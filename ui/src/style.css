@@ -1,0 +1,21 @@
+:root {
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  color: #202225;
+  background: #f4f4f1;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  font-optical-sizing: auto;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+main { width: min(100% - 48px, 720px); margin: 15vh auto 0; }
+.brand-mark { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; background: #202125; color: #f4f4f1; font-weight: 700; }
+.eyebrow { margin: 44px 0 12px; color: #6d6d68; font-size: 11px; font-weight: 700; letter-spacing: .14em; }
+h1 { max-width: 620px; margin: 0; font-size: clamp(32px, 6vw, 48px); line-height: 1.08; letter-spacing: -.055em; }
+.description { max-width: 520px; margin: 20px 0 32px; color: #6d6d68; font-size: 15px; line-height: 1.65; }
+.status { display: flex; align-items: center; gap: 9px; padding-top: 18px; border-top: 1px solid #d8d6cd; color: #6d6d68; font-size: 13px; }
+.indicator { width: 8px; height: 8px; border-radius: 50%; background: #10b981; }
+code { margin-left: auto; color: #6d6d68; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; } }
