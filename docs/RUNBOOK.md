@@ -62,7 +62,107 @@ Expected first boot:
 
 Remove the bootstrap password from deployment environment after the admin credential exists if the implementation does not require it for subsequent boots.
 
-## 4. Local development
+## 4. Git worktree operating model
+
+Routeweft development uses one dedicated worktree per feature/PR.
+
+The primary checkout is coordination-only. Do not implement sprint features directly there.
+
+Invariant:
+
+```text
+1 feature / PR = 1 branch = 1 worktree
+```
+
+### Create a feature worktree
+
+```bash
+git fetch origin
+git switch main
+git pull --ff-only origin main
+git worktree list
+
+mkdir -p ../routeweft-wt
+git worktree add ../routeweft-wt/s<S>-<feature> \
+  -b sprint/<S>-<feature> origin/main
+```
+
+Example:
+
+```bash
+git worktree add ../routeweft-wt/s1-repo-scaffold \
+  -b sprint/1-repo-scaffold origin/main
+```
+
+Then work only from that worktree:
+
+```bash
+cd ../routeweft-wt/s1-repo-scaffold
+git status --short
+git branch --show-current
+git rev-parse --show-toplevel
+```
+
+All edits, builds, tests, commits, pushes, and review fixes for that PR occur from this directory.
+
+### Resume an existing PR
+
+Run:
+
+```bash
+git worktree list
+```
+
+Reuse the worktree already bound to the PR branch. Never maintain two mutable worktrees for the same feature branch.
+
+### Parallel features
+
+Parallel work is permitted only when the work is explicitly independent.
+
+Each parallel PR gets its own sibling worktree and branch:
+
+```text
+../routeweft-wt/s3-routing-core
+../routeweft-wt/s3-combo
+../routeweft-wt/s7-ui-overview
+```
+
+Each worktree must use separate disposable runtime data when running Routeweft locally.
+
+### Dependent features
+
+Default flow:
+
+```text
+PR A approved/merged
+ -> update primary checkout main
+ -> create PR B worktree from new origin/main
+```
+
+Stacked branches/worktrees are allowed only when `docs/SPRINT_PLAN.md` explicitly declares the dependency.
+
+### Review fixes
+
+All review fixes are made in the original PR worktree. Do not patch a PR from another feature's worktree or the coordination checkout.
+
+### Cleanup
+
+After merge/close and after verifying no local work remains:
+
+```bash
+cd <primary-routeweft-checkout>
+git fetch origin
+git switch main
+git pull --ff-only origin main
+git worktree remove ../routeweft-wt/s<S>-<feature>
+git branch -d sprint/<S>-<feature>
+git worktree prune
+```
+
+Never force-remove a worktree containing uncommitted or unpushed work.
+
+
+## 5. Local development
 
 Target commands:
 
@@ -89,7 +189,7 @@ export ROUTEWEFT_DATA_DIR="$PWD/.data-dev"
 
 Never point development at the production DB.
 
-## 5. Production container
+## 6. Production container
 
 Target Compose shape:
 
@@ -110,7 +210,7 @@ services:
 
 The production image should be referenced by an immutable version/SHA-derived tag for daily-drive deployments.
 
-## 6. Reverse proxy
+## 7. Reverse proxy
 
 Recommended topology:
 
@@ -126,7 +226,7 @@ Forward only trusted proxy headers from known proxy peers.
 
 Do not expose an unprotected admin API directly to the public network.
 
-## 7. Smoke checks
+## 8. Smoke checks
 
 After start/upgrade:
 
@@ -148,7 +248,7 @@ Then verify through normal client auth:
 
 Do not use a destructive OAuth refresh smoke test casually on production credentials.
 
-## 8. Health interpretation
+## 9. Health interpretation
 
 ### Liveness unhealthy
 
@@ -172,7 +272,7 @@ Likely causes:
 
 Do not route new inference traffic until readiness recovers.
 
-## 9. Logs
+## 10. Logs
 
 Production logging should be structured.
 
@@ -201,7 +301,7 @@ Never log:
 
 Prompt/request bodies are captured only through explicitly enabled request-detail observability with redaction/retention limits.
 
-## 10. Backup
+## 11. Backup
 
 Preferred:
 
@@ -220,7 +320,7 @@ Store alongside metadata:
 
 Periodically rehearse restore on a disposable host/data directory.
 
-## 11. Restore
+## 12. Restore
 
 Validation first:
 
@@ -245,7 +345,7 @@ Required behavior:
 
 If validation fails, leave the current DB untouched.
 
-## 12. Upgrade
+## 13. Upgrade
 
 For an immutable image upgrade:
 
@@ -262,7 +362,7 @@ For an immutable image upgrade:
 
 Do not combine an upgrade with unrelated database surgery.
 
-## 13. Rollback
+## 14. Rollback
 
 If the new Routeweft release fails:
 
@@ -278,7 +378,7 @@ If the new Routeweft release fails:
 
 Release policy should prefer additive/backward-compatible migrations during the daily-drive stabilization window.
 
-## 14. SQLite maintenance
+## 15. SQLite maintenance
 
 Monitor:
 
@@ -293,7 +393,7 @@ Do not run manual VACUUM/checkpoint commands during heavy production traffic wit
 
 Use Routeweft-owned maintenance commands once implemented.
 
-## 15. Incident: elevated 5xx
+## 16. Incident: elevated 5xx
 
 Check:
 
@@ -308,7 +408,7 @@ Check:
 
 If one provider is broken, disable/reroute that provider rather than restart the entire router unless required.
 
-## 16. Incident: OAuth refresh failures
+## 17. Incident: OAuth refresh failures
 
 Actions:
 
@@ -322,7 +422,7 @@ Actions:
 
 Never restore an older DB solely to recover an OAuth token unless you know the older refresh token remains valid.
 
-## 17. Incident: SQLite busy/locked
+## 18. Incident: SQLite busy/locked
 
 Check:
 
@@ -336,7 +436,7 @@ A normal single-instance deployment should not repeatedly hit sustained writer l
 
 Do not add Redis/Postgres as an emergency workaround; fix the contention/root cause.
 
-## 18. Incident: telemetry pressure
+## 19. Incident: telemetry pressure
 
 Check:
 
@@ -350,7 +450,7 @@ Check:
 
 Inference may remain available in degraded mode according to SPEC, but lost critical accounting must be visible.
 
-## 19. Incident: prompt-cache regression
+## 20. Incident: prompt-cache regression
 
 Symptoms:
 
@@ -367,7 +467,7 @@ Actions:
 5. compare N/N+1 fixture behavior;
 6. roll back a transform/cache change if regression is confirmed.
 
-## 20. Incident: runaway Fusion cost/load
+## 21. Incident: runaway Fusion cost/load
 
 Actions:
 
@@ -382,7 +482,7 @@ Disable/change the affected Combo strategy if needed.
 
 Do not globally disable unrelated routing.
 
-## 21. Security rotation
+## 22. Security rotation
 
 For compromised client API key:
 
@@ -400,7 +500,7 @@ For compromised admin credential:
 - rotate password/session state;
 - invalidate active admin sessions as supported.
 
-## 22. Disaster recovery minimum
+## 23. Disaster recovery minimum
 
 Maintain:
 

@@ -4,6 +4,42 @@ Status: **Execution sequence**
 
 The project is built in small reviewable PRs. Do not turn the first sprint into a whole-product rewrite.
 
+## Mandatory execution model
+
+Every implementation PR below runs in its own dedicated branch and git worktree.
+
+```text
+1 feature / PR = 1 branch = 1 worktree
+```
+
+Default naming:
+
+```text
+branch:   sprint/<sprint-number>-<feature-slug>
+worktree: ../routeweft-wt/s<sprint-number>-<feature-slug>
+```
+
+Examples:
+
+```text
+Sprint 1 / repo scaffold:
+  branch   sprint/1-repo-scaffold
+  worktree ../routeweft-wt/s1-repo-scaffold
+
+Sprint 3 / full Combo:
+  branch   sprint/3-combo
+  worktree ../routeweft-wt/s3-combo
+```
+
+The primary checkout is coordination-only.
+
+Unless a section explicitly marks PRs as independent/parallel, a dependent PR starts only after its prerequisite is approved/merged. Update `main`, then create the next worktree from the new `origin/main`.
+
+Review fixes remain in the same PR worktree for the PR's entire lifecycle.
+
+The exact create/resume/cleanup commands are normative in `AGENTS.md` and `docs/RUNBOOK.md`.
+
+
 ## Sprint 0 — Foundation
 
 ### PR 1: foundation docs
@@ -246,6 +282,9 @@ Deliver:
 - operator runbook verification.
 
 ## Review protocol for every sprint
+
+Before starting each PR, create or resume its dedicated worktree. Never implement two feature PRs from the same worktree.
+
 
 1. one coherent push;
 2. wait for exact-head review;

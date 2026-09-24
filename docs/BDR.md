@@ -28,6 +28,7 @@ This document records binding architecture/build choices so implementation agent
 | BDR-018 | Default listen port 21128 | Accepted |
 | BDR-019 | Exact SQLite Go driver | Constrained/Deferred |
 | BDR-020 | Strict FIFO review discipline | Accepted |
+| BDR-021 | One feature/PR per dedicated worktree | Accepted |
 
 ## BDR-001 — Standalone product
 
@@ -246,3 +247,33 @@ Do not stack noisy pushes onto a PR waiting for exact-head review.
 Validate all prior findings, bundle valid fixes, then push once.
 
 Dependent work proceeds after reviewed/merged prerequisites unless explicitly planned otherwise.
+
+
+## BDR-021 — Dedicated worktree per feature/PR
+
+Every implementation feature/PR uses exactly one dedicated branch and one dedicated git worktree.
+
+```text
+1 feature / PR = 1 branch = 1 worktree
+```
+
+The primary checkout is coordination-only and must not contain feature implementation work.
+
+Why:
+
+- isolates simultaneous Codex/agent sessions;
+- prevents accidental branch switching and cross-feature staging;
+- keeps build/test artifacts attributable to one PR;
+- makes review fixes return to the exact PR environment;
+- permits safe parallel work only when items are truly independent.
+
+Naming:
+
+```text
+branch:   sprint/<sprint-number>-<feature-slug>
+worktree: ../routeweft-wt/s<sprint-number>-<feature-slug>
+```
+
+The same worktree is reused for all review fixes on its PR and removed only after merge/close with no uncommitted/unpushed work.
+
+Dependent PRs are based on the reviewed/merged prerequisite by default. Stacked worktrees require explicit sprint-plan authorization.

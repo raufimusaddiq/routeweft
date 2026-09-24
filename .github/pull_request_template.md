@@ -53,3 +53,10 @@ Details:
 - [ ] This is a coherent head ready for review.
 - [ ] Prior findings were re-read and valid fixes were bundled.
 - [ ] I will not push a new head while the FIFO reviewer is still reviewing this head unless a blocker requires it.
+
+
+## Worktree isolation
+
+- [ ] This PR was implemented in its own dedicated feature worktree.
+- [ ] The worktree is bound to this PR's branch only.
+- [ ] Review fixes will be made in the same worktree.
