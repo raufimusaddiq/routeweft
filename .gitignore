@@ -1,0 +1,29 @@
+# Go
+/bin/
+*.test
+*.out
+coverage.*
+
+# UI
+ui/node_modules/
+ui/dist/
+ui/.vite/
+
+# Local runtime data
+.data/
+.data-*/
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+
+# Environment/secrets
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
