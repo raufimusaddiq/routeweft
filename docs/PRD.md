@@ -1,205 +1,114 @@
-# Routeweft Product Requirements
+# Routeweft Product Requirements Document
 
-Status: **Foundation / normative**
+Status: **Implementation-ready product requirements**
+Product owner/design authority: Routeweft repository
+Behavioral reference snapshot: LiteRouter `2ffb7922954112b30425cd487d686758e519397e`
+Architecture reference: `docs/SPEC.md`
+Provider requirements: `docs/PROVIDER_BASELINE.md`
 
-## 1. Product definition
+## 1. Product thesis
 
-Routeweft is a standalone, local-first LLM routing gateway with a web control plane.
+Routeweft is a standalone, local-first LLM routing gateway and operator control plane.
 
-Its job is to present stable client-facing LLM interfaces while Routeweft owns the complexity of:
+It gives clients one stable endpoint while owning the operational complexity behind it:
 
-- provider selection;
-- multiple accounts per provider;
-- credentials and refresh;
-- model mapping;
-- fallback and rotation;
-- quota/cooldown/health state;
-- Combo routing;
+- many LLM providers;
+- many accounts per provider;
+- API-key/OAuth/cookie/no-auth credentials;
+- model discovery/mapping;
+- provider/account/Combo routing;
+- quota, cooldown and health;
+- native protocol selection and translation fallback;
 - prompt-efficiency transforms;
 - prompt-cache preservation;
-- Usage and operational visibility.
+- Usage/Quota/request diagnostics;
+- backup, restore and operator workflows.
 
-Routeweft is not a LiteRouter release line. It has its own database, release process, configuration schema, binary, container, UI, and operational lifecycle.
+Routeweft is **not** a LiteRouter release line, migration wrapper, shared database, plugin or runtime dependency. LiteRouter is used only as a behavioral/product reference while Routeweft establishes its own tests.
 
-## 2. Primary user
+## 2. Primary user and jobs-to-be-done
 
-The first product is optimized for a technically sophisticated operator running one Routeweft instance on a private server.
+The first user is a technically sophisticated operator running one self-hosted Routeweft instance on a private server or behind a trusted reverse proxy.
 
-The operator wants:
+The operator needs to:
 
-- one endpoint for many LLM providers;
-- reliable daily-drive behavior;
-- predictable routing;
-- low router overhead;
-- local durable state;
-- no mandatory cloud control plane;
-- clear Usage/Quota/provider health;
-- easy provider/account management;
-- reversible upgrades.
+1. point tools/clients at one endpoint;
+2. add built-in or custom providers without code edits;
+3. manage multiple provider accounts;
+4. choose deterministic routing policy;
+5. keep working through provider limits/failures;
+6. see exactly which provider/account/model handled traffic;
+7. preserve prompt-cache economics;
+8. tune token-saving features;
+9. operate/upgrade/restore the router without another control service.
 
 ## 3. Product principles
 
-1. **Correct before clever.** A routing optimization is invalid if it changes client-visible behavior unexpectedly.
-2. **Memory hot path, durable local state.** SQLite is authoritative; requests use compiled in-memory state.
-3. **Native first.** Do not translate a protocol that can be forwarded safely.
-4. **Provider identity is not protocol identity.** Multiple providers can share a wire adapter.
-5. **One coherent runtime view.** Requests read one immutable snapshot rather than many repository caches.
-6. **Failure is bounded.** Retries, queues, timeouts, fallback, and shutdown all have explicit limits.
-7. **Daily-drive observability.** Failures must be diagnosable without attaching a debugger.
-8. **Operator UI, not a marketing site.** Fast, information-dense, neutral, accessible.
-9. **Standalone means standalone.** No writable state is shared with another router product.
+1. **Correctness before optimization.**
+2. **Native transport before translation.**
+3. **Built-in provider support is a product contract; shared adapters are an implementation detail.**
+4. **Routing state is explicit and bounded.**
+5. **SQLite is durable state; RuntimeSnapshot/RuntimeState serve requests.**
+6. **Usage and quota are product features, not debug extras.**
+7. **Prompt-cache preservation is release-blocking.**
+8. **Operator UI is an instrument panel, not a marketing surface.**
+9. **Standalone deployment must remain simple.**
+10. **A feature is not "supported" merely because a provider name appears in a list.**
 
-## 4. Goals
+## 4. Product scope summary
 
-### 4.1 Inference
+### 4.1 In scope
 
-Routeweft must support:
+- OpenAI Chat Completions ingress;
+- OpenAI Responses + compact;
+- Anthropic Messages + count tokens;
+- Gemini-compatible LLM ingress;
+- Ollama-compatible chat ingress;
+- System One/Jev;
+- streaming + non-streaming;
+- built-in 80-provider catalog;
+- Generic Provider;
+- multiple provider connections/accounts;
+- API key/OAuth/PAT/cookie/no-auth credentials;
+- model discovery, aliases, custom/disabled models, pricing;
+- fill-first, RR, sticky RR, provider strategies;
+- fallback, quota/cooldown/health routing;
+- full Combo;
+- Fusion;
+- capability-aware Combo routing/capacity adapter;
+- proxy pools/global proxy/no-proxy;
+- RTK, Caveman, Ponytail, Headroom, PXPIPE;
+- prompt-cache anchors/accounting;
+- API-key and dashboard auth;
+- Usage, Quota, request details, topology, console logs;
+- backup/restore;
+- static Routeweft UI following `UI_STYLE.md`.
 
-- OpenAI Chat Completions;
-- OpenAI Responses;
-- OpenAI Responses Compact compatibility;
-- Anthropic Messages;
-- Anthropic count-tokens compatibility;
-- System One;
-- Gemini-compatible LLM generate/stream ingress where enabled;
-- Ollama-compatible chat ingress where enabled;
-- SSE/streaming and non-streaming;
-- client cancellation;
-- native passthrough;
-- protocol translation when required.
+### 4.2 Explicitly out of scope
 
-### 4.2 Routing
+- standalone image generation;
+- standalone video generation;
+- TTS/STT/speech product APIs;
+- embeddings product APIs;
+- media-provider management;
+- RAG/vector database;
+- general agent orchestration;
+- SaaS multi-tenancy;
+- Kubernetes/microservices;
+- multi-region HA;
+- Redis/PostgreSQL for the initial single-instance product;
+- LiteRouter database compatibility;
+- built-in tunnel/Tailscale lifecycle management;
+- cloud sync;
+- enterprise SAML/OIDC.
 
-Routeweft must support:
+Multimodal image/audio/file content remains valid when embedded in retained LLM protocols and supported by the selected provider/model.
 
-- multiple providers;
-- multiple accounts per provider;
-- provider/account enable/disable;
-- connection priority;
-- fill-first;
-- global round-robin;
-- sticky round-robin;
-- per-provider `providerStrategies`;
-- bounded account fallback;
-- retry exclusion;
-- quota-aware routing;
-- model cooldown/locks;
-- provider/model/account health;
-- proxy assignment;
-- proxy pools;
-- global outbound proxy and no-proxy policy;
-- model aliases;
-- custom models;
-- disabled models;
-- pricing overrides.
+## 5. Public inference and compatibility contract
 
-### 4.3 Combo
+### PRD-API-001 — primary public routes
 
-Everything in the Routeweft Combo product is retained as a first-class feature:
-
-- named Combo CRUD;
-- ordered model membership;
-- reorder/add/remove/deselect;
-- fallback strategy;
-- round-robin/sticky strategy;
-- per-Combo `comboStrategies`;
-- Fusion panel + judge;
-- explicit/default judge;
-- quorum, straggler grace, hard timeout;
-- graceful degradation when only one panel succeeds;
-- capability-aware reordering of existing members;
-- capacity-adapter pools;
-- per-capability fallback or round-robin;
-- vision and audio-input adapter UI;
-- stored pdf/video capability compatibility for future/hidden support;
-- empty adapter pool = no-op;
-- final model may be deselected;
-- adapter context-window history trimming.
-
-Capability routing exists to route an LLM request to an LLM model that can accept its input. It does not make Routeweft a general media platform.
-
-### 4.4 Prompt efficiency
-
-Hard-retain:
-
-- RTK;
-- Caveman;
-- Ponytail;
-- Headroom;
-- PXPIPE;
-- per-request token-saver bypass;
-- prompt-cache anchoring;
-- cache-read/cache-create token accounting;
-- request-detail diagnostics for transforms.
-
-### 4.5 Provider/auth workflows
-
-Routeweft architecture must support provider modules that use:
-
-- API keys;
-- access tokens;
-- OAuth;
-- rotating refresh tokens;
-- cookies/session credentials;
-- PAT-like credentials;
-- no-auth/free endpoints;
-- provider-specific import helpers.
-
-Provider modules may also provide:
-
-- model discovery;
-- suggested models;
-- quota;
-- precise reset times;
-- model validation/test;
-- connection test;
-- provider-thinking controls;
-- provider-specific headers/quirks.
-
-Initial implementation should maximize shared protocol adapters rather than create one transport implementation per provider.
-
-The initial provider breadth target is tracked in [PROVIDER_BASELINE.md](PROVIDER_BASELINE.md). Every listed provider must receive an explicit implementation disposition before Routeweft declares broad-provider GA. Routeweft owns that manifest after bootstrap; the source reference is provenance, not a runtime dependency.
-
-### 4.6 Control plane
-
-The web UI must provide:
-
-**Operate**
-- Overview
-- Endpoint & Key
-- Providers
-
-**Route**
-- Combo & Capability Adapter
-- System One
-
-**Observe**
-- Usage
-- Quota Tracker
-- Token Saver
-
-**System**
-- Console Log
-- Settings
-
-Supporting workflows include:
-
-- API key create/pause/resume/delete/copy;
-- dashboard login/password;
-- provider add/edit/reorder/test/import;
-- connection health/quota;
-- model aliases/custom/disabled/pricing;
-- provider nodes;
-- proxy pools;
-- Combo/Fusion/capability settings;
-- request detail;
-- provider topology/activity;
-- database backup/restore;
-- theme and local UI preferences.
-
-## 5. Public API contract
-
-Primary public routes:
+Routeweft must expose:
 
 ```text
 POST /v1/chat/completions
@@ -215,7 +124,7 @@ GET  /v1/models/{provider}/{model}
 GET  /v1/models/info
 ```
 
-Optional compatibility ingress implemented as LLM-only surfaces:
+### PRD-API-002 — retained compatibility ingress
 
 ```text
 POST /v1/api/chat
@@ -224,201 +133,765 @@ POST /v1beta/models/{model}:generateContent
 POST /v1beta/models/{model}:streamGenerateContent
 ```
 
-Routeweft must not add standalone image/video generation, speech/TTS/STT, embeddings, or media-provider APIs under the initial product scope.
+These are LLM compatibility routes. They do not authorize standalone media product APIs.
 
-## 6. Streaming contract
+### PRD-API-003 — client aliases
 
-For supported streaming protocols:
+Retain compatibility behavior equivalent to:
 
-- first bytes should be forwarded as soon as safely possible;
-- Routeweft must not buffer a full response unless a feature requires it;
-- cancellation must abort upstream work;
-- terminal events must be emitted exactly once;
-- malformed upstream termination must map to an explicit client-visible failure rather than silently hanging;
-- telemetry completion must be independent from keeping the client connection open after terminal delivery.
+- `/responses` -> Responses;
+- `/codex/:path*` -> Responses compatibility;
+- historical double-prefix `/v1/v1[/...]` where existing clients depend on it.
 
-Fusion is an explicit exception: panel members are collected non-streaming; the judge can stream to the client.
+Routeweft may implement aliases directly rather than via framework rewrites.
 
-## 7. Runtime and persistence requirements
+### PRD-API-004 — authentication forms
 
-Single-instance Routeweft uses SQLite WAL.
+Inference authentication must understand the current supported client forms, including:
 
-Steady-state inference configuration must be served from an immutable in-memory snapshot.
+- Bearer authorization;
+- Anthropic-style `x-api-key`;
+- Gemini-compatible API key forms where required by the compatibility route.
 
-SQLite is used for:
+Provider credentials are not the same thing as client Routeweft API keys.
 
-- startup/reload;
-- configuration mutations;
-- credentials;
-- API keys/admin state;
-- Usage/request-detail persistence;
-- selected restart-durable operational state;
-- backup/restore/migrations.
+### PRD-API-005 — request/stream behavior
 
-SQLite must not be queried synchronously on every successful inference request for routing configuration.
+- streaming and non-streaming;
+- cancellation on client disconnect;
+- exactly-once terminal semantics;
+- finite retries/fallback;
+- CORS/preflight needed by current clients;
+- required response/content-type headers;
+- configurable request-body limit at least equivalent to the current 128 MB long-context/base64 use case;
+- h2c-capable clients must not fail merely because they attempt an HTTP/2 cleartext upgrade;
+- unknown native-path JSON fields survive when safe.
 
-Redis is not required.
+### PRD-API-006 — Responses requirements
 
-PostgreSQL is not part of the initial product.
+Support current behavior for:
 
-## 8. Security requirements
+- tools/custom tools;
+- parallel tool calls;
+- multi-turn state;
+- compact mode;
+- reasoning fields;
+- stream terminal events;
+- abort/cancel;
+- native Responses providers when available.
 
-Routeweft must:
+### PRD-API-007 — Messages requirements
 
-- require API-key protection according to configured policy;
-- protect the dashboard with login/password according to configured policy;
-- hash dashboard passwords;
-- compare API keys safely;
-- redact credentials from logs and request details;
-- keep provider credentials server-side;
-- protect configurable outbound URLs from SSRF;
-- revalidate redirects;
-- block link-local/metadata destinations unless explicitly safe and required;
-- sanitize forwarded hop-by-hop and sensitive headers;
-- propagate trusted client IP only through an explicit trusted-proxy policy;
-- never expose database backup endpoints without admin authentication.
+Support:
 
-## 9. UI requirements
+- tool-use/tool-result ordering;
+- thinking/reasoning;
+- prompt-cache control fields;
+- count-tokens compatibility;
+- native Messages providers when available.
 
-The visual contract is [UI_STYLE.md](UI_STYLE.md).
+## 6. Built-in provider product contract
 
-Routeweft deliberately follows the current LiteRouter operator-console visual language while remaining an independent frontend implementation.
+### PRD-PROV-001 — first-class provider definition
 
-Key requirements:
+Routeweft targets the 80 active built-in providers listed in `PROVIDER_BASELINE.md`.
 
-- neutral warm light/dark themes;
-- IBM Plex Sans + JetBrains Mono;
-- Material Symbols;
-- compact left control-plane sidebar;
-- 10px card primitives with subtle border/ring;
-- strong information hierarchy;
-- color used for status rather than decoration;
-- responsive mobile drawer;
-- keyboard/focus support;
-- reduced-motion support;
-- no production Next runtime.
+A first-class provider:
 
-## 10. Observability requirements
+- is present in the built-in catalog;
+- has working connection/auth flows;
+- has a correct wire adapter;
+- preserves its model discovery/passthrough semantics;
+- preserves usage/quota/reset behavior where applicable;
+- preserves provider quirks required for successful inference;
+- works with multiple accounts/routing/Combo/Usage;
+- can be tested/managed from the UI.
 
-Routeweft must expose:
+A provider backed by a shared OpenAI/Anthropic/Responses adapter is still first-class.
 
-- request count;
-- active requests;
-- success/failure;
-- latency/TTFT where available;
+### PRD-PROV-002 — implementation model
+
+Do not create 80 near-identical executors.
+
+Provider implementation is composed from:
+
+```text
+ProviderSpec
+ + protocol adapter
+ + authentication module
+ + optional model-discovery module
+ + optional quota/usage module
+ + optional provider hook/quirk module
+```
+
+### PRD-PROV-003 — hidden providers
+
+`trae`, `devin-cli`, and `windsurf` remain hidden/non-product until an explicit requirements decision changes them.
+
+### PRD-PROV-004 — release breadth
+
+- **Daily-driver beta** may ship before all 80 are ready, but only configured/advertised-ready providers may be selected as production-ready.
+- **Broad-provider GA** requires all 80 built-in provider rows implemented and green.
+- No built-in row may disappear silently because porting it is difficult.
+
+## 7. Generic Provider contract
+
+### PRD-GEN-001 — creation
+
+The operator can create a Generic Provider with:
+
+- friendly name;
+- unique provider/model prefix;
+- base URL;
+- one or more native transports:
+  - Chat Completions;
+  - Responses;
+  - Messages.
+
+### PRD-GEN-002 — connection/auth
+
+Generic Provider supports multiple API-key connections/accounts.
+
+A Generic Provider connection stores credentials separately from provider-node definition so multiple keys can share one node.
+
+### PRD-GEN-003 — native transport selection
+
+Given a Generic Provider advertising all three transports:
+
+- Chat ingress uses `/chat/completions`;
+- Responses ingress uses `/responses`;
+- Messages ingress uses `/messages`.
+
+Translation is used only when the selected provider does not advertise the source protocol.
+
+### PRD-GEN-004 — validation/model discovery
+
+The control plane must:
+
+- validate URL shape;
+- protect remote validation with SSRF policy;
+- allow a trusted local operator to validate LAN/self-hosted nodes;
+- try `/models` when available;
+- allow a manual model ID fallback and minimal inference validation when model listing is absent;
+- keep manual model configuration if discovery is unavailable.
+
+### PRD-GEN-005 — forward compatibility
+
+Native Generic Provider paths preserve unknown supported JSON fields where safe.
+
+## 8. Provider connection and credential workflows
+
+### PRD-AUTH-001
+
+Connection modes may include:
+
+- API key;
+- access token/PAT;
+- OAuth authorization code/PKCE;
+- OAuth device flow;
+- rotating refresh token;
+- cookie/session;
+- no-auth/free connection;
+- dual auth.
+
+### PRD-AUTH-002
+
+Retain the user capability of current provider-specific helpers:
+
+- Codex token import/bulk import;
+- Cursor import/auto-import;
+- GitLab PAT;
+- Grok CLI bulk import;
+- iFlow cookie;
+- Kiro API-key/import/auto-import/CLI-proxy/social auth;
+- Xiaomi Mimo API-key/auto-import;
+- generic provider OAuth action flows.
+
+Internal endpoint names may change.
+
+### PRD-AUTH-003
+
+Refresh correctness:
+
+- singleflight per credential identity;
+- new access token immediately updates RuntimeState;
+- rotated refresh token durably commits before success is considered stable;
+- failed refresh cannot destroy the last valid durable credential;
+- distinct workspaces/accounts remain distinct identities.
+
+## 9. Model catalog, capability and pricing requirements
+
+### PRD-MODEL-001
+
+Support:
+
+- built-in seed models;
+- live model discovery;
+- passthrough model IDs;
+- aliases;
+- custom models;
+- disabled models;
+- upstream-model mapping;
+- model capabilities;
+- context window;
+- service kind;
+- thinking/reasoning options;
+- pricing overrides;
+- quota-family metadata.
+
+### PRD-MODEL-002
+
+Dynamic catalog failure must not delete a configured/known model.
+
+### PRD-MODEL-003
+
+Model IDs added to built-in providers after implementation begins are treated as product drift and require catalog update, not a code fork.
+
+## 10. Routing requirements
+
+### PRD-ROUTE-001 — multi-provider/account
+
+Multiple providers and multiple accounts per provider are core.
+
+Connections support enable/disable, naming, priority and reorder.
+
+### PRD-ROUTE-002 — strategies
+
+Support:
+
+- fill-first;
+- round-robin;
+- sticky round-robin;
+- global defaults;
+- per-provider `providerStrategies`;
+- per-provider sticky limits.
+
+RR/sticky cursor mutation is hot in-memory state; no synchronous per-request durable write.
+
+### PRD-ROUTE-003 — fallback
+
+Fallback is bounded.
+
+Retryable provider/account failures can advance to the next eligible candidate.
+
+Non-retryable client errors must not create provider storms.
+
+The current attempt chain excludes already-failed accounts/candidates as required to avoid loops.
+
+### PRD-ROUTE-004 — quota/cooldown/health
+
+Routing state distinguishes:
+
+- available;
+- exhausted;
+- cooldown;
+- unknown;
+- error.
+
+Unknown/error are not automatically exhausted.
+
+Provider-specific precise reset timestamps override generic backoff when trusted.
+
+### PRD-ROUTE-005 — proxying
+
+Support:
+
+- global outbound proxy;
+- no-proxy list;
+- proxy pools;
+- per-connection pool binding;
+- rotation for providers that support it;
+- proxy connectivity test.
+
+## 11. Combo product requirements
+
+### PRD-COMBO-001 — CRUD/order
+
+- create/edit/delete Combo;
+- ordered members;
+- drag/reorder and explicit order semantics;
+- add/remove/deselect model;
+- aliases usable as members.
+
+### PRD-COMBO-002 — fallback/RR/sticky
+
+- ordered fallback;
+- round-robin;
+- sticky RR;
+- global Combo strategy;
+- `comboStrategies` per Combo;
+- `comboStickyRoundRobinLimit`.
+
+### PRD-COMBO-003 — Fusion
+
+Fusion must preserve:
+
+- parallel panel fan-out;
+- panel calls forced non-streaming;
+- panel tools removed;
+- prior tool history flattened to prose;
+- configurable judge;
+- first Combo model as default judge;
+- minimum-panel quorum;
+- straggler grace;
+- hard panel timeout;
+- 0 successes -> error;
+- 1 success -> direct answer;
+- 2+ successes -> judge synthesis;
+- judge preserves original client streaming/tools behavior.
+
+### PRD-COMBO-004 — capability routing
+
+- detect hard capability needed by active LLM request;
+- stably prioritize existing capable Combo members;
+- only consult capacity-adapter pool when original candidates cannot satisfy capability;
+- per-capability fallback or RR;
+- enabled empty pool = no-op;
+- final adapter model may be deselected;
+- adapter target with smaller context trims old middle history first while preserving system/instructions and active user/media tail.
+
+Initial visible capability adapters: vision and audio-input.
+
+PDF/video state may exist for compatibility/future use but does not create standalone media APIs.
+
+## 12. Prompt-efficiency and cache requirements
+
+### PRD-XFORM-001 — token-saver master behavior
+
+Retain:
+
+- RTK;
+- Headroom;
+- Caveman;
+- Ponytail;
+- PXPIPE;
+- client per-request bypass.
+
+### PRD-XFORM-002 — normative order
+
+```text
+protocol/provider preparation
+ -> RTK
+ -> Headroom
+ -> Caveman
+ -> Ponytail
+ -> PXPIPE
+ -> prompt-cache anchoring
+ -> final provider normalization/dispatch
+```
+
+### PRD-XFORM-003 — fail-open
+
+A non-essential compression/transform failure must not convert an otherwise valid inference request into a failure unless the feature explicitly defines strict behavior.
+
+### PRD-XFORM-004 — Headroom
+
+Retain:
+
+- enable;
+- URL;
+- timeout;
+- optional user-message compression;
+- extras;
+- managed status/start/stop/restart when Routeweft owns integration;
+- proxy behavior;
+- diagnostics.
+
+### PRD-XFORM-005 — PXPIPE
+
+Retain:
+
+- enable;
+- auto-install policy where applicable;
+- min-char threshold;
+- timeout;
+- transform behavior;
+- health/status/start/stop/restart;
+- logs;
+- stats;
+- request-detail diagnostics.
+
+### PRD-CACHE-001 — prompt cache
+
+Cache anchors are applied to the **final transformed body**.
+
+Controlled fixtures must cover stable system/tool prefix, first turn, assistant turns, client markers, marker budget, deferred tools, thinking/redacted thinking, token savers, fallback and translated/native paths.
+
+### PRD-CACHE-002
+
+Usage records cache-read/cache-create token data when upstream provides it.
+
+A release cannot knowingly reduce controlled prompt-cache reuse merely to save small router latency.
+
+## 13. Usage, quota and observability
+
+### PRD-OBS-001 — Usage
+
+Preserve user-visible capability for:
+
+- total requests;
+- token totals;
+- estimated cost;
 - provider/model/account/API-key attribution;
-- prompt/completion tokens;
-- cache-read/cache-create tokens;
-- estimated cost from configured pricing;
-- route/fallback decisions;
-- cooldown/quota state;
-- request details with redaction;
-- transform diagnostics;
-- live events;
-- console/service logs.
+- latency/TTFT where known;
+- success/error;
+- time-period selection;
+- charts/history;
+- provider topology/activity;
+- request logs/details;
+- cache tokens;
+- routing/fallback decision;
+- transform diagnostics.
 
-Critical Usage accounting must not be silently dropped under ordinary queue pressure.
+### PRD-OBS-002 — request detail
 
-## 11. Performance objectives
+Request details are bounded/redacted.
 
-Performance targets are budgets, not marketing claims.
+Do not store/render authorization, refresh token, cookies, admin password or provider secret.
 
-Initial engineering goals:
+### PRD-OBS-003 — live events
 
-- router-only native-path p95 <= 12 ms against local mock upstream after warmup;
-- target native-path p50 <= 7 ms;
-- no request-path global mutex;
-- no per-request durable RR cursor write;
-- stable behavior at 1/10/50/100 concurrent streams;
-- post-burst RSS target <= 64 MiB for the Go service under representative fixtures;
-- production server image goal <= 100 MiB; stretch <= 60 MiB;
-- cached dashboard navigation perceived < 100 ms after assets/data are warm;
-- initial overview API target < 20 ms from local server;
-- no prompt-cache regression on controlled fixtures.
+UI gets one live event channel for meaningful operational updates and falls back to query refresh.
 
-The benchmark harness is authoritative; upstream LLM latency is reported separately from router overhead.
+### PRD-OBS-004 — telemetry durability
 
-## 12. Reliability requirements
+Normal Usage persistence is asynchronous/batched and bounded.
 
-- readiness is false until SQLite migrations/load and RuntimeSnapshot compilation succeed;
-- liveness must not depend on an upstream provider;
-- configuration mutations are serialized and atomic at the application level;
-- OAuth refresh is singleflight per identity;
-- rotating refresh-token updates are durable before old credentials can be lost;
-- telemetry is bounded;
-- shutdown drains active streams and accepted critical telemetry within configured deadlines;
-- backup restore is validated on a temporary candidate before activation;
-- schema changes must have upgrade/rollback behavior documented.
+On pressure:
 
-## 13. Non-goals
+1. diagnostic detail sheds/coalesces first;
+2. critical accounting gets short bounded backpressure;
+3. emergency flush may run;
+4. persistent DB failure marks degraded health;
+5. any ultimately lost critical event increments visible monotonic lost-accounting state.
 
-Initial Routeweft does not target:
+No unbounded queue.
 
-- Kubernetes;
-- microservices;
-- multi-region HA;
-- multiple active SQLite writers;
-- mandatory Redis;
-- PostgreSQL;
-- agent orchestration;
-- vector databases/RAG;
-- standalone media generation;
-- speech products;
-- embeddings products;
-- a hosted SaaS control plane;
-- LiteRouter database migration compatibility;
-- LiteRouter API-internal compatibility;
-- preserving another project's package/module layout.
+### PRD-QUOTA-001
 
-## 14. Standalone boundary
+Quota page shows provider/account limit and reset state where available and can refresh without blocking normal inference.
 
-Routeweft may run beside LiteRouter for evaluation, but:
+Provider-specific actions currently exposed, such as Codex reset-credit operations, remain representable.
 
-- use a separate port;
-- use a separate SQLite/database directory;
-- use a separate container;
-- use separate writable OAuth credential ownership;
-- use a separate reverse-proxy route;
-- do not mount the same data volume.
+## 14. Control-plane UI requirements
 
-A user can choose either product independently.
+The Routeweft information architecture follows the current LiteRouter operator workflow and Routeweft `UI_STYLE.md`.
 
-## 15. Release gates
+### Operate
 
-A release suitable for daily-drive use requires:
+**Overview**
+- runtime/version/health;
+- configured/ready providers;
+- API-key state;
+- active/recent traffic;
+- actionable errors.
 
-- public protocol contract tests green;
-- routing/Combo/token-saver fixtures green;
-- prompt-cache parity fixtures green;
-- provider modules used by the deployment green;
-- OAuth rotation tests green where relevant;
-- SQLite integrity/backup/restore tests green;
-- race tests green;
-- streaming cancellation/terminal tests green;
-- security/SSRF tests green;
-- benchmark budgets reviewed;
-- UI critical workflows smoke-tested;
-- immutable image built;
-- upgrade and rollback rehearsal completed.
+**Endpoint & Key**
+- base endpoint;
+- transport examples;
+- create/name/copy/pause/resume/revoke/delete Routeweft client keys;
+- require-API-key setting.
 
-## 16. Definition of done for initial GA
+**Providers**
+- built-in catalog;
+- add/edit/delete/enable/disable/reorder connection;
+- multiple accounts;
+- auth/import workflow;
+- model discovery/manual model;
+- model test/batch test;
+- provider health/quota;
+- aliases/custom/disabled/pricing;
+- provider nodes/Generic Provider;
+- proxy assignment.
 
-Initial GA is complete when Routeweft can be installed on a fresh host with no other router present and the operator can:
+### Route
 
-1. create/login to the control plane;
-2. configure providers/accounts/credentials;
-3. create client API keys;
-4. discover/select models;
-5. configure routing strategies;
-6. create/use Combo fallback/RR/Fusion/capability adapters;
-7. use Chat Completions, Responses, Messages, and System One;
-8. use RTK/Caveman/Ponytail/Headroom/PXPIPE as configured;
-9. observe Usage/Quota/request details/logs;
-10. back up and restore the Routeweft database;
-11. upgrade and roll back Routeweft without involving LiteRouter.
+**Combo & Capability Adapter**
+- all Combo requirements in section 11.
 
-## 17. Reference provenance
+**System One**
+- configure/use System One/Jev provider/model and exercise the typed request workflow.
 
-The initial requirements were informed by behavior proven in LiteRouter and by its current control-plane UX. The UI reference snapshot used when this document was created is LiteRouter main `2ffb7922954112b30425cd487d686758e519397e`.
+### Observe
 
-This provenance is informational only. Routeweft's contract is this repository's approved documentation and tests.
+**Usage**
+- section 13 Usage contract.
+
+**Quota Tracker**
+- section 13 quota contract.
+
+**Token Saver**
+- master/feature toggles;
+- Caveman/Ponytail levels;
+- Headroom settings/status;
+- PXPIPE settings/status/diagnostics.
+
+### System
+
+**Console Log**
+- bounded service logs with filtering/refresh appropriate for operator troubleshooting.
+
+**Settings**
+- dashboard password/login;
+- API-key requirement;
+- routing defaults;
+- provider/combo strategy defaults;
+- quota visibility;
+- observability settings;
+- outbound proxy/no-proxy;
+- provider compatibility/tool flags;
+- database backup/restore;
+- theme/preferences.
+
+## 15. Settings product contract
+
+Initial Routeweft defaults should intentionally mirror proven daily-driver behavior where applicable:
+
+| Setting | Initial requirement/default |
+|---|---|
+| requireLogin | true |
+| requireApiKey | true |
+| stickyRoundRobinLimit | 3 |
+| providerStrategies | empty map |
+| quotaVisibility | empty map |
+| comboStrategy | fallback |
+| comboStickyRoundRobinLimit | 1 |
+| comboStrategies | empty map |
+| capacityAdapter vision/pdf/audioInput/videoInput | disabled, empty pools |
+| enableObservability | false |
+| observabilityMaxRecords | 1000 |
+| observabilityBatchSize | 20 |
+| observabilityFlushIntervalMs | 5000 |
+| observabilityMaxJsonSize | 5 MB |
+| outboundProxyEnabled | false |
+| outboundProxyUrl/noProxy | empty |
+| dnsToolEnabled/provider compatibility map | empty |
+| rtkEnabled | true |
+| headroomEnabled | false |
+| headroom default URL | http://localhost:8787 |
+| headroomCompressUserMessages | false |
+| headroomTimeoutMs | 3000 |
+| cavemanEnabled / level | false / full |
+| ponytailEnabled / level | false / full |
+| pxpipeEnabled | false |
+| pxpipeAutoInstall | true unless deployment policy disables managed install |
+| pxpipeMinChars | 25000 |
+| pxpipeTimeoutMs | 15000 |
+
+Routeweft does **not** inherit LiteRouter cloud/tunnel/removed-platform settings solely for compatibility.
+
+## 16. Admin/control API product requirements
+
+New Routeweft UI-facing API is versioned under `/admin/v1`.
+
+Required logical resources:
+
+- overview;
+- providers/connections;
+- provider nodes;
+- models/aliases/pricing;
+- combos;
+- proxy pools;
+- keys;
+- settings;
+- usage/request details;
+- quota;
+- token saver;
+- System One;
+- logs;
+- backup/restore;
+- live events.
+
+Internal endpoint names do not need to match LiteRouter `/api/*`.
+
+Mutations report an active configuration revision where relevant so the UI can distinguish "persisted" from "active".
+
+## 17. Security and network requirements
+
+### PRD-SEC-001
+
+- hash admin password using an appropriate password KDF;
+- store only hashed Routeweft client API keys or equivalent non-recoverable verification material when product UX permits;
+- redact credentials from logs/details;
+- keep provider secrets server-side.
+
+### PRD-SEC-002 — trusted proxy
+
+Client-supplied forwarded-IP headers are not trusted by default.
+
+Only configured trusted proxy peers can influence the canonical client IP.
+
+### PRD-SEC-003 — SSRF
+
+Every operator-configurable outbound URL path—Generic Provider validation, provider test/discovery, Headroom/PXPIPE endpoints, proxy tests and redirects—uses one SSRF policy.
+
+Remote operator requests block loopback/private/link-local/metadata targets unless explicitly allowed by policy.
+
+Trusted local operator flows may support LAN nodes without disabling redirect revalidation.
+
+### PRD-SEC-004
+
+Hop-by-hop headers and sensitive client headers are not blindly forwarded upstream.
+
+## 18. Persistence, backup and standalone operation
+
+### PRD-DATA-001
+
+SQLite WAL is the initial durable source of truth.
+
+Normal successful inference does not synchronously read SQLite for already-compiled routing configuration.
+
+### PRD-DATA-002
+
+Routeweft has its own data directory/database and never shares writable state with LiteRouter.
+
+### PRD-DATA-003
+
+Backup/restore is product functionality:
+
+- online-safe backup;
+- schema/version/config-revision metadata;
+- candidate integrity/migration/snapshot validation before restore activation;
+- rollback copy;
+- no overwrite of live DB before validation.
+
+## 19. Performance and reliability budgets
+
+### PRD-PERF-001
+
+Engineering targets against local mock upstream after warmup:
+
+- native router p50 <= 7 ms target;
+- native router p95 <= 12 ms;
+- no request-global selection mutex;
+- stable 1/10/50/100 concurrent streams;
+- post-burst Go service RSS target <= 64 MiB;
+- server image goal <= 100 MiB, stretch <= 60 MiB.
+
+Provider latency is reported separately.
+
+### PRD-PERF-002
+
+Static UI:
+
+- one useful Overview read model;
+- cached navigation target perceived <100 ms;
+- local Overview API target <20 ms;
+- no Next production server.
+
+### PRD-REL-001
+
+Readiness remains false until durable state is migrated/validated and RuntimeSnapshot compiles.
+
+Liveness does not depend on any upstream provider.
+
+### PRD-REL-002
+
+Graceful shutdown:
+
+- readiness false;
+- stop new work;
+- bounded stream drain;
+- stop schedulers;
+- flush accepted critical telemetry;
+- safe SQLite close/checkpoint.
+
+## 20. Release profiles
+
+### 20.1 Development scaffold
+
+May have no real providers. Must satisfy architecture/tooling gates.
+
+### 20.2 Daily-driver beta
+
+Requires:
+
+- core public protocols used by deployment;
+- all providers/accounts actually configured for the target daily driver;
+- routing/Combo/token savers used by deployment;
+- Usage/Quota/control plane;
+- backup/restore;
+- security suite;
+- benchmark/rollback rehearsal.
+
+Unsupported built-in provider rows may remain clearly non-ready during beta, but must stay tracked.
+
+### 20.3 Broad-provider GA
+
+Requires:
+
+- all 80 built-in provider rows production-ready;
+- no unexplained provider requirement gaps;
+- Generic Provider;
+- all public ingress compatibility contracts;
+- complete UI workflows;
+- operational/runbook gates.
+
+## 21. Product drift policy
+
+Until Routeweft tests become the sole oracle, LiteRouter reference changes are reviewed as product drift, not copied automatically.
+
+A drift review asks:
+
+1. Is this a new/changed behavior inside Routeweft product scope?
+2. Does it affect a built-in provider, protocol, Combo, cache, Usage/Quota or operator workflow?
+3. Should Routeweft adopt, explicitly reject, or defer it?
+
+Every accepted product change updates PRD/provider requirements/tests before implementation.
+
+## 22. Implementation-start gate
+
+Codex implementation is allowed only when all are true on Routeweft `main`:
+
+- PRD status is **Implementation-ready product requirements**;
+- `PROVIDER_BASELINE.md` has exactly 80 active built-in rows and no `TBD` disposition;
+- hidden provider decisions are explicit;
+- Generic Provider contract is explicit;
+- public API/alias/auth compatibility is explicit;
+- all current major dashboard workflows are classified;
+- Combo/Fusion/capability adapters are explicit;
+- RTK/Caveman/Ponytail/Headroom/PXPIPE/cache are explicit;
+- standalone/storage/security/backup decisions are explicit;
+- requirements traceability document has no product-area blocker.
+
+Technical implementation details explicitly deferred in BDR (for example exact SQLite driver) do not make the product requirements incomplete.
+
+## 23. Definition of initial product done
+
+Routeweft initial GA is done when a fresh standalone installation can:
+
+1. bootstrap/login securely;
+2. create client API keys;
+3. configure built-in and Generic Providers;
+4. manage multiple provider accounts;
+5. discover/map/test models;
+6. route Chat/Responses/Messages/System One;
+7. use Gemini/Ollama compatibility as defined;
+8. use provider/account strategies and bounded fallback;
+9. create/use Combo fallback/RR/sticky/Fusion/capability routing;
+10. use RTK/Caveman/Ponytail/Headroom/PXPIPE;
+11. preserve prompt-cache behavior on controlled fixtures;
+12. observe Usage/Quota/details/logs;
+13. manage proxy settings/pools;
+14. back up/restore;
+15. upgrade/rollback without LiteRouter.
+
+## 24. Reference inventory
+
+At the reference SHA used for this product freeze, LiteRouter exposes:
+
+- 80 active built-in provider registry entries;
+- 3 intentionally hidden provider entries;
+- 95 internal API route files;
+- 12 dashboard page routes;
+- public LLM/model/SystemOne routes represented in section 5;
+- provider-specific OAuth/import helpers represented in sections 6-8;
+- current settings defaults represented in section 15.
+
+Routeweft does not need to reproduce LiteRouter's internal 95-route control API. It must reproduce the classified user capabilities through Routeweft's own `/admin/v1` design.
+
+## 25. Provenance
+
+The product requirements were frozen against LiteRouter `main` at `2ffb7922954112b30425cd487d686758e519397e`.
+
+After this requirements document is merged, Routeweft's own PRD/SPEC/BDR/provider matrix/tests are authoritative.

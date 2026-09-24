@@ -882,3 +882,111 @@ These are constrained, not free-form:
 - **Exact provider registry contents:** provider modules land in reviewable groups; shared protocol adapters come first.
 
 None of these decisions may introduce PostgreSQL/Redis or change the standalone product boundary without a BDR update.
+
+
+## 32. Built-in provider implementation contract
+
+`docs/PROVIDER_BASELINE.md` is normative for provider breadth.
+
+All 80 active rows are first-class product targets. The transport class in that matrix determines the default adapter family, while authentication/model-discovery/quota modules remain orthogonal.
+
+Provider readiness is a real capability state; the UI must not imply production readiness for a provider whose connection/request path is not implemented.
+
+Hidden reference providers remain absent unless PRD/BDR changes.
+
+## 33. Generic Provider technical contract
+
+Routeweft has one Generic Provider product model rather than separate hard-coded "OpenAI Compatible" and "Anthropic Compatible" products.
+
+Conceptual durable node:
+
+```go
+type GenericProvider struct {
+    ID         string
+    Name       string
+    Prefix     string
+    BaseURL    string
+    Transports []GenericTransport // chat_completions, responses, messages
+}
+```
+
+Connections/credentials are separate records so a single node may have multiple accounts/API keys.
+
+Native route resolution:
+
+```text
+chat_completions -> <base>/chat/completions
+responses        -> <base>/responses
+messages         -> <base>/messages
+```
+
+A route can be disabled independently.
+
+Validation must use the central SSRF guard. Trusted-local operator policy may allow LAN destinations, but redirects are still re-resolved/revalidated.
+
+Model validation order:
+
+1. try a compatible `/models` endpoint;
+2. if unavailable and operator supplied a model ID, run the smallest safe inference probe;
+3. return an actionable auth/not-found/network result;
+4. never require model discovery in order to save a manual model.
+
+## 34. Public compatibility details
+
+Routeweft ingress must account for:
+
+- aliases `/responses`, `/codex/:path*`, and historical `/v1/v1`;
+- Bearer, Anthropic `x-api-key`, and Gemini-compatible key forms;
+- CORS/preflight;
+- configurable body limit >= 128 MB default compatibility target;
+- h2c-capable clients;
+- exact cancellation and terminal-event semantics;
+- safe unknown-field preservation on native paths.
+
+The Go server can implement these directly and should not mimic Next rewrite architecture.
+
+## 35. Provider import/action capability
+
+Provider-specific connection helpers are exposed as Routeweft admin actions, not necessarily copied route-for-route.
+
+Required product actions are listed in PRD §8 and PROVIDER_BASELINE.
+
+These actions must:
+
+- be authenticated as admin control operations;
+- never return raw stored refresh tokens to browser UI;
+- validate imported identity before overwriting an existing connection;
+- use the same durable credential update path as normal OAuth refresh.
+
+## 36. Product readiness metadata
+
+Provider registry entries should expose readiness separately from enabled/disabled user state.
+
+Conceptual:
+
+```go
+type ProviderReadiness string
+const (
+    ProviderReady ProviderReadiness = "ready"
+    ProviderExperimental ProviderReadiness = "experimental"
+    ProviderUnavailable ProviderReadiness = "unavailable"
+)
+```
+
+Broad-provider GA requires every active baseline provider to be `ready`.
+
+This metadata is a Routeweft release/build capability, not a mutable per-user setting.
+
+## 37. Requirements source-of-truth rule
+
+Before implementation, agents must treat:
+
+1. PRD;
+2. PROVIDER_BASELINE;
+3. SPEC;
+4. BDR;
+5. UI_STYLE/RUNBOOK/SPRINT_PLAN
+
+as the approved product/technical hierarchy described in `AGENTS.md`.
+
+A LiteRouter source observation that conflicts with an approved Routeweft product decision is not copied silently; it becomes a product-drift review.
