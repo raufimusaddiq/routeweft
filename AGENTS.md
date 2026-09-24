@@ -15,6 +15,18 @@ Before changing implementation, read these files in order:
 
 When documents conflict, the precedence above applies unless a later approved PR explicitly changes the decision.
 
+## 1.1 Implementation-start gate
+
+Do not begin implementation work unless Routeweft `main` satisfies PRD §22.
+
+In particular:
+
+- `docs/PRD.md` must say **Implementation-ready product requirements**;
+- `docs/PROVIDER_BASELINE.md` must contain 80 active providers and no `TBD` rows;
+- `docs/REQUIREMENTS_TRACEABILITY.md` must contain no product blocker.
+
+If this gate is not satisfied, work on requirements/docs only.
+
 ## 2. Product boundary
 
 Routeweft is a standalone product.

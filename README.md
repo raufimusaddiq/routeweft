@@ -50,7 +50,8 @@ SQLite is the default durable store. PostgreSQL and Redis are not part of the no
 - [Product Requirements](docs/PRD.md)
 - [Technical Specification](docs/SPEC.md)
 - [Build Decision Record](docs/BDR.md)
-- [Provider Baseline](docs/PROVIDER_BASELINE.md)
+- [Provider Requirements](docs/PROVIDER_BASELINE.md)
+- [Requirements Traceability](docs/REQUIREMENTS_TRACEABILITY.md)
 - [UI Style Contract](docs/UI_STYLE.md)
 - [Runbook](docs/RUNBOOK.md)
 - [Sprint Plan](docs/SPRINT_PLAN.md)
@@ -58,6 +59,6 @@ SQLite is the default durable store. PostgreSQL and Redis are not part of the no
 
 ## Foundation status
 
-The repository is intentionally documentation-first. Runtime implementation begins only after the foundation PR is reviewed and merged.
+The repository is documentation-first. Runtime implementation begins only after the implementation-start gate in PRD §22 is satisfied on `main`.
 
 The initial product/behavior scope was informed by proven LiteRouter behavior, while the visual baseline is informed by LiteRouter current UI at reference commit `2ffb7922954112b30425cd487d686758e519397e`. Routeweft does not import, share a database with, or depend on LiteRouter at runtime.

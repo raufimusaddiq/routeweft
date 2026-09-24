@@ -50,7 +50,7 @@ Deliver:
 - PRD;
 - technical spec;
 - BDR;
-- AGENT/AGENTS;
+- AGENTS.md;
 - UI style contract;
 - runbook;
 - sprint plan.
@@ -60,9 +60,34 @@ Gate:
 - exact-head review approved;
 - no unresolved scope/architecture blocker.
 
+## Sprint 0.5 — Product requirements freeze
+
+### PR 2: complete product requirements
+
+Deliver:
+
+- implementation-ready PRD;
+- 80-provider first-class requirement matrix with no TBD rows;
+- built-in vs Generic Provider definition;
+- public route/alias/auth/body/h2c compatibility;
+- exact Combo/Fusion/capability scope;
+- exact RTK/Caveman/Ponytail/Headroom/PXPIPE/cache scope;
+- Usage/Quota/control-plane workflows;
+- requirements traceability;
+- BDR/SPEC alignment.
+
+Gate:
+
+- docs-only PR reviewed/merged;
+- provider baseline contains exactly 80 active rows;
+- no product-area blocker in REQUIREMENTS_TRACEABILITY;
+- implementation-start gate in PRD §22 is satisfied.
+
+**No Codex implementation sprint begins before Sprint 0.5 is merged.**
+
 ## Sprint 1 — Executable skeleton and correctness harness
 
-### PR 2: repository/tooling scaffold
+### PR 3: repository/tooling scaffold
 
 Deliver:
 
@@ -85,7 +110,7 @@ Gate:
 - container starts;
 - no Node runtime in server image target.
 
-### PR 3: SQLite + migrations + RuntimeSnapshot
+### PR 4: SQLite + migrations + RuntimeSnapshot
 
 Deliver:
 
@@ -111,7 +136,7 @@ Gate:
 - backup/restore integration;
 - race detector.
 
-### PR 4: protocol fixtures + mock upstream + benchmark harness
+### PR 5: protocol fixtures + mock upstream + benchmark harness
 
 Deliver deterministic fixtures for:
 
@@ -131,7 +156,7 @@ This harness becomes the compatibility oracle for later PRs.
 
 ## Sprint 2 — Core ingress
 
-### PR 5: API key/auth + model discovery
+### PR 6: API key/auth + model discovery
 
 Deliver:
 
@@ -141,25 +166,25 @@ Deliver:
 - alias/custom/disabled model compile primitives;
 - request IDs/limits/CORS.
 
-### PR 6: OpenAI Chat
+### PR 7: OpenAI Chat
 
 Deliver native path first, then translation hooks.
 
-### PR 7: OpenAI Responses + compact
+### PR 8: OpenAI Responses + compact
 
 Cover tools, parallel tool calls, multi-turn fields, stream terminal behavior.
 
-### PR 8: Anthropic Messages + count_tokens
+### PR 9: Anthropic Messages + count_tokens
 
 Cover tools/thinking/cache-control preservation.
 
-### PR 9: System One + Gemini/Ollama compatibility
+### PR 10: System One + Gemini/Ollama compatibility
 
 LLM-only compatibility; no standalone media endpoints.
 
 ## Sprint 3 — Routing
 
-### PR 10: providers/accounts/fallback
+### PR 11: providers/accounts/fallback
 
 Deliver:
 
@@ -171,7 +196,7 @@ Deliver:
 - quota state model;
 - proxy transport integration.
 
-### PR 11: full Combo
+### PR 12: full Combo
 
 Deliver:
 
@@ -183,7 +208,7 @@ Deliver:
 - capacity adapters;
 - context trimming.
 
-### PR 12: Fusion
+### PR 13: Fusion
 
 Separate PR due fan-out/concurrency/cost behavior.
 
@@ -191,13 +216,13 @@ Deliver panel/judge/quorum/grace/hard-timeout/tool-history semantics.
 
 ## Sprint 4 — Prompt efficiency
 
-### PR 13: RTK + Caveman + Ponytail
+### PR 14: RTK + Caveman + Ponytail
 
-### PR 14: Headroom
+### PR 15: Headroom
 
-### PR 15: PXPIPE
+### PR 16: PXPIPE
 
-### PR 16: prompt-cache anchors + cache accounting
+### PR 17: prompt-cache anchors + cache accounting
 
 Gate Sprint 4 with N/N+1 cache stability fixtures.
 

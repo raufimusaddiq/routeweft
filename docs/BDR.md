@@ -29,6 +29,9 @@ This document records binding architecture/build choices so implementation agent
 | BDR-019 | Exact SQLite Go driver | Constrained/Deferred |
 | BDR-020 | Strict FIFO review discipline | Accepted |
 | BDR-021 | One feature/PR per dedicated worktree | Accepted |
+| BDR-022 | 80-provider built-in catalog is a first-class GA target | Accepted |
+| BDR-023 | Generic Provider unifies Chat/Responses/Messages compatible nodes | Accepted |
+| BDR-024 | Product requirements freeze gates Codex implementation | Accepted |
 
 ## BDR-001 — Standalone product
 
@@ -277,3 +280,34 @@ worktree: ../routeweft-wt/s<sprint-number>-<feature-slug>
 The same worktree is reused for all review fixes on its PR and removed only after merge/close with no uncommitted/unpushed work.
 
 Dependent PRs are based on the reviewed/merged prerequisite by default. Stacked worktrees require explicit sprint-plan authorization.
+
+
+## BDR-022 — Built-in provider catalog
+
+Routeweft targets all 80 active providers in `docs/PROVIDER_BASELINE.md` as first-class built-ins for broad-provider GA.
+
+First-class does not imply one executor per provider. Shared protocol adapters are preferred.
+
+A provider may ship later than daily-driver beta only when its readiness is explicit; it may not disappear from the requirements matrix without an approved product decision.
+
+## BDR-023 — Unified Generic Provider
+
+Routeweft exposes one Generic Provider product that can advertise any combination of:
+
+- OpenAI Chat Completions;
+- OpenAI Responses;
+- Anthropic Messages.
+
+A Generic Provider node owns endpoint/prefix/transport capability. Connections own credentials.
+
+Native source-matching transport is preferred. Manual model configuration remains possible when model discovery is absent.
+
+Validation uses the common SSRF policy with explicit trusted-local behavior.
+
+## BDR-024 — Product requirements freeze before Codex
+
+Implementation work does not start until the product requirements freeze is merged to `main`.
+
+The implementation-start gate is PRD §22 plus `docs/REQUIREMENTS_TRACEABILITY.md`.
+
+After the freeze, technical decisions intentionally deferred by BDR (for example SQLite driver selection) are resolved in their named implementation PR; product scope is not reopened casually inside code PRs.
