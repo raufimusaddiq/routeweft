@@ -26,7 +26,7 @@ This document records binding architecture/build choices so implementation agent
 | BDR-016 | No standalone media product surfaces | Accepted |
 | BDR-017 | One application writer per SQLite DB | Accepted |
 | BDR-018 | Default listen port 21128 | Accepted |
-| BDR-019 | Exact SQLite Go driver | Constrained/Deferred |
+| BDR-019 | Exact SQLite Go driver | Accepted: `modernc.org/sqlite` v1.34.5 |
 | BDR-020 | Strict FIFO review discipline | Accepted |
 | BDR-021 | One feature/PR per dedicated worktree | Accepted |
 | BDR-022 | 80-provider built-in catalog is a first-class GA target | Accepted |
@@ -219,27 +219,21 @@ The value avoids assuming LiteRouter's port and reinforces standalone coexistenc
 
 It remains configurable through `ROUTEWEFT_LISTEN`.
 
-## BDR-019 — SQLite driver decision deadline
+## BDR-019 — SQLite driver
 
-Status: constrained/deferred.
+Decision: use `modernc.org/sqlite` v1.34.5, a maintained pure-Go SQLite driver.
 
-Resolve in the first storage PR.
+Evidence collected for Sprint 1 PR 4:
 
-Evaluation must include:
+- Go 1.22 Linux/amd64 build, `CGO_ENABLED=0`, succeeds; this avoids a C toolchain in production builds.
+- Store tests verify fresh schema/migrations, idempotent restart, WAL, foreign keys, 5-second busy timeout, online backup, and integrity check.
+- `go test -race ./...` passes, including concurrent snapshot readers/writers.
+- Online backup uses the driver's SQLite backup API; restore candidates are copied into a private stage and integrity/schema/snapshot validated there before any activation.
+- Same local 16,000-row synthetic write benchmark, 8 serialized `database/sql` writers, `MaxOpenConns(1)`, WAL, 5 repetitions: modernc v1.34.5 0.81–1.19s; `mattn/go-sqlite3` v1.14.24 0.52–0.90s. This is a directional microbenchmark, not a production telemetry workload or release latency budget.
+- Driver/dependency import modules occupy roughly 304 MiB in the Go module cache; that is source/module footprint, not binary/image size. The latter is separately measured in CI/Docker evidence.
+- Linux/amd64 is exercised locally. arm64 was not measured.
 
-- fresh schema/migrations;
-- WAL;
-- busy timeout;
-- backup API;
-- concurrent telemetry/config writes;
-- race tooling;
-- Linux amd64 production target;
-- optional arm64;
-- binary/image size;
-- CGO build complexity;
-- measured latency/throughput.
-
-Default preference is a maintained pure-Go driver if it meets correctness/performance budgets. Evidence can justify CGO.
+The pure-Go choice accepts slower synthetic bulk writes in exchange for CGO-free cross-builds and simpler static container builds. Revisit only if representative batched telemetry benchmarks miss an agreed workload budget or maintenance/correctness evidence changes.
 
 ## BDR-020 — Review discipline
 

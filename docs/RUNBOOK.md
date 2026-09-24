@@ -309,14 +309,11 @@ Preferred:
 routeweft backup --output /backup/routeweft-$(date +%Y%m%d-%H%M%S).sqlite
 ```
 
-Backup must use a SQLite-safe online backup/checkpoint procedure rather than copying an arbitrary live WAL state.
+Backup uses SQLite's online backup API, validates the staged database, switches the artifact to rollback-journal mode, then publishes the database and metadata without overwriting existing files. It writes a sibling `<file>.meta.json` containing Routeweft version/commit, schema version, UTC timestamp, and config revision. Keep the database and metadata together.
 
-Store alongside metadata:
+The metadata includes Routeweft version/commit, schema version, timestamp, and config revision.
 
-- Routeweft version/commit;
-- schema version;
-- timestamp;
-- config revision.
+When the server is running, `routeweft backup` fails with a busy/locked error rather than risking an inconsistent artifact. Perform backups during a maintenance window, or use the future admin backup API/`VACUUM INTO`-style read-only backup path once it exists.
 
 Periodically rehearse restore on a disposable host/data directory.
 
@@ -327,6 +324,8 @@ Validation first:
 ```bash
 routeweft restore --input /backup/file.sqlite --check
 ```
+
+`--check` copies the candidate into a private temporary staging directory, checks integrity and Routeweft schema compatibility, applies supported migrations to that copy, and compiles a candidate RuntimeSnapshot. The supplied file remains unchanged. No activation restore is implemented by this CLI yet; use a controlled offline procedure only after a separate reviewed activation workflow exists.
 
 Activation restore should be performed during a controlled window.
 

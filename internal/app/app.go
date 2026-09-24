@@ -7,7 +7,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
+	"sync/atomic"
 	"time"
+
+	"github.com/raufimusaddiq/routeweft/internal/runtime"
+	"github.com/raufimusaddiq/routeweft/internal/store/migrations"
+	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
 )
 
 type Config struct {
@@ -16,8 +22,11 @@ type Config struct {
 }
 
 type App struct {
-	cfg Config
-	log *slog.Logger
+	cfg     Config
+	log     *slog.Logger
+	store   *sqlite.Store
+	runtime *runtime.Manager
+	ready   atomic.Bool
 }
 
 func New(cfg Config, log *slog.Logger) *App {
@@ -27,9 +36,46 @@ func New(cfg Config, log *slog.Logger) *App {
 	return &App{cfg: cfg, log: log}
 }
 
+// Initialize creates the data directory, migrates durable state and compiles the
+// initial request-serving snapshot before the listener is started.
+func (a *App) Initialize(ctx context.Context) error {
+	if a.cfg.DataDir == "" {
+		return errors.New("data directory is required")
+	}
+	store, err := sqlite.Open(ctx, filepath.Join(a.cfg.DataDir, "routeweft.sqlite"))
+	if err != nil {
+		return err
+	}
+	if err := migrations.NewRunner(store.DB()).Apply(ctx); err != nil {
+		_ = store.Close()
+		return fmt.Errorf("migrate database: %w", err)
+	}
+	if err := store.IntegrityCheck(ctx); err != nil {
+		_ = store.Close()
+		return fmt.Errorf("validate database integrity: %w", err)
+	}
+	manager, err := runtime.NewManager(ctx, store.DB())
+	if err != nil {
+		_ = store.Close()
+		return fmt.Errorf("initialize runtime: %w", err)
+	}
+	a.store, a.runtime = store, manager
+	a.ready.Store(true)
+	return nil
+}
+
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, _ *http.Request) {
+		if !a.ready.Load() {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
@@ -38,6 +84,11 @@ func (a *App) Handler() http.Handler {
 }
 
 func (a *App) Serve(ctx context.Context) error {
+	if !a.ready.Load() {
+		if err := a.Initialize(ctx); err != nil {
+			return err
+		}
+	}
 	srv := &http.Server{Addr: a.cfg.Listen, Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	errCh := make(chan error, 1)
 	go func() {
@@ -50,8 +101,15 @@ func (a *App) Serve(ctx context.Context) error {
 	case err := <-errCh:
 		return fmt.Errorf("serve: %w", err)
 	case <-ctx.Done():
+		a.ready.Store(false)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+		if a.store != nil {
+			return a.store.Close()
+		}
+		return nil
 	}
 }
