@@ -1,0 +1,24 @@
+{
+  "id": "anthropic-messages-upstream-error",
+  "protocol": "anthropic-messages",
+  "kind": "upstream-error",
+  "description": "Anthropic overloaded error fixture for retry/fallback classification.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/messages",
+    "headers": {
+      "content-type": "application/json",
+      "x-api-key": "fixture-anthropic-key",
+      "anthropic-version": "2023-06-01"
+    },
+    "body": "{\"model\":\"fixture-model\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":\"synthetic\"}]}"
+  },
+  "response": {
+    "status": 529,
+    "headers": {
+      "content-type": "application/json",
+      "retry-after": "2"
+    },
+    "body": "{\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Synthetic upstream overload.\"}}"
+  }
+}

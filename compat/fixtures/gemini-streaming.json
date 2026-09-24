@@ -1,0 +1,27 @@
+{
+  "id": "gemini-streaming",
+  "protocol": "gemini",
+  "kind": "streaming",
+  "description": "Gemini streamGenerateContent emits JSON records and terminates with the final STOP candidate.",
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
+    "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "fixture-gemini-key"
+    },
+    "body": "{\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"Say hi.\"}]}],\"generationConfig\":{\"maxOutputTokens\":16}}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/event-stream"
+    },
+    "body": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hi\"}]},\"finishReason\":null,\"index\":0}]}\n\ndata: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\".\"}]},\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":8,\"candidatesTokenCount\":2,\"totalTokenCount\":10}}\n\n"
+  },
+  "usage": {
+    "inputTokens": 8,
+    "outputTokens": 2
+  },
+  "terminal": "finishReason\":\"STOP\""
+}

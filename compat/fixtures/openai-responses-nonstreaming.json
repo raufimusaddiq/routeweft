@@ -1,0 +1,26 @@
+{
+  "id": "openai-responses-nonstreaming",
+  "protocol": "openai-responses",
+  "kind": "non-streaming",
+  "description": "OpenAI Responses with tools, parallel tool calls, and reasoning fields.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer fixture-client-key"
+    },
+    "body": "{\"model\":\"gpt-4.1\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Weather in two cities?\"}]}],\"tools\":[{\"type\":\"function\",\"name\":\"get_weather\",\"parameters\":{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"]}}],\"parallel_tool_calls\":true,\"reasoning\":{\"effort\":\"low\"},\"store\":false}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"id\":\"resp_fixture_1\",\"object\":\"response\",\"created_at\":1735689602,\"status\":\"completed\",\"model\":\"gpt-4.1\",\"output\":[{\"type\":\"reasoning\",\"id\":\"rs_1\",\"summary\":[]},{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"Oslo\\\"}\"},{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"Lima\\\"}\"}],\"usage\":{\"input_tokens\":31,\"output_tokens\":18,\"total_tokens\":49}}"
+  },
+  "usage": {
+    "inputTokens": 31,
+    "outputTokens": 18
+  }
+}

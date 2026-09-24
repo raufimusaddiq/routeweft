@@ -1,0 +1,22 @@
+{
+  "id": "openai-chat-auth-error",
+  "protocol": "openai-chat",
+  "kind": "auth-error",
+  "description": "Provider authentication failure retains status and normalized error details.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer fixture-client-key"
+    },
+    "body": "{\"model\":\"fixture-model\",\"messages\":[{\"role\":\"user\",\"content\":\"synthetic\"}]}"
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"error\":{\"message\":\"Fixture upstream rejected credentials.\",\"type\":\"authentication_error\",\"code\":\"invalid_api_key\"}}"
+  }
+}

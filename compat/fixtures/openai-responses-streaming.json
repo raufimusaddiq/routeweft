@@ -1,0 +1,28 @@
+{
+  "id": "openai-responses-streaming",
+  "protocol": "openai-responses",
+  "kind": "streaming",
+  "description": "OpenAI Responses SSE stream ending with response.completed exactly once.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer fixture-client-key"
+    },
+    "body": "{\"model\":\"gpt-4.1\",\"stream\":true,\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Say one word.\"}]}]}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache"
+    },
+    "body": "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_fixture_2\",\"status\":\"in_progress\"}}\n\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"sequence_number\":1,\"item_id\":\"msg_1\",\"delta\":\"Sure\"}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"sequence_number\":2,\"response\":{\"id\":\"resp_fixture_2\",\"status\":\"completed\",\"usage\":{\"input_tokens\":7,\"output_tokens\":4}}}"
+  },
+  "usage": {
+    "inputTokens": 7,
+    "outputTokens": 4
+  },
+  "terminal": "event: response.completed"
+}

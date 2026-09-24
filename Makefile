@@ -1,4 +1,4 @@
-.PHONY: test build run ui-install ui-typecheck ui-build check
+.PHONY: test build run ui-install ui-typecheck ui-build compat-test bench-router check
 
 test:
 	go test ./...
@@ -18,4 +18,10 @@ ui-typecheck:
 ui-build:
 	cd ui && npm run build
 
-check: test ui-typecheck ui-build
+compat-test:
+	go test ./compat/...
+
+bench-router:
+	go test ./bench/router -run '^$$' -bench . -benchmem -count=5
+
+check: test compat-test ui-typecheck ui-build
