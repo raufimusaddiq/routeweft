@@ -1,0 +1,27 @@
+{
+  "id": "systemone-nonstreaming",
+  "protocol": "systemone",
+  "kind": "non-streaming",
+  "description": "System One typed envelope passed through to TypeSafe with provider-owned questions and response.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer fixture-client-key"
+    },
+    "body": "{\"model\":\"jev-latest\",\"state\":{\"message\":\"A synthetic customer asked for help.\"},\"questions\":{\"urgent\":{\"type\":\"noul\",\"instructions\":\"Is the request urgent?\"}}}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "x-request-id": "fixture-request-1"
+    },
+    "body": "{\"answers\":{\"urgent\":{\"noul\":0.9}},\"usage\":{\"input_tokens\":18,\"output_tokens\":2}}"
+  },
+  "usage": {
+    "inputTokens": 18,
+    "outputTokens": 2
+  }
+}
