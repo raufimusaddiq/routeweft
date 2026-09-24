@@ -17,6 +17,8 @@ ui/.vite/
 *.db
 *.db-wal
 *.db-shm
+*.sqlite-meta.json
+*.sqlite.meta.json
 
 # Environment/secrets
 .env
