@@ -50,6 +50,7 @@ SQLite is the default durable store. PostgreSQL and Redis are not part of the no
 - [Product Requirements](docs/PRD.md)
 - [Technical Specification](docs/SPEC.md)
 - [Build Decision Record](docs/BDR.md)
+- [Provider Baseline](docs/PROVIDER_BASELINE.md)
 - [UI Style Contract](docs/UI_STYLE.md)
 - [Runbook](docs/RUNBOOK.md)
 - [Sprint Plan](docs/SPRINT_PLAN.md)

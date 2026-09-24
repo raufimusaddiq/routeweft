@@ -158,6 +158,8 @@ Provider modules may also provide:
 
 Initial implementation should maximize shared protocol adapters rather than create one transport implementation per provider.
 
+The initial provider breadth target is tracked in [PROVIDER_BASELINE.md](PROVIDER_BASELINE.md). Every listed provider must receive an explicit implementation disposition before Routeweft declares broad-provider GA. Routeweft owns that manifest after bootstrap; the source reference is provenance, not a runtime dependency.
+
 ### 4.6 Control plane
 
 The web UI must provide:
