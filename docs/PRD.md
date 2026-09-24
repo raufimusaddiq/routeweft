@@ -209,6 +209,8 @@ A first-class provider:
 
 A provider backed by a shared OpenAI/Anthropic/Responses adapter is still first-class.
 
+"Native support" means Routeweft uses a provider's same-protocol endpoint when that endpoint is a declared built-in capability. Native capability is provider-specific, not inferred just because an upstream happens to be OpenAI-compatible. At minimum the first-party OpenAI built-in must expose both native Chat Completions and native Responses; Anthropic must expose native Messages; Gemini must expose native GenerateContent; providers explicitly marked Multi in the provider matrix must expose their listed native transports.
+
 ### PRD-PROV-002 — implementation model
 
 Do not create 80 near-identical executors.

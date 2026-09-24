@@ -60,7 +60,7 @@ Authentication is orthogonal to transport. A provider can reuse a shared protoco
 | fireworks | OA-chat | API key | Static | — | Built-in first-class provider. |
 | gemini-cli | Specialized | OAuth | Static | Usage/quota | Google OAuth and Gemini CLI internal wire format/quota. |
 | gemini | Gemini | API key | Static | — | Native Gemini GenerateContent transport; current API-key flow. |
-| github | OA-chat | OAuth | Static | Usage/quota | GitHub Copilot OAuth and usage/reset behavior. |
+| github | Multi: chat+responses | OAuth | Static | Usage/quota | GitHub Copilot OAuth, native Chat/Responses endpoints and usage/reset behavior. |
 | gitlab | OA-chat | OAuth/PAT | Static | — | Retain GitLab PAT helper/current credential workflow. |
 | glm-cn | OA-chat | API key | Static | Usage | China GLM endpoint and usage. |
 | glm | Multi: chat+messages | API key | Static | Usage | OpenAI Chat + Anthropic Messages native transports. |
@@ -82,7 +82,7 @@ Authentication is orthogonal to transport. A provider can reuse a shared protoco
 | nvidia | OA-chat | API key/free-tier | Static | — | Built-in NVIDIA provider. |
 | ollama-local | Ollama | Local/optional | Static | — | Local Ollama /api/chat transport; local-network operation is first-class. |
 | ollama | Ollama | API key | Static | — | Hosted Ollama /api/chat compatibility. |
-| openai | OA-chat | API key | Static | — | First-party OpenAI built-in provider. |
+| openai | Multi: chat+responses | API key | Static | — | First-party OpenAI; Routeweft must use native Chat or Responses according to client source protocol. |
 | opencode-go | Multi: chat+responses+messages | API key | Static | Usage | Three native transports; select matching client protocol where possible. |
 | opencode | OA-chat | No auth | Dynamic + passthrough | — | Free/no-auth OpenCode gateway; retain quirks and arbitrary model IDs. |
 | openrouter | OA-chat | API key | Dynamic + passthrough | — | Live model catalog and passthrough IDs. |
@@ -97,7 +97,7 @@ Authentication is orthogonal to transport. A provider can reuse a shared protoco
 | vertex-partner | OA-chat | API key | Static | — | Partner endpoint support through shared OpenAI semantics. |
 | vertex | Specialized | Google/Vertex credentials | Static | — | Native Vertex request/auth semantics. |
 | volcengine-ark | OA-chat | API key | Static | — | Built-in Ark OpenAI-compatible provider. |
-| xai | OA-chat | API key + OAuth | Static | — | xAI direct API with current dual-auth/OAuth refresh support. |
+| xai | Multi: chat+responses | API key + OAuth | Static | — | xAI direct API with native Chat/Responses plus current dual-auth/OAuth refresh support. |
 | xiaomi-mimo | Multi: chat+messages | API key + OAuth | Static | Usage | Chat + Messages, API-key/auto-import/OAuth workflows. |
 | xiaomi-tokenplan | Multi: chat+messages | API key | Static | — | Token-plan endpoints for Chat + Messages. |
 | alims-intl | OA-chat | API key | Static | — | Alibaba Model Studio international; retain current quirks. |
