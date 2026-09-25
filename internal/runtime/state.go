@@ -36,6 +36,13 @@ func (s *RuntimeState) NextCursor(provider string) uint64 {
 	return value
 }
 
+// Cursor returns the current value without advancing it.
+func (s *RuntimeState) Cursor(key string) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cursors[key]
+}
+
 // CooldownUntil returns the active cooldown deadline, if any.
 func (s *RuntimeState) CooldownUntil(account string, now time.Time) (time.Time, bool) {
 	s.mu.Lock()

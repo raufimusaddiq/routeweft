@@ -13,12 +13,15 @@ type Member struct {
 
 // CapabilityRequirement names a hard capability an active request needs.
 type CapabilityRequirement struct {
-	Name string
+	Name     string
+	Strategy Strategy
 	// AdapterEnabled mirrors the per-capability adapter enable flag.
 	AdapterEnabled bool
 	// AdapterPool is the configured capacity-adapter pool. An enabled empty
 	// pool is a deliberate no-op (PRD-COMBO-004).
 	AdapterPool []Member
+	// AdapterContextWindow is the selected adapter's context ceiling.
+	AdapterContextWindow int
 }
 
 // Has reports whether a member declares a capability.
@@ -80,8 +83,40 @@ func AdapterCandidates(requirements []CapabilityRequirement, stratify func([]Mem
 	if stratify != nil {
 		return stratify(adapters)
 	}
-	sort.SliceStable(adapters, func(i, j int) bool { return adapters[i].Position < adapters[j].Position })
-	return adapters
+	// Adapter ordering is local to the adapter tier; caller prepends this
+	// result without mixing it into original Combo RR state.
+	return OrderAdapters(adapters, requirements)
+}
+
+// OrderAdapters groups candidates by required capability and applies that
+// capability's fallback/RR strategy independently.
+func OrderAdapters(adapters []Member, requirements []CapabilityRequirement) []Member {
+	ordered := make([]Member, 0, len(adapters))
+	for _, requirement := range requirements {
+		var group []Member
+		for _, member := range adapters {
+			if member.Has(requirement.Name) {
+				group = append(group, member)
+			}
+		}
+		sort.SliceStable(group, func(i, j int) bool { return group[i].Position < group[j].Position })
+		if (requirement.Strategy == StrategyRoundRobin || requirement.Strategy == StrategyStickyRR) && len(group) > 1 {
+			group = append(group[1:], group[:1]...)
+		}
+		ordered = append(ordered, group...)
+	}
+	return ordered
+}
+
+// ContextBudget carries the instruction head, active tail and target context
+// limit needed for adapter history trimming.
+type ContextBudget struct {
+	Head, Tail, Limit int
+}
+
+// TrimHistory applies a context budget using opaque message units.
+func TrimHistory(messages []string, budget ContextBudget) []string {
+	return TrimHistoryForContext(messages, budget.Head, budget.Tail, budget.Limit)
 }
 
 // TrimHistoryForContext keeps the instruction head and the active tail, dropping
