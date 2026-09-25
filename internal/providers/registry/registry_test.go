@@ -51,6 +51,7 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 		t.Fatal(err)
 	}
 	wantIDs := []string{
+		"anthropic",
 		"alicode-intl", "alicode", "alims-intl", "alitp-intl", "api-airforce", "baidu", "bazaarlink", "blackbox", "bluesminds", "byteplus",
 		"cerebras", "chutes", "cohere", "featherless", "fireworks", "groq", "hyperbolic", "kilo-gateway", "llm7", "mistral", "morph", "nebius",
 		"codex", "nvidia", "openai", "openrouter", "perplexity", "poolside", "sambanova", "siliconflow", "tencent", "together", "venice", "vercel-ai-gateway", "volcengine-ark",
@@ -88,6 +89,9 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	}
 	if spec, _ := catalog.Lookup("groq"); !spec.ReportsUsage {
 		t.Fatalf("Groq usage capability missing: %+v", spec)
+	}
+	if spec, _ := catalog.Lookup("anthropic"); spec.Auth != AuthAPIKey || spec.Transports[0] != TransportAnthropic || len(spec.StaticModels) != 3 {
+		t.Fatalf("anthropic spec=%+v", spec)
 	}
 	for _, id := range []string{"alicode-intl", "alitp-intl"} {
 		spec, _ := catalog.Lookup(id)
