@@ -3,18 +3,22 @@ package discovery
 import (
 	"context"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 )
 
 type recordingStore struct {
+	mu         sync.Mutex
 	providerID string
 	models     []Model
 	calls      int
 }
 
 func (s *recordingStore) ReplaceDiscoveredModels(_ context.Context, providerID string, models []Model) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.calls++
 	s.providerID = providerID
 	s.models = append([]Model(nil), models...)
@@ -78,5 +82,45 @@ func TestSyncResolvesBuiltinCatalog(t *testing.T) {
 	}
 	if count != 1 || store.providerID != "openrouter" {
 		t.Fatalf("count=%d store=%+v", count, store)
+	}
+}
+
+func TestSyncSpecDoesNotMutateSharedClientPolicy(t *testing.T) {
+	client := &Client{HTTP: fakeClient{do: func(*http.Request) (*http.Response, error) {
+		return response(200, `{"data":[{"id":"m"}]}`), nil
+	}}}
+	store := &recordingStore{}
+	if _, err := Sync(context.Background(), client, store, "openrouter", "key", true); err != nil {
+		t.Fatal(err)
+	}
+	if client.AllowPrivateUpstreams {
+		t.Fatal("shared client policy was mutated by an allowPrivate call")
+	}
+	// A later strict call must not inherit trusted-local access.
+	if _, err := Sync(context.Background(), client, store, "openrouter", "key", false); err != nil {
+		t.Fatal(err)
+	}
+	if client.AllowPrivateUpstreams {
+		t.Fatal("shared client policy retained trusted-local access")
+	}
+}
+
+func TestSyncSpecConcurrentPolicyIsolation(t *testing.T) {
+	client := &Client{HTTP: fakeClient{do: func(*http.Request) (*http.Response, error) {
+		return response(200, `{"data":[{"id":"m"}]}`), nil
+	}}}
+	store := &recordingStore{}
+	var wait sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		allowPrivate := i%2 == 0
+		wait.Add(1)
+		go func(private bool) {
+			defer wait.Done()
+			_, _ = Sync(context.Background(), client, store, "openrouter", "key", private)
+		}(allowPrivate)
+	}
+	wait.Wait()
+	if client.AllowPrivateUpstreams {
+		t.Fatal("concurrent calls leaked trusted-local policy onto shared client")
 	}
 }

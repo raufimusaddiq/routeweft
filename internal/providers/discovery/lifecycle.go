@@ -62,9 +62,12 @@ func SyncSpec(ctx context.Context, client *Client, store Store, catalog *registr
 	if client == nil {
 		client = &Client{}
 	}
-	if allowPrivate {
-		client.AllowPrivateUpstreams = true
-	}
+	// Never mutate the caller-owned client: a shared client that once ran with
+	// trusted-local access would silently keep it for later calls, and concurrent
+	// calls would race on the field. Use a per-call copy that shares the HTTP
+	// client but carries its own policy.
+	callClient := *client
+	callClient.AllowPrivateUpstreams = allowPrivate
 	request := Request{
 		ProviderID: providerID,
 		BaseURL:    spec.DefaultBaseURL,
@@ -72,7 +75,7 @@ func SyncSpec(ctx context.Context, client *Client, store Store, catalog *registr
 		APIKey:     apiKey,
 		AuthStyle:  authStyleFor(spec.Auth),
 	}
-	ids, err := client.Models(ctx, request)
+	ids, err := callClient.Models(ctx, request)
 	if err != nil {
 		return 0, err
 	}

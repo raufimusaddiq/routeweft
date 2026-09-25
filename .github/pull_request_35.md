@@ -54,7 +54,7 @@ Revert this PR to drop discovery; no schema change is introduced and existing pe
 ## Review discipline
 
 - [x] Coherent head ready for review.
-- [x] Prior findings re-read and validated. Finding 1: an empty discovered slice deleted the provider's discovered models; valid, so `ReplaceDiscoveredModels` now returns before mutating when the slice is empty. Finding 2: discovery was test-only with no production caller; valid, so `registry.Spec.DiscoveryPath` plus `discovery.Sync`/`SyncSpec` and `Manager.ReplaceDiscoveredCatalogFor` now form the production entry point that resolves a built-in provider identity, fetches its declared catalog path, and persists it, with integration tests covering fetch→persist, declared-path/auth use, and rejection of unknown or non-discoverable providers.
+- [x] Prior findings re-read and validated. Finding 1 (empty slice erased the discovered catalog): fixed with an early return. Finding 2 (discovery had no production caller): fixed with `registry.Spec.DiscoveryPath` + `discovery.Sync`/`SyncSpec` + `Manager.ReplaceDiscoveredCatalogFor`. Finding 3 (`SyncSpec` mutated the caller-owned client's trusted-local policy, leaking SSRF relaxation across calls and racing under concurrency): fixed by running each call on a copy of the client with its own policy, plus sequential and concurrent regression tests.
 - [x] No new head while FIFO reviewer reviews this exact head absent blocker.
 
 ## Worktree isolation
