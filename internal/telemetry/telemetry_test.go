@@ -155,3 +155,43 @@ func TestDisabledServiceIsNoOp(t *testing.T) {
 		t.Fatalf("disabled service performed work: %+v", service)
 	}
 }
+
+type recordingDetails struct {
+	mu      sync.Mutex
+	written []Detail
+}
+
+func (d *recordingDetails) WriteRequestDetail(_ context.Context, detail Detail) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.written = append(d.written, detail)
+	return nil
+}
+
+func TestRecordDetailRoutesToDetailSink(t *testing.T) {
+	sink := &recordingSink{}
+	details := &recordingDetails{}
+	service := New(sink, Options{MaxRecords: 8, BatchSize: 4, FlushInterval: time.Hour, EnqueueTimeout: time.Millisecond, Enabled: true}).WithDetails(details)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go service.Run(ctx)
+	service.RecordDetail(Detail{RequestID: "req_1", RouteMode: "native", Payload: map[string]any{"a": 1}})
+	service.Record(Event{Class: Critical, RequestID: "req_1", Status: 200})
+	if err := service.FlushNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(details.written) != 1 || details.written[0].RequestID != "req_1" {
+		t.Fatalf("details=%+v", details.written)
+	}
+	if sink.count() != 1 {
+		t.Fatalf("usage sink got %d events, want 1 (detail must not go to the usage sink)", sink.count())
+	}
+}
+
+func TestRecordDetailIsNoOpWithoutDetailSink(t *testing.T) {
+	service := New(&recordingSink{}, Options{MaxRecords: 4, BatchSize: 4, FlushInterval: time.Hour, Enabled: true})
+	service.RecordDetail(Detail{RequestID: "req_1"})
+	if service.depth() != 0 {
+		t.Fatalf("detail without a sink should not enqueue: depth=%d", service.depth())
+	}
+}

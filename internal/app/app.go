@@ -68,6 +68,15 @@ func telemetryOptions(settings map[string]string) telemetry.Options {
 	return opts
 }
 
+// observabilityMaxJSONSize returns the configured request-detail size cap,
+// falling back to the compiled default when unset or invalid.
+func observabilityMaxJSONSize(settings map[string]string) int {
+	if value, err := strconv.Atoi(settings["observabilityMaxJsonSize"]); err == nil && value > 0 {
+		return value
+	}
+	return 5 << 20
+}
+
 type App struct {
 	cfg     Config
 	log     *slog.Logger
@@ -76,6 +85,7 @@ type App struct {
 	ingress *ingress.Handler
 	quota   *quota.Service
 	usage   *telemetry.Service
+	details *telemetry.SQLiteDetailStore
 	ready   atomic.Bool
 }
 
@@ -118,7 +128,10 @@ func (a *App) Initialize(ctx context.Context) error {
 		_ = store.Close()
 		return fmt.Errorf("load initial snapshot: %w", err)
 	}
-	usage := telemetry.New(telemetry.NewSQLiteSink(store.DB()), telemetryOptions(snapshot.Settings()))
+	settings := snapshot.Settings()
+	usage := telemetry.New(telemetry.NewSQLiteSink(store.DB()), telemetryOptions(settings))
+	a.details = telemetry.NewSQLiteDetailStore(store.DB(), observabilityMaxJSONSize(settings))
+	usage.WithDetails(a.details)
 	a.usage = usage
 	binder := proxy.NewBinder(loadSnapshot(manager))
 	binder.AllowLocal = a.cfg.AllowPrivateUpstreams
@@ -190,6 +203,31 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 	return nil
 }
 
+// pruneDetails deletes request details older than the retention window at
+// startup and hourly thereafter (PRD-OBS-002). Errors are logged, never fatal.
+func (a *App) pruneDetails(ctx context.Context) {
+	store := a.details
+	if store == nil {
+		return
+	}
+	prune := func() {
+		if _, err := store.PruneNow(ctx); err != nil && ctx.Err() == nil {
+			a.log.Warn("prune request details", "error", err)
+		}
+	}
+	prune()
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			prune()
+		}
+	}
+}
+
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	if a.ingress != nil {
@@ -229,6 +267,8 @@ func (a *App) Serve(ctx context.Context) error {
 		// SPEC §21: the batcher is the only usage writer; the request path only
 		// enqueues, so a normal success never synchronously writes SQLite.
 		go a.usage.Run(ctx)
+		// PRD-OBS-002 bounded retention: prune expired request details hourly.
+		go a.pruneDetails(ctx)
 	}
 	if a.quota != nil {
 		// PRD-QUOTA-001: provider quota refresh runs in the background and must not
