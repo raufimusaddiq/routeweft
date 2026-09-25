@@ -37,7 +37,7 @@ func TestSetSettingsRejectsNonWritableKeys(t *testing.T) {
 	ctx := context.Background()
 	manager, store := newTestManager(t)
 	defer store.Close()
-	for _, values := range []map[string]string{{"requireApiKey": "false"}, {"notARealSetting": "1"}} {
+	for _, values := range []map[string]string{{"requireLogin": "false"}, {"notARealSetting": "1"}} {
 		if _, err := manager.SetSettings(ctx, values, nil); err == nil {
 			t.Fatalf("accepted non-writable settings %v", values)
 		}
@@ -46,7 +46,33 @@ func TestSetSettingsRejectsNonWritableKeys(t *testing.T) {
 		t.Fatal("accepted non-writable remove")
 	}
 	// A rejected patch must not change any live setting.
-	if manager.Settings()["requireApiKey"] != "true" {
+	if manager.Settings()["requireLogin"] != "true" {
 		t.Fatal("rejected patch mutated settings")
+	}
+}
+
+// TestSetSettingsAllowsRequireAPIKey is the Endpoint & Key toggle (PRD §14):
+// requireApiKey is a normal writable setting and defaults to requiring keys.
+func TestSetSettingsAllowsRequireAPIKey(t *testing.T) {
+	ctx := context.Background()
+	manager, store := newTestManager(t)
+	defer store.Close()
+	if manager.Settings()["requireApiKey"] != "true" {
+		t.Fatalf("requireApiKey default=%q want true", manager.Settings()["requireApiKey"])
+	}
+	if _, err := manager.SetSettings(ctx, map[string]string{"requireApiKey": "false"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if manager.Settings()["requireApiKey"] != "false" {
+		t.Fatalf("requireApiKey=%q want false", manager.Settings()["requireApiKey"])
+	}
+	if _, err := manager.SetSettings(ctx, map[string]string{"requireApiKey": "maybe"}, nil); err == nil {
+		t.Fatal("accepted a non-boolean requireApiKey value")
+	}
+	if _, err := manager.SetSettings(ctx, nil, []string{"requireApiKey"}); err != nil {
+		t.Fatal(err)
+	}
+	if manager.Settings()["requireApiKey"] != "true" {
+		t.Fatalf("requireApiKey after remove=%q want compiled default true", manager.Settings()["requireApiKey"])
 	}
 }

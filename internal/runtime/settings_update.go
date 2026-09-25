@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,6 +13,7 @@ import (
 // combos, proxy pools) and must not be set through the generic settings route.
 var writableSettings = map[string]struct{}{
 	"providerStrategy":             {},
+	"requireApiKey":                {},
 	"stickyRoundRobinLimit":        {},
 	"providerStrategies":           {},
 	"comboStrategy":                {},
@@ -89,6 +91,9 @@ func (m *Manager) SetSettings(ctx context.Context, values map[string]string, rem
 	for key, value := range values {
 		if strings.ContainsRune(key, 0) || len(value) > 1<<20 {
 			return 0, fmt.Errorf("invalid setting %q", key)
+		}
+		if key == "requireApiKey" && value != "true" && value != "false" {
+			return 0, errors.New("setting \"requireApiKey\" must be \"true\" or \"false\"")
 		}
 	}
 	snapshot, err := m.Update(ctx, func(candidate *Candidate) error {

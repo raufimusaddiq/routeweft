@@ -37,6 +37,7 @@ func newReadAPI(t *testing.T) (*Handler, *http.ServeMux, *sqlite.Store) {
 		Accounts:  adminauth.NewStore(store.DB()),
 		Sessions:  adminauth.NewSessionManager(time.Hour),
 		Settings:  manager,
+		Keys:      manager,
 		DB:        store.DB(),
 		Runtime:   manager,
 		Providers: specs,
