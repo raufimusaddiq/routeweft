@@ -22,6 +22,8 @@ No Messages-to-other-protocol translator implementation, provider catalog/accoun
 
 `POST /v1/messages` preserves raw native JSON, including tool blocks/order, thinking, system content, `cache_control`, and unknown fields; changes only `model` on explicit remap. Adds `/messages` and historical `/v1/v1/messages` aliases. Native dispatch sets provider `x-api-key`, default Anthropic version `2023-06-01`, client beta opt-in. SSE relays incrementally, filters terminal duplicates/non-final markers, guarantees one final `message_stop` on clean EOF, emits an error plus terminal marker on incomplete clean EOF. Count-tokens follows the approved compatibility estimator (nested character count divided by four, rounded up); no upstream call.
 
+Sprint 4 owns Routeweft token-saver implementations and final-body cache anchoring (SPRINT_PLAN PRs 14–17; SPEC §§17–18). Those transform packages currently contain no behavior or ingress hooks, so PR #9 does not invent or duplicate that deferred pipeline. Native Messages preserves caller-provided cache markers byte-for-byte; after Sprint 4, the shared request pipeline must process this protocol in the normative order.
+
 ## Storage / migration impact
 
 - [x] No storage/schema/migration impact.

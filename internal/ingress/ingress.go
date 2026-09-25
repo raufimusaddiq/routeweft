@@ -151,6 +151,9 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	var outbound []byte
 	var headers http.Header
 	if plan.NativePath() {
+		// Sprint 4 owns Routeweft-side token savers and cache anchoring. Until
+		// those transforms exist, preserve the native body (including client
+		// cache_control markers) rather than normalize or drop fields here.
 		outbound, err = request.MarshalBody(provider.UpstreamModel)
 		headers = anthropicHeaders(r, provider)
 	} else if h.opts.TranslateMessages != nil {
