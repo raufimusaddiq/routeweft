@@ -24,8 +24,8 @@ func TestFreshMigrationAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 1 {
-		t.Fatalf("version %d, want 1", version)
+	if version != LatestVersion() {
+		t.Fatalf("version %d, want %d", version, LatestVersion())
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestFreshMigrationAndRestart(t *testing.T) {
 	if err := NewRunner(reopened.DB()).Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
-	required := []string{"meta", "settings", "provider_nodes", "provider_connections", "combos", "usage_events", "request_details"}
+	required := []string{"meta", "settings", "provider_nodes", "provider_connections", "combos", "usage_events", "request_details", "provider_models"}
 	for _, name := range required {
 		var count int
 		if err := reopened.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", name).Scan(&count); err != nil {
@@ -48,6 +48,43 @@ func TestFreshMigrationAndRestart(t *testing.T) {
 		if count != 1 {
 			t.Fatalf("table %q missing after restart", name)
 		}
+	}
+}
+
+func TestV1DatabaseUpgradesWithoutLosingCatalogRecords(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "routeweft.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := NewRunner(store.DB(), v1).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DB().ExecContext(ctx, `INSERT INTO settings(key,value) VALUES('requireApiKey','true');
+INSERT INTO api_keys(id,name,key_hash,key_prefix) VALUES('k1','operator key','hash-only','rw_demo');
+INSERT INTO custom_models(id,provider_id,model_id,display_name) VALUES('m1','provider','model','Model');`); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewRunner(store.DB()).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	version, err := NewRunner(store.DB()).Version(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != 2 {
+		t.Fatalf("version %d, want 2", version)
+	}
+	var keyName, modelName string
+	if err := store.DB().QueryRowContext(ctx, "SELECT name FROM api_keys WHERE id='k1'").Scan(&keyName); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DB().QueryRowContext(ctx, "SELECT display_name FROM custom_models WHERE id='m1'").Scan(&modelName); err != nil {
+		t.Fatal(err)
+	}
+	if keyName != "operator key" || modelName != "Model" {
+		t.Fatalf("upgraded records key=%q model=%q", keyName, modelName)
 	}
 }
 

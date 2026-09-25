@@ -48,7 +48,13 @@ ROUTEWEFT_LISTEN=:21128
 ROUTEWEFT_DATA_DIR=/var/lib/routeweft
 ROUTEWEFT_LOG_LEVEL=info
 ROUTEWEFT_BOOTSTRAP_ADMIN_PASSWORD='use-a-secret-source'
+ROUTEWEFT_MAX_BODY_BYTES=134217728
+ROUTEWEFT_CORS_ORIGINS='https://console.example'
 ```
+
+The default request-body limit is 128 MiB. Cross-origin requests are denied
+unless `ROUTEWEFT_CORS_ORIGINS` has a comma-separated allowlist. Routeweft does
+not enable credentialed CORS cookies.
 
 Expected first boot:
 

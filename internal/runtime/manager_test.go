@@ -3,10 +3,12 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
 
+	"github.com/raufimusaddiq/routeweft/internal/auth"
 	"github.com/raufimusaddiq/routeweft/internal/store/migrations"
 	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
 )
@@ -244,4 +246,104 @@ func TestConcurrentReadersSeeCoherentSnapshots(t *testing.T) {
 	if snapshot.ConfigRevision() != 20 {
 		t.Fatalf("revision %d, want 20", snapshot.ConfigRevision())
 	}
+}
+
+func TestCatalogMutationPersistsAndPublishesAtomically(t *testing.T) {
+	ctx := context.Background()
+	manager, store := newTestManager(t)
+	defer store.Close()
+	entry, plaintext, err := manager.CreateAPIKey(ctx, "key A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plaintext == "" || entry.Hash != "" {
+		t.Fatal("key creation must return plaintext once and hide hash")
+	}
+	var storedHash string
+	if err := store.DB().QueryRowContext(ctx, "SELECT key_hash FROM api_keys WHERE id=?", entry.ID).Scan(&storedHash); err != nil {
+		t.Fatal(err)
+	}
+	if storedHash != auth.Hash(plaintext) || storedHash == plaintext {
+		t.Fatal("database must contain only the one-way key digest")
+	}
+	active, err := manager.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := active.APIKeys().Lookup(plaintext); !ok {
+		t.Fatal("key absent from published snapshot")
+	}
+	if err := manager.PutModel(ctx, Model{ProviderID: "openai", ID: "model-a", Name: "A", ContextWindow: 8192, Capabilities: []string{"tools"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.PutAlias(ctx, "fast", ModelRef{ProviderID: "openai", ModelID: "model-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetModelDisabled(ctx, "openai", "model-a", true); err != nil {
+		t.Fatal(err)
+	}
+	if models := manager.active.Load().Models(); len(models) != 0 {
+		t.Fatalf("disabled target/alias visible: %+v", models)
+	}
+	if err := manager.SetModelDisabled(ctx, "openai", "model-a", false); err != nil {
+		t.Fatal(err)
+	}
+	if models := manager.active.Load().Models(); len(models) != 2 {
+		t.Fatalf("models=%+v, want model and alias", models)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := sqlite.Open(ctx, store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	restarted, err := NewManager(ctx, reopened.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := restarted.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := snapshot.APIKeys().Lookup(plaintext); !ok {
+		t.Fatal("key missing after restart")
+	}
+	if model, ok := snapshot.ResolveModel("", "fast"); !ok || model.ID != "model-a" {
+		t.Fatalf("alias resolution = %+v %v", model, ok)
+	}
+}
+
+func TestCatalogConcurrentReadsAndUpdatesRaceSafe(t *testing.T) {
+	ctx := context.Background()
+	manager, store := newTestManager(t)
+	defer store.Close()
+	_, plaintext, err := manager.CreateAPIKey(ctx, "race key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for reader := 0; reader < 8; reader++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				snapshot, err := manager.Load()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				_, _ = snapshot.APIKeys().Lookup(plaintext)
+				_ = snapshot.Models()
+			}
+		}()
+	}
+	for i := 0; i < 10; i++ {
+		if err := manager.PutModel(ctx, Model{ProviderID: "provider", ID: fmt.Sprintf("model-%d", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wg.Wait()
 }
