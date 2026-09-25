@@ -25,6 +25,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/ingress"
 	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
+	"github.com/raufimusaddiq/routeweft/internal/providers/discovery"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/proxy"
 	quota "github.com/raufimusaddiq/routeweft/internal/quota"
@@ -105,6 +106,8 @@ type App struct {
 	usage   *telemetry.Service
 	details *telemetry.SQLiteDetailStore
 	admin   *adminauth.Store
+	creds   *credentials.Store
+	credReg *credentials.Registry
 	control *controlapi.Handler
 	events  *controlevents.Bus
 	logs    *controlapi.LogBuffer
@@ -242,22 +245,28 @@ func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager 
 	sessions := adminauth.NewSessionManager(a.cfg.AdminSessionTTL)
 	specs := registry.Builtins()
 	a.control = controlapi.New(controlapi.Options{
-		Accounts:       a.admin,
-		Sessions:       sessions,
-		Settings:       manager,
-		Keys:           manager,
-		DB:             store.DB(),
-		Runtime:        manager,
-		Providers:      specs,
-		Telemetry:      a.usage,
-		Events:         a.events,
-		Logs:           a.logs,
-		ActiveRequests: func() int64 { return a.active.Load() },
-		Ready:          a.ready.Load,
-		Build:          buildinfo.Current(),
-		DataDir:        a.cfg.DataDir,
-		Backup:         a.CreateBackup,
-		Restore:        a.QueueRestore,
+		Accounts:              a.admin,
+		Sessions:              sessions,
+		Settings:              manager,
+		Keys:                  manager,
+		DB:                    store.DB(),
+		Runtime:               manager,
+		Providers:             specs,
+		Credentials:           a.creds,
+		CredentialRegistry:    a.credReg,
+		ProviderCatalog:       manager,
+		PoolBindings:          manager,
+		AllowPrivateUpstreams: a.cfg.AllowPrivateUpstreams,
+		DiscoveryClient:       &discovery.Client{},
+		Telemetry:             a.usage,
+		Events:                a.events,
+		Logs:                  a.logs,
+		ActiveRequests:        func() int64 { return a.active.Load() },
+		Ready:                 a.ready.Load,
+		Build:                 buildinfo.Current(),
+		DataDir:               a.cfg.DataDir,
+		Backup:                a.CreateBackup,
+		Restore:               a.QueueRestore,
 	})
 	return nil
 }
@@ -283,6 +292,9 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 		return fmt.Errorf("initialize credential store: %w", err)
 	}
 	registry := credentials.NewRegistry(credentialStore, nil)
+	// The control plane shares this store/registry so provider CRUD publishes
+	// credentials to the same memory-first state inference reads (SPEC §19).
+	a.creds, a.credReg = credentialStore, registry
 	// Seed the memory-first credential registry so quota reads do not fail with
 	// ErrNotFound before the first refresh.
 	for _, providerID := range []string{"codex", "claude"} {

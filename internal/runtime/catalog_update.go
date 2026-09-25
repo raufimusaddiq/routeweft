@@ -127,6 +127,15 @@ func (m *Manager) PutAlias(ctx context.Context, alias string, target ModelRef) e
 	return m.UpdateCatalog(ctx, func(candidate *Candidate) error { candidate.SetAlias(alias, target); return nil })
 }
 
+// DeleteAlias removes one alias through the same compile/commit/publish path.
+// Removing an absent alias is a no-op so callers can treat delete as idempotent.
+func (m *Manager) DeleteAlias(ctx context.Context, alias string) error {
+	return m.UpdateCatalog(ctx, func(candidate *Candidate) error {
+		delete(candidate.Aliases, alias)
+		return nil
+	})
+}
+
 // SetModelDisabled changes model visibility/eligibility in one atomic update.
 func (m *Manager) SetModelDisabled(ctx context.Context, provider, model string, disabled bool) error {
 	return m.UpdateCatalog(ctx, func(candidate *Candidate) error { candidate.SetModelDisabled(provider, model, disabled); return nil })
