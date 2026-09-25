@@ -2,14 +2,21 @@
 package ingress
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/auth"
+	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
+	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
+	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
 // Snapshot provides the immutable request-serving configuration.
@@ -19,9 +26,30 @@ type Snapshot interface {
 
 // Options configure public ingress behavior such as limits and CORS policy.
 type Options struct {
-	MaxBodyBytes int64
-	CORSOrigins  []string
+	MaxBodyBytes     int64
+	CORSOrigins      []string
+	ProviderResolver ProviderResolver
+	TranslateChat    ChatTranslator
+	// AllowPrivateUpstreams is the explicit trusted-local operator policy. It is
+	// off by default so operator-supplied provider URLs cannot reach loopback,
+	// LAN, or metadata addresses.
+	AllowPrivateUpstreams bool
 }
+
+// ProviderResolver is request-time code that uses only the already-loaded
+// snapshot to resolve the requested model/provider.
+type ProviderResolver func(*runtime.RuntimeSnapshot, string) (routing.ProviderRef, bool)
+
+// ChatTranslation describes one translated request relative to the provider
+// base URL. Target adapters own endpoint and protocol-specific headers.
+type ChatTranslation struct {
+	Endpoint string
+	Body     []byte
+	Headers  http.Header
+}
+
+// ChatTranslator is the later-adapter hook for a different target protocol.
+type ChatTranslator func(*openaiadapter.ChatRequest, string) (ChatTranslation, error)
 
 // DefaultMaxBodyBytes matches the 128 MB compatibility target in PRD-API-005.
 const DefaultMaxBodyBytes int64 = 128 << 20
@@ -30,6 +58,7 @@ const DefaultMaxBodyBytes int64 = 128 << 20
 type Handler struct {
 	snapshot Snapshot
 	opts     Options
+	client   *http.Client
 }
 
 // New builds the public ingress handler.
@@ -37,7 +66,11 @@ func New(snapshot Snapshot, opts Options) *Handler {
 	if opts.MaxBodyBytes <= 0 {
 		opts.MaxBodyBytes = DefaultMaxBodyBytes
 	}
-	return &Handler{snapshot: snapshot, opts: opts}
+	client := transport.NewSSRFProtectedClient()
+	if opts.AllowPrivateUpstreams {
+		client = transport.NewTrustedLocalSSRFProtectedClient()
+	}
+	return &Handler{snapshot: snapshot, opts: opts, client: client}
 }
 
 // Attach registers the public inference routes on the shared mux.
@@ -48,6 +81,236 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/models/info", h.withCORS(h.handleModelsInfo))
 	mux.HandleFunc("GET /v1/models/{provider}/{model...}", h.withCORS(h.handleModel))
 	mux.HandleFunc("OPTIONS /v1/{rest...}", h.withCORS(h.handlePreflight))
+	mux.HandleFunc("POST /v1/chat/completions", h.withCORS(h.handleChatCompletions))
+}
+
+func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	if !h.authorize(w, r) {
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, h.opts.MaxBodyBytes))
+	if err != nil {
+		var limitErr *http.MaxBytesError
+		if errors.As(err, &limitErr) {
+			h.writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds configured limit")
+		} else if r.Context().Err() == nil {
+			h.writeError(w, http.StatusBadRequest, "request_read_failed", "request body could not be read")
+		}
+		return
+	}
+	request, err := openaiadapter.ParseChatRequest(body)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	snapshot, err := h.snapshot.Load()
+	if err != nil {
+		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
+		return
+	}
+	if h.opts.ProviderResolver == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "no_provider", "no OpenAI Chat provider is configured")
+		return
+	}
+	provider, ok := h.opts.ProviderResolver(snapshot, request.Model)
+	if !ok {
+		h.writeError(w, http.StatusNotFound, "model_not_found", fmt.Sprintf("model %q is not configured for inference", request.Model))
+		return
+	}
+	plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: openaiadapter.ChatProtocol, TargetProtocol: provider.Protocol, Provider: provider})
+	if err != nil {
+		h.writeError(w, http.StatusBadGateway, "route_unavailable", err.Error())
+		return
+	}
+	endpoint := "chat/completions"
+	var outbound []byte
+	var headers http.Header
+	if plan.NativePath() {
+		outbound, err = request.MarshalBody(provider.UpstreamModel)
+		if provider.APIToken != "" {
+			headers = http.Header{"Authorization": {"Bearer " + provider.APIToken}}
+		}
+	} else if h.opts.TranslateChat != nil {
+		var translated ChatTranslation
+		translated, err = h.opts.TranslateChat(request, plan.TargetProtocol)
+		endpoint, outbound, headers = translated.Endpoint, translated.Body, translated.Headers
+	} else {
+		err = fmt.Errorf("no Chat Completions translator registered for target protocol %q", plan.TargetProtocol)
+	}
+	if err != nil {
+		h.writeError(w, http.StatusBadGateway, "request_translation_failed", err.Error())
+		return
+	}
+	upstreamRequest, err := h.newUpstreamRequest(r, provider, endpoint, outbound, headers)
+	if err != nil {
+		h.writeError(w, http.StatusBadGateway, "upstream_configuration_error", err.Error())
+		return
+	}
+	response, err := h.client.Do(upstreamRequest)
+	if err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
+		h.writeError(w, http.StatusBadGateway, "upstream_request_failed", "upstream request failed")
+		return
+	}
+	defer response.Body.Close()
+	copyResponseHeaders(w.Header(), response.Header)
+	w.WriteHeader(response.StatusCode)
+	if request.Stream {
+		h.copyStream(w, r, response)
+		return
+	}
+	_, _ = io.Copy(w, response.Body)
+}
+
+func (h *Handler) newUpstreamRequest(r *http.Request, provider routing.ProviderRef, endpoint string, body []byte, headers http.Header) (*http.Request, error) {
+	validate := transport.ValidatePublicURL
+	if h.opts.AllowPrivateUpstreams {
+		validate = transport.ValidateTrustedLocalURL
+	}
+	base, err := validate(provider.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	if endpoint == "" || strings.HasPrefix(endpoint, "/") || strings.ContainsAny(endpoint, "?#") {
+		return nil, errors.New("provider endpoint must be a relative path without query or fragment")
+	}
+	for _, segment := range strings.Split(endpoint, "/") {
+		if segment == "." || segment == ".." {
+			return nil, errors.New("provider endpoint must not traverse paths")
+		}
+	}
+	base.Path = strings.TrimRight(base.Path, "/") + "/" + endpoint
+	base.RawPath = ""
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, base.String(), bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("User-Agent", "Routeweft")
+	if accept := r.Header.Get("Accept"); accept != "" {
+		request.Header.Set("Accept", accept)
+	}
+	for name, values := range headers {
+		request.Header.Del(name)
+		for _, value := range values {
+			request.Header.Add(name, value)
+		}
+	}
+	return request, nil
+}
+
+func (h *Handler) copyStream(w http.ResponseWriter, r *http.Request, response *http.Response) {
+	flusher, canFlush := w.(http.Flusher)
+	reader := bufio.NewReaderSize(response.Body, 32*1024)
+	lineCandidate := make([]byte, 0, len("data: [DONE]\r\n"))
+	passLine := false
+	skipTerminalBlank := false
+	eventHasData := false
+	eventHasContent := false
+	write := func(chunk []byte) bool {
+		if len(chunk) == 0 {
+			return true
+		}
+		if _, err := w.Write(chunk); err != nil {
+			return false
+		}
+		if canFlush {
+			flusher.Flush()
+		}
+		return true
+	}
+	for {
+		if err := r.Context().Err(); err != nil {
+			return
+		}
+		line, err := reader.ReadSlice('\n')
+		completeLine := !errors.Is(err, bufio.ErrBufferFull)
+		bypassedLine := false
+		if passLine {
+			if !write(line) {
+				return
+			}
+			if completeLine {
+				passLine = false
+			}
+		} else {
+			if len(lineCandidate)+len(line) > cap(lineCandidate) {
+				eventHasData = eventHasData || isSSEDataLine(lineCandidate)
+				eventHasContent = true
+				if !write(lineCandidate) || !write(line) {
+					return
+				}
+				lineCandidate = lineCandidate[:0]
+				bypassedLine = true
+				passLine = !completeLine
+			} else {
+				lineCandidate = append(lineCandidate, line...)
+			}
+		}
+		if completeLine && !bypassedLine && !passLine {
+			switch {
+			case isTerminalLine(lineCandidate) && !eventHasData:
+				skipTerminalBlank = !eventHasContent
+			case skipTerminalBlank && isBlankSSELine(lineCandidate):
+				skipTerminalBlank = false
+				eventHasData, eventHasContent = false, false
+			default:
+				skipTerminalBlank = false
+				if !write(lineCandidate) {
+					return
+				}
+				if isSSEDataLine(lineCandidate) {
+					eventHasData = true
+				}
+				if isBlankSSELine(lineCandidate) {
+					eventHasData, eventHasContent = false, false
+				} else {
+					eventHasContent = true
+				}
+			}
+			lineCandidate = lineCandidate[:0]
+		}
+		if err == nil || errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		if !errors.Is(err, io.EOF) {
+			return
+		}
+		if !passLine && !isTerminalLine(lineCandidate) && !write(lineCandidate) {
+			return
+		}
+		if r.Context().Err() == nil {
+			_ = write([]byte("data: [DONE]\n\n"))
+		}
+		return
+	}
+}
+
+func isTerminalLine(line []byte) bool {
+	text := strings.TrimSuffix(string(line), "\n")
+	text = strings.TrimSuffix(text, "\r")
+	return text == "data: [DONE]" || text == "data:[DONE]"
+}
+
+func isBlankSSELine(line []byte) bool {
+	return bytes.Equal(line, []byte("\n")) || bytes.Equal(line, []byte("\r\n"))
+}
+
+func isSSEDataLine(line []byte) bool {
+	return bytes.HasPrefix(line, []byte("data:"))
+}
+
+func copyResponseHeaders(dst, src http.Header) {
+	for _, name := range []string{"Content-Type", "Cache-Control", "Retry-After", "Openai-Organization", "Openai-Processing-Ms", "X-Request-Id"} {
+		for _, value := range src.Values(name) {
+			dst.Add(name, value)
+		}
+	}
+	if dst.Get("Content-Type") == "" {
+		dst.Set("Content-Type", "application/json")
+	}
 }
 
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
