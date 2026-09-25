@@ -58,7 +58,7 @@ Revert this PR. No schema changes. If an admin was bootstrapped, retain the admi
 ## Review discipline
 
 - [x] This is a coherent head ready for review.
-- [x] Prior findings were re-read and valid fixes were bundled. (New PR; no prior findings.)
+- [x] Prior findings were re-read and valid fixes were bundled. (Review round 1 finding was a false positive: the test literals are `s3cret`, not the redacted `***`; verified against head `a89fe04` and the CI `go` job passed.)
 - [x] I will wait for review of this exact head before pushing further changes.
 
 ## Worktree isolation
