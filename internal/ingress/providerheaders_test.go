@@ -48,6 +48,12 @@ func TestAnthropicProviderHeaderPolicy(t *testing.T) {
 	if oauth.Get("Authorization") != "Bearer token" || oauth.Get("X-Api-Key") != "" || oauth.Get("User-Agent") == "" {
 		t.Fatalf("claude headers=%v", oauth)
 	}
+	// GitHub Copilot's native Messages route must authenticate as bearer and
+	// carry the Copilot fingerprint, not x-api-key.
+	github := anthropicHeaders(request, routing.ProviderRef{ProviderID: "github", APIToken: "copilot-token"})
+	if github.Get("Authorization") != "Bearer copilot-token" || github.Get("X-Api-Key") != "" || github.Get("copilot-integration-id") != "vscode-chat" || github.Get("editor-version") != "vscode/1.110.0" {
+		t.Fatalf("github messages headers=%v", github)
+	}
 	clientOptIn := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	clientOptIn.Header.Set("Anthropic-Beta", "client-beta")
 	clientOptIn.Header.Set("Anthropic-Version", "2099-01-01")

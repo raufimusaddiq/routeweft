@@ -255,17 +255,29 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 // anthropicHeaders sets the provider credential and version headers. Routeweft
 // forwards the client's anthropic-beta opt-in but never the client credential.
-// Claude OAuth connections authenticate with a bearer token and identify as the
-// Claude CLI; API-key connections use x-api-key.
+// Claude and GitHub Copilot OAuth connections authenticate with a bearer token
+// and identify as their native client; API-key connections use x-api-key.
 func anthropicHeaders(r *http.Request, provider routing.ProviderRef) http.Header {
 	headers := http.Header{}
-	if provider.ProviderID == "claude" && provider.APIToken != "" {
-		headers.Set("Authorization", "Bearer "+provider.APIToken)
+	// Claude and GitHub Copilot advertise Anthropic Messages natively but their
+	// credential is a bearer token, not an x-api-key. Copilot additionally needs
+	// its identity fingerprint on the native Messages route, not only on the
+	// OpenAI Chat/Responses path.
+	bearer := provider.ProviderID == "claude" || provider.ProviderID == "github"
+	if provider.APIToken != "" {
+		if bearer {
+			headers.Set("Authorization", "Bearer "+provider.APIToken)
+		} else {
+			headers.Set("X-Api-Key", provider.APIToken)
+		}
+	}
+	if provider.ProviderID == "claude" {
 		for name, value := range claudeprovider.Headers() {
 			headers.Set(name, value)
 		}
-	} else if provider.APIToken != "" {
-		headers.Set("X-Api-Key", provider.APIToken)
+	}
+	for name, value := range oauthheaders.Headers(provider.ProviderID) {
+		headers.Set(name, value)
 	}
 	if version := r.Header.Get("Anthropic-Version"); version != "" {
 		headers.Set("Anthropic-Version", version)

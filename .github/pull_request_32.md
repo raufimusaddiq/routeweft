@@ -50,7 +50,7 @@ Revert this PR to remove these identities and header hooks; no durable state dep
 ## Review discipline
 
 - [x] Coherent head ready for review.
-- [x] Prior findings re-read and validated. The reviewer flagged that dual-auth rows could not represent both approved credential modes on a single-valued `AuthKind`; that was valid, so `Spec.AuthModes` is added with validation, defensive copy, and explicit assertions for every affected provider. Identity-header behavior was unchanged and remains correct.
+- [x] Prior findings re-read and validated. Finding 1: dual-auth rows could not represent both approved credential modes on a single-valued `AuthKind`; valid, so `Spec.AuthModes` is added with validation, defensive copy, and assertions for every affected provider. Finding 2: Copilot's advertised native `anthropic-messages` binding used `x-api-key` and dropped the Copilot fingerprint; valid, so `anthropicHeaders` now sends bearer auth plus the Copilot identity headers for `github` (and shared provider identity headers for any OAuth-specialized id), with a request-level header test.
 - [x] No new head while FIFO reviewer reviews this exact head absent blocker.
 
 ## Worktree isolation
