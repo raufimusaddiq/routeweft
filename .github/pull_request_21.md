@@ -52,8 +52,10 @@ Revert this PR to remove Codex OAuth primitives. No durable schema or provider d
 ## Review discipline
 
 - [x] Coherent head ready for review.
-- [x] Prior findings re-read; none exist for this new PR.
+- [x] Prior findings re-read and validated. The reviewer reported mismatched token fixtures, but current `codex_test.go` fixtures and assertions match (`a`/`r`, `new`/`rotated`); both CI Go jobs passed. No code fix was valid.
 - [x] No new head while FIFO reviewer reviews this exact head absent blocker.
+
+Review retrigger: documentation-only commit records the invalid finding and reruns CI/review.
 
 ## Worktree isolation
 
