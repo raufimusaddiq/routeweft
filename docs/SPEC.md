@@ -692,6 +692,21 @@ Core resources:
 
 Mutation responses return the persisted object and active config/snapshot revision where relevant.
 
+Client API key management:
+
+```text
+GET    /admin/v1/keys            bounded list; digest and plaintext never returned
+POST   /admin/v1/keys            create {name}; returns the plaintext secret exactly once
+PATCH  /admin/v1/keys/{id}       {paused: bool} pause/resume without deleting
+DELETE /admin/v1/keys/{id}       revoke; the compiled key index drops it immediately
+```
+
+Keys are created, paused, resumed, and revoked through the compiled
+`RuntimeSnapshot` candidate protocol (BDR-007), so the request path never reads
+SQLite to validate a key. `requireApiKey` is writable through
+`PATCH /admin/v1/settings` and accepts only `"true"`/`"false"`; the compiled
+default is `true` (PRD §15).
+
 List APIs have bounded pagination and stable sort.
 
 Live events use SSE initially.

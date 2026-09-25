@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.ROUTEWEFT_SMOKE_CHROME || '/root/.cache/ms-playwright/chromium-1148/chrome-linux/chrome', args: ['--no-sandbox'] });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:4173' });
   const errors = [];
   const report = {};
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));
@@ -18,8 +19,40 @@ const assert = require('node:assert/strict');
   let sessionCalls = 0;
   let loginCalls = 0;
   let overviewCalls = 0;
+  let settingsRequireApiKey = 'true';
+  let keyListCalls = 0;
+  let createCalls = 0;
+  let deleteCalls = 0;
+  let patchKeyCalls = 0;
+  const createdKeyID = 'k-ci-1';
+  const createdSecret = 'rw_smoke_secret_value';
   await page.route('**/admin/v1/**', async route => {
     const url = new URL(route.request().url());
+    const method = route.request().method();
+	if (url.pathname === '/admin/v1/settings' && method === 'GET') {
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ settings: { requireApiKey: settingsRequireApiKey }, writable: ['requireApiKey'] }) });
+	}
+	if (url.pathname === '/admin/v1/settings' && method === 'PATCH') {
+	  settingsRequireApiKey = String(route.request().postDataJSON().set.requireApiKey);
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ configRevision: 8, settings: { requireApiKey: settingsRequireApiKey } }) });
+	}
+	if (url.pathname === '/admin/v1/keys' && method === 'GET') {
+	  keyListCalls += 1;
+  const items = deleteCalls > 0 ? [] : [{ id: createdKeyID, name: 'ci-pipeline', prefix: 'rw_smoke', enabled: true, paused: patchKeyCalls % 2 === 1, createdAt: '2026-09-25T20:00:00Z' }];
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items, page: 1, pageSize: 50, total: items.length }) });
+	}
+	if (url.pathname === '/admin/v1/keys' && method === 'POST') {
+	  createCalls += 1;
+	  return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ key: { id: createdKeyID, name: route.request().postDataJSON().name, prefix: 'rw_smoke', enabled: true, paused: false }, secret: createdSecret }) });
+	}
+	if (url.pathname.startsWith('/admin/v1/keys/') && method === 'PATCH') {
+	  patchKeyCalls += 1;
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: createdKeyID, paused: true, configRevision: 9 }) });
+	}
+	if (url.pathname.startsWith('/admin/v1/keys/') && method === 'DELETE') {
+	  deleteCalls += 1;
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: createdKeyID, revoked: true, configRevision: 10 }) });
+	}
     if (url.pathname === '/admin/v1/auth/session') {
       sessionCalls += 1;
       if (sessionCalls === 1) return route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: { code: 'unauthenticated' } }) });
@@ -61,6 +94,40 @@ const assert = require('node:assert/strict');
   await page.click('.refresh-error button');
   await page.waitForFunction(() => !document.querySelector('.refresh-error'));
   report.overviewCallsAfterRetry = overviewCalls;
+  // Endpoint & Key workflow (PRD 14).
+  await page.click('a[href="#endpoint-key"]');
+  await page.waitForSelector('.endpoint-content');
+  report.endpointURL = await page.locator('.copy-field code').first().textContent();
+  await page.locator('.copy-field button').first().click();
+  report.copiedEndpoint = await page.evaluate(() => navigator.clipboard.readText());
+  report.transportCount = await page.locator('.transport-grid > div').count();
+  report.enforcementLabel = await page.locator('.switch-label').textContent();
+  report.keyRowCountBefore = await page.locator('.key-row').count();
+  await page.fill('#new-key-name', 'smoke-key');
+  await page.click('.create-key-form button[type="submit"]');
+  await page.waitForSelector('.secret-panel');
+  report.secretShown = await page.locator('.secret-panel input').inputValue();
+  report.createCalls = createCalls;
+  await page.click('.secret-panel .button-primary');
+  await page.waitForFunction(() => document.querySelector('.secret-panel .button-primary').textContent === 'Copied');
+  report.copiedSecret = await page.evaluate(() => navigator.clipboard.readText());
+  await page.click('.secret-panel .button-ghost');
+  report.secretCleared = await page.locator('.secret-panel').count();
+  await page.click('.key-row .button-secondary');
+  await page.waitForFunction(() => document.querySelector('.key-row .button-secondary').textContent === 'Resume');
+  report.pausedLabel = await page.locator('.key-row .button-secondary').textContent();
+  page.once('dialog', dialog => dialog.accept());
+  await page.click('.key-row .button-danger');
+  await page.waitForSelector('.empty-keys');
+  report.emptyAfterRevoke = await page.locator('.empty-keys').textContent();
+  report.patchKeyCalls = patchKeyCalls;
+  report.deleteCalls = deleteCalls;
+  page.once('dialog', dialog => dialog.accept());
+  await page.click('.switch-control input');
+  await page.waitForFunction(() => document.querySelector('.switch-label').textContent === 'Not required');
+  report.enforcementAfterToggle = await page.locator('.switch-label').textContent();
+  await page.click('a[href="#overview"]');
+  await page.waitForSelector('.metrics-grid');
   await page.emulateMedia({ colorScheme: 'dark' });
   report.navCount = await page.locator('nav a').count();
   report.groups = await page.locator('.nav-group h2').allTextContents();
@@ -126,6 +193,20 @@ const assert = require('node:assert/strict');
   assert.match(report.refreshError, /Overview is temporarily unavailable/);
   assert.equal(report.staleMetricAfterRefreshError, 'Ready');
   assert.equal(report.overviewCallsAfterRetry, 3);
+  assert.match(report.endpointURL, /\/v1$/);
+  assert.equal(report.copiedEndpoint, report.endpointURL);
+  assert.equal(report.transportCount, 6);
+  assert.equal(report.enforcementLabel, 'Required');
+  assert.equal(report.keyRowCountBefore, 1);
+  assert.equal(report.secretShown, 'rw_smoke_secret_value');
+  assert.equal(report.copiedSecret, 'rw_smoke_secret_value');
+  assert.equal(report.createCalls, 1);
+  assert.equal(report.secretCleared, 0);
+  assert.equal(report.pausedLabel, 'Resume');
+  assert.match(report.emptyAfterRevoke, /No API keys yet/);
+  assert.equal(report.patchKeyCalls, 1);
+  assert.equal(report.deleteCalls, 1);
+  assert.equal(report.enforcementAfterToggle, 'Not required');
   assert.match(report.overviewAlert, /3 failed requests/);
   assert.match(report.overviewAlert, /telemetry is degraded/);
   assert.equal(report.sessionCalls, 1);

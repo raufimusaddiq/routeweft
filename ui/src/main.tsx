@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { EndpointAndKey } from './EndpointAndKey'
 import { Overview } from './Overview'
 import { SignIn } from './SignIn'
 import './style.css'
@@ -37,6 +38,10 @@ function App() {
   const [username, setUsername] = useState('')
   const [signingOut, setSigningOut] = useState(false)
   const menuButton = useRef<HTMLButtonElement>(null)
+  const handleUnauthorized = useCallback(() => {
+    setUsername('')
+    setAuth('signed-out')
+  }, [])
 
   // Only the mobile drawer returns focus to its trigger; on desktop the menu
   // button is hidden, so navigation must keep focus on the activated link.
@@ -188,12 +193,13 @@ function App() {
             </div>
             <p className="page-description">Routeweft gateway operations, in one place.</p>
           </div>
-          {authError && <p className="auth-error" role="alert">{authError}</p>}
+          {authError && auth !== 'unavailable' && <p className="auth-error" role="alert">{authError}</p>}
           {auth === 'checking' && <p className="page-status" role="status">Checking admin session…</p>}
           {auth === 'unavailable' && <section className="page-error" role="alert"><p>{authError}</p><button className="button-secondary" type="button" onClick={() => void checkSession()}>Retry</button></section>}
           {auth === 'signed-out' && <SignIn onSignedIn={name => { setUsername(name); setAuth('signed-in'); setAuthError('') }} />}
-          {auth === 'signed-in' && page === 'Overview' && <Overview onUnauthorized={() => { setUsername(''); setAuth('signed-out') }} />}
-          {auth === 'signed-in' && page !== 'Overview' && <section className="empty-workspace" aria-labelledby="workspace-title"><span className="material-symbols empty-icon" aria-hidden="true">tune</span><div><h2 id="workspace-title">Workspace shell</h2><p>Operational views are added in their planned increments.</p></div></section>}
+          {auth === 'signed-in' && page === 'Overview' && <Overview onUnauthorized={handleUnauthorized} />}
+          {auth === 'signed-in' && page === 'Endpoint & Key' && <EndpointAndKey onUnauthorized={handleUnauthorized} />}
+          {auth === 'signed-in' && page !== 'Overview' && page !== 'Endpoint & Key' && <section className="empty-workspace" aria-labelledby="workspace-title"><span className="material-symbols empty-icon" aria-hidden="true">tune</span><div><h2 id="workspace-title">Workspace shell</h2><p>Operational views are added in their planned increments.</p></div></section>}
         </div>
       </main>
     </div>

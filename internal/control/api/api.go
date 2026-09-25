@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/adminauth"
+	"github.com/raufimusaddiq/routeweft/internal/auth"
 	"github.com/raufimusaddiq/routeweft/internal/backup"
 	"github.com/raufimusaddiq/routeweft/internal/buildinfo"
 	controlevents "github.com/raufimusaddiq/routeweft/internal/control/events"
@@ -26,11 +27,19 @@ type SettingsStore interface {
 	SetSettings(ctx context.Context, values map[string]string, remove []string) (uint64, error)
 }
 
+// KeyManager mutates the compiled inference-key index through RuntimeSnapshot.
+type KeyManager interface {
+	CreateAPIKey(context.Context, string) (auth.Entry, string, error)
+	SetAPIKeyPaused(context.Context, string, bool) error
+	DeleteAPIKey(context.Context, string) error
+}
+
 // Options configure the control API.
 type Options struct {
 	Accounts       *adminauth.Store
 	Sessions       *adminauth.SessionManager
 	Settings       SettingsStore
+	Keys           KeyManager
 	DB             *sql.DB
 	Runtime        RuntimeReader
 	Providers      []registry.Spec
@@ -80,6 +89,9 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/v1/auth/session", h.handleSession)
 	mux.HandleFunc("GET /admin/v1/settings", h.requireSession(h.handleGetSettings))
 	mux.HandleFunc("PATCH /admin/v1/settings", h.requireSession(h.handlePatchSettings))
+	mux.Handle("POST /admin/v1/keys", h.requireSessionHandler(http.HandlerFunc(h.handleCreateKey)))
+	mux.Handle("PATCH /admin/v1/keys/{id}", h.requireSessionHandler(http.HandlerFunc(h.handlePatchKey)))
+	mux.Handle("DELETE /admin/v1/keys/{id}", h.requireSessionHandler(http.HandlerFunc(h.handleDeleteKey)))
 	for _, path := range []string{"overview", "providers", "provider-nodes", "connections", "models", "aliases", "pricing", "combos", "proxy-pools", "keys", "usage", "requests", "quota", "token-saver", "systemone"} {
 		mux.Handle("GET /admin/v1/"+path, h.requireSessionHandler(h.readModel(path)))
 	}

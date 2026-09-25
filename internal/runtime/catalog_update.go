@@ -12,6 +12,8 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/auth"
 )
 
+var ErrAPIKeyNotFound = errors.New("API key not found")
+
 // CreateAPIKey persists and publishes a newly created client key, returning its
 // one-time plaintext value.
 func (m *Manager) CreateAPIKey(ctx context.Context, name string) (auth.Entry, string, error) {
@@ -50,7 +52,7 @@ func (m *Manager) SetAPIKeyPaused(ctx context.Context, id string, paused bool) e
 				return nil
 			}
 		}
-		return errors.New("API key not found")
+		return ErrAPIKeyNotFound
 	})
 }
 
@@ -63,7 +65,7 @@ func (m *Manager) DeleteAPIKey(ctx context.Context, id string) error {
 				return nil
 			}
 		}
-		return errors.New("API key not found")
+		return ErrAPIKeyNotFound
 	})
 }
 

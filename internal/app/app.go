@@ -245,6 +245,7 @@ func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager 
 		Accounts:       a.admin,
 		Sessions:       sessions,
 		Settings:       manager,
+		Keys:           manager,
 		DB:             store.DB(),
 		Runtime:        manager,
 		Providers:      specs,
