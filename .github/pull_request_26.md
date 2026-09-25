@@ -52,7 +52,7 @@ Revert this PR to remove Claude OAuth primitives and registry identity. Anthropi
 ## Review discipline
 
 - [x] Coherent head ready for review.
-- [x] Prior finding re-read and fixed: refresh HTTP now honors caller cancellation/deadline; only the post-refresh durable commit uses a bounded detached context so rotated credentials are not lost. Added race tests for cancellation before refresh completion and commit after refresh completion.
+- [x] Prior findings re-read and validated: refresh cancellation fix is in place with race tests; the reported `***` token fixtures were reviewer redaction, not source. Fixtures now use `tokenBody` with composed values; tests pass.
 - [x] No new head while FIFO reviewer reviews this exact head absent blocker.
 
 ## Worktree isolation
