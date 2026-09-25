@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/compat/fixtures"
 	"github.com/raufimusaddiq/routeweft/compat/mockupstream"
@@ -16,6 +17,7 @@ import (
 	systemoneadapter "github.com/raufimusaddiq/routeweft/internal/protocol/systemone"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
+	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
 )
 
 func compatFixtures(t *testing.T, protocol fixtures.Protocol) []fixtures.Exchange {
@@ -168,6 +170,47 @@ func TestOllamaChatNativeReturnsNdjson(t *testing.T) {
 	seen := server.Requests()
 	if len(seen) != 1 || !strings.HasSuffix(seen[0].Path, "/api/chat") {
 		t.Fatalf("ollama upstream %+v", seen)
+	}
+}
+
+func TestOllamaChatNativeExtractsUsage(t *testing.T) {
+	server, err := mockupstream.Start(nil, mockupstream.WithMatcher(func(_ *http.Request, _ string) mockupstream.Decision {
+		return mockupstream.Decision{Status: http.StatusOK, Headers: map[string]string{"Content-Type": "application/json"}, Body: `{"model":"llama3.2","done":true,"prompt_eval_count":14,"eval_count":9}`}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	var got promptcache.Usage
+	var calls int
+	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, ProviderResolver: fixedProvider(ollamaadapter.Protocol, server.URL()), OnUsage: func(_, _ string, usage promptcache.Usage) { calls++; got = usage }})
+	recorder := httptest.NewRecorder()
+	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/api/chat", strings.NewReader(`{"model":"llama3.2","messages":[{"role":"user","content":"hi"}],"stream":false}`)))
+	if recorder.Code != http.StatusOK || calls != 1 || got.InputTokens != 14 || got.OutputTokens != 9 {
+		t.Fatalf("status=%d calls=%d usage=%+v", recorder.Code, calls, got)
+	}
+}
+
+func TestOllamaChatNativeRecordsUpstreamFailure(t *testing.T) {
+	server, err := mockupstream.Start(nil, mockupstream.WithMatcher(func(_ *http.Request, _ string) mockupstream.Decision {
+		return mockupstream.Decision{Status: http.StatusTooManyRequests, Headers: map[string]string{"Content-Type": "application/json"}, Body: `{"error":"rate limit exceeded"}`}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	state := runtime.NewState()
+	resolver := func(*runtime.RuntimeSnapshot, string) (routing.ProviderRef, bool) {
+		return routing.ProviderRef{ProviderID: ollamaadapter.Protocol, Protocol: ollamaadapter.Protocol, BaseURL: server.URL(), APIToken: "provider-credential", ConnectionID: "acct-1"}, true
+	}
+	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, State: state, ProviderResolver: resolver})
+	recorder := httptest.NewRecorder()
+	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/api/chat", strings.NewReader(`{"model":"llama3.2","messages":[{"role":"user","content":"hi"}],"stream":false}`)))
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("status=%d", recorder.Code)
+	}
+	if _, cooling := state.CooldownUntil("acct-1", time.Now()); !cooling {
+		t.Fatal("native Ollama upstream failure did not record cooldown visibility")
 	}
 }
 

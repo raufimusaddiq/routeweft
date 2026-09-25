@@ -29,6 +29,8 @@ New shared package `internal/providers/shared`:
 
 Ingress wiring: every non-2xx upstream response is classified through the shared mapping and recorded into `RuntimeState` cooldown visibility (SPEC §14 "cooldown is visible immediately") while the provider error body is still relayed to the client unchanged. The streamed-usage scanner is now protocol-family aware (Anthropic `message_stop`, OpenAI-family `[DONE]`) and non-stream success paths capture usage for all families, replacing the Anthropic-only extraction.
 
+Review fix: the native Ollama branch (`POST /v1/api/chat` on an Ollama-protocol provider) now participates in both behaviors. Non-2xx native responses are classified and recorded into `RuntimeState` cooldown visibility with the body still relayed unchanged, and both stream and non-stream success paths extract usage from the final `prompt_eval_count`/`eval_count` object (`copyOllamaNativeStream`). Covered by `TestOllamaChatNativeExtractsUsage` and `TestOllamaChatNativeRecordsUpstreamFailure`.
+
 ## Storage / migration impact
 
 - [x] No storage/schema/migration impact.
