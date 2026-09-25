@@ -45,6 +45,8 @@ Reads/writes are single short transactions with no network work inside a transac
 
 New tests cover: seal round-trip + nonce freshness + tamper/truncation/version rejection; wrong-key-length rejection; sealed-at-rest persistence and read-back; edit preserving the stored secret; empty/unknown rotation rejection; routing-order listing; enable/delete; audit-event validation; singleflight with 8 concurrent callers (one exchange) and durable commit; refresh keeping the durable refresh token; empty-refresh and provider-error leaving durable state intact; import identity validation and audit; resolver with node identity vs compiled fallback; disabled/unknown connection rejection.
 
+Concurrency evidence: refresh and import install (durable write + in-memory publish) share one per-connection install lock, so a stale rotation can never overwrite a newer import in storage or in the served credential. Regression tests cover the pre-write, post-write and post-publish windows, and are run under `-race -count`.
+
 ## Rollback
 
 Revert the PR. No schema migration is involved, so an earlier binary reads the same tables (it will not understand sealed envelopes, but this slice does not change any data the earlier binary read).
