@@ -70,6 +70,9 @@ func (h *Handler) PlanCombo(snapshot *runtime.RuntimeSnapshot, name string, requ
 		Cursor:      cursor,
 		Accounts:    comboAccounts(routed),
 	})
+	if len(requirements) > 0 {
+		selection.Candidates = prioritizeSelectedCapabilities(selection.Candidates, routed, requirements)
+	}
 	ordered := make([]runtime.ComboMember, 0, len(adapterTier)+len(selection.Candidates))
 	for _, adapter := range adapterTier {
 		ordered = append(ordered, runtime.ComboMember{ProviderID: adapter.ProviderID, ModelID: adapter.ModelID, Position: len(ordered), Selected: true})
@@ -79,6 +82,26 @@ func (h *Handler) PlanCombo(snapshot *runtime.RuntimeSnapshot, name string, requ
 		ordered = append(ordered, runtime.ComboMember{ProviderID: providerID, ModelID: modelID, Position: len(ordered), Selected: true})
 	}
 	return ordered, true
+}
+
+// prioritizeSelectedCapabilities re-applies hard capability tiers after RR
+// rotation while preserving the cursor-derived order inside each tier.
+func prioritizeSelectedCapabilities(candidates []routing.Account, members []routing.Member, requirements []routing.CapabilityRequirement) []routing.Account {
+	byID := make(map[string]routing.Member, len(members))
+	for _, member := range members {
+		byID[member.ProviderID+"\x00"+member.ModelID] = member
+	}
+	capable := make([]routing.Account, 0, len(candidates))
+	fallback := make([]routing.Account, 0, len(candidates))
+	for _, candidate := range candidates {
+		providerID, modelID, _ := strings.Cut(candidate.ID, "\x00")
+		if satisfies(byID[providerID+"\x00"+modelID], requirements) {
+			capable = append(capable, candidate)
+		} else {
+			fallback = append(fallback, candidate)
+		}
+	}
+	return append(capable, fallback...)
 }
 
 func anyMemberHas(members []routing.Member, capability string) bool {

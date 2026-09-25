@@ -211,3 +211,35 @@ func TestPlanComboDedupesAdapterAndSelectsPerCapability(t *testing.T) {
 		t.Fatalf("adapter for the unmet capability should lead: %+v", ordered)
 	}
 }
+
+func TestPlanComboRRNeverPutsNonCapableFallbackFirst(t *testing.T) {
+	manager := newManager(t)
+	ctx := context.Background()
+	for _, model := range []runtime.Model{
+		{ProviderID: "p", ID: "v1", Capabilities: []string{"vision"}},
+		{ProviderID: "p", ID: "text"},
+		{ProviderID: "p", ID: "v2", Capabilities: []string{"vision"}},
+	} {
+		if err := manager.PutModel(ctx, model); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := manager.SetCombos(ctx, []runtime.Combo{{ID: "rr", Name: "rr", Strategy: "round-robin", Members: []runtime.ComboMember{
+		{ProviderID: "p", ModelID: "v1", Position: 0, Selected: true},
+		{ProviderID: "p", ModelID: "text", Position: 1, Selected: true},
+		{ProviderID: "p", ModelID: "v2", Position: 2, Selected: true},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := manager.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := runtime.NewState()
+	state.NextCursor("combo|rr") // start from the non-capable member before capability reorder.
+	handler := New(nil, Options{State: state})
+	ordered, ok := handler.PlanCombo(snapshot, "rr", []routing.CapabilityRequirement{{Name: "vision"}})
+	if !ok || ordered[0].ModelID != "v2" || ordered[1].ModelID != "v1" || ordered[2].ModelID != "text" {
+		t.Fatalf("RR capability order=%+v", ordered)
+	}
+}
