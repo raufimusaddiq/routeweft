@@ -42,10 +42,15 @@ type entry struct {
 	connection Connection
 	exchanger  Exchanger
 
-	mu       sync.Mutex
-	current  Secret
-	seeded   bool
-	inflight *refreshCall
+	mu sync.Mutex
+	// generation increments on every explicit credential install (import or
+	// register). A refresh captures it before the exchange and refuses to commit
+	// or publish if it changed, so an import that lands mid-refresh is never
+	// overwritten by the older exchange result.
+	generation uint64
+	current    Secret
+	seeded     bool
+	inflight   *refreshCall
 }
 
 type refreshCall struct {
@@ -65,6 +70,10 @@ func NewRegistry(store *Store, now func() time.Time) *Registry {
 // ErrNoExchanger means a rotating connection has no refresh implementation.
 var ErrNoExchanger = errors.New("connection has no credential refresh implementation")
 
+// ErrSuperseded means a refresh result was discarded because a newer credential
+// install (import or register) landed while the exchange was in flight.
+var ErrSuperseded = errors.New("credential refresh was superseded by a newer install")
+
 // Register seeds one connection into memory-first state. An already-registered
 // connection is replaced, which is how an import or edit installs new material.
 func (r *Registry) Register(connection Connection, exchanger Exchanger) {
@@ -76,10 +85,11 @@ func (r *Registry) Register(connection Connection, exchanger Exchanger) {
 		existing.current = connection.Secret
 		existing.seeded = true
 		existing.exchanger = exchanger
+		existing.generation++
 		existing.mu.Unlock()
 		return
 	}
-	r.entries[connection.ID] = &entry{connection: connection, exchanger: exchanger, current: connection.Secret, seeded: true}
+	r.entries[connection.ID] = &entry{connection: connection, exchanger: exchanger, current: connection.Secret, seeded: true, generation: 1}
 }
 
 // Forget drops one connection's in-memory credential state.
@@ -150,15 +160,32 @@ func (r *Registry) Secret(ctx context.Context, connectionID string) (Secret, err
 	call := &refreshCall{done: make(chan struct{})}
 	current.inflight = call
 	stored := current.current
+	generation := current.generation
 	current.mu.Unlock()
 
-	secret, err := r.refresh(ctx, connectionID, stored, exchanger)
+	secret, err := r.refresh(ctx, connectionID, stored, generation, current, exchanger)
+	if errors.Is(err, ErrSuperseded) {
+		// A newer install won while this exchange ran. Serve the newer credential
+		// instead of a stale or failed one, and do not clear the inflight marker's
+		// result as an error for other waiters.
+		current.mu.Lock()
+		secret, err = current.current, nil
+		current.inflight = nil
+		call.secret, call.err = secret, nil
+		current.mu.Unlock()
+		close(call.done)
+		return secret, nil
+	}
 	if err != nil {
 		secret = Secret{}
 	}
 	current.mu.Lock()
+	// A concurrent import/register bumped the generation while this exchange was
+	// in flight. Its install is newer, so this stale result must not overwrite it
+	// in memory; the same check gates the durable commit below.
 	if err == nil {
 		current.current = secret
+		current.seeded = true
 	}
 	current.inflight = nil
 	call.secret, call.err = secret, err
@@ -171,7 +198,7 @@ func (r *Registry) Secret(ctx context.Context, connectionID string) (Secret, err
 // before a successful refresh becomes visible to any caller. The commit is
 // bounded and detached so an already-rotated upstream token is not dropped when
 // the caller disappears between exchange and commit (SPEC §19).
-func (r *Registry) refresh(ctx context.Context, connectionID string, stored Secret, exchanger Exchanger) (Secret, error) {
+func (r *Registry) refresh(ctx context.Context, connectionID string, stored Secret, generation uint64, current *entry, exchanger Exchanger) (Secret, error) {
 	refreshed, err := exchanger(ctx, stored)
 	if err != nil {
 		return Secret{}, err
@@ -186,8 +213,19 @@ func (r *Registry) refresh(ctx context.Context, connectionID string, stored Secr
 	if strings.TrimSpace(refreshed.RefreshToken) == "" {
 		refreshed.RefreshToken = stored.RefreshToken
 	}
+	// The exchange is over; if a newer install happened meanwhile, discard this
+	// stale result instead of persisting it over the newer credential.
+	if r.superseded(current, generation) {
+		return Secret{}, ErrSuperseded
+	}
 	if r.store != nil {
 		commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		// Re-check under the commit window: an import may have landed between the
+		// exchange and this write.
+		if r.superseded(current, generation) {
+			cancel()
+			return Secret{}, ErrSuperseded
+		}
 		err := r.store.RotateSecret(commitCtx, connectionID, refreshed)
 		cancel()
 		if err != nil {
@@ -220,6 +258,11 @@ func (r *Registry) Import(ctx context.Context, connectionID, identity string, se
 	if r.store == nil {
 		return ErrKeyRequired
 	}
+	// Bump the generation before the durable write so any in-flight refresh that
+	// started earlier cannot commit or publish over this import.
+	current.mu.Lock()
+	current.generation++
+	current.mu.Unlock()
 	if err := r.store.RotateSecret(ctx, connectionID, secret); err != nil {
 		return err
 	}
@@ -231,6 +274,14 @@ func (r *Registry) Import(ctx context.Context, connectionID, identity string, se
 	current.seeded = true
 	current.mu.Unlock()
 	return nil
+}
+
+// superseded reports whether a newer install replaced the credential generation
+// a refresh started from.
+func (r *Registry) superseded(current *entry, generation uint64) bool {
+	current.mu.Lock()
+	defer current.mu.Unlock()
+	return current.generation != generation
 }
 
 func (r *Registry) lookup(connectionID string) (*entry, error) {
