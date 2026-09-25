@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { Overview } from './Overview'
+import { SignIn } from './SignIn'
 import './style.css'
 
 type Theme = 'light' | 'dark' | 'system'
@@ -30,15 +32,17 @@ function App() {
   const [theme, setTheme] = useState<Theme>(readTheme)
   const [page, setPage] = useState(() => pages[location.hash.slice(1)] ?? 'Overview')
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [auth, setAuth] = useState<'checking' | 'signed-in' | 'signed-out' | 'unavailable'>('checking')
+  const [authError, setAuthError] = useState('')
+  const [username, setUsername] = useState('')
+  const [signingOut, setSigningOut] = useState(false)
   const menuButton = useRef<HTMLButtonElement>(null)
 
-  // Only the mobile drawer should return focus to its trigger; on desktop the
-  // menu button is hidden, so activating a link must keep focus visible.
-  function closeDrawer(restoreFocus = true) {
-    setDrawerOpen(open => {
-      if (open && restoreFocus) menuButton.current?.focus()
-      return false
-    })
+  // Only the mobile drawer returns focus to its trigger; on desktop the menu
+  // button is hidden, so navigation must keep focus on the activated link.
+  function closeDrawer() {
+    if (drawerOpen) menuButton.current?.focus()
+    setDrawerOpen(false)
   }
 
   useEffect(() => {
@@ -46,6 +50,42 @@ function App() {
     addEventListener('hashchange', updatePage)
     return () => removeEventListener('hashchange', updatePage)
   }, [])
+
+  async function checkSession() {
+    setAuth('checking')
+    setAuthError('')
+    try {
+      const response = await fetch('/admin/v1/auth/session', { credentials: 'same-origin' })
+      if (response.status === 401) {
+        setAuth('signed-out')
+        return
+      }
+      if (!response.ok) throw new Error('Could not verify the admin session.')
+      const session = await response.json() as { username: string }
+      setUsername(session.username)
+      setAuth('signed-in')
+    } catch {
+      setAuthError('Could not reach the Routeweft control API.')
+      setAuth('unavailable')
+    }
+  }
+
+  useEffect(() => { void checkSession() }, [])
+
+  async function signOut() {
+    setSigningOut(true)
+    setAuthError('')
+    try {
+      const response = await fetch('/admin/v1/auth/logout', { method: 'POST', credentials: 'same-origin' })
+      if (!response.ok) throw new Error('Sign-out failed. Try again.')
+      setUsername('')
+      setAuth('signed-out')
+    } catch {
+      setAuthError('Sign-out failed. The admin session may still be active.')
+    } finally {
+      setSigningOut(false)
+    }
+  }
 
   useEffect(() => {
     if (theme !== 'system') return
@@ -96,7 +136,7 @@ function App() {
       </button>
       {drawerOpen && <button className="drawer-backdrop" type="button" tabIndex={-1} aria-label="Close navigation" onClick={() => closeDrawer()} />}
       <aside className={`sidebar${drawerOpen ? ' sidebar-open' : ''}`}>
-          <a className="brand" href="#overview" aria-label="Routeweft overview" onClick={() => closeDrawer(false)}>
+        <a className="brand" href="#overview" aria-label="Routeweft overview" onClick={closeDrawer}>
           <span className="brand-mark" aria-hidden="true">R</span>
           <span className="brand-copy"><strong>Routeweft</strong><small>CONTROL PLANE</small></span>
         </a>
@@ -112,7 +152,7 @@ function App() {
                     href={`#${slug(label)}`}
                     key={label}
                     aria-current={active ? 'page' : undefined}
-                    onClick={() => closeDrawer(false)}
+                    onClick={closeDrawer}
                   >
                     <span className="material-symbols" aria-hidden="true">{icon}</span>
                     <span>{label}</span>
@@ -139,17 +179,21 @@ function App() {
         </header>
         <div className="workspace-inner">
           <div className="page-intro">
-            <p className="eyebrow">CONTROL PLANE / {page.toUpperCase()}</p>
-            <h1 id="page-title">{page}</h1>
+            <div className="page-heading-row">
+              <div>
+                <p className="eyebrow">CONTROL PLANE / {page.toUpperCase()}</p>
+                <h1 id="page-title">{page}</h1>
+              </div>
+              {auth === 'signed-in' && <button className="button-ghost sign-out" type="button" disabled={signingOut} onClick={() => void signOut()}>{signingOut ? 'Signing out…' : `Sign out${username ? ` · ${username}` : ''}`}</button>}
+            </div>
             <p className="page-description">Routeweft gateway operations, in one place.</p>
           </div>
-          <section className="empty-workspace" aria-labelledby="workspace-title">
-            <span className="material-symbols empty-icon" aria-hidden="true">tune</span>
-            <div>
-              <h2 id="workspace-title">Workspace shell</h2>
-              <p>Operational views are added in their planned increments.</p>
-            </div>
-          </section>
+          {authError && <p className="auth-error" role="alert">{authError}</p>}
+          {auth === 'checking' && <p className="page-status" role="status">Checking admin session…</p>}
+          {auth === 'unavailable' && <section className="page-error" role="alert"><p>{authError}</p><button className="button-secondary" type="button" onClick={() => void checkSession()}>Retry</button></section>}
+          {auth === 'signed-out' && <SignIn onSignedIn={name => { setUsername(name); setAuth('signed-in'); setAuthError('') }} />}
+          {auth === 'signed-in' && page === 'Overview' && <Overview onUnauthorized={() => { setUsername(''); setAuth('signed-out') }} />}
+          {auth === 'signed-in' && page !== 'Overview' && <section className="empty-workspace" aria-labelledby="workspace-title"><span className="material-symbols empty-icon" aria-hidden="true">tune</span><div><h2 id="workspace-title">Workspace shell</h2><p>Operational views are added in their planned increments.</p></div></section>}
         </div>
       </main>
     </div>
