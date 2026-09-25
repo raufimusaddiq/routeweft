@@ -46,8 +46,10 @@ func cloneCombos(combos map[string]Combo) map[string]Combo {
 	return cloned
 }
 
-// compileCombos indexes Combos by name and validates their members.
-func compileCombos(combos []Combo, models map[string]Model) (map[string]Combo, error) {
+// compileCombos indexes Combos by name and validates their members. Alias
+// members are canonicalized to their target provider/model so capability
+// lookups and dispatch resolve uniformly (PRD-COMBO-001).
+func compileCombos(combos []Combo, models map[string]Model, aliases map[string]ModelRef) (map[string]Combo, error) {
 	compiled := make(map[string]Combo, len(combos))
 	for _, combo := range combos {
 		name := strings.TrimSpace(combo.Name)
@@ -64,6 +66,16 @@ func compileCombos(combos []Combo, models map[string]Model) (map[string]Combo, e
 			return nil, fmt.Errorf("combo %q: %w", name, err)
 		}
 		combo.Members = append([]ComboMember(nil), combo.Members...)
+		for i := range combo.Members {
+			member := &combo.Members[i]
+			member.ProviderID = strings.TrimSpace(member.ProviderID)
+			member.ModelID = strings.TrimSpace(member.ModelID)
+			// An alias member resolves to its target provider/model; capability
+			// and dispatch lookups then work uniformly.
+			if target, ok := aliases[member.ModelID]; ok && (member.ProviderID == "" || member.ProviderID == target.ProviderID) {
+				member.ProviderID, member.ModelID = target.ProviderID, target.ModelID
+			}
+		}
 		seen := make(map[string]struct{}, len(combo.Members))
 		for _, member := range combo.Members {
 			key := modelKey(member.ProviderID, member.ModelID)

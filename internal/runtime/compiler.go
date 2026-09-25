@@ -134,7 +134,7 @@ func (Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, error)
 		settings[key] = value
 	}
 	models, aliases, disabled := compileCatalog(config.Models, config.Aliases, config.DisabledModels)
-	combos, err := compileCombos(config.Combos, models)
+	combos, err := compileCombos(config.Combos, models, aliases)
 	if err != nil {
 		return nil, err
 	}

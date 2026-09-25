@@ -255,6 +255,47 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .model-row .state-tag { margin-left: auto; }
 .pricing-form input { flex-basis: 105px; }
 
+.combos-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.combos-toolbar .count-label { margin-right: auto; }
+.combos-layout { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); align-items: start; gap: 16px; }
+.combo-list-panel { align-self: stretch; }
+.combo-list { display: grid; gap: 2px; margin-top: 4px; }
+.combo-row { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; border: 1px solid transparent; border-bottom: 1px solid var(--border-subtle); padding: 11px 8px; }
+.combo-row-selected { border-color: var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.combo-main { display: grid; flex: 1 1 140px; min-width: 0; gap: 4px; }
+.combo-main strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; }
+.combo-main small { color: var(--text-subtle); font-size: 10px; }
+.combo-actions { display: flex; flex-basis: 100%; gap: 6px; }
+.combo-actions button { min-height: 30px; padding-inline: 9px; font-size: 10px; }
+.detail-panel-empty h2 { margin: 0 0 6px; font-size: 13px; }
+.detail-panel-empty p { margin: 0; color: var(--text-muted); font-size: 12px; }
+.combo-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.combo-form-grid > label { display: grid; align-content: start; gap: 6px; color: var(--text-muted); font-size: 11px; font-weight: 600; }
+.combo-form-grid input, .combo-form-grid select { width: 100%; }
+.combo-toggle { flex-direction: row; align-items: center; display: flex !important; gap: 8px; }
+.combo-toggle input { width: 16px; min-height: auto; accent-color: var(--brand-600); }
+.member-picker { display: flex; flex-wrap: wrap; gap: 7px; margin: 12px 0; }
+.member-picker select { flex: 1 1 200px; }
+.member-picker button { min-height: 36px; }
+.member-list { display: grid; gap: 2px; margin: 0 0 14px; padding: 0; list-style: none; }
+.member-row { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; border-top: 1px solid var(--border-subtle); padding: 9px 0; font-size: 11px; }
+.member-row-deselected { opacity: .66; }
+.member-order { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 999px; color: var(--text-muted); background: var(--surface-2); font-size: 10px; }
+.member-row code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10px; }
+.member-row .state-tag { margin-left: auto; }
+.member-actions { display: flex; flex-basis: 100%; gap: 6px; }
+.member-actions button { min-height: 30px; padding-inline: 9px; font-size: 10px; }
+.adapter-panel { margin-top: 16px; }
+.adapter-card { border-top: 1px solid var(--border-subtle); padding: 12px 0; }
+.adapter-header { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.adapter-header > div { display: grid; flex: 1 1 160px; gap: 4px; }
+.adapter-header strong { font-size: 12px; }
+.adapter-header small { color: var(--text-subtle); font-size: 10px; }
+.adapter-pool { display: grid; gap: 2px; margin: 10px 0; padding: 0; list-style: none; }
+.adapter-pool li { display: flex; align-items: center; gap: 9px; border-top: 1px solid var(--border-subtle); padding: 8px 0; }
+.adapter-pool code { flex: 1; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10px; }
+.adapter-pool button { min-height: 30px; padding-inline: 9px; font-size: 10px; }
+
 @media (max-width: 900px) {
   .workspace-inner { padding-inline: 28px; }
   .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -263,6 +304,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   .transport-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .providers-layout { grid-template-columns: minmax(0, 1fr); }
   .provider-catalog { max-height: 280px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .combos-layout { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 700px) {
@@ -298,6 +340,9 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   .connection-row { grid-template-columns: minmax(0, 1fr) auto; }
   .connection-row .proxy-select { grid-column: 1 / -1; }
   .providers-toolbar .button-primary, .providers-toolbar .button-secondary { flex: 1; }
+    .combos-toolbar { flex-wrap: wrap; }
+    .combos-toolbar .count-label { flex: 1 1 100%; }
+    .combo-form-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 380px) {

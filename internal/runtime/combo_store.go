@@ -19,15 +19,21 @@ func (m *Manager) SetCombos(ctx context.Context, combos []Combo) (*RuntimeSnapsh
 }
 
 // PutCombo creates or replaces one Combo by ID, preserving member positions.
+// An update matches by ID only so a rename cannot collide with an unrelated
+// Combo; a create rejects a duplicate name.
 func (m *Manager) PutCombo(ctx context.Context, combo Combo) (*RuntimeSnapshot, error) {
-	if combo.ID == "" {
+	creating := combo.ID == ""
+	if creating {
 		combo.ID = uuid.NewString()
 	}
 	return m.Update(ctx, func(candidate *Candidate) error {
 		for i := range candidate.Combos {
-			if candidate.Combos[i].ID == combo.ID || candidate.Combos[i].Name == combo.Name {
+			if candidate.Combos[i].ID == combo.ID {
 				candidate.Combos[i] = combo
 				return nil
+			}
+			if creating && candidate.Combos[i].Name == combo.Name {
+				return fmt.Errorf("combo %q already exists", combo.Name)
 			}
 		}
 		candidate.Combos = append(candidate.Combos, combo)

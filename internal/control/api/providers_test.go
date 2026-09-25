@@ -56,6 +56,7 @@ func newProvidersAPI(t *testing.T, allowPrivate bool, upstream *discovery.Client
 		DB: store.DB(), Runtime: manager, Providers: specs,
 		Credentials: credStore, CredentialRegistry: credentials.NewRegistry(credStore, nil),
 		ProviderCatalog: manager, PoolBindings: manager, AllowPrivateUpstreams: allowPrivate, DiscoveryClient: upstream,
+		Combos: manager,
 	})
 	session, err := sessions.Create(adminauth.Account{ID: "a1", Username: "operator"})
 	if err != nil {
@@ -75,7 +76,9 @@ func doJSON(t *testing.T, mux *http.ServeMux, cookie *http.Cookie, method, path,
 		reader = strings.NewReader(body)
 	}
 	request := httptest.NewRequest(method, path, reader)
-	request.AddCookie(cookie)
+	if cookie != nil {
+		request.AddCookie(cookie)
+	}
 	recorder := httptest.NewRecorder()
 	mux.ServeHTTP(recorder, request)
 	return recorder
