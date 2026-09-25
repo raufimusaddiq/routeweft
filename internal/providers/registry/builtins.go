@@ -99,7 +99,11 @@ func SpecializedWire() []Spec {
 		{ID: "perplexity-web", Transports: []Protocol{TransportPerplexityWeb}, Auth: AuthCookie, DefaultBaseURL: "https://www.perplexity.ai", ModelCatalog: CatalogStatic, StaticModels: []string{
 			"pplx-auto", "pplx-sonar", "pplx-gpt", "pplx-gemini", "pplx-sonnet", "pplx-opus", "pplx-nemotron",
 		}},
-		{ID: "kenari", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://kenari.id", ModelCatalog: CatalogDynamic, PassthroughModels: true, ReportsUsage: true},
+		{ID: "kenari", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://kenari.id", TransportEndpoints: map[Protocol]string{
+			TransportOpenAIChat:      "v1/chat/completions",
+			TransportOpenAIResponses: "v1/responses",
+			TransportAnthropic:       "v1/messages",
+		}, ModelCatalog: CatalogDynamic, PassthroughModels: true, ReportsUsage: true},
 		{ID: "zed", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://cloud.zed.dev", ModelCatalog: CatalogPassthrough, PassthroughModels: true, ReportsUsage: true},
 		{ID: "kimchi", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://llm.kimchi.dev/openai/v1", ModelCatalog: CatalogPassthrough, PassthroughModels: true},
 		{ID: "azure", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "", ModelCatalog: CatalogStatic},
@@ -124,7 +128,11 @@ func OAuthSpecialized() []Spec {
 		{ID: "xai", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.x.ai/v1", ModelCatalog: CatalogStatic, StaticModels: []string{
 			"grok-4.6", "grok-4.5", "grok-4", "grok-4-fast-reasoning", "grok-code-fast-1", "grok-3",
 		}},
-		{ID: "github", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses, TransportAnthropic}, Auth: AuthOAuth, DefaultBaseURL: "https://api.githubcopilot.com", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
+		{ID: "github", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses, TransportAnthropic}, Auth: AuthOAuth, DefaultBaseURL: "https://api.githubcopilot.com", TransportEndpoints: map[Protocol]string{
+			TransportOpenAIChat:      "chat/completions",
+			TransportOpenAIResponses: "responses",
+			TransportAnthropic:       "v1/messages",
+		}, ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
 			"gpt-5.2", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.4", "gpt-5.4-mini",
 			"claude-haiku-4.5", "claude-opus-4.5", "claude-sonnet-4.5", "claude-sonnet-4.6", "claude-opus-4.6", "claude-opus-4.7",
 			"gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "grok-code-fast-1", "oswe-vscode-prime", "goldeneye-free-auto",
@@ -135,11 +143,17 @@ func OAuthSpecialized() []Spec {
 			"qwen3-235b-a22b-thinking-2507", "qwen3-32b", "kimi-k2", "deepseek-v3.2", "deepseek-v3.1", "deepseek-v3", "deepseek-r1", "glm-4.7",
 			"iflow-rome-30ba3b",
 		}},
-		{ID: "kimi", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.kimi.com/coding/v1", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
+		{ID: "kimi", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.kimi.com/coding/v1", TransportEndpoints: map[Protocol]string{
+			TransportOpenAIChat: "chat/completions",
+			TransportAnthropic:  "messages",
+		}, ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
 			"kimi-k3", "k3", "kimi-for-coding", "kimi-for-coding-highspeed", "kimi-k2.7-code", "kimi-k2.7-code-highspeed",
 			"kimi-k2.6", "kimi-k2.5", "kimi-k2.5-thinking", "kimi-latest",
 		}},
-		{ID: "xiaomi-mimo", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.xiaomimimo.com/v1", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
+		{ID: "xiaomi-mimo", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.xiaomimimo.com", TransportEndpoints: map[Protocol]string{
+			TransportOpenAIChat: "v1/chat/completions",
+			TransportAnthropic:  "anthropic/v1/messages",
+		}, ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
 			"mimo-x-pro-preview", "mimo-x-flash-preview", "mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-omni", "mimo-v2-flash",
 		}},
 		{ID: "cline", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://api.cline.bot", ModelCatalog: CatalogStatic, StaticModels: []string{

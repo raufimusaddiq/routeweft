@@ -294,3 +294,61 @@ func TestDualAuthModesValidationAndCopy(t *testing.T) {
 		t.Fatal("auth modes slice leaked")
 	}
 }
+
+func TestTransportEndpointsResolvePerProtocolAndCopy(t *testing.T) {
+	catalog, err := NewBuiltinCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Providers whose native transports do not share one base path expose a
+	// per-protocol endpoint, and the shared catalog resolves it by id.
+	cases := []struct {
+		provider  string
+		transport string
+		path      string
+	}{
+		{"kenari", "openai-chat", "v1/chat/completions"},
+		{"kenari", "openai-responses", "v1/responses"},
+		{"kenari", "anthropic-messages", "v1/messages"},
+		{"github", "openai-chat", "chat/completions"},
+		{"github", "openai-responses", "responses"},
+		{"github", "anthropic-messages", "v1/messages"},
+		{"kimi", "anthropic-messages", "messages"},
+		{"xiaomi-mimo", "openai-chat", "v1/chat/completions"},
+		{"xiaomi-mimo", "anthropic-messages", "anthropic/v1/messages"},
+	}
+	for _, tc := range cases {
+		path, ok := catalog.EndpointFor(tc.provider, tc.transport)
+		if !ok || path != tc.path {
+			t.Errorf("endpoint %s/%s = %q ok=%v want %q", tc.provider, tc.transport, path, ok, tc.path)
+		}
+	}
+	// A single-transport provider with no declared override keeps the shared
+	// default (ok=false).
+	if _, ok := catalog.EndpointFor("openai", "openai-chat"); ok {
+		t.Fatal("openai should not declare a transport endpoint override")
+	}
+	if _, ok := catalog.EndpointFor("unknown", "openai-chat"); ok {
+		t.Fatal("unknown provider should not resolve an endpoint")
+	}
+	// Lookup must not leak the endpoint map to callers.
+	spec, _ := catalog.Lookup("kenari")
+	spec.TransportEndpoints["openai-chat"] = "mutated"
+	if path, _ := catalog.EndpointFor("kenari", "openai-chat"); path != "v1/chat/completions" {
+		t.Fatalf("endpoint map leaked: %q", path)
+	}
+}
+
+func TestTransportEndpointsValidation(t *testing.T) {
+	for _, invalid := range []Spec{
+		{ID: "p", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, ModelCatalog: CatalogStatic, TransportEndpoints: map[Protocol]string{TransportAnthropic: "messages"}},
+		{ID: "p", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, ModelCatalog: CatalogStatic, TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "/abs"}},
+		{ID: "p", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, ModelCatalog: CatalogStatic, TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "a/../b"}},
+		{ID: "p", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, ModelCatalog: CatalogStatic, TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "a?b"}},
+		{ID: "p", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, ModelCatalog: CatalogStatic, TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "  "}},
+	} {
+		if _, err := NewCatalog([]Spec{invalid}); err == nil {
+			t.Errorf("accepted invalid transport endpoint %+v", invalid.TransportEndpoints)
+		}
+	}
+}

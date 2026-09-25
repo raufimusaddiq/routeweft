@@ -1,11 +1,14 @@
 package ingress
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/raufimusaddiq/routeweft/internal/routing"
+	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
 func TestCodexProviderHeadersCarryCLIFingerprint(t *testing.T) {
@@ -35,6 +38,43 @@ func TestOAuthSpecializedProviderHeaders(t *testing.T) {
 	plain := openAIProviderHeaders(routing.ProviderRef{ProviderID: "mistral", Protocol: "openai-chat", APIToken: "token"})
 	if plain.Get("copilot-integration-id") != "" || plain.Get("User-Agent") != "" {
 		t.Fatalf("unexpected fingerprint on plain provider: %v", plain)
+	}
+}
+
+// TestNativeDispatchHonorsTransportEndpoint proves a multi-transport provider
+// posts to its declared per-protocol path instead of the shared default.
+func TestNativeDispatchHonorsTransportEndpoint(t *testing.T) {
+	var gotPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		gotPath = req.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"x","object":"chat.completion","choices":[]}`))
+	}))
+	defer upstream.Close()
+	manager := newManager(t)
+	_, key, err := manager.CreateAPIKey(context.Background(), "chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(manager, Options{AllowPrivateUpstreams: true,
+		EndpointFor: func(providerID, transport string) (string, bool) {
+			if providerID == "kimi" && transport == "openai-chat" {
+				return "chat/completions", true
+			}
+			return "", false
+		},
+		ProviderResolver: func(_ *runtime.RuntimeSnapshot, model string) (routing.ProviderRef, bool) {
+			return routing.ProviderRef{ProviderID: "kimi", Protocol: "openai-chat", BaseURL: upstream.URL, APIToken: "token"}, true
+		},
+	})
+	mux := http.NewServeMux()
+	handler.Attach(mux)
+	server := bearer(mux, key)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"kimi-k3","messages":[{"role":"user","content":"hi"}]}`))
+	server.ServeHTTP(recorder, request)
+	if gotPath != "/chat/completions" {
+		t.Fatalf("upstream path=%q want /chat/completions", gotPath)
 	}
 }
 

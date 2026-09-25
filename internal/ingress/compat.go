@@ -44,6 +44,13 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, source, model
 	var headers http.Header
 	var outbound []byte
 	if plan.NativePath() {
+		// Multi-transport providers may serve a different path per native
+		// protocol; the registry owns that mapping (SPEC §11).
+		if h.opts.EndpointFor != nil {
+			if override, ok := h.opts.EndpointFor(provider.ProviderID, provider.Protocol); ok {
+				endpoint = override
+			}
+		}
 		outbound, err = native.body(provider.UpstreamModel)
 		if native.headers != nil {
 			headers = native.headers(provider)

@@ -60,6 +60,11 @@ type Options struct {
 	// off by default so operator-supplied provider URLs cannot reach loopback,
 	// LAN, or metadata addresses.
 	AllowPrivateUpstreams bool
+	// EndpointFor returns the provider-specific relative dispatch path for a
+	// native transport, so multi-transport providers that serve a different path
+	// per protocol (SPEC §11 base endpoint rules) do not reuse one shared path.
+	// It returns ok=false to keep the caller's shared default endpoint.
+	EndpointFor func(providerID string, transport string) (string, bool)
 }
 
 // ProviderResolver is request-time code that uses only the already-loaded
@@ -182,6 +187,11 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	var outbound []byte
 	var headers http.Header
 	if plan.NativePath() {
+		if h.opts.EndpointFor != nil {
+			if override, ok := h.opts.EndpointFor(provider.ProviderID, provider.Protocol); ok {
+				endpoint = override
+			}
+		}
 		// Sprint 4 owns Routeweft-side token savers and cache anchoring. Until
 		// those transforms exist, preserve the native body (including client
 		// cache_control markers) rather than normalize or drop fields here.
@@ -362,6 +372,11 @@ func (h *Handler) handleResponsesRequest(w http.ResponseWriter, r *http.Request,
 	var outbound []byte
 	var headers http.Header
 	if plan.NativePath() {
+		if h.opts.EndpointFor != nil && !compact {
+			if override, ok := h.opts.EndpointFor(provider.ProviderID, provider.Protocol); ok {
+				endpoint = override
+			}
+		}
 		outbound, err = request.MarshalBody(provider.UpstreamModel)
 		headers = openAIProviderHeaders(provider)
 	} else if compact && h.opts.TranslateResponsesCompact != nil {
@@ -444,6 +459,11 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	var outbound []byte
 	var headers http.Header
 	if plan.NativePath() {
+		if h.opts.EndpointFor != nil {
+			if override, ok := h.opts.EndpointFor(provider.ProviderID, provider.Protocol); ok {
+				endpoint = override
+			}
+		}
 		outbound, err = request.MarshalBody(provider.UpstreamModel)
 		headers = openAIProviderHeaders(provider)
 	} else if h.opts.TranslateChat != nil {
