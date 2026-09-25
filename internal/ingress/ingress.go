@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/auth"
+	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
@@ -32,6 +33,7 @@ type Options struct {
 	TranslateChat             ChatTranslator
 	TranslateResponses        ResponsesTranslator
 	TranslateResponsesCompact ResponsesCompactTranslator
+	TranslateMessages         MessagesTranslator
 	// AllowPrivateUpstreams is the explicit trusted-local operator policy. It is
 	// off by default so operator-supplied provider URLs cannot reach loopback,
 	// LAN, or metadata addresses.
@@ -54,6 +56,7 @@ type ChatTranslation struct {
 type ChatTranslator func(*openaiadapter.ChatRequest, string) (ChatTranslation, error)
 type ResponsesTranslator func(*openaiadapter.ResponsesRequest, string) (ChatTranslation, error)
 type ResponsesCompactTranslator func(*openaiadapter.ResponsesRequest, string) (ChatTranslation, error)
+type MessagesTranslator func(*anthropicadapter.MessagesRequest, string) (ChatTranslation, error)
 
 // DefaultMaxBodyBytes matches the 128 MB compatibility target in PRD-API-005.
 const DefaultMaxBodyBytes int64 = 128 << 20
@@ -96,6 +99,113 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.HandleFunc("OPTIONS /responses", h.withCORS(h.handlePreflight))
 	mux.HandleFunc("OPTIONS /codex/{path...}", h.withCORS(h.handlePreflight))
 	mux.HandleFunc("OPTIONS /codex", h.withCORS(h.handlePreflight))
+	mux.HandleFunc("POST /v1/messages", h.withCORS(h.handleMessages))
+	mux.HandleFunc("POST /v1/messages/count_tokens", h.withCORS(h.handleCountTokens))
+	mux.HandleFunc("POST /messages", h.withCORS(h.handleMessages))
+	mux.HandleFunc("POST /messages/count_tokens", h.withCORS(h.handleCountTokens))
+	mux.HandleFunc("POST /v1/v1/messages", h.withCORS(h.handleMessages))
+	mux.HandleFunc("POST /v1/v1/messages/count_tokens", h.withCORS(h.handleCountTokens))
+	mux.HandleFunc("OPTIONS /messages", h.withCORS(h.handlePreflight))
+	mux.HandleFunc("OPTIONS /messages/count_tokens", h.withCORS(h.handlePreflight))
+}
+
+func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
+	if !h.authorize(w, r) {
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, h.opts.MaxBodyBytes))
+	if err != nil {
+		var limitErr *http.MaxBytesError
+		if errors.As(err, &limitErr) {
+			h.writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds configured limit")
+		} else if r.Context().Err() == nil {
+			h.writeError(w, http.StatusBadRequest, "request_read_failed", "request body could not be read")
+		}
+		return
+	}
+	request, err := anthropicadapter.ParseMessagesRequest(body)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	snapshot, err := h.snapshot.Load()
+	if err != nil {
+		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
+		return
+	}
+	if h.opts.ProviderResolver == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "no_provider", "no Anthropic Messages provider is configured")
+		return
+	}
+	provider, ok := h.opts.ProviderResolver(snapshot, request.Model)
+	if !ok {
+		h.writeError(w, http.StatusNotFound, "model_not_found", fmt.Sprintf("model %q is not configured for inference", request.Model))
+		return
+	}
+	plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: anthropicadapter.MessagesProtocol, TargetProtocol: provider.Protocol, Provider: provider})
+	if err != nil {
+		h.writeError(w, http.StatusBadGateway, "route_unavailable", err.Error())
+		return
+	}
+	endpoint := "messages"
+	var outbound []byte
+	var headers http.Header
+	if plan.NativePath() {
+		// Sprint 4 owns Routeweft-side token savers and cache anchoring. Until
+		// those transforms exist, preserve the native body (including client
+		// cache_control markers) rather than normalize or drop fields here.
+		outbound, err = request.MarshalBody(provider.UpstreamModel)
+		headers = anthropicHeaders(r, provider)
+	} else if h.opts.TranslateMessages != nil {
+		var translated ChatTranslation
+		translated, err = h.opts.TranslateMessages(request, plan.TargetProtocol)
+		endpoint, outbound, headers = translated.Endpoint, translated.Body, translated.Headers
+	} else {
+		err = fmt.Errorf("no Messages translator registered for target protocol %q", plan.TargetProtocol)
+	}
+	if err != nil {
+		h.writeError(w, http.StatusBadGateway, "request_translation_failed", err.Error())
+		return
+	}
+	upstreamRequest, err := h.newUpstreamRequest(r, provider, endpoint, outbound, headers)
+	if err != nil {
+		h.writeError(w, http.StatusBadGateway, "upstream_configuration_error", err.Error())
+		return
+	}
+	response, err := h.client.Do(upstreamRequest)
+	if err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
+		h.writeError(w, http.StatusBadGateway, "upstream_request_failed", "upstream request failed")
+		return
+	}
+	defer response.Body.Close()
+	copyResponseHeaders(w.Header(), response.Header)
+	w.WriteHeader(response.StatusCode)
+	if request.Stream {
+		h.copyMessagesStream(w, r, response)
+		return
+	}
+	_, _ = io.Copy(w, response.Body)
+}
+
+// anthropicHeaders sets the provider credential and version headers. Routeweft
+// forwards the client's anthropic-beta opt-in but never the client credential.
+func anthropicHeaders(r *http.Request, provider routing.ProviderRef) http.Header {
+	headers := http.Header{}
+	if provider.APIToken != "" {
+		headers.Set("X-Api-Key", provider.APIToken)
+	}
+	if version := r.Header.Get("Anthropic-Version"); version != "" {
+		headers.Set("Anthropic-Version", version)
+	} else {
+		headers.Set("Anthropic-Version", "2023-06-01")
+	}
+	if beta := r.Header.Get("Anthropic-Beta"); beta != "" {
+		headers.Set("Anthropic-Beta", beta)
+	}
+	return headers
 }
 
 func (h *Handler) handleResponses(w http.ResponseWriter, r *http.Request) {
@@ -414,6 +524,14 @@ func isSSEDataLine(line []byte) bool {
 // terminal event until EOF, filters duplicates/non-final terminals, and reports
 // an incomplete upstream stream as response.failed.
 func (h *Handler) copyResponsesStream(w http.ResponseWriter, r *http.Request, response *http.Response) {
+	copyTerminalSSE(w, r, response, responsesEventTerminal, responsesIncompleteEvent())
+}
+
+func (h *Handler) copyMessagesStream(w http.ResponseWriter, r *http.Request, response *http.Response) {
+	copyTerminalSSE(w, r, response, messagesEventTerminal, messagesIncompleteEvent())
+}
+
+func copyTerminalSSE(w http.ResponseWriter, r *http.Request, response *http.Response, isTerminal func([]byte) bool, incomplete []byte) {
 	flusher, canFlush := w.(http.Flusher)
 	reader := bufio.NewReaderSize(response.Body, 32*1024)
 	event := make([]byte, 0, 4096)
@@ -434,7 +552,7 @@ func (h *Handler) copyResponsesStream(w http.ResponseWriter, r *http.Request, re
 		if len(event) == 0 {
 			return true
 		}
-		if responsesEventTerminal(event) {
+		if isTerminal(event) {
 			terminal = append(terminal[:0], event...)
 			event = event[:0]
 			return true
@@ -472,14 +590,14 @@ func (h *Handler) copyResponsesStream(w http.ResponseWriter, r *http.Request, re
 		if len(terminal) > 0 {
 			_ = write(terminal)
 		} else {
-			_ = write(responsesIncompleteEvent())
+			_ = write(incomplete)
 		}
 		return
 	}
 }
 
 func copyResponseHeaders(dst, src http.Header) {
-	for _, name := range []string{"Content-Type", "Cache-Control", "Retry-After", "Openai-Organization", "Openai-Processing-Ms", "X-Request-Id"} {
+	for _, name := range []string{"Content-Type", "Cache-Control", "Retry-After", "Openai-Organization", "Openai-Processing-Ms", "X-Request-Id", "Anthropic-Version", "Anthropic-Beta", "Request-Id"} {
 		for _, value := range src.Values(name) {
 			dst.Add(name, value)
 		}
