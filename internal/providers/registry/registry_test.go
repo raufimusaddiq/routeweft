@@ -53,16 +53,19 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	wantIDs := []string{
 		"alicode-intl", "alicode", "alims-intl", "alitp-intl", "api-airforce", "baidu", "bazaarlink", "blackbox", "bluesminds", "byteplus",
 		"cerebras", "chutes", "cohere", "featherless", "fireworks", "groq", "hyperbolic", "kilo-gateway", "llm7", "mistral", "morph", "nebius",
-		"nvidia", "openai", "openrouter", "perplexity", "poolside", "sambanova", "siliconflow", "tencent", "together", "venice", "vercel-ai-gateway", "volcengine-ark",
+		"codex", "nvidia", "openai", "openrouter", "perplexity", "poolside", "sambanova", "siliconflow", "tencent", "together", "venice", "vercel-ai-gateway", "volcengine-ark",
 	}
 	if catalog.Len() != len(wantIDs) {
 		t.Fatalf("catalog size=%d want=%d", catalog.Len(), len(wantIDs))
 	}
 	for _, id := range wantIDs {
 		spec, ok := catalog.Lookup(id)
-		if !ok || spec.Auth != AuthAPIKey || len(spec.Transports) == 0 || spec.Transports[0] != TransportOpenAIChat || spec.DefaultBaseURL == "" {
+		if !ok || len(spec.Transports) == 0 || spec.DefaultBaseURL == "" || (spec.Auth != AuthAPIKey && spec.Auth != AuthOAuth) {
 			t.Errorf("incomplete group member %q: %+v present=%v", id, spec, ok)
 		}
+	}
+	if spec, _ := catalog.Lookup("codex"); spec.Auth != AuthOAuth || spec.Transports[0] != TransportOpenAIResponses || !spec.ReportsUsage || len(spec.StaticModels) != 18 {
+		t.Fatalf("codex spec=%+v", spec)
 	}
 	if spec, _ := catalog.Lookup("openrouter"); spec.ModelCatalog != CatalogDynamic || !spec.PassthroughModels {
 		t.Fatalf("openrouter catalog semantics=%+v", spec)

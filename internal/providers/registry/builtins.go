@@ -45,7 +45,17 @@ func Builtins() []Spec {
 		{ID: "vercel-ai-gateway", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://ai-gateway.vercel.sh/v1", ModelCatalog: CatalogDynamic, PassthroughModels: true, ReportsUsage: true},
 		{ID: "volcengine-ark", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://ark.cn-beijing.volces.com/api/coding/v3", ModelCatalog: CatalogStatic},
 	}
-	return append(specs, NativeOpenAI()...)
+	return append(specs, append(NativeOpenAI(), Codex()...)...)
+}
+
+// Codex returns the OpenAI Codex OAuth provider identity. Its rotating
+// credentials and request path are implemented by the Codex provider module.
+func Codex() []Spec {
+	return []Spec{{ID: "codex", Transports: []Protocol{TransportOpenAIResponses}, Auth: AuthOAuth, DefaultBaseURL: "https://chatgpt.com/backend-api/codex", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
+		"gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-sol-review", "gpt-5.6-terra", "gpt-5.6-terra-review",
+		"gpt-5.6-luna", "gpt-5.6-luna-review", "gpt-5.5", "gpt-5.5-review", "gpt-5.4", "gpt-5.4-review", "gpt-5.4-mini",
+		"gpt-5.4-mini-review", "gpt-5.3-codex-spark", "gpt-5.3-codex-spark-review", "codex-auto-review",
+	}}}
 }
 
 // NativeOpenAI returns the first-party provider with both source-matching
