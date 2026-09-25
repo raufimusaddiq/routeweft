@@ -31,7 +31,7 @@ type SpecResolver func(providerID string) (registry.Spec, bool)
 // entry point for built-in provider model discovery: callers invoke it from an
 // admin action, and it returns the number of models persisted. A provider that
 // does not declare a base URL or is unknown is rejected rather than guessed.
-func Sync(ctx context.Context, client *Client, store Store, providerID, apiKey string, allowPrivate bool) (int, error) {
+func Sync(ctx context.Context, client *Client, store Store, providerID, credential string, allowPrivate bool) (int, error) {
 	if store == nil {
 		return 0, errors.New("discovery store is required")
 	}
@@ -39,12 +39,12 @@ func Sync(ctx context.Context, client *Client, store Store, providerID, apiKey s
 	if err != nil {
 		return 0, err
 	}
-	return SyncSpec(ctx, client, store, catalog, providerID, apiKey, allowPrivate)
+	return SyncSpec(ctx, client, store, catalog, providerID, credential, allowPrivate)
 }
 
 // SyncSpec is Sync against a caller-supplied catalog, so tests and future
 // provider sets can resolve identities without rebuilding the built-in catalog.
-func SyncSpec(ctx context.Context, client *Client, store Store, catalog *registry.Catalog, providerID, apiKey string, allowPrivate bool) (int, error) {
+func SyncSpec(ctx context.Context, client *Client, store Store, catalog *registry.Catalog, providerID, credential string, allowPrivate bool) (int, error) {
 	if store == nil {
 		return 0, errors.New("discovery store is required")
 	}
@@ -72,7 +72,7 @@ func SyncSpec(ctx context.Context, client *Client, store Store, catalog *registr
 		ProviderID: providerID,
 		BaseURL:    spec.DefaultBaseURL,
 		Path:       spec.DiscoveryPath,
-		APIKey:     apiKey,
+		Credential: credential,
 		AuthStyle:  authStyleFor(spec.Auth),
 	}
 	ids, err := callClient.Models(ctx, request)

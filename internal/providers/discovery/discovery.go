@@ -36,11 +36,11 @@ type Request struct {
 	BaseURL    string
 	Path       string
 	// Headers carry only non-secret provider identity headers; the credential is
-	// injected from APIKey and never logged.
+	// injected from Credential and never logged.
 	Headers map[string]string
 	// AuthStyle selects the credential header. Empty means bearer.
-	AuthStyle AuthStyle
-	APIKey    string
+	AuthStyle  AuthStyle
+	Credential string
 }
 
 // AuthStyle is a supported discovery credential style.
@@ -104,12 +104,12 @@ func (c *Client) Models(ctx context.Context, request Request) ([]string, error) 
 	switch request.AuthStyle {
 	case AuthNone:
 	case AuthXApiKey:
-		if request.APIKey != "" {
-			httpRequest.Header.Set("x-api-key", request.APIKey)
+		if request.Credential != "" {
+			httpRequest.Header.Set("x-api-key", request.Credential)
 		}
 	default:
-		if request.APIKey != "" {
-			httpRequest.Header.Set("Authorization", "Bearer "+request.APIKey)
+		if request.Credential != "" {
+			httpRequest.Header.Set("Authorization", "Bearer "+request.Credential)
 		}
 	}
 

@@ -25,7 +25,7 @@ func TestModelsFetchesBearerCatalogAndTrimsIDs(t *testing.T) {
 		seenAuth = request.Header.Get("Authorization")
 		return response(200, `{"data":[{"id":"m-b"},{"id":"m-a"},{"id":"m-a"}]}`), nil
 	}}}
-	models, err := client.Models(context.Background(), Request{ProviderID: "p", BaseURL: "https://api.example.com/v1", APIKey: "secret"})
+	models, err := client.Models(context.Background(), Request{ProviderID: "p", BaseURL: "https://api.example.com/v1", Credential: "secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestModelsSupportsApiKeyHeaderAndGeminiShape(t *testing.T) {
 		seenBearer = request.Header.Get("Authorization")
 		return response(200, `{"models":[{"name":"models/gemini-2.5-flash"}]}`), nil
 	}}}
-	models, err := client.Models(context.Background(), Request{ProviderID: "p", BaseURL: "https://gen.example.com/v1beta", AuthStyle: AuthXApiKey, APIKey: "key"})
+	models, err := client.Models(context.Background(), Request{ProviderID: "p", BaseURL: "https://gen.example.com/v1beta", AuthStyle: AuthXApiKey, Credential: "key"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestModelsNoAuthOmitsCredential(t *testing.T) {
 		seenKey = request.Header.Get("x-api-key")
 		return response(200, `["a","b"]`), nil
 	}}}
-	models, err := client.Models(context.Background(), Request{ProviderID: "p", BaseURL: "https://free.example.com", AuthStyle: AuthNone, APIKey: "ignored"})
+	models, err := client.Models(context.Background(), Request{ProviderID: "p", BaseURL: "https://free.example.com", AuthStyle: AuthNone, Credential: "ignored"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestModelsReportsHTTPFailureWithoutLeakingBody(t *testing.T) {
 	client := &Client{HTTP: fakeClient{do: func(*http.Request) (*http.Response, error) {
 		return response(401, `{"error":"invalid key sk-secret"}`), nil
 	}}}
-	_, err := client.Models(context.Background(), Request{ProviderID: "p", BaseURL: "https://api.example.com", APIKey: "sk-secret"})
+	_, err := client.Models(context.Background(), Request{ProviderID: "p", BaseURL: "https://api.example.com", Credential: "sk-secret"})
 	if err == nil || strings.Contains(err.Error(), "sk-secret") {
 		t.Fatalf("error=%v", err)
 	}
