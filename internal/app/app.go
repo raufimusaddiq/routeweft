@@ -67,7 +67,7 @@ func (a *App) Initialize(ctx context.Context) error {
 		return fmt.Errorf("initialize runtime: %w", err)
 	}
 	a.store, a.runtime = store, manager
-	a.ingress = ingress.New(manager, ingress.Options{MaxBodyBytes: a.cfg.MaxBodyBytes, CORSOrigins: a.cfg.CORSOrigins})
+	a.ingress = ingress.New(manager, ingress.Options{MaxBodyBytes: a.cfg.MaxBodyBytes, CORSOrigins: a.cfg.CORSOrigins, State: manager.State()})
 	a.ready.Store(true)
 	return nil
 }
