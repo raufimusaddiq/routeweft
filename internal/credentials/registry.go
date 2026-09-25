@@ -42,7 +42,12 @@ type entry struct {
 	connection Connection
 	exchanger  Exchanger
 
-	mu sync.Mutex
+	// installMu serializes every credential install (durable write + memory
+	// publish) for one connection. The generation check and its durable write
+	// happen under this lock, so a refresh can never pass the staleness check and
+	// then write over an import that landed in the check-to-write window.
+	installMu sync.Mutex
+	mu        sync.Mutex
 	// generation increments on every explicit credential install (import or
 	// register). A refresh captures it before the exchange and refuses to commit
 	// or publish if it changed, so an import that lands mid-refresh is never
@@ -80,6 +85,7 @@ func (r *Registry) Register(connection Connection, exchanger Exchanger) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if existing, ok := r.entries[connection.ID]; ok {
+		existing.installMu.Lock()
 		existing.mu.Lock()
 		existing.connection = connection
 		existing.current = connection.Secret
@@ -87,6 +93,7 @@ func (r *Registry) Register(connection Connection, exchanger Exchanger) {
 		existing.exchanger = exchanger
 		existing.generation++
 		existing.mu.Unlock()
+		existing.installMu.Unlock()
 		return
 	}
 	r.entries[connection.ID] = &entry{connection: connection, exchanger: exchanger, current: connection.Secret, seeded: true, generation: 1}
@@ -198,6 +205,11 @@ func (r *Registry) Secret(ctx context.Context, connectionID string) (Secret, err
 // before a successful refresh becomes visible to any caller. The commit is
 // bounded and detached so an already-rotated upstream token is not dropped when
 // the caller disappears between exchange and commit (SPEC §19).
+//
+// The staleness check and the durable write execute under the connection's
+// install lock, so an import that lands during the exchange either wins before
+// this write (making it a no-op) or waits until after it. Either order leaves the
+// newer install as the durable and published credential.
 func (r *Registry) refresh(ctx context.Context, connectionID string, stored Secret, generation uint64, current *entry, exchanger Exchanger) (Secret, error) {
 	refreshed, err := exchanger(ctx, stored)
 	if err != nil {
@@ -213,19 +225,15 @@ func (r *Registry) refresh(ctx context.Context, connectionID string, stored Secr
 	if strings.TrimSpace(refreshed.RefreshToken) == "" {
 		refreshed.RefreshToken = stored.RefreshToken
 	}
-	// The exchange is over; if a newer install happened meanwhile, discard this
-	// stale result instead of persisting it over the newer credential.
+	current.installMu.Lock()
+	defer current.installMu.Unlock()
+	// Still current under the install lock: nothing has replaced this generation
+	// since the exchange started.
 	if r.superseded(current, generation) {
 		return Secret{}, ErrSuperseded
 	}
 	if r.store != nil {
 		commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		// Re-check under the commit window: an import may have landed between the
-		// exchange and this write.
-		if r.superseded(current, generation) {
-			cancel()
-			return Secret{}, ErrSuperseded
-		}
 		err := r.store.RotateSecret(commitCtx, connectionID, refreshed)
 		cancel()
 		if err != nil {
@@ -258,21 +266,26 @@ func (r *Registry) Import(ctx context.Context, connectionID, identity string, se
 	if r.store == nil {
 		return ErrKeyRequired
 	}
-	// Bump the generation before the durable write so any in-flight refresh that
-	// started earlier cannot commit or publish over this import.
+	// The generation bump and the durable write are one critical section under the
+	// install lock, so a refresh cannot interleave between them and overwrite this
+	// import with a stale rotated secret.
+	current.installMu.Lock()
 	current.mu.Lock()
 	current.generation++
 	current.mu.Unlock()
 	if err := r.store.RotateSecret(ctx, connectionID, secret); err != nil {
+		current.installMu.Unlock()
 		return err
 	}
 	if err := r.store.RecordCredentialEvent(ctx, connectionID, "import", ""); err != nil {
+		current.installMu.Unlock()
 		return err
 	}
 	current.mu.Lock()
 	current.current = secret
 	current.seeded = true
 	current.mu.Unlock()
+	current.installMu.Unlock()
 	return nil
 }
 
