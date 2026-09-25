@@ -57,3 +57,5 @@ Revert this PR to remove these identities; no durable state depends on them.
 - [x] Dedicated feature worktree.
 - [x] Worktree bound to this branch only.
 - [x] Review fixes remain in this worktree.
+
+CI/review retrigger: Hermes check failed without publishing a review or details payload; CI passed. Documentation-only head refresh.
