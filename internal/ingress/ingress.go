@@ -20,6 +20,7 @@ import (
 	systemoneadapter "github.com/raufimusaddiq/routeweft/internal/protocol/systemone"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
+	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
 	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
@@ -45,6 +46,12 @@ type Options struct {
 	State                     *runtime.RuntimeState
 	Strategy                  routing.Strategy
 	StickyLimit               uint64
+	// OnUsage receives upstream-reported token counts, including cache counts.
+	// The later telemetry PR wires this callback to the bounded Usage queue.
+	OnUsage func(providerID, model string, usage promptcache.Usage)
+	// TransformFinalBody runs Routeweft token savers on the final outbound body
+	// before cache anchors are applied (BDR-012). Errors leave the body unchanged.
+	TransformFinalBody func(protocol string, body []byte) ([]byte, error)
 	// AllowPrivateUpstreams is the explicit trusted-local operator policy. It is
 	// off by default so operator-supplied provider URLs cannot reach loopback,
 	// LAN, or metadata addresses.
@@ -187,6 +194,16 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadGateway, "request_translation_failed", err.Error())
 		return
 	}
+	if h.opts.TransformFinalBody != nil {
+		if transformed, transformErr := h.opts.TransformFinalBody(provider.Protocol, outbound); transformErr == nil {
+			outbound = transformed
+		}
+	}
+	if provider.Protocol == anthropicadapter.MessagesProtocol {
+		if anchored, anchorErr := promptcache.Anchor(outbound, promptcache.DefaultBudget); anchorErr == nil {
+			outbound = anchored
+		}
+	}
 	upstreamRequest, err := h.newUpstreamRequest(r, provider, endpoint, outbound, headers)
 	if err != nil {
 		h.writeError(w, http.StatusBadGateway, "upstream_configuration_error", err.Error())
@@ -204,7 +221,29 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	if request.Stream {
+		if h.opts.OnUsage != nil {
+			scanner := &usageScanner{}
+			response.Body = struct {
+				io.Reader
+				io.Closer
+			}{Reader: io.TeeReader(response.Body, scanner), Closer: response.Body}
+			h.copyMessagesStream(w, r, response)
+			if usage, ok := scanner.usage(); ok && scanner.complete {
+				h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
+			}
+			return
+		}
 		h.copyMessagesStream(w, r, response)
+		return
+	}
+	if h.opts.OnUsage != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
+		responseBody, readErr := io.ReadAll(response.Body)
+		if readErr == nil {
+			if usage, ok := promptcache.ParseAnthropicUsage(responseBody); ok {
+				h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
+			}
+		}
+		_, _ = w.Write(responseBody)
 		return
 	}
 	_, _ = io.Copy(w, response.Body)
@@ -541,6 +580,45 @@ func isBlankSSELine(line []byte) bool {
 func isSSEDataLine(line []byte) bool {
 	return bytes.HasPrefix(line, []byte("data:"))
 }
+
+// usageScanner observes a streamed Anthropic SSE body and merges the usage
+// fields the upstream reports. It only latches completion on the terminal
+// message_stop event so a cancelled stream never reports partial accounting.
+type usageScanner struct {
+	buffer   []byte
+	merged   promptcache.Usage
+	found    bool
+	complete bool
+}
+
+func (s *usageScanner) Write(chunk []byte) (int, error) {
+	s.buffer = append(s.buffer, chunk...)
+	for {
+		index := bytes.IndexByte(s.buffer, '\n')
+		if index < 0 {
+			break
+		}
+		line := bytes.TrimSpace(s.buffer[:index])
+		s.buffer = s.buffer[index+1:]
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		payload := bytes.TrimSpace(line[len("data:"):])
+		var event struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(payload, &event) == nil && event.Type == "message_stop" {
+			s.complete = true
+		}
+		if usage, ok := promptcache.ParseAnthropicUsage(payload); ok {
+			s.merged = s.merged.Merge(usage)
+			s.found = true
+		}
+	}
+	return len(chunk), nil
+}
+
+func (s *usageScanner) usage() (promptcache.Usage, bool) { return s.merged, s.found }
 
 // copyResponsesStream relays Responses SSE events incrementally. It holds one
 // terminal event until EOF, filters duplicates/non-final terminals, and reports
