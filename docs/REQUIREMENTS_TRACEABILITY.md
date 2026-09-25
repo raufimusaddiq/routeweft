@@ -9,7 +9,7 @@ This file proves that every major product area has a requirement owner, technica
 | Public API + aliases | PRD §5 | SPEC request/protocol sections | Sprint 2 | protocol fixtures, auth/CORS/body/h2c/cancel tests |
 | Built-in providers (80) | PRD §6 + PROVIDER_BASELINE | SPEC provider modules | Sprint 5 | every provider row implemented/tested for broad-provider GA |
 | Generic Provider | PRD §7 | SPEC Generic Provider section | Sprint 5 | native Chat/Responses/Messages + validation/SSRF/model fallback fixtures |
-| Credentials/import/refresh | PRD §8 | SPEC OAuth/provider modules | Sprint 5 | rotation/singleflight/import fixtures |
+| Credentials/import/refresh | PRD §8 | SPEC OAuth/provider modules | Sprint 5 | sealed-at-rest store, rotation/singleflight/import fixtures |
 | Models/aliases/pricing | PRD §9 | SPEC RuntimeSnapshot/provider catalog | Sprint 2/5 | model list/alias/custom/disabled/dynamic catalog tests |
 | Provider/account routing | PRD §10 | SPEC routing/runtime state | Sprint 3 | fill-first/RR/sticky/fallback/quota/cooldown tests |
 | Combo | PRD §11 | SPEC Combo | Sprint 3 | ordered/RR/sticky/capability fixtures |
