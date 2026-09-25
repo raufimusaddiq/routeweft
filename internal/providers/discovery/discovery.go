@@ -154,6 +154,16 @@ func ParseModels(body []byte) ([]string, error) {
 		} `json:"models"`
 	}
 	envelopeErr := json.Unmarshal(body, &envelope)
+	// A syntax error can still leave partially populated slices. Never trust a
+	// partial decode: a malformed catalog must not replace the durable catalog,
+	// so only a clean envelope or a clean bare-array decode is accepted.
+	if envelopeErr != nil {
+		var bare []string
+		if json.Unmarshal(body, &bare) != nil {
+			return nil, errors.New("model discovery returned invalid JSON")
+		}
+		return normalizeAndSort(bare), nil
+	}
 	seen := make(map[string]bool)
 	models := make([]string, 0, len(envelope.Data)+len(envelope.Models))
 	add := func(id string) {
@@ -170,17 +180,21 @@ func ParseModels(body []byte) ([]string, error) {
 	for _, entry := range envelope.Models {
 		add(entry.Name)
 	}
-	if envelopeErr != nil || len(models) == 0 {
-		var bare []string
-		if json.Unmarshal(body, &bare) == nil {
-			for _, id := range bare {
-				add(id)
-			}
-		}
-	}
-	if envelopeErr != nil && len(models) == 0 {
-		return nil, errors.New("model discovery returned invalid JSON")
-	}
 	sort.Strings(models)
 	return models, nil
+}
+
+func normalizeAndSort(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	models := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		id = strings.TrimPrefix(id, "models/")
+		if id != "" && !seen[id] {
+			seen[id] = true
+			models = append(models, id)
+		}
+	}
+	sort.Strings(models)
+	return models
 }

@@ -110,3 +110,27 @@ func TestParseModelsRejectsInvalidJSON(t *testing.T) {
 		t.Fatal("accepted invalid JSON")
 	}
 }
+
+func TestParseModelsRejectsPartiallyDecodableJSON(t *testing.T) {
+	// A valid data[] prefix followed by a syntax error must not yield the partial
+	// ID: accepting it would let a truncated catalog replace the durable one.
+	partial := `{"data":[{"id":"valid-before-error"}, }`
+	if models, err := ParseModels([]byte(partial)); err == nil {
+		t.Fatalf("accepted partial decode: %v", models)
+	}
+	// A truncated bare array is also rejected rather than partially applied.
+	if models, err := ParseModels([]byte(`["a",`)); err == nil {
+		t.Fatalf("accepted truncated array: %v", models)
+	}
+}
+
+func TestParseModelsAcceptsCleanShapes(t *testing.T) {
+	models, err := ParseModels([]byte(`{"data":[{"id":"b"},{"id":"a"},{"id":"a"}]}`))
+	if err != nil || len(models) != 2 || models[0] != "a" || models[1] != "b" {
+		t.Fatalf("models=%v err=%v", models, err)
+	}
+	models, err = ParseModels([]byte(`["z","y"]`))
+	if err != nil || len(models) != 2 || models[0] != "y" || models[1] != "z" {
+		t.Fatalf("bare models=%v err=%v", models, err)
+	}
+}
