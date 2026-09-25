@@ -9,7 +9,9 @@ import (
 
 // Status is the routing-relevant quota state (PRD-ROUTE-004). Unknown and Error
 // are deliberately not exhaustion, so a failed read can never remove an account
-// from rotation (PROVIDER_BASELINE §8).
+// from rotation (PROVIDER_BASELINE §8). Cooldown is not derived from quota data:
+// it is owned by routing classification (Retry-After / upstream status) and
+// lives in RuntimeState alongside the quota observation.
 type Status string
 
 const (
@@ -61,6 +63,8 @@ func RemainingPercent(remaining float64) *float64 {
 // DeriveStatus classifies a snapshot from its windows at the given time.
 // Exhausted requires a known zero remaining with a reset still in the future or
 // unspecified; a window with no bound stays available/unknown, not exhausted.
+// Cooldown is produced by routing classification, not by quota data, so this
+// method never returns StatusCooldown; callers combine the two axes themselves.
 func (s State) DeriveStatus(now time.Time) Status {
 	if s.Status == StatusError {
 		return StatusError

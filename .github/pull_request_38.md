@@ -23,6 +23,8 @@ No new provider usage endpoints, no quota admin API/UI (Sprint 6), no background
 
 Quota now distinguishes all five PRD-ROUTE-004 states: available, exhausted, cooldown, unknown and error. An account is exhausted only when a bounded window reports zero remaining with a reset still in the future; unlimited and unbounded windows never mark exhaustion, and a reset that has already passed stops constraining routing. A quota read failure is published as error with no remaining bound, so it is never inferred as exhaustion. Multi-window snapshots reduce to the most constrained window for eligibility. Reset-credit consumption remains representable through a provider-agnostic `ResetCreditConsumer`.
 
+Production wiring: `App.Initialize` builds a `quota.Service` over the durable credential store/registry (using `ROUTEWEFT_CREDENTIAL_KEY`); `App.Serve` starts its background refresh loop and `App.RefreshQuota` is the operator-initiated entry point. `cooldown` is not derived from quota data — it stays owned by routing classification — so quota only produces available/exhausted/unknown/error and the routing layer combines that with the cooldown axis.
+
 ## Storage / migration impact
 
 - [x] No storage/schema/migration impact.
