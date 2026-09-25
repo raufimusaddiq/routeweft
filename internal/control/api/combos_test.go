@@ -89,3 +89,21 @@ func TestComboCreateReadAndDelete(t *testing.T) {
 		t.Fatalf("second delete status=%d", missing.Code)
 	}
 }
+
+// PRD-COMBO-001 requires aliases to be usable as Combo members.
+func TestComboAcceptsAliasMember(t *testing.T) {
+	handler, mux, store, _, cookie := newProvidersAPI(t, false, nil)
+	defer store.Close()
+	seedComboCatalog(t, handler)
+	ctx := context.Background()
+	if err := handler.opts.ProviderCatalog.PutAlias(ctx, "smart", runtime.ModelRef{ProviderID: "openai", ModelID: "gpt-5"}); err != nil {
+		t.Fatal(err)
+	}
+	created := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/combos", `{"name":"aliased","members":[{"providerId":"openai","modelId":"smart"}]}`)
+	if created.Code != http.StatusOK {
+		t.Fatalf("alias member status=%d body=%s", created.Code, created.Body.String())
+	}
+	if !strings.Contains(created.Body.String(), `"modelId":"gpt-5"`) {
+		t.Fatalf("alias not resolved in response: %s", created.Body.String())
+	}
+}

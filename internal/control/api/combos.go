@@ -46,7 +46,7 @@ func (h *Handler) handlePutCombo(w http.ResponseWriter, r *http.Request) {
 	}
 	snapshot, err := h.opts.Combos.PutCombo(r.Context(), combo)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "combo_save_failed", "Combo could not be saved; members must reference configured models")
+		writeError(w, http.StatusBadRequest, "combo_save_failed", err.Error())
 		return
 	}
 	if h.opts.Events != nil {

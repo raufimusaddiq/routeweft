@@ -304,7 +304,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   .transport-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .providers-layout { grid-template-columns: minmax(0, 1fr); }
   .provider-catalog { max-height: 280px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-	  .combos-layout { grid-template-columns: minmax(0, 1fr); }
+    .combos-layout { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 700px) {
@@ -340,9 +340,9 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   .connection-row { grid-template-columns: minmax(0, 1fr) auto; }
   .connection-row .proxy-select { grid-column: 1 / -1; }
   .providers-toolbar .button-primary, .providers-toolbar .button-secondary { flex: 1; }
-	  .combos-toolbar { flex-wrap: wrap; }
-	  .combos-toolbar .count-label { flex: 1 1 100%; }
-	  .combo-form-grid { grid-template-columns: minmax(0, 1fr); }
+    .combos-toolbar { flex-wrap: wrap; }
+    .combos-toolbar .count-label { flex: 1 1 100%; }
+    .combo-form-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 380px) {

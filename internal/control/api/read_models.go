@@ -666,7 +666,6 @@ func slice[T any](items []T, p page) []T {
 	}
 	return items[start:end]
 }
-func itemsSlice[T any](items []T, p page) []T { return slice(items, p) }
 func putNull(dst map[string]any, key string, value sql.NullString) {
 	if value.Valid {
 		dst[key] = value.String

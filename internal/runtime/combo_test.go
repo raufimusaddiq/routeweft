@@ -133,3 +133,64 @@ func TestCompileRejectsUnknownComboMember(t *testing.T) {
 		t.Fatal("unknown member compiled")
 	}
 }
+
+// Aliases are usable as Combo members and resolve to their target provider/model
+// so capability lookups and dispatch work uniformly (PRD-COMBO-001).
+func TestCompileResolvesAliasComboMember(t *testing.T) {
+	manager, store := newTestManager(t)
+	defer store.Close()
+	ctx := context.Background()
+	comboModels(t, manager)
+	if err := manager.PutAlias(ctx, "smart", ModelRef{ProviderID: "openai", ModelID: "gpt-vision"}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := manager.SetCombos(ctx, []Combo{{ID: "c", Name: "alias-combo", Members: []ComboMember{{ProviderID: "openai", ModelID: "smart", Selected: true}}}})
+	if err != nil {
+		t.Fatalf("alias member rejected: %v", err)
+	}
+	combo, ok := snapshot.ComboByName("alias-combo")
+	if !ok || len(combo.Members) != 1 {
+		t.Fatalf("combo=%+v ok=%v", combo, ok)
+	}
+	if combo.Members[0].ProviderID != "openai" || combo.Members[0].ModelID != "gpt-vision" {
+		t.Fatalf("alias not canonicalized: %+v", combo.Members[0])
+	}
+	capabilities, _, ok := snapshot.ModelCapabilities("openai", "gpt-vision")
+	if !ok || len(capabilities) == 0 || capabilities[0] != "vision" {
+		t.Fatalf("alias capability lookup failed: %v ok=%v", capabilities, ok)
+	}
+}
+
+// An update matches by ID only, so renaming cannot clash with another Combo;
+// creating a second Combo with an existing name is rejected.
+func TestPutComboRenameAndDuplicateName(t *testing.T) {
+	manager, store := newTestManager(t)
+	defer store.Close()
+	ctx := context.Background()
+	comboModels(t, manager)
+	first, err := manager.PutCombo(ctx, Combo{ID: "c1", Name: "alpha", Members: []ComboMember{{ProviderID: "openai", ModelID: "gpt-text", Selected: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.PutCombo(ctx, Combo{ID: "c2", Name: "beta", Members: []ComboMember{{ProviderID: "openai", ModelID: "gpt-text", Selected: true}}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = first
+	// Renaming by ID updates that record in place (no new entry created).
+	renamed, err := manager.PutCombo(ctx, Combo{ID: "c1", Name: "gamma", Members: []ComboMember{{ProviderID: "openai", ModelID: "gpt-text", Selected: true}}})
+	if err != nil {
+		t.Fatalf("rename failed: %v", err)
+	}
+	if len(renamed.Combos()) != 2 {
+		t.Fatalf("combos=%d want 2", len(renamed.Combos()))
+	}
+	// A fresh create reusing a taken name is rejected.
+	if _, err := manager.PutCombo(ctx, Combo{Name: "beta", Members: []ComboMember{{ProviderID: "openai", ModelID: "gpt-text", Selected: true}}}); err == nil {
+		t.Fatal("duplicate name accepted on create")
+	}
+	// Renaming onto a name another Combo already owns is rejected rather than
+	// silently creating two entries with one name.
+	if _, err := manager.PutCombo(ctx, Combo{ID: "c1", Name: "beta", Members: []ComboMember{{ProviderID: "openai", ModelID: "gpt-text", Selected: true}}}); err == nil {
+		t.Fatal("rename onto an existing name accepted")
+	}
+}
