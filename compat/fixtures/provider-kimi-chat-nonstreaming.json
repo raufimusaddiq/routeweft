@@ -1,0 +1,26 @@
+{
+  "id": "provider-kimi-chat-nonstreaming",
+  "protocol": "openai-chat",
+  "kind": "non-streaming",
+  "description": "Kimi native Chat Completions: a dual-auth, multi-transport provider served over the shared OpenAI Chat adapter.",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer fixture-provider-credential"
+    },
+    "body": "{\"model\":\"kimi-k3\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hi.\"}],\"max_tokens\":16}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"id\":\"chatcmpl-kimi-fixture\",\"object\":\"chat.completion\",\"created\":1735689600,\"model\":\"kimi-k3\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hi.\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":2,\"total_tokens\":11}}"
+  },
+  "usage": {
+    "inputTokens": 9,
+    "outputTokens": 2
+  }
+}
