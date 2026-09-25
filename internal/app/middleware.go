@@ -34,6 +34,12 @@ func withBodyLimit(limit int64, next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Admin routes carry their own bounded-upload handling (SPEC §25), so the
+		// public inference body limit applies only to inference paths.
+		if !isInferencePath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if r.ContentLength > limit {
 			http.Error(w, "request body exceeds configured limit", http.StatusRequestEntityTooLarge)
 			return

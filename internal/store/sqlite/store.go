@@ -168,6 +168,17 @@ func (s *Store) IntegrityCheck(ctx context.Context) error {
 // Backup writes an online-consistent SQLite backup without replacing an
 // existing destination.
 func (s *Store) Backup(ctx context.Context, destination string) error {
+	return BackupTo(ctx, s, destination)
+}
+
+// BackupTo writes an online-consistent copy of source into destination. The
+// destination must not already exist, so a rollback copy can be produced
+// without risking an existing artifact.
+func BackupTo(ctx context.Context, source *Store, destination string) error {
+	if source == nil {
+		return errors.New("backup source is required")
+	}
+	s := source
 	if destination == "" || destination == s.path {
 		return errors.New("backup destination must be non-empty and differ from live database")
 	}

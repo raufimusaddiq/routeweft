@@ -319,11 +319,17 @@ func (s *Service) FlushNow(ctx context.Context) error {
 	done := make(chan struct{})
 	select {
 	case s.flushNow <- done:
+	case <-s.closedCh:
+		// Run drains the queue before closing closedCh, so an exit racing this
+		// request already performed the final flush.
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 	select {
 	case <-done:
+		return nil
+	case <-s.closedCh:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

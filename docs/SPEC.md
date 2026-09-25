@@ -757,6 +757,31 @@ Restore:
 
 Never overwrite the live DB with an unvalidated file.
 
+The online admin API uses:
+
+```text
+GET  /admin/v1/backup
+POST /admin/v1/backup/restore/check
+POST /admin/v1/backup/restore
+```
+
+`GET /backup` streams a ZIP containing exactly `routeweft.sqlite` and
+`routeweft.sqlite.meta.json`. The upload endpoints accept that archive, cap
+compressed and total uncompressed size at 8 GiB, and reject extra, duplicate,
+non-regular, or mismatched entries. Restore-check validates integrity, schema,
+metadata, supported migrations, and RuntimeSnapshot compilation on a private
+copy; it never mutates live state.
+
+Restore activation returns HTTP 202 only after candidate validation/staging.
+The serving process then rejects new requests, drains existing work for at most
+30 seconds, closes remaining connections if needed, flushes accepted telemetry,
+and stops schedulers. It creates a non-overwriting
+`routeweft.sqlite.pre-restore-<timestamp>` rollback copy before atomically
+replacing the database. It recompiles process state, invalidates admin sessions,
+and resumes serving in the same process. If activation cannot recover either
+the candidate or rollback DB, readiness stays false and the process exits with
+an error. Offline CLI restore remains check-only.
+
 ## 26. CLI surface
 
 Planned operational commands:
