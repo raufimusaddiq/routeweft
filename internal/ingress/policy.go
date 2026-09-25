@@ -3,6 +3,7 @@ package ingress
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -37,70 +38,21 @@ func (h *Handler) PlanCombo(snapshot *runtime.RuntimeSnapshot, name string, requ
 		capabilities, contextWindow, _ := snapshot.ModelCapabilities(member.ProviderID, member.ModelID)
 		routed = append(routed, routing.Member{ProviderID: member.ProviderID, ModelID: member.ModelID, Position: member.Position, Capabilities: capabilities, ContextWindow: contextWindow})
 	}
-	var adapterTier, fallbackTier []routing.Member
-	if len(requirements) > 0 {
-		if !anySatisfies(routed, requirements) {
-			adapterTier = routing.AdapterCandidates(requirements, func(pool []routing.Member) []routing.Member {
-				ordered := append([]routing.Member(nil), pool...)
-				for _, requirement := range requirements {
-					var tier []routing.Member
-					for _, member := range ordered {
-						if member.Has(requirement.Name) {
-							tier = append(tier, member)
-						}
-					}
-					if len(tier) < 2 {
-						continue
-					}
-					switch requirement.Strategy {
-					case routing.StrategyRoundRobin:
-						cursor := uint64(0)
-						if h.opts.State != nil {
-							cursor = h.opts.State.NextCursor("combo-adapter|" + name + "|" + requirement.Name)
-						}
-						start := int(cursor % uint64(len(tier)))
-						tier = append(tier[start:], tier[:start]...)
-					case routing.StrategyStickyRR:
-						cursor := uint64(0)
-						if h.opts.State != nil {
-							cursor = h.opts.State.NextCursor("combo-adapter|" + name + "|" + requirement.Name)
-						}
-						start := int((cursor / routing.StickyRotations(snapshot.ComboStickyLimit(name))) % uint64(len(tier)))
-						tier = append(tier[start:], tier[:start]...)
-					}
-					// Rebuild this capability tier in its original slots; adapter-only
-					// rotation must not reorder other capability groups.
-					i := 0
-					for index := range ordered {
-						if ordered[index].Has(requirement.Name) {
-							ordered[index] = tier[i]
-							i++
-						}
-					}
-				}
-				return ordered
-			})
-		}
-		routed = routing.OrderCombo(routed, requirements)
-		for _, member := range routed {
-			if !satisfies(member, requirements) {
-				fallbackTier = append(fallbackTier, member)
-			}
-		}
-		if len(fallbackTier) > 0 {
-			fallbackSet := make(map[string]struct{}, len(fallbackTier))
-			for _, member := range fallbackTier {
-				fallbackSet[member.ProviderID+"\x00"+member.ModelID] = struct{}{}
-			}
-			filtered := routed[:0]
-			for _, member := range routed {
-				if _, fallback := fallbackSet[member.ProviderID+"\x00"+member.ModelID]; !fallback {
-					filtered = append(filtered, member)
-				}
-			}
-			routed = filtered
+	// Adapters are consulted per unsatisfied hard capability and stay in their
+	// own tier ahead of the Combo fallback order (SPEC §15.3-15.4).
+	var adapterRequirements []routing.CapabilityRequirement
+	for _, requirement := range requirements {
+		// A Combo member already carrying this capability is promoted by the
+		// capability reorder below; the adapter pool is only for unmet ones.
+		if !anyMemberHas(routed, requirement.Name) {
+			adapterRequirements = append(adapterRequirements, requirement)
 		}
 	}
+	adapterTier := eligibleAdapters(adapterRequirements, routed)
+	if len(adapterTier) > 0 {
+		adapterTier = orderAdapterTier(adapterTier, adapterRequirements, name, snapshot, h)
+	}
+	routed = routing.OrderCombo(routed, requirements)
 	strategy := routing.StrategyFillFirst
 	switch snapshot.ComboStrategy(name) {
 	case "round-robin":
@@ -122,14 +74,81 @@ func (h *Handler) PlanCombo(snapshot *runtime.RuntimeSnapshot, name string, requ
 	for _, adapter := range adapterTier {
 		ordered = append(ordered, runtime.ComboMember{ProviderID: adapter.ProviderID, ModelID: adapter.ModelID, Position: len(ordered), Selected: true})
 	}
-	for position, candidate := range selection.Candidates {
+	for _, candidate := range selection.Candidates {
 		providerID, modelID, _ := strings.Cut(candidate.ID, "\x00")
-		ordered = append(ordered, runtime.ComboMember{ProviderID: providerID, ModelID: modelID, Position: position, Selected: true})
-	}
-	for _, member := range fallbackTier {
-		ordered = append(ordered, runtime.ComboMember{ProviderID: member.ProviderID, ModelID: member.ModelID, Position: len(ordered), Selected: true})
+		ordered = append(ordered, runtime.ComboMember{ProviderID: providerID, ModelID: modelID, Position: len(ordered), Selected: true})
 	}
 	return ordered, true
+}
+
+func anyMemberHas(members []routing.Member, capability string) bool {
+	for _, member := range members {
+		if member.Has(capability) {
+			return true
+		}
+	}
+	return false
+}
+
+// eligibleAdapters keeps only enabled, non-empty pools and drops candidates
+// already present in the Combo fallback list so a member never appears twice.
+func eligibleAdapters(requirements []routing.CapabilityRequirement, routed []routing.Member) []routing.Member {
+	members := routing.AdapterCandidates(requirements, nil)
+	present := make(map[string]struct{}, len(routed))
+	for _, member := range routed {
+		present[member.ProviderID+"\x00"+member.ModelID] = struct{}{}
+	}
+	kept := members[:0]
+	for _, member := range members {
+		if _, exists := present[member.ProviderID+"\x00"+member.ModelID]; exists {
+			continue
+		}
+		kept = append(kept, member)
+	}
+	return append([]routing.Member(nil), kept...)
+}
+
+// orderAdapterTier applies each capability's fallback/RR strategy within its
+// own group using Combo-local adapter cursors.
+func orderAdapterTier(members []routing.Member, requirements []routing.CapabilityRequirement, name string, snapshot *runtime.RuntimeSnapshot, h *Handler) []routing.Member {
+	ordered := make([]routing.Member, 0, len(members))
+	claimed := make(map[string]struct{}, len(members))
+	for _, requirement := range requirements {
+		var group []routing.Member
+		for _, member := range members {
+			key := member.ProviderID + "\x00" + member.ModelID
+			if _, taken := claimed[key]; taken || !member.Has(requirement.Name) {
+				continue
+			}
+			group = append(group, member)
+		}
+		sort.SliceStable(group, func(i, j int) bool { return group[i].Position < group[j].Position })
+		if len(group) > 1 {
+			cursor := uint64(0)
+			if h.opts.State != nil {
+				cursor = h.opts.State.NextCursor("combo-adapter|" + name + "|" + requirement.Name)
+			}
+			switch requirement.Strategy {
+			case routing.StrategyRoundRobin:
+				start := int(cursor % uint64(len(group)))
+				group = append(group[start:], group[:start]...)
+			case routing.StrategyStickyRR:
+				start := int((cursor / routing.StickyRotations(snapshot.ComboStickyLimit(name))) % uint64(len(group)))
+				group = append(group[start:], group[:start]...)
+			}
+		}
+		for _, member := range group {
+			claimed[member.ProviderID+"\x00"+member.ModelID] = struct{}{}
+		}
+		ordered = append(ordered, group...)
+	}
+	for _, member := range members {
+		if _, taken := claimed[member.ProviderID+"\x00"+member.ModelID]; taken {
+			continue
+		}
+		ordered = append(ordered, member)
+	}
+	return ordered
 }
 
 // PlanComboRequest selects a Combo route and applies smaller-context trimming
@@ -140,9 +159,24 @@ func (h *Handler) PlanComboRequest(snapshot *runtime.RuntimeSnapshot, name strin
 		return ordered, append([]string(nil), messages...), ok
 	}
 	targetContext := 0
-	_, targetContext, _ = snapshot.ModelCapabilities(ordered[0].ProviderID, ordered[0].ModelID)
+	// Any ordered candidate may be attempted on fallback, so trim to the
+	// smallest context across the whole planned tier (SPEC §15.4).
+	for _, member := range ordered {
+		_, contextWindow, ok := snapshot.ModelCapabilities(member.ProviderID, member.ModelID)
+		if !ok || contextWindow <= 0 {
+			continue
+		}
+		if targetContext == 0 || contextWindow < targetContext {
+			targetContext = contextWindow
+		}
+	}
+	// Adapter ceilings come from the request requirements because an adapter
+	// model may not be in the discovered catalog.
 	for _, requirement := range requirements {
-		if requirement.AdapterEnabled && !anySatisfies(comboRoutingMembers(snapshot, name), requirements) && requirement.AdapterContextWindow > 0 && (targetContext == 0 || requirement.AdapterContextWindow < targetContext) {
+		if requirement.AdapterContextWindow <= 0 {
+			continue
+		}
+		if targetContext == 0 || requirement.AdapterContextWindow < targetContext {
 			targetContext = requirement.AdapterContextWindow
 		}
 	}
@@ -150,19 +184,6 @@ func (h *Handler) PlanComboRequest(snapshot *runtime.RuntimeSnapshot, name strin
 		budget.Limit = targetContext
 	}
 	return ordered, routing.TrimHistory(messages, budget), true
-}
-
-func comboRoutingMembers(snapshot *runtime.RuntimeSnapshot, name string) []routing.Member {
-	combo, ok := snapshot.ComboByName(name)
-	if !ok {
-		return nil
-	}
-	members := make([]routing.Member, 0, len(combo.Members))
-	for _, member := range combo.Resolve() {
-		caps, context, _ := snapshot.ModelCapabilities(member.ProviderID, member.ModelID)
-		members = append(members, routing.Member{ProviderID: member.ProviderID, ModelID: member.ModelID, Position: member.Position, Capabilities: caps, ContextWindow: context})
-	}
-	return members
 }
 
 // TrimComboHistoryForTarget applies an adapter target's context ceiling to
@@ -200,11 +221,13 @@ func anySatisfies(members []routing.Member, requirements []routing.CapabilityReq
 }
 
 // comboAccounts encodes provider and model without an ambiguous separator so
-// selection order can be decoded losslessly.
+// selection order can be decoded losslessly. Priority is the current slice
+// index so an already-applied capability reorder survives Select's stable
+// priority sort (SPEC §15.3).
 func comboAccounts(members []routing.Member) []routing.Account {
 	accounts := make([]routing.Account, 0, len(members))
-	for _, member := range members {
-		accounts = append(accounts, routing.Account{ID: member.ProviderID + "\x00" + member.ModelID, Priority: member.Position, Enabled: true})
+	for index, member := range members {
+		accounts = append(accounts, routing.Account{ID: member.ProviderID + "\x00" + member.ModelID, Priority: index, Enabled: true})
 	}
 	return accounts
 }
