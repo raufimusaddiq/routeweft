@@ -101,6 +101,35 @@ func TestTelemetryServiceIsWiredIntoTheApp(t *testing.T) {
 	}
 }
 
+func TestAdminBootstrapProvisionOnceAndSessionGate(t *testing.T) {
+	ctx := context.Background()
+	application := New(Config{Listen: ":0", DataDir: t.TempDir(), AdminBootstrapUsername: "operator", AdminBootstrapPassword: "s3cret"}, nil)
+	if err := application.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if application.admin == nil || application.control == nil {
+		t.Fatal("admin store/control API not wired")
+	}
+	// The unauthenticated admin settings route is rejected.
+	recorder := httptest.NewRecorder()
+	application.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/v1/settings", nil))
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated settings status=%d want 401", recorder.Code)
+	}
+	// A fresh app on the same data dir must not re-provision from a stale env.
+	again := New(Config{Listen: ":0", DataDir: application.cfg.DataDir, AdminBootstrapUsername: "attacker", AdminBootstrapPassword: "pw"}, nil)
+	if err := again.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	account, ok, err := again.admin.Authenticate(ctx, "operator", "s3cret")
+	if err != nil || !ok || account.Username != "operator" {
+		t.Fatalf("original admin lost: account=%+v ok=%v err=%v", account, ok, err)
+	}
+	if _, ok, _ := again.admin.Authenticate(ctx, "attacker", "pw"); ok {
+		t.Fatal("stale bootstrap credential re-provisioned an admin")
+	}
+}
+
 func TestTelemetryOptionsMapSettings(t *testing.T) {
 	opts := telemetryOptions(map[string]string{
 		"enableObservability":          "true",

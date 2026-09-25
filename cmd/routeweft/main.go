@@ -380,7 +380,12 @@ func serve(args []string) error {
 		}
 		key = decoded
 	}
-	return app.New(app.Config{Listen: *listen, DataDir: *dataDir, MaxBodyBytes: *maxBody, CORSOrigins: splitList(*corsOrigins), CredentialKey: key, AllowPrivateUpstreams: *allowPrivate}, log).Serve(ctx)
+	adminPassword := os.Getenv("ROUTEWEFT_BOOTSTRAP_ADMIN_PASSWORD")
+	adminUsername := strings.TrimSpace(os.Getenv("ROUTEWEFT_BOOTSTRAP_ADMIN_USERNAME"))
+	if adminPassword != "" && adminUsername == "" {
+		adminUsername = "admin"
+	}
+	return app.New(app.Config{Listen: *listen, DataDir: *dataDir, MaxBodyBytes: *maxBody, CORSOrigins: splitList(*corsOrigins), CredentialKey: key, AllowPrivateUpstreams: *allowPrivate, AdminBootstrapUsername: adminUsername, AdminBootstrapPassword: adminPassword}, log).Serve(ctx)
 }
 
 func envBool(key string, fallback bool) bool {

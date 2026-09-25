@@ -12,6 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/raufimusaddiq/routeweft/internal/adminauth"
+	controlapi "github.com/raufimusaddiq/routeweft/internal/control/api"
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/ingress"
 	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
@@ -38,6 +41,13 @@ type Config struct {
 	// AllowPrivateUpstreams mirrors the trusted-local operator policy so outbound
 	// proxy validation and inference may reach LAN/self-hosted destinations.
 	AllowPrivateUpstreams bool
+	// AdminBootstrapUsername/Password provision the first dashboard admin when the
+	// database has none (RUNBOOK §bootstrap). Both are ignored once an admin
+	// exists, so a stale environment value cannot re-provision or overwrite one.
+	AdminBootstrapUsername string
+	AdminBootstrapPassword string
+	// AdminSessionTTL overrides the dashboard session lifetime (zero uses default).
+	AdminSessionTTL time.Duration
 }
 
 // loadSnapshot exposes the active snapshot to the proxy binder's binding source.
@@ -86,6 +96,8 @@ type App struct {
 	quota   *quota.Service
 	usage   *telemetry.Service
 	details *telemetry.SQLiteDetailStore
+	admin   *adminauth.Store
+	control *controlapi.Handler
 	ready   atomic.Bool
 }
 
@@ -163,9 +175,42 @@ func (a *App) Initialize(ctx context.Context) error {
 		_ = store.Close()
 		return err
 	}
+	if err := a.initializeAdmin(ctx, store, manager); err != nil {
+		_ = store.Close()
+		return err
+	}
 	a.ready.Store(true)
 	return nil
 }
+
+// initializeAdmin provisions the first dashboard admin when none exists and
+// builds the session-gated control API. A missing bootstrap credential is not an
+// error while no admin exists: the control API stays mounted but returns 409
+// until an operator provisions one (RUNBOOK §bootstrap).
+func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager *runtime.Manager) error {
+	a.admin = adminauth.NewStore(store.DB())
+	if (a.cfg.AdminBootstrapUsername == "") != (a.cfg.AdminBootstrapPassword == "") {
+		return errors.New("initial admin bootstrap username and password must be configured together")
+	}
+	if a.cfg.AdminBootstrapUsername != "" && a.cfg.AdminBootstrapPassword != "" {
+		has, err := a.admin.HasAdmin(ctx)
+		if err != nil {
+			return fmt.Errorf("check admin account: %w", err)
+		}
+		if !has {
+			if _, err := a.admin.Bootstrap(ctx, newAdminID(), a.cfg.AdminBootstrapUsername, a.cfg.AdminBootstrapPassword); err != nil {
+				return fmt.Errorf("bootstrap admin account: %w", err)
+			}
+			a.log.Info("provisioned initial admin account", "username", a.cfg.AdminBootstrapUsername)
+		}
+	}
+	sessions := adminauth.NewSessionManager(a.cfg.AdminSessionTTL)
+	a.control = controlapi.New(controlapi.Options{Accounts: a.admin, Sessions: sessions, Settings: manager})
+	return nil
+}
+
+// newAdminID returns a stable, non-secret admin identifier.
+func newAdminID() string { return "admin_" + uuid.NewString() }
 
 // initializeQuota wires the production quota path: provider usage reads are
 // normalized and published to RuntimeState, reusing the same durable,
@@ -232,6 +277,9 @@ func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	if a.ingress != nil {
 		a.ingress.Attach(mux)
+	}
+	if a.control != nil {
+		a.control.Attach(mux)
 	}
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
