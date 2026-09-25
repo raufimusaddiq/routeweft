@@ -268,14 +268,23 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 func (s *Service) flush(events []Event) {
+	if len(events) == 0 {
+		// An empty drain carries no new success and must not clear a degraded
+		// state established by an earlier failing batch.
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	// A batch may mix usage and detail events. Degraded health reflects *any*
+	// failing sink in the batch, so a successful usage write must not clear a
+	// degraded state caused by a failed detail write (and vice versa).
+	failed := false
 	usage := make([]Event, 0, len(events))
 	for _, event := range events {
 		if event.detail != nil {
 			if s.details != nil {
 				if err := s.details.WriteRequestDetail(ctx, *event.detail); err != nil {
-					s.degraded.Store(true)
+					failed = true
 					s.lostDiagnostics.Add(1)
 				}
 			}
@@ -283,18 +292,21 @@ func (s *Service) flush(events []Event) {
 		}
 		usage = append(usage, event)
 	}
-	if s.sink == nil || len(usage) == 0 {
-		return
+	if s.sink != nil && len(usage) > 0 {
+		if err := s.sink.WriteUsageEvents(ctx, usage); err != nil {
+			// Persistent failure marks degraded health and counts the loss; the
+			// queue keeps accepting so a transient failure is not silently lost.
+			failed = true
+			s.lost.Add(uint64(len(usage)))
+		} else {
+			s.written.Add(uint64(len(usage)))
+		}
 	}
-	if err := s.sink.WriteUsageEvents(ctx, usage); err != nil {
-		// Persistent failure marks degraded health and counts the loss; the queue
-		// keeps accepting so a transient failure does not silently lose the kind.
+	if failed {
 		s.degraded.Store(true)
-		s.lost.Add(uint64(len(usage)))
 		return
 	}
 	s.degraded.Store(false)
-	s.written.Add(uint64(len(usage)))
 }
 
 // FlushNow requests one synchronous flush of queued events. It blocks until the

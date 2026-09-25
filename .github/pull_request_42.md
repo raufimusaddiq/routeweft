@@ -54,6 +54,8 @@ New tests: `internal/telemetry/redact_test.go` (nested/key-variant redaction, no
 
 Review fix: the detail upsert now also refreshes `created_at` (`created_at=excluded.created_at`), so a route decision written earlier and refreshed with its final outcome is not immediately deleted by the next retention prune. Covered by `TestDetailStoreRefreshedRowSurvivesPrune`.
 
+Second review fix: degraded health is now batch-scoped and monotonic with respect to failures — a failing detail write keeps `Health()==ErrDegraded` even when a successful usage write shares the batch, and an empty drain no longer clears a previously established degraded state. Regression covered by `TestMixedBatchKeepsDegradedWhenDetailSinkFails`.
+
 ## Rollback
 
 Revert the PR. No schema or persisted state changes; the request path returns to the PR41 usage-only writer.
