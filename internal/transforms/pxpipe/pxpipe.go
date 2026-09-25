@@ -27,6 +27,8 @@ const (
 	defaultMaxResponseSize = 8 << 20
 )
 
+var defaultClient = transport.NewSSRFProtectedClient()
+
 // Client is the HTTP surface PXPIPE needs; tests inject a deterministic fake.
 type Client interface {
 	Do(*http.Request) (*http.Response, error)
@@ -130,7 +132,7 @@ func (t Transform) Apply(request transforms.Request) (transforms.Request, error)
 	}
 	httpRequest.Header.Set("Content-Type", "application/json")
 	started := time.Now()
-	result, err := t.client(timeout).Do(httpRequest)
+	result, err := t.client().Do(httpRequest)
 	if err != nil {
 		return request, t.fail(Diagnostic{Step: "pxpipe", Attempted: true, InputChars: inputChars, Duration: time.Since(started), Error: "PXPIPE request failed"})
 	}
@@ -184,7 +186,7 @@ func (t Transform) Health(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	response, err := t.client(timeout).Do(request)
+	response, err := t.client().Do(request)
 	if err != nil {
 		return err
 	}
@@ -195,11 +197,11 @@ func (t Transform) Health(ctx context.Context) error {
 	return nil
 }
 
-func (t Transform) client(timeout time.Duration) Client {
+func (t Transform) client() Client {
 	if t.Client != nil {
 		return t.Client
 	}
-	return &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return defaultClient
 }
 
 func (t Transform) fail(diagnostic Diagnostic) error {
