@@ -51,6 +51,7 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 		t.Fatal(err)
 	}
 	wantIDs := []string{
+		"vertex-partner", "tokenrouter", "perplexity-agent", "opencode-go", "cloudflare-ai",
 		"mimo-free", "mmf", "opencode", "ollama", "ollama-local", "typesafe",
 		"deepseek", "glm", "glm-cn", "minimax", "minimax-cn", "xiaomi-tokenplan",
 		"claude",
@@ -135,6 +136,25 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	}
 	if spec, _ := catalog.Lookup("typesafe"); spec.Transports[0] != TransportSystemOne || spec.Auth != AuthAPIKey {
 		t.Fatalf("typesafe spec=%+v", spec)
+	}
+	for _, id := range []string{"tokenrouter", "perplexity-agent"} {
+		spec, _ := catalog.Lookup(id)
+		if spec.ModelCatalog != CatalogDynamic || !spec.PassthroughModels || spec.Auth != AuthAPIKey {
+			t.Errorf("dynamic gateway %s spec=%+v", id, spec)
+		}
+	}
+	if spec, _ := catalog.Lookup("perplexity-agent"); spec.Transports[0] != TransportOpenAIResponses {
+		t.Fatalf("perplexity-agent transports=%v", spec.Transports)
+	}
+	if spec, _ := catalog.Lookup("opencode-go"); len(spec.Transports) != 3 || !spec.ReportsUsage {
+		t.Fatalf("opencode-go spec=%+v", spec)
+	}
+	opencodeGo, _ := catalog.Lookup("opencode-go")
+	if transport, ok := opencodeGo.NativeBinding("anthropic-messages"); !ok || transport != TransportAnthropic {
+		t.Fatalf("opencode-go messages binding=%q ok=%v", transport, ok)
+	}
+	if spec, _ := catalog.Lookup("vertex-partner"); spec.Transports[0] != TransportOpenAIChat || spec.DefaultBaseURL != "https://aiplatform.googleapis.com" {
+		t.Fatalf("vertex-partner spec=%+v", spec)
 	}
 	for _, id := range []string{"alicode-intl", "alitp-intl"} {
 		spec, _ := catalog.Lookup(id)

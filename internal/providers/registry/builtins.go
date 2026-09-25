@@ -51,7 +51,22 @@ func Builtins() []Spec {
 	specs = append(specs, Gemini()...)
 	specs = append(specs, Claude()...)
 	specs = append(specs, MultiTransport()...)
-	return append(specs, LocalAndNoAuth()...)
+	specs = append(specs, LocalAndNoAuth()...)
+	return append(specs, APIGateways()...)
+}
+
+// APIGateways returns remaining API-key gateway/aggregator providers. Dynamic
+// providers keep arbitrary IDs routable via passthrough; cloudflare-ai takes
+// the account id from provider-specific data, so its base URL stays the
+// template origin and the account path is resolved by its provider module.
+func APIGateways() []Spec {
+	return []Spec{
+		{ID: "vertex-partner", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://aiplatform.googleapis.com", ModelCatalog: CatalogStatic},
+		{ID: "tokenrouter", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.tokenrouter.com/v1", ModelCatalog: CatalogDynamic, PassthroughModels: true},
+		{ID: "perplexity-agent", Transports: []Protocol{TransportOpenAIResponses}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.perplexity.ai/v1", ModelCatalog: CatalogDynamic, PassthroughModels: true},
+		{ID: "opencode-go", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://opencode.ai/zen/go/v1", ModelCatalog: CatalogStatic, ReportsUsage: true},
+		{ID: "cloudflare-ai", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.cloudflare.com/client/v4/accounts", ModelCatalog: CatalogStatic},
+	}
 }
 
 // LocalAndNoAuth returns no-auth/passthrough, hosted Ollama, local Ollama and
