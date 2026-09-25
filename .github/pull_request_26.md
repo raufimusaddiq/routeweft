@@ -60,3 +60,5 @@ Revert this PR to remove Claude OAuth primitives and registry identity. Anthropi
 - [x] Dedicated feature worktree.
 - [x] Worktree bound to this branch only.
 - [x] Review fixes remain in this worktree.
+
+CI/review retrigger: Hermes re-posted the superseded `ce45a15` fixture finding against head `6adcb8a`, where fixtures are already composed via `tokenBody`. Documentation-only head refresh.
