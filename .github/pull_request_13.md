@@ -27,11 +27,11 @@ No control-plane API/UI or public route changes. No provider-specific panel/judg
 - [x] Relevant protocol/routing/provider fixtures added or updated.
 - [x] No retained behavior was silently simplified.
 
-`internal/routing/fusion.go` adds the transport-agnostic `Fusion` orchestration API. Each panel is started concurrently with the same hard-timeout context; configured `MinPanelQuorum` starts the straggler grace timer; cancellation/deadline ends collection. Zero successes returns `ErrFusionNoPanels`; a sub-quorum result returns `ErrFusionQuorum`; one answer is returned directly; 2+ anonymous answer strings are passed to the judge. Empty explicit judge uses `DefaultJudge`, which callers set to the first Combo member per SPEC §16.
+`internal/routing/fusion.go` adds the transport-agnostic `Fusion` orchestration API. Each panel is started concurrently with the same hard-timeout context; configured `MinPanelQuorum` starts the straggler grace timer; cancellation/deadline ends collection. Zero successes returns `ErrFusionNoPanels`; a sub-quorum result returns `ErrFusionQuorum`; one answer is returned directly; 2+ anonymous answer strings are passed to the judge. Empty explicit judge uses `DefaultJudge`, which callers set to the first Combo member per SPEC §16. `Grace == 0` stops collection as soon as quorum is met.
 
-`PanelFunc` contract requires panel calls be non-streaming, tool-free, and use prose-flattened prior tool history. `StripTools` removes `tools` and `tool_choice`; `FlattenToolHistory` joins already-rendered tool turns. `JudgeFunc` receives the original request context and is responsible for preserving client streaming/tools behavior.
+`PanelFunc` returns an `io.ReadCloser`; Fusion reads it through `io.LimitReader` and rejects the panel as soon as `MaxResponseBytes` is exceeded, so an oversized upstream is never fully buffered. Panel calls must be non-streaming, tool-free, and use prose-flattened prior tool history. `StripTools` removes `tools` and `tool_choice`; `FlattenToolHistory` joins already-rendered tool turns. `JudgeFunc` receives the original request context and is responsible for preserving client streaming/tools behavior.
 
-Defaults cap panel count (8), per-panel response bytes (1 MiB), hard panel timeout (30s), grace (250ms), and concurrent requests (8). Tests cover fan-out result states, quorum, grace, timeout, judge fallback, concurrency cap, byte/panel caps, and tool/history helpers.
+Defaults cap panel count (8), per-panel response bytes (1 MiB), hard panel timeout (30s), grace (250ms), and concurrent requests (8). Limits are validated (negatives rejected) and frozen on first use so a concurrent `Config` mutation cannot race with in-flight requests. Tests cover fan-out result states, quorum, grace, timeout, judge fallback, concurrency cap, streaming byte/panel caps, config freeze, zero-grace stop, and tool/history helpers.
 
 ## Storage / migration impact
 

@@ -4,12 +4,13 @@ package routing
 import (
 	"context"
 	"errors"
+	"io"
 	"sync"
 	"time"
 )
 
-// FusionConfig bounds one Fusion request (SPEC §16). Zero values take the
-// documented default; negative values make the limit unlimited.
+// FusionConfig bounds one Fusion request (SPEC §16). Negative limits are
+// rejected; zero uses the default except Grace, where zero stops at quorum.
 type FusionConfig struct {
 	// MinPanelQuorum is the successful panel count required before a judge
 	// synthesis replaces the direct answer.
@@ -46,7 +47,7 @@ type PanelResult struct {
 
 // PanelFunc runs one panel call. Implementations must force non-streaming,
 // remove tools and flatten prior tool history before dispatch (SPEC §16).
-type PanelFunc func(ctx context.Context, candidate PanelCandidate) (string, error)
+type PanelFunc func(ctx context.Context, candidate PanelCandidate) (io.ReadCloser, error)
 
 // JudgeFunc synthesizes 2+ panel answers into one response while preserving
 // the client's own stream/tools behavior (SPEC §16).
@@ -63,8 +64,13 @@ type Fusion struct {
 	// the first Combo model here (SPEC §16).
 	DefaultJudge string
 
-	semaphore chan struct{}
-	semOnce   sync.Once
+	mu           sync.Mutex
+	semaphore    chan struct{}
+	started      bool
+	config       FusionConfig
+	panels       PanelFunc
+	judgeFn      JudgeFunc
+	defaultJudge string
 }
 
 // Run executes the Fusion flow. A zero-success panel phase returns
@@ -73,23 +79,17 @@ func (f *Fusion) Run(ctx context.Context, candidates []PanelCandidate, judge str
 	if len(candidates) == 0 {
 		return "", ErrFusionNoPanels
 	}
-	config := f.Config
-	if config.MinPanelQuorum <= 0 {
-		config.MinPanelQuorum = 1
-	}
-	if config.HardTimeout <= 0 {
-		config.HardTimeout = DefaultFusionConfig().HardTimeout
-	}
-	if config.MaxPanels <= 0 {
-		config.MaxPanels = DefaultFusionConfig().MaxPanels
+	config, err := f.freezeConfig()
+	if err != nil {
+		return "", err
 	}
 	if len(candidates) > config.MaxPanels {
 		return "", ErrFusionPanelLimit
 	}
 	if judge == "" {
-		judge = f.DefaultJudge
+		judge = f.defaultJudge
 	}
-	if f.Panels == nil {
+	if f.panels == nil {
 		return "", errors.New("fusion panel runner is required")
 	}
 	if !f.acquire(config.MaxConcurrent) {
@@ -113,10 +113,10 @@ func (f *Fusion) Run(ctx context.Context, candidates []PanelCandidate, judge str
 	if len(answers) == 1 {
 		return answers[0], nil
 	}
-	if f.Judge == nil {
+	if f.judgeFn == nil {
 		return "", errors.New("fusion judge is required for multiple panel answers")
 	}
-	return f.Judge(ctx, judge, answers)
+	return f.judgeFn(ctx, judge, answers)
 }
 
 // ErrFusionNoPanels reports that every panel call failed or timed out.
@@ -131,6 +131,9 @@ var ErrFusionBusy = errors.New("fusion: concurrency limit reached")
 // ErrFusionPanelLimit rejects fan-out larger than the configured budget.
 var ErrFusionPanelLimit = errors.New("fusion: panel limit exceeded")
 
+// ErrFusionResponseTooLarge rejects a panel answer beyond the byte budget.
+var ErrFusionResponseTooLarge = errors.New("fusion: panel response exceeded byte limit")
+
 func (f *Fusion) fanOut(ctx context.Context, candidates []PanelCandidate, maxResponseBytes int64) <-chan PanelResult {
 	results := make(chan PanelResult, len(candidates))
 	var wg sync.WaitGroup
@@ -138,10 +141,7 @@ func (f *Fusion) fanOut(ctx context.Context, candidates []PanelCandidate, maxRes
 		wg.Add(1)
 		go func(candidate PanelCandidate) {
 			defer wg.Done()
-			answer, err := f.Panels(ctx, candidate)
-			if err == nil && maxResponseBytes > 0 && int64(len(answer)) > maxResponseBytes {
-				answer, err = "", errors.New("fusion: panel response exceeded byte limit")
-			}
+			answer, err := readPanel(ctx, f.panels, candidate, maxResponseBytes)
 			select {
 			case results <- PanelResult{Candidate: candidate, Answer: answer, Err: err}:
 			case <-ctx.Done():
@@ -150,6 +150,28 @@ func (f *Fusion) fanOut(ctx context.Context, candidates []PanelCandidate, maxRes
 	}
 	go func() { wg.Wait(); close(results) }()
 	return results
+}
+
+// readPanel streams one panel answer and stops at the byte budget so an
+// oversized upstream cannot be fully buffered before rejection.
+func readPanel(ctx context.Context, panel PanelFunc, candidate PanelCandidate, maxResponseBytes int64) (string, error) {
+	body, err := panel(ctx, candidate)
+	if err != nil {
+		return "", err
+	}
+	defer body.Close()
+	var reader io.Reader = body
+	if maxResponseBytes > 0 {
+		reader = io.LimitReader(body, maxResponseBytes+1)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return "", err
+	}
+	if maxResponseBytes > 0 && int64(len(data)) > maxResponseBytes {
+		return "", ErrFusionResponseTooLarge
+	}
+	return string(data), nil
 }
 
 // collectAnswers gathers successes until the hard timeout, letting stragglers
@@ -166,9 +188,15 @@ func collectAnswers(ctx context.Context, results <-chan PanelResult, config Fusi
 			}
 			if result.Err == nil {
 				answers = append(answers, result.Answer)
-				if len(answers) >= config.MinPanelQuorum && config.Grace > 0 && graceTimer == nil {
-					graceTimer = time.NewTimer(config.Grace)
-					grace = graceTimer.C
+				if len(answers) >= config.MinPanelQuorum {
+					if config.Grace == 0 {
+						// Zero grace stops immediately at quorum.
+						return answers, graceTimer
+					}
+					if graceTimer == nil {
+						graceTimer = time.NewTimer(config.Grace)
+						grace = graceTimer.C
+					}
 				}
 			}
 		case <-grace:
@@ -183,13 +211,50 @@ func (f *Fusion) acquire(limit int) bool {
 	if limit <= 0 {
 		return true
 	}
-	f.semOnce.Do(func() { f.semaphore = make(chan struct{}, limit) })
 	select {
 	case f.semaphore <- struct{}{}:
 		return true
 	default:
 		return false
 	}
+}
+
+// freezeConfig validates and caches the effective limits on first use so a
+// concurrent Config mutation cannot race with in-flight requests (SPEC §16).
+func (f *Fusion) freezeConfig() (FusionConfig, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.started {
+		return f.config, nil
+	}
+	config := f.Config
+	if config.MinPanelQuorum < 0 || config.HardTimeout < 0 || config.MaxResponseBytes < 0 || config.MaxPanels < 0 || config.MaxConcurrent < 0 || config.Grace < 0 {
+		return FusionConfig{}, errors.New("fusion: limits must not be negative")
+	}
+	if config.MinPanelQuorum == 0 {
+		config.MinPanelQuorum = 1
+	}
+	if config.HardTimeout == 0 {
+		config.HardTimeout = DefaultFusionConfig().HardTimeout
+	}
+	if config.MaxPanels == 0 {
+		config.MaxPanels = DefaultFusionConfig().MaxPanels
+	}
+	if config.MaxResponseBytes == 0 {
+		config.MaxResponseBytes = DefaultFusionConfig().MaxResponseBytes
+	}
+	if config.MaxConcurrent == 0 {
+		config.MaxConcurrent = DefaultFusionConfig().MaxConcurrent
+	}
+	if config.MaxConcurrent > 0 {
+		f.semaphore = make(chan struct{}, config.MaxConcurrent)
+	}
+	f.config = config
+	f.panels = f.Panels
+	f.judgeFn = f.Judge
+	f.defaultJudge = f.DefaultJudge
+	f.started = true
+	return config, nil
 }
 
 func (f *Fusion) release() {
