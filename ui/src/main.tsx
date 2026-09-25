@@ -32,6 +32,15 @@ function App() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const menuButton = useRef<HTMLButtonElement>(null)
 
+  // Only the mobile drawer should return focus to its trigger; on desktop the
+  // menu button is hidden, so activating a link must keep focus visible.
+  function closeDrawer(restoreFocus = true) {
+    setDrawerOpen(open => {
+      if (open && restoreFocus) menuButton.current?.focus()
+      return false
+    })
+  }
+
   useEffect(() => {
     const updatePage = () => setPage(pages[location.hash.slice(1)] ?? 'Overview')
     addEventListener('hashchange', updatePage)
@@ -51,8 +60,7 @@ function App() {
     if (!drawerOpen) return
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setDrawerOpen(false)
-        menuButton.current?.focus()
+        closeDrawer()
       }
     }
     addEventListener('keydown', closeOnEscape)
@@ -86,9 +94,9 @@ function App() {
       >
         <span className="material-symbols" aria-hidden="true">{drawerOpen ? 'close' : 'menu'}</span>
       </button>
-      {drawerOpen && <button className="drawer-backdrop" type="button" tabIndex={-1} aria-label="Close navigation" onClick={() => { setDrawerOpen(false); menuButton.current?.focus() }} />}
+      {drawerOpen && <button className="drawer-backdrop" type="button" tabIndex={-1} aria-label="Close navigation" onClick={() => closeDrawer()} />}
       <aside className={`sidebar${drawerOpen ? ' sidebar-open' : ''}`}>
-          <a className="brand" href="#overview" aria-label="Routeweft overview" onClick={() => { setDrawerOpen(false); menuButton.current?.focus() }}>
+          <a className="brand" href="#overview" aria-label="Routeweft overview" onClick={() => closeDrawer(false)}>
           <span className="brand-mark" aria-hidden="true">R</span>
           <span className="brand-copy"><strong>Routeweft</strong><small>CONTROL PLANE</small></span>
         </a>
@@ -104,7 +112,7 @@ function App() {
                     href={`#${slug(label)}`}
                     key={label}
                     aria-current={active ? 'page' : undefined}
-                    onClick={() => { setDrawerOpen(false); menuButton.current?.focus() }}
+                    onClick={() => closeDrawer(false)}
                   >
                     <span className="material-symbols" aria-hidden="true">{icon}</span>
                     <span>{label}</span>
