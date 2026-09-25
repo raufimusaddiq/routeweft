@@ -158,6 +158,32 @@ func TestChatCompletionsStreamsBytesAndCancelsUpstream(t *testing.T) {
 	}
 }
 
+func TestChatStreamEnforcesSingleFinalTerminalMarker(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "missing", body: "data: {\"chunk\":1}\n\n", want: "data: {\"chunk\":1}\n\ndata: [DONE]\n\n"},
+		{name: "duplicate", body: "data: [DONE]\n\ndata: {\"late\":true}\n\ndata: [DONE]\n\n", want: "data: {\"late\":true}\n\ndata: [DONE]\n\n"},
+		{name: "already-final", body: "data: {\"chunk\":1}\n\ndata: [DONE]\n\n", want: "data: {\"chunk\":1}\n\ndata: [DONE]\n\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := New(nil, Options{AllowPrivateUpstreams: true})
+			recorder := httptest.NewRecorder()
+			response := &http.Response{Body: io.NopCloser(strings.NewReader(tc.body))}
+			handler.copyStream(recorder, httptest.NewRequest(http.MethodPost, "/", nil), response)
+			if got := recorder.Body.String(); got != tc.want {
+				t.Fatalf("stream %q, want %q", got, tc.want)
+			}
+			if err := openaiadapter.ValidateStreamTerminal(recorder.Body.String()); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestChatCompletionsRejectsBadRequests(t *testing.T) {
 	server, err := mockupstream.Start(chatFixtures(t))
 	if err != nil {

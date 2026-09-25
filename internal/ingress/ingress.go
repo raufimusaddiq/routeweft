@@ -2,6 +2,7 @@
 package ingress
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/subtle"
 	"encoding/json"
@@ -202,27 +203,70 @@ func (h *Handler) newUpstreamRequest(r *http.Request, provider routing.ProviderR
 
 func (h *Handler) copyStream(w http.ResponseWriter, r *http.Request, response *http.Response) {
 	flusher, canFlush := w.(http.Flusher)
-	buffer := make([]byte, 32*1024)
+	reader := bufio.NewReaderSize(response.Body, 32*1024)
+	event := make([]byte, 0, 64)
+	largeEvent := false
+	write := func(chunk []byte) bool {
+		if len(chunk) == 0 {
+			return true
+		}
+		if _, err := w.Write(chunk); err != nil {
+			return false
+		}
+		if canFlush {
+			flusher.Flush()
+		}
+		return true
+	}
 	for {
 		if err := r.Context().Err(); err != nil {
 			return
 		}
-		n, err := response.Body.Read(buffer)
-		if n > 0 {
-			if _, writeErr := w.Write(buffer[:n]); writeErr != nil {
+		line, err := reader.ReadSlice('\n')
+		completeLine := !errors.Is(err, bufio.ErrBufferFull)
+		if largeEvent {
+			if !write(line) {
 				return
 			}
-			if canFlush {
-				flusher.Flush()
+		} else if len(event)+len(line) <= 64 {
+			event = append(event, line...)
+		} else {
+			if !write(event) || !write(line) {
+				return
 			}
+			event = event[:0]
+			largeEvent = true
 		}
-		if errors.Is(err, io.EOF) {
+		if completeLine && (bytes.Equal(line, []byte("\n")) || bytes.Equal(line, []byte("\r\n"))) {
+			if !largeEvent && !isTerminalEvent(event) && !write(event) {
+				return
+			}
+			event = event[:0]
+			largeEvent = false
+		}
+		if err == nil || errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		if !errors.Is(err, io.EOF) {
 			return
 		}
-		if err != nil {
+		if !largeEvent && !isTerminalEvent(event) && !write(event) {
 			return
 		}
+		if r.Context().Err() == nil {
+			_ = write([]byte("data: [DONE]\n\n"))
+		}
+		return
 	}
+}
+
+func isTerminalEvent(event []byte) bool {
+	text := string(event)
+	text = strings.TrimSuffix(text, "\r\n\r\n")
+	text = strings.TrimSuffix(text, "\n\n")
+	text = strings.TrimSuffix(text, "\r\n")
+	text = strings.TrimSuffix(text, "\n")
+	return text == "data: [DONE]" || text == "data:[DONE]"
 }
 
 func copyResponseHeaders(dst, src http.Header) {
