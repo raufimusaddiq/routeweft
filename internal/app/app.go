@@ -9,15 +9,19 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/raufimusaddiq/routeweft/internal/adminauth"
+	"github.com/raufimusaddiq/routeweft/internal/buildinfo"
 	controlapi "github.com/raufimusaddiq/routeweft/internal/control/api"
+	controlevents "github.com/raufimusaddiq/routeweft/internal/control/events"
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/ingress"
 	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
+	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/proxy"
 	quota "github.com/raufimusaddiq/routeweft/internal/quota"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
@@ -98,6 +102,9 @@ type App struct {
 	details *telemetry.SQLiteDetailStore
 	admin   *adminauth.Store
 	control *controlapi.Handler
+	events  *controlevents.Bus
+	logs    *controlapi.LogBuffer
+	active  atomic.Int64
 	ready   atomic.Bool
 }
 
@@ -108,7 +115,8 @@ func New(cfg Config, log *slog.Logger) *App {
 	if cfg.MaxBodyBytes <= 0 {
 		cfg.MaxBodyBytes = ingress.DefaultMaxBodyBytes
 	}
-	return &App{cfg: cfg, log: log}
+	logs := controlapi.NewLogBuffer(0)
+	return &App{cfg: cfg, log: slog.New(controlapi.LogHandler(log.Handler(), logs)), logs: logs}
 }
 
 // Initialize creates the data directory, migrates durable state and compiles the
@@ -145,6 +153,7 @@ func (a *App) Initialize(ctx context.Context) error {
 	a.details = telemetry.NewSQLiteDetailStore(store.DB(), observabilityMaxJSONSize(settings))
 	usage.WithDetails(a.details)
 	a.usage = usage
+	a.events = controlevents.New()
 	binder := proxy.NewBinder(loadSnapshot(manager))
 	binder.AllowLocal = a.cfg.AllowPrivateUpstreams
 	a.ingress = ingress.New(manager, ingress.Options{
@@ -156,6 +165,14 @@ func (a *App) Initialize(ctx context.Context) error {
 			return binder.ClientFor(context.Background(), connectionID)
 		},
 		OnRequestComplete: func(outcome ingress.RequestOutcome) {
+			a.events.Publish("request.completed", map[string]any{
+				"requestId":    outcome.RequestID,
+				"providerId":   outcome.ProviderID,
+				"modelId":      outcome.ModelID,
+				"connectionId": outcome.ConnectionID,
+				"status":       outcome.Status,
+				"durationMs":   outcome.Duration.Milliseconds(),
+			})
 			usage.Record(telemetry.Event{
 				Class:        telemetry.Critical,
 				RequestID:    outcome.RequestID,
@@ -205,7 +222,21 @@ func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager 
 		}
 	}
 	sessions := adminauth.NewSessionManager(a.cfg.AdminSessionTTL)
-	a.control = controlapi.New(controlapi.Options{Accounts: a.admin, Sessions: sessions, Settings: manager})
+	specs := registry.Builtins()
+	a.control = controlapi.New(controlapi.Options{
+		Accounts:       a.admin,
+		Sessions:       sessions,
+		Settings:       manager,
+		DB:             store.DB(),
+		Runtime:        manager,
+		Providers:      specs,
+		Telemetry:      a.usage,
+		Events:         a.events,
+		Logs:           a.logs,
+		ActiveRequests: func() int64 { return a.active.Load() },
+		Ready:          a.ready.Load,
+		Build:          buildinfo.Current(),
+	})
 	return nil
 }
 
@@ -295,7 +326,18 @@ func (a *App) Handler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
-	return withRequestID(withBodyLimit(a.cfg.MaxBodyBytes, mux))
+	return withRequestID(withBodyLimit(a.cfg.MaxBodyBytes, a.trackInference(mux)))
+}
+
+func (a *App) trackInference(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if path == "/v1" || strings.HasPrefix(path, "/v1/") || path == "/responses" || strings.HasPrefix(path, "/responses/") || path == "/messages" || strings.HasPrefix(path, "/messages/") || path == "/codex" || strings.HasPrefix(path, "/codex/") {
+			a.active.Add(1)
+			defer a.active.Add(-1)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (a *App) Serve(ctx context.Context) error {
