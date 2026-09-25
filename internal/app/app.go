@@ -5,16 +5,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/raufimusaddiq/routeweft/internal/adminauth"
+	"github.com/raufimusaddiq/routeweft/internal/backup"
 	"github.com/raufimusaddiq/routeweft/internal/buildinfo"
 	controlapi "github.com/raufimusaddiq/routeweft/internal/control/api"
 	controlevents "github.com/raufimusaddiq/routeweft/internal/control/events"
@@ -106,6 +110,13 @@ type App struct {
 	logs    *controlapi.LogBuffer
 	active  atomic.Int64
 	ready   atomic.Bool
+	// mu serializes Initialize and restore activation. Quiescent is set while a
+	// restore reinitializes the process so new requests are refused instead of
+	// racing the database swap (SPEC §25).
+	mu        sync.Mutex
+	quiescent atomic.Bool
+	serving   atomic.Bool
+	restoreCh chan *backup.Candidate
 }
 
 func New(cfg Config, log *slog.Logger) *App {
@@ -116,12 +127,19 @@ func New(cfg Config, log *slog.Logger) *App {
 		cfg.MaxBodyBytes = ingress.DefaultMaxBodyBytes
 	}
 	logs := controlapi.NewLogBuffer(0)
-	return &App{cfg: cfg, log: slog.New(controlapi.LogHandler(log.Handler(), logs)), logs: logs}
+	return &App{cfg: cfg, log: slog.New(controlapi.LogHandler(log.Handler(), logs)), logs: logs, restoreCh: make(chan *backup.Candidate, 1)}
 }
 
 // Initialize creates the data directory, migrates durable state and compiles the
 // initial request-serving snapshot before the listener is started.
 func (a *App) Initialize(ctx context.Context) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.initialize(ctx)
+}
+
+// initialize performs the startup sequence. Callers must hold a.mu.
+func (a *App) initialize(ctx context.Context) error {
 	if a.cfg.DataDir == "" {
 		return errors.New("data directory is required")
 	}
@@ -236,6 +254,9 @@ func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager 
 		ActiveRequests: func() int64 { return a.active.Load() },
 		Ready:          a.ready.Load,
 		Build:          buildinfo.Current(),
+		DataDir:        a.cfg.DataDir,
+		Backup:         a.CreateBackup,
+		Restore:        a.QueueRestore,
 	})
 	return nil
 }
@@ -306,8 +327,9 @@ func (a *App) pruneDetails(ctx context.Context) {
 
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
+	inferenceMux := http.NewServeMux()
 	if a.ingress != nil {
-		a.ingress.Attach(mux)
+		a.ingress.Attach(inferenceMux)
 	}
 	if a.control != nil {
 		a.control.Attach(mux)
@@ -326,13 +348,198 @@ func (a *App) Handler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
-	return withRequestID(withBodyLimit(a.cfg.MaxBodyBytes, a.trackInference(mux)))
+	mux.Handle("/", withBodyLimit(a.cfg.MaxBodyBytes, a.trackInference(inferenceMux)))
+	return withRequestID(a.quiescenceGate(mux))
+}
+
+func (a *App) quiescenceGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.quiescent.Load() && r.URL.Path != "/health/live" {
+			http.Error(w, "restore in progress", http.StatusServiceUnavailable)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// DatabasePath returns the live database path.
+func (a *App) DatabasePath() string {
+	if a.store == nil {
+		return filepath.Join(a.cfg.DataDir, "routeweft.sqlite")
+	}
+	return a.store.Path()
+}
+
+// CreateBackup writes a validated online backup artifact (SPEC §25).
+func (a *App) CreateBackup(ctx context.Context, output string) (backup.Metadata, error) {
+	if a.store == nil {
+		return backup.Metadata{}, errors.New("database is not initialized")
+	}
+	return backup.Create(ctx, a.store, output)
+}
+
+// StageRestore validates and stages a restore candidate without touching live
+// state. The returned candidate must be activated with ActivateRestore or
+// discarded.
+func (a *App) StageRestore(ctx context.Context, input string) (*backup.Candidate, error) {
+	if a.store == nil {
+		return nil, errors.New("database is not initialized")
+	}
+	return backup.StageRestore(ctx, input, a.cfg.DataDir)
+}
+
+// QueueRestore validates the uploaded file and schedules activation after the
+// current HTTP request returns. The server then drains requests and telemetry
+// before replacing any live SQLite file (SPEC §25).
+func (a *App) QueueRestore(ctx context.Context, input string) (backup.Metadata, error) {
+	if !a.serving.Load() {
+		return backup.Metadata{}, errors.New("restore activation requires a running server")
+	}
+	candidate, err := a.StageRestore(ctx, input)
+	if err != nil {
+		return backup.Metadata{}, err
+	}
+	if !a.quiescent.CompareAndSwap(false, true) {
+		candidate.Discard()
+		return backup.Metadata{}, errors.New("another restore is already in progress")
+	}
+	a.ready.Store(false)
+	select {
+	case a.restoreCh <- candidate:
+		return candidate.Metadata, nil
+	default:
+		a.ready.Store(true)
+		a.quiescent.Store(false)
+		candidate.Discard()
+		return backup.Metadata{}, errors.New("restore queue is busy")
+	}
+}
+
+func (a *App) activateRestore(ctx context.Context, candidate *backup.Candidate) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	database := a.DatabasePath()
+	rollback := database + ".pre-restore-" + time.Now().UTC().Format("20060102T150405.000000000Z")
+
+	// The server and its request handlers have drained. Finish accepted Usage,
+	// then close the only live SQLite writer before file replacement.
+	a.flushTelemetry()
+	if a.usage != nil {
+		a.usage.Close()
+		a.usage.Wait()
+	}
+	if err := sqlite.BackupTo(ctx, a.store, rollback); err != nil {
+		return fmt.Errorf("preserve rollback database: %w", err)
+	}
+	if err := syncDir(filepath.Dir(database)); err != nil {
+		return err
+	}
+	if err := a.store.Close(); err != nil {
+		return fmt.Errorf("close live database: %w", err)
+	}
+	if err := replaceDatabase(candidate.Path, database); err != nil {
+		if rollbackErr := restoreRollback(rollback, database); rollbackErr != nil {
+			return &restoreRecoveryError{err: fmt.Errorf("activate candidate: %v; restore rollback: %w", err, rollbackErr)}
+		}
+		return err
+	}
+	candidate.Discard()
+	if err := a.initialize(ctx); err != nil {
+		// A candidate that passed validation can still fail to initialize due to
+		// an environmental error. Restore the preserved DB before reopening.
+		if rollbackErr := restoreRollback(rollback, database); rollbackErr != nil {
+			return &restoreRecoveryError{err: fmt.Errorf("reinitialize restored database: %v; rollback failed: %w", err, rollbackErr)}
+		}
+		if reopenErr := a.initialize(ctx); reopenErr != nil {
+			return &restoreRecoveryError{err: fmt.Errorf("reinitialize restored database: %v; reopen rollback database: %w", err, reopenErr)}
+		}
+		return fmt.Errorf("restore activation rejected; previous database restored: %w", err)
+	}
+	return nil
+}
+
+// replaceDatabase moves the validated candidate over database, removing stale
+// WAL sidecars so no pre-restore pages survive the swap.
+func replaceDatabase(candidatePath, database string) error {
+	sidecars := []string{database + "-wal", database + "-shm"}
+	for _, path := range sidecars {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("clear stale database sidecar %s: %w", path, err)
+		}
+	}
+	if err := os.Rename(candidatePath, database); err != nil {
+		return fmt.Errorf("activate restore candidate: %w", err)
+	}
+	return syncDir(filepath.Dir(database))
+}
+
+func restoreRollback(rollback, database string) error {
+	source, err := os.Open(rollback)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	target, err := os.CreateTemp(filepath.Dir(database), ".routeweft-rollback-*.sqlite")
+	if err != nil {
+		return err
+	}
+	stage := target.Name()
+	if err := target.Chmod(0o600); err != nil {
+		_ = target.Close()
+		_ = os.Remove(stage)
+		return err
+	}
+	_, copyErr := io.Copy(target, source)
+	if copyErr == nil {
+		copyErr = target.Sync()
+	}
+	closeErr := target.Close()
+	if copyErr != nil {
+		_ = os.Remove(stage)
+		return copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(stage)
+		return closeErr
+	}
+	for _, sidecar := range []string{database + "-wal", database + "-shm"} {
+		if err := os.Remove(sidecar); err != nil && !errors.Is(err, os.ErrNotExist) {
+			_ = os.Remove(stage)
+			return err
+		}
+	}
+	if err := os.Rename(stage, database); err != nil {
+		_ = os.Remove(stage)
+		return err
+	}
+	return syncDir(filepath.Dir(database))
+}
+
+func (a *App) flushTelemetry() {
+	if a.usage == nil || !a.usage.Enabled() {
+		return
+	}
+	flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = a.usage.FlushNow(flushCtx)
+}
+
+func syncDir(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	err = dir.Sync()
+	_ = dir.Close()
+	if err != nil {
+		return fmt.Errorf("sync database directory: %w", err)
+	}
+	return nil
 }
 
 func (a *App) trackInference(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-		if path == "/v1" || strings.HasPrefix(path, "/v1/") || path == "/responses" || strings.HasPrefix(path, "/responses/") || path == "/messages" || strings.HasPrefix(path, "/messages/") || path == "/codex" || strings.HasPrefix(path, "/codex/") {
+		if isInferencePath(r.URL.Path) {
 			a.active.Add(1)
 			defer a.active.Add(-1)
 		}
@@ -340,12 +547,40 @@ func (a *App) trackInference(next http.Handler) http.Handler {
 	})
 }
 
+func isInferencePath(path string) bool {
+	return path == "/v1" || strings.HasPrefix(path, "/v1/") ||
+		path == "/v1beta" || strings.HasPrefix(path, "/v1beta/") ||
+		path == "/responses" || strings.HasPrefix(path, "/responses/") ||
+		path == "/messages" || strings.HasPrefix(path, "/messages/") ||
+		path == "/codex" || strings.HasPrefix(path, "/codex/")
+}
+
+var errRestoreApplied = errors.New("restore activated")
+
+// restoreRecoveryError means activation failed after the live database was
+// already replaced or closed, so automatic resume is unsafe; the process should
+// stop and the preserved rollback database should be inspected.
+type restoreRecoveryError struct{ err error }
+
+func (e *restoreRecoveryError) Error() string { return e.err.Error() }
+func (e *restoreRecoveryError) Unwrap() error { return e.err }
+
 func (a *App) Serve(ctx context.Context) error {
-	if !a.ready.Load() {
-		if err := a.Initialize(ctx); err != nil {
-			return err
+	for {
+		if !a.ready.Load() {
+			if err := a.Initialize(ctx); err != nil {
+				return err
+			}
 		}
+		err := a.serveOnce(ctx)
+		if errors.Is(err, errRestoreApplied) {
+			continue
+		}
+		return err
 	}
+}
+
+func (a *App) serveOnce(ctx context.Context) error {
 	srv := &http.Server{
 		Addr:              a.cfg.Listen,
 		Handler:           a.Handler(),
@@ -353,17 +588,19 @@ func (a *App) Serve(ctx context.Context) error {
 		MaxHeaderBytes:    1 << 20,
 	}
 	errCh := make(chan error, 1)
+	serviceCtx, stopServices := context.WithCancel(ctx)
+	a.serving.Store(true)
 	if a.usage != nil && a.usage.Enabled() {
 		// SPEC §21: the batcher is the only usage writer; the request path only
 		// enqueues, so a normal success never synchronously writes SQLite.
-		go a.usage.Run(ctx)
+		go a.usage.Run(serviceCtx)
 		// PRD-OBS-002 bounded retention: prune expired request details hourly.
-		go a.pruneDetails(ctx)
+		go a.pruneDetails(serviceCtx)
 	}
 	if a.quota != nil {
 		// PRD-QUOTA-001: provider quota refresh runs in the background and must not
 		// block normal inference. A refresh error is recorded, never fatal.
-		go a.quota.Run(ctx, a.cfg.QuotaRefreshInterval)
+		go a.quota.Run(serviceCtx, a.cfg.QuotaRefreshInterval)
 	}
 	go func() {
 		a.log.Info("listening", "addr", a.cfg.Listen)
@@ -373,18 +610,54 @@ func (a *App) Serve(ctx context.Context) error {
 	}()
 	select {
 	case err := <-errCh:
+		a.serving.Store(false)
+		stopServices()
 		return fmt.Errorf("serve: %w", err)
-	case <-ctx.Done():
+	case candidate := <-a.restoreCh:
 		a.ready.Store(false)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		shutdownErr := srv.Shutdown(shutdownCtx)
+		cancel()
+		if shutdownErr != nil {
+			_ = srv.Close()
+		}
+		stopServices()
 		if a.usage != nil {
 			a.usage.Close()
-			// ctx is already cancelled, so Run performs its final flush now; join it
-			// before the store is closed (BDR-013 shutdown).
 			a.usage.Wait()
 		}
+		a.serving.Store(false)
+		if err := a.activateRestore(context.Background(), candidate); err != nil {
+			candidate.Discard()
+			a.log.Error("restore activation failed", "error", err)
+			var recoveryErr *restoreRecoveryError
+			if errors.As(err, &recoveryErr) {
+				return err
+			}
+			if a.store != nil {
+				_ = a.store.Close()
+			}
+			if reopenErr := a.initialize(context.Background()); reopenErr != nil {
+				return fmt.Errorf("restore failed: %v; resume service: %w", err, reopenErr)
+			}
+		}
+		a.quiescent.Store(false)
+		if shutdownErr != nil {
+			a.log.Warn("restore shutdown exceeded drain deadline; active requests were closed", "error", shutdownErr)
+		}
+		return errRestoreApplied
+	case <-ctx.Done():
+		a.ready.Store(false)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
+		err := srv.Shutdown(shutdownCtx)
+		cancel()
+		stopServices()
+		if a.usage != nil {
+			a.usage.Close()
+			a.usage.Wait()
+		}
+		a.serving.Store(false)
+		if err != nil {
 			return err
 		}
 		if a.store != nil {

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/adminauth"
+	"github.com/raufimusaddiq/routeweft/internal/backup"
 	"github.com/raufimusaddiq/routeweft/internal/buildinfo"
 	controlevents "github.com/raufimusaddiq/routeweft/internal/control/events"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
@@ -39,6 +40,9 @@ type Options struct {
 	ActiveRequests func() int64
 	Ready          func() bool
 	Build          buildinfo.Info
+	DataDir        string
+	Backup         func(context.Context, string) (backup.Metadata, error)
+	Restore        func(context.Context, string) (backup.Metadata, error)
 }
 
 // RuntimeReader exposes immutable active configuration and process-local state.
@@ -81,6 +85,9 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	}
 	mux.Handle("GET /admin/v1/events", h.requireSessionHandler(http.HandlerFunc(h.handleEvents)))
 	mux.Handle("GET /admin/v1/logs", h.requireSessionHandler(http.HandlerFunc(h.handleLogs)))
+	mux.Handle("GET /admin/v1/backup", h.requireSessionHandler(http.HandlerFunc(h.handleBackup)))
+	mux.Handle("POST /admin/v1/backup/restore/check", h.requireSessionHandler(http.HandlerFunc(h.handleRestoreCheck)))
+	mux.Handle("POST /admin/v1/backup/restore", h.requireSessionHandler(http.HandlerFunc(h.handleRestore)))
 }
 
 func (h *Handler) requireSessionHandler(next http.Handler) http.Handler {

@@ -21,7 +21,7 @@ This file proves that every major product area has a requirement owner, technica
 | Prompt cache | PRD §12 | SPEC prompt cache | Sprint 4 | N/N+1 outbound-body/cache accounting fixtures |
 | Usage/request details | PRD §13, PRD-OBS-002 | SPEC telemetry/control | Sprint 6 | seeded accounting tests (PR41); bounded/redacted request-detail store + retention tests (PR42) |
 | Quota | PRD §13 | SPEC runtime/provider usage | Sprint 5/6 | normalized quota states, failure-not-exhaustion, reset/action tests |
-| Admin/control API | PRD §16 | SPEC /admin/v1 | Sprint 6 | admin auth/session + writable settings tests (PR43); session-gated read models, live events, and console logs tests (PR44); backup/restore API pending a later Sprint 6 PR |
+| Admin/control API | PRD §16 | SPEC /admin/v1 | Sprint 6 | admin auth/session + writable settings (PR43); session-gated read models, live events, console logs (PR44); backup download/restore-check/activation tests (PR45) |
 | UI shell/workflows | PRD §14-15 + UI_STYLE | SPEC UI architecture | Sprint 7 | browser smoke/a11y/theme/mobile tests |
 | Security/trusted proxy/SSRF | PRD §17 | SPEC security/transport | Sprint 1/5/8 | negative security fixtures |
 | SQLite/snapshot | PRD §18 | SPEC store/runtime | Sprint 1 | migration/mutation/race/restore tests |

@@ -325,11 +325,30 @@ Backup uses SQLite's online backup API, validates the staged database, switches 
 
 The metadata includes Routeweft version/commit, schema version, timestamp, and config revision.
 
-When the server is running, `routeweft backup` fails with a busy/locked error rather than risking an inconsistent artifact. Perform backups during a maintenance window, or use the future admin backup API/`VACUUM INTO`-style read-only backup path once it exists.
+The standalone `routeweft backup` command opens the database as a separate
+process and may fail busy/locked while the server is running; use the admin
+backup API for an online backup from the active process.
+
+```text
+GET  /admin/v1/backup               -> zip {routeweft.sqlite, routeweft.sqlite.meta.json}
+POST /admin/v1/backup/restore/check -> validate an uploaded archive without activating it
+POST /admin/v1/backup/restore       -> validate and activate an uploaded archive
+```
+
+The admin backup API uses the same online backup API as the CLI, so it is safe
+while serving inference. It returns a zip stream of the validated artifact and
+its metadata and never overwrites an existing file. The restore endpoints are
+session-gated and same-origin protected.
 
 Periodically rehearse restore on a disposable host/data directory.
 
 ## 12. Restore
+
+```bash
+curl -fsS -b <session-cookie> -o backup.zip https://host/admin/v1/backup
+curl -fsS -b <session-cookie> --data-binary @backup.zip https://host/admin/v1/backup/restore/check
+curl -fsS -b <session-cookie> --data-binary @backup.zip https://host/admin/v1/backup/restore
+```
 
 Validation first:
 
@@ -337,7 +356,19 @@ Validation first:
 routeweft restore --input /backup/file.sqlite --check
 ```
 
-`--check` copies the candidate into a private temporary staging directory, checks integrity and Routeweft schema compatibility, applies supported migrations to that copy, and compiles a candidate RuntimeSnapshot. The supplied file remains unchanged. No activation restore is implemented by this CLI yet; use a controlled offline procedure only after a separate reviewed activation workflow exists.
+`--check` copies the candidate into a private temporary staging directory, checks integrity and Routeweft schema compatibility, applies supported migrations to that copy, and compiles a candidate RuntimeSnapshot. The supplied file remains unchanged.
+
+The admin restore API activates a validated candidate: it sets readiness false,
+drains in-flight requests for at most 30 seconds (then closes remaining
+connections), stops the background schedulers, flushes accepted
+telemetry, preserves a pre-restore rollback database (`routeweft.sqlite.pre-restore-<timestamp>`),
+atomically replaces the live database, recompiles state, and returns to ready.
+Admin sessions are invalidated, so operators log in again after restore.
+Invalid candidates never touch the live database. If neither candidate
+activation nor rollback recovery can be validated, readiness remains false and
+the process exits with an error. The CLI `restore` command still validates
+only (`--check`); it refuses to activate so two writers never contend for one
+SQLite file. Archive upload/expanded size is capped at 8 GiB.
 
 Activation restore should be performed during a controlled window.
 
@@ -511,7 +542,27 @@ For compromised admin credential:
 - rotate password/session state;
 - invalidate active admin sessions as supported.
 
-## 23. Disaster recovery minimum
+## 23. Incident: failed restore activation
+
+An admin restore sets readiness false, drains requests, and preserves the prior
+database as `routeweft.sqlite.pre-restore-<timestamp>` before swapping files. If
+activation fails after file replacement, the process stops instead of resuming
+against an unknown database.
+
+Actions:
+
+1. read the startup/restore error and current schema/config revision;
+2. confirm the preserved `routeweft.sqlite.pre-restore-*` artifact is present;
+3. stop the process and copy that artifact aside as the rollback database;
+4. replace `routeweft.sqlite` with the rollback copy (and remove stale
+   `routeweft.sqlite-wal`/`-shm` sidecars);
+5. start Routeweft, wait for readiness, and run smoke checks;
+6. keep the failed restored database for diagnosis, then re-stage the restore
+   from a validated backup once the cause is fixed.
+
+Never leave a stale `-wal`/`-shm` beside a replaced database file.
+
+## 24. Disaster recovery minimum
 
 Maintain:
 
