@@ -26,10 +26,10 @@ stays a delegated hook until the Sprint 3 provider registry lands.
 
 Details: native Chat body bytes are forwarded unchanged (unknown forward-
 compatible fields preserved); model remap only rewrites the `model` value when a
-resolved upstream model differs. Streaming is relayed incrementally, but the
-router enforces the client contract on the wire: upstream `[DONE]` markers are
-suppressed and exactly one terminal `data: [DONE]\n\n` event is appended on clean
-EOF, so missing/duplicate/non-final markers cannot reach clients. Client
+resolved upstream model differs. Streaming is relayed incrementally with bounded
+line buffering; terminal markers and their separators are filtered, then exactly
+one terminal event is emitted on clean EOF. Missing, duplicate, or non-final
+markers cannot reach clients. Client
 disconnect cancels upstream work; upstream status/body relayed without leaking
 the provider credential. Translation is a hook only; no cross-protocol path ships
 in this PR.
@@ -77,8 +77,9 @@ malformed-body rejection, native non-streaming passthrough, streaming framing +
 exactly-once terminal, delayed-upstream client-cancellation, auth/upstream-error
 relay without credential leakage, unknown-model 404, oversize 413, dead-upstream
 502, bounded one-attempt route budget, private/metadata URL denial, loopback
-dial-time denial, redirect refusal, trusted-local allowance, and streaming
-terminal normalization for missing/duplicate/already-final `[DONE]` markers.
+dial-time denial, redirect refusal, trusted-local allowance, and incremental
+stream terminal normalization for missing/duplicate/already-final markers,
+including long events containing duplicate terminals.
 
 ## Rollback
 

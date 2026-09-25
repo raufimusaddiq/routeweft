@@ -204,8 +204,9 @@ func (h *Handler) newUpstreamRequest(r *http.Request, provider routing.ProviderR
 func (h *Handler) copyStream(w http.ResponseWriter, r *http.Request, response *http.Response) {
 	flusher, canFlush := w.(http.Flusher)
 	reader := bufio.NewReaderSize(response.Body, 32*1024)
-	event := make([]byte, 0, 64)
-	largeEvent := false
+	lineCandidate := make([]byte, 0, len("data: [DONE]\r\n"))
+	longLine := false
+	skipTerminalBlank := false
 	write := func(chunk []byte) bool {
 		if len(chunk) == 0 {
 			return true
@@ -223,26 +224,36 @@ func (h *Handler) copyStream(w http.ResponseWriter, r *http.Request, response *h
 			return
 		}
 		line, err := reader.ReadSlice('\n')
-		completeLine := !errors.Is(err, bufio.ErrBufferFull)
-		if largeEvent {
+		if longLine {
 			if !write(line) {
 				return
 			}
-		} else if len(event)+len(line) <= 64 {
-			event = append(event, line...)
+		} else if len(lineCandidate)+len(line) <= cap(lineCandidate) {
+			lineCandidate = append(lineCandidate, line...)
 		} else {
-			if !write(event) || !write(line) {
+			if !write(lineCandidate) || !write(line) {
 				return
 			}
-			event = event[:0]
-			largeEvent = true
+			lineCandidate = lineCandidate[:0]
+			longLine = true
 		}
-		if completeLine && (bytes.Equal(line, []byte("\n")) || bytes.Equal(line, []byte("\r\n"))) {
-			if !largeEvent && !isTerminalEvent(event) && !write(event) {
-				return
+		if !errors.Is(err, bufio.ErrBufferFull) {
+			if longLine {
+				longLine = false
+			} else {
+				switch {
+				case isTerminalLine(lineCandidate):
+					skipTerminalBlank = true
+				case skipTerminalBlank && isBlankSSELine(lineCandidate):
+					skipTerminalBlank = false
+				default:
+					skipTerminalBlank = false
+					if !write(lineCandidate) {
+						return
+					}
+				}
+				lineCandidate = lineCandidate[:0]
 			}
-			event = event[:0]
-			largeEvent = false
 		}
 		if err == nil || errors.Is(err, bufio.ErrBufferFull) {
 			continue
@@ -250,7 +261,7 @@ func (h *Handler) copyStream(w http.ResponseWriter, r *http.Request, response *h
 		if !errors.Is(err, io.EOF) {
 			return
 		}
-		if !largeEvent && !isTerminalEvent(event) && !write(event) {
+		if !longLine && !isTerminalLine(lineCandidate) && !write(lineCandidate) {
 			return
 		}
 		if r.Context().Err() == nil {
@@ -260,13 +271,14 @@ func (h *Handler) copyStream(w http.ResponseWriter, r *http.Request, response *h
 	}
 }
 
-func isTerminalEvent(event []byte) bool {
-	text := string(event)
-	text = strings.TrimSuffix(text, "\r\n\r\n")
-	text = strings.TrimSuffix(text, "\n\n")
-	text = strings.TrimSuffix(text, "\r\n")
-	text = strings.TrimSuffix(text, "\n")
+func isTerminalLine(line []byte) bool {
+	text := strings.TrimSuffix(string(line), "\n")
+	text = strings.TrimSuffix(text, "\r")
 	return text == "data: [DONE]" || text == "data:[DONE]"
+}
+
+func isBlankSSELine(line []byte) bool {
+	return bytes.Equal(line, []byte("\n")) || bytes.Equal(line, []byte("\r\n"))
 }
 
 func copyResponseHeaders(dst, src http.Header) {
