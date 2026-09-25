@@ -19,7 +19,7 @@ This file proves that every major product area has a requirement owner, technica
 | Headroom | PRD §12 | SPEC token saver | Sprint 4 | fail-open/status/timeout/diagnostic tests |
 | PXPIPE | PRD §12 | SPEC token saver | Sprint 4 | transform/health/log/stats/fail-open tests |
 | Prompt cache | PRD §12 | SPEC prompt cache | Sprint 4 | N/N+1 outbound-body/cache accounting fixtures |
-| Usage/request details | PRD §13 | SPEC telemetry/control | Sprint 6 | seeded accounting/detail/redaction tests |
+| Usage/request details | PRD §13, PRD-OBS-002 | SPEC telemetry/control | Sprint 6 | seeded accounting tests (PR41); bounded/redacted request-detail store + retention tests (PR42) |
 | Quota | PRD §13 | SPEC runtime/provider usage | Sprint 5/6 | normalized quota states, failure-not-exhaustion, reset/action tests |
 | Admin/control API | PRD §16 | SPEC /admin/v1 | Sprint 6 | CRUD/auth/revision tests |
 | UI shell/workflows | PRD §14-15 + UI_STYLE | SPEC UI architecture | Sprint 7 | browser smoke/a11y/theme/mobile tests |

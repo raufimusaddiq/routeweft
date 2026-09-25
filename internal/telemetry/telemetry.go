@@ -40,12 +40,20 @@ type Event struct {
 	TTFTMS       int64
 	RouteOutcome string
 	CreatedAt    time.Time
+	// detail, when non-nil, marks the event as a request-detail diagnostic the
+	// batcher routes to the DetailSink instead of the usage sink.
+	detail *Detail
 }
 
 // Sink persists one batch of events. Implementations must tolerate an empty
 // batch and must be safe to call from the single batcher goroutine.
 type Sink interface {
 	WriteUsageEvents(ctx context.Context, events []Event) error
+}
+
+// DetailSink persists one redacted request detail (SPEC §21 diagnostic class).
+type DetailSink interface {
+	WriteRequestDetail(ctx context.Context, detail Detail) error
 }
 
 // Options configure the bounded queue and batcher.
@@ -78,11 +86,15 @@ type Service struct {
 	signal   chan struct{}
 	closedCh chan struct{}
 	sink     Sink
+	details  DetailSink
 	opts     Options
 
 	lost     atomic.Uint64
 	written  atomic.Uint64
 	degraded atomic.Bool
+	// lostDiagnostics counts dropped/unwritable diagnostics; unlike Lost it is
+	// not an accounting loss (diagnostics are shed-able by design).
+	lostDiagnostics atomic.Uint64
 
 	closeOnce sync.Once
 	closed    atomic.Bool
@@ -105,6 +117,22 @@ func New(sink Sink, opts Options) *Service {
 		opts.EnqueueTimeout = DefaultOptions().EnqueueTimeout
 	}
 	return &Service{queue: make([]Event, 0, opts.MaxRecords), signal: make(chan struct{}, 1), closedCh: make(chan struct{}), sink: sink, opts: opts, flushNow: make(chan chan struct{})}
+}
+
+// WithDetails attaches a request-detail sink. Without one, RecordDetail is a
+// no-op so the diagnostic class degrades to nothing rather than failing.
+func (s *Service) WithDetails(details DetailSink) *Service {
+	s.details = details
+	return s
+}
+
+// RecordDetail enqueues one redacted request detail as a diagnostic event. It is
+// shed first under pressure like any other diagnostic (SPEC §21).
+func (s *Service) RecordDetail(detail Detail) {
+	if !s.opts.Enabled || s.closed.Load() || s.details == nil {
+		return
+	}
+	s.Record(Event{Class: Diagnostic, RequestID: detail.RequestID, CreatedAt: detail.CreatedAt, detail: &detail})
 }
 
 // Record enqueues one event. Critical events are never silently dropped:
@@ -240,20 +268,45 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 func (s *Service) flush(events []Event) {
-	if s.sink == nil {
+	if len(events) == 0 {
+		// An empty drain carries no new success and must not clear a degraded
+		// state established by an earlier failing batch.
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := s.sink.WriteUsageEvents(ctx, events); err != nil {
-		// Persistent failure marks degraded health and counts the loss; the queue
-		// keeps accepting so a transient failure does not silently lose the kind.
+	// A batch may mix usage and detail events. Degraded health reflects *any*
+	// failing sink in the batch, so a successful usage write must not clear a
+	// degraded state caused by a failed detail write (and vice versa).
+	failed := false
+	usage := make([]Event, 0, len(events))
+	for _, event := range events {
+		if event.detail != nil {
+			if s.details != nil {
+				if err := s.details.WriteRequestDetail(ctx, *event.detail); err != nil {
+					failed = true
+					s.lostDiagnostics.Add(1)
+				}
+			}
+			continue
+		}
+		usage = append(usage, event)
+	}
+	if s.sink != nil && len(usage) > 0 {
+		if err := s.sink.WriteUsageEvents(ctx, usage); err != nil {
+			// Persistent failure marks degraded health and counts the loss; the
+			// queue keeps accepting so a transient failure is not silently lost.
+			failed = true
+			s.lost.Add(uint64(len(usage)))
+		} else {
+			s.written.Add(uint64(len(usage)))
+		}
+	}
+	if failed {
 		s.degraded.Store(true)
-		s.lost.Add(uint64(len(events)))
 		return
 	}
 	s.degraded.Store(false)
-	s.written.Add(uint64(len(events)))
 }
 
 // FlushNow requests one synchronous flush of queued events. It blocks until the
@@ -310,6 +363,11 @@ func (s *Service) Lost() uint64 { return s.lost.Load() }
 
 // Written reports the monotonic count of persisted events.
 func (s *Service) Written() uint64 { return s.written.Load() }
+
+// LostDiagnostics reports the monotonic count of diagnostics that could not be
+// persisted. Diagnostics are shed-able by design, so this never affects the
+// critical `Lost` counter (SPEC §21).
+func (s *Service) LostDiagnostics() uint64 { return s.lostDiagnostics.Load() }
 
 // Enabled reports whether the service performs any work.
 func (s *Service) Enabled() bool { return s.opts.Enabled }

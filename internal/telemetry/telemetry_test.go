@@ -155,3 +155,75 @@ func TestDisabledServiceIsNoOp(t *testing.T) {
 		t.Fatalf("disabled service performed work: %+v", service)
 	}
 }
+
+type recordingDetails struct {
+	mu      sync.Mutex
+	written []Detail
+}
+
+func (d *recordingDetails) WriteRequestDetail(_ context.Context, detail Detail) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.written = append(d.written, detail)
+	return nil
+}
+
+func TestRecordDetailRoutesToDetailSink(t *testing.T) {
+	sink := &recordingSink{}
+	details := &recordingDetails{}
+	service := New(sink, Options{MaxRecords: 8, BatchSize: 4, FlushInterval: time.Hour, EnqueueTimeout: time.Millisecond, Enabled: true}).WithDetails(details)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go service.Run(ctx)
+	service.RecordDetail(Detail{RequestID: "req_1", RouteMode: "native", Payload: map[string]any{"a": 1}})
+	service.Record(Event{Class: Critical, RequestID: "req_1", Status: 200})
+	if err := service.FlushNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(details.written) != 1 || details.written[0].RequestID != "req_1" {
+		t.Fatalf("details=%+v", details.written)
+	}
+	if sink.count() != 1 {
+		t.Fatalf("usage sink got %d events, want 1 (detail must not go to the usage sink)", sink.count())
+	}
+}
+
+type failingDetails struct{}
+
+func (failingDetails) WriteRequestDetail(context.Context, Detail) error {
+	return errors.New("detail store down")
+}
+
+func TestMixedBatchKeepsDegradedWhenDetailSinkFails(t *testing.T) {
+	sink := &recordingSink{}
+	service := New(sink, Options{MaxRecords: 16, BatchSize: 16, FlushInterval: time.Hour, EnqueueTimeout: time.Millisecond, Enabled: true}).WithDetails(failingDetails{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go service.Run(ctx)
+	service.Record(Event{Class: Critical, RequestID: "req_1", Status: 200})
+	service.RecordDetail(Detail{RequestID: "req_1", Payload: map[string]any{"a": 1}})
+	if err := service.FlushNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// The usage write succeeded, but the detail failure must keep health degraded.
+	if !errors.Is(service.Health(), ErrDegraded) {
+		t.Fatalf("health=%v want degraded after mixed-batch detail failure", service.Health())
+	}
+	if service.LostDiagnostics() == 0 {
+		t.Fatal("detail failure did not advance the diagnostic loss counter")
+	}
+	if service.Lost() != 0 {
+		t.Fatalf("usage accounting loss=%d want 0", service.Lost())
+	}
+	if sink.count() != 1 {
+		t.Fatalf("usage sink got %d want 1", sink.count())
+	}
+}
+
+func TestRecordDetailIsNoOpWithoutDetailSink(t *testing.T) {
+	service := New(&recordingSink{}, Options{MaxRecords: 4, BatchSize: 4, FlushInterval: time.Hour, Enabled: true})
+	service.RecordDetail(Detail{RequestID: "req_1"})
+	if service.depth() != 0 {
+		t.Fatalf("detail without a sink should not enqueue: depth=%d", service.depth())
+	}
+}
