@@ -40,6 +40,11 @@ type Options struct {
 	TranslateGemini           GeminiTranslator
 	TranslateOllama           OllamaTranslator
 	TranslateSystemOne        SystemOneTranslator
+	Candidates                CandidateResolver
+	AccountProvider           AccountProvider
+	State                     *runtime.RuntimeState
+	Strategy                  routing.Strategy
+	StickyLimit               uint64
 	// AllowPrivateUpstreams is the explicit trusted-local operator policy. It is
 	// off by default so operator-supplied provider URLs cannot reach loopback,
 	// LAN, or metadata addresses.
