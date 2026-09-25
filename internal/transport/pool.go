@@ -24,6 +24,14 @@ type ProxyPolicy struct {
 	AllowPrivate       bool
 }
 
+// ProxyForHost exposes the compiled precedence for tests and callers that need
+// to inspect the effective proxy: a connection-level proxy wins over the global
+// one, and a no-proxy match wins over both (PRD-ROUTE-005, SPEC §20). A nil
+// result means the request dials directly.
+func (p ProxyPolicy) ProxyForHost(host string) (*url.URL, error) {
+	return p.proxyFor(host)
+}
+
 // proxyFor returns the effective proxy URL for a destination host, or nil when
 // the host is in the no-proxy list or proxying is disabled.
 func (p ProxyPolicy) proxyFor(host string) (*url.URL, error) {

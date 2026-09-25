@@ -14,6 +14,16 @@ type RuntimeSnapshot struct {
 	aliases        map[string]ModelRef
 	disabledModels map[string]struct{}
 	combos         map[string]Combo
+	poolBindings   map[string]string
+}
+
+// ConnectionPool returns the proxy pool bound to one connection, or "" when the
+// connection uses the global proxy setting (PRD-ROUTE-005).
+func (s *RuntimeSnapshot) ConnectionPool(connectionID string) string {
+	if s == nil {
+		return ""
+	}
+	return s.poolBindings[connectionID]
 }
 
 func (s *RuntimeSnapshot) Version() uint64        { return s.version }

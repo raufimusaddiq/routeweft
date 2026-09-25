@@ -57,11 +57,11 @@ func (m *Manager) Update(ctx context.Context, mutate func(*Candidate) error) (*R
 	if err != nil {
 		return nil, err
 	}
-	candidate := &Candidate{Settings: current.Settings(), APIKeys: current.APIKeys().Records(), Models: cloneModelsForConfig(current.models), Aliases: cloneAliases(current.aliases), DisabledModels: cloneDisabled(current.disabledModels), Combos: current.Combos()}
+	candidate := &Candidate{Settings: current.Settings(), APIKeys: current.APIKeys().Records(), Models: cloneModelsForConfig(current.models), Aliases: cloneAliases(current.aliases), DisabledModels: cloneDisabled(current.disabledModels), Combos: current.Combos(), PoolBindings: cloneStringMap(current.poolBindings)}
 	if err := mutate(candidate); err != nil {
 		return nil, err
 	}
-	config := Config{Revision: current.ConfigRevision() + 1, Settings: cloneSettings(candidate.Settings), APIKeys: append([]auth.Entry(nil), candidate.APIKeys...), Models: append([]Model(nil), candidate.Models...), Aliases: cloneAliases(candidate.Aliases), DisabledModels: cloneDisabled(candidate.DisabledModels), Combos: append([]Combo(nil), candidate.Combos...)}
+	config := Config{Revision: current.ConfigRevision() + 1, Settings: cloneSettings(candidate.Settings), APIKeys: append([]auth.Entry(nil), candidate.APIKeys...), Models: append([]Model(nil), candidate.Models...), Aliases: cloneAliases(candidate.Aliases), DisabledModels: cloneDisabled(candidate.DisabledModels), Combos: append([]Combo(nil), candidate.Combos...), PoolBindings: cloneStringMap(candidate.PoolBindings)}
 	nextVersion := m.version.Load() + 1
 	compiled, err := (Compiler{}).Compile(config, nextVersion)
 	if err != nil {
@@ -136,6 +136,11 @@ func loadConfig(ctx context.Context, db *sql.DB) (Config, error) {
 	if err := loadCatalog(ctx, db, &config); err != nil {
 		return Config{}, err
 	}
+	bindings, err := loadPoolBindings(ctx, db)
+	if err != nil {
+		return Config{}, err
+	}
+	config.PoolBindings = bindings
 	combos, err := loadCombos(ctx, db)
 	if err != nil {
 		return Config{}, err

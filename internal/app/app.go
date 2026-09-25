@@ -14,6 +14,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/ingress"
 	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
+	"github.com/raufimusaddiq/routeweft/internal/proxy"
 	quota "github.com/raufimusaddiq/routeweft/internal/quota"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/store/migrations"
@@ -32,6 +33,32 @@ type Config struct {
 	// QuotaRefreshInterval controls the periodic provider quota refresh. Zero uses
 	// the default interval.
 	QuotaRefreshInterval time.Duration
+	// AllowPrivateUpstreams mirrors the trusted-local operator policy so outbound
+	// proxy validation and inference may reach LAN/self-hosted destinations.
+	AllowPrivateUpstreams bool
+}
+
+// settingsSource adapts the active snapshot's settings to the proxy binder so
+// global proxy configuration is read from the immutable snapshot, never SQLite.
+func settingsSource(manager *runtime.Manager) proxy.SettingsSource {
+	return func() map[string]string {
+		snapshot, err := manager.Load()
+		if err != nil {
+			return nil
+		}
+		return snapshot.Settings()
+	}
+}
+
+// loadSnapshot exposes the active snapshot to the proxy binder's binding source.
+func loadSnapshot(manager *runtime.Manager) func() *runtime.RuntimeSnapshot {
+	return func() *runtime.RuntimeSnapshot {
+		snapshot, err := manager.Load()
+		if err != nil {
+			return nil
+		}
+		return snapshot
+	}
 }
 
 type App struct {
@@ -78,7 +105,22 @@ func (a *App) Initialize(ctx context.Context) error {
 		return fmt.Errorf("initialize runtime: %w", err)
 	}
 	a.store, a.runtime = store, manager
-	a.ingress = ingress.New(manager, ingress.Options{MaxBodyBytes: a.cfg.MaxBodyBytes, CORSOrigins: a.cfg.CORSOrigins, State: manager.State()})
+	proxyStore, err := proxy.NewStore(store.DB())
+	if err != nil {
+		_ = store.Close()
+		return fmt.Errorf("initialize proxy store: %w", err)
+	}
+	binder := proxy.NewBinder(proxyStore, settingsSource(manager), proxy.SnapshotBindingSource{Snapshot: loadSnapshot(manager)})
+	binder.AllowLocal = a.cfg.AllowPrivateUpstreams
+	a.ingress = ingress.New(manager, ingress.Options{
+		MaxBodyBytes:          a.cfg.MaxBodyBytes,
+		CORSOrigins:           a.cfg.CORSOrigins,
+		State:                 manager.State(),
+		AllowPrivateUpstreams: a.cfg.AllowPrivateUpstreams,
+		ClientFor: func(connectionID string) *http.Client {
+			return binder.ClientFor(context.Background(), connectionID)
+		},
+	})
 	if err := a.initializeQuota(ctx, store, manager); err != nil {
 		_ = store.Close()
 		return err

@@ -22,6 +22,8 @@ No proxy admin API/UI (Sprint 6), no connectivity-test endpoint, no global-proxy
 
 Proxy pools are now real durable records (`proxy_pool_members`, migration v4) rather than a dangling `proxy_pool_id`. Pool members are validated at write time (scheme + host) and de-duplicated. The compiled policy prefers a connection's bound pool member over the global proxy, falls back to the global proxy when the pool is empty or unbound, and disables proxying when nothing is configured. The ingress request path now resolves the outbound client per connection, so a bound pool is honored without building a transport per request; unbound connections keep the existing SSRF-protected default client.
 
+Runtime wiring: `App.Initialize` builds a `proxy.Binder` over the pool store, the active snapshot's settings, and the snapshot's connection bindings, and passes its `ClientFor` to ingress. Connection bindings are compiled into the immutable snapshot (`RuntimeSnapshot.ConnectionPool`) and refreshed through the standard compile-before-commit path (`Manager.RefreshPoolBindings`), so the request path never queries SQLite for a connection's proxy. Precedence (bound member > global > disabled) is asserted both on the compiled struct and through `transport.ProxyPolicy.ProxyForHost`, which selects the URL that actually dials.
+
 ## Storage / migration impact
 
 - [x] Storage/schema/migration impact documented below.

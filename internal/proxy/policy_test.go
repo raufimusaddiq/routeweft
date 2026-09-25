@@ -6,6 +6,29 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
+// TestCompiledPolicyPrefersBoundMemberOnTheWire asserts precedence through the
+// actual transport selector, not just the struct fields: with both a global and
+// a bound pool proxy, the bound member must be the one that dials.
+func TestCompiledPolicyPrefersBoundMemberOnTheWire(t *testing.T) {
+	resolver := Resolver{Global: GlobalConfig{Enabled: true, ProxyURL: "http://global.example:3128"}}
+	policy := resolver.Policy(Binding{PoolID: "pool-1", MemberURL: "http://pool.example:1080"})
+	selected, err := policy.ProxyForHost("api.example")
+	if err != nil || selected == nil || selected.Host != "pool.example:1080" {
+		t.Fatalf("selected=%v err=%v", selected, err)
+	}
+	// With no bound member the global proxy applies.
+	fallback, err := resolver.Policy(Binding{}).ProxyForHost("api.example")
+	if err != nil || fallback == nil || fallback.Host != "global.example:3128" {
+		t.Fatalf("fallback=%v err=%v", fallback, err)
+	}
+	// A no-proxy match wins over both.
+	resolver.Global.NoProxy = []string{".example"}
+	bypass, err := resolver.Policy(Binding{MemberURL: "http://pool.example:1080"}).ProxyForHost("api.example")
+	if err != nil || bypass != nil {
+		t.Fatalf("no-proxy bypass=%v err=%v", bypass, err)
+	}
+}
+
 func TestPolicyPrefersBoundPoolMemberOverGlobal(t *testing.T) {
 	resolver := Resolver{Global: GlobalConfig{Enabled: true, ProxyURL: "http://global.example:3128", NoProxy: []string{".internal.example", "localhost"}}}
 	policy := resolver.Policy(Binding{PoolID: "pool-1", MemberURL: "http://pool.example:1080"})

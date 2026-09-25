@@ -362,6 +362,7 @@ func serve(args []string) error {
 	maxBody := flags.Int64("max-body-bytes", envInt64("ROUTEWEFT_MAX_BODY_BYTES", ingress.DefaultMaxBodyBytes), "maximum request body size in bytes")
 	corsOrigins := flags.String("cors-origins", envOr("ROUTEWEFT_CORS_ORIGINS", ""), "comma-separated allowed browser origins")
 	credentialKey := flags.String("credential-key", envOr("ROUTEWEFT_CREDENTIAL_KEY", ""), "base64 credential master key sealing provider secrets at rest")
+	allowPrivate := flags.Bool("allow-private-upstreams", envBool("ROUTEWEFT_ALLOW_PRIVATE_UPSTREAMS", false), "allow trusted-local/private upstream and proxy destinations")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -379,7 +380,16 @@ func serve(args []string) error {
 		}
 		key = decoded
 	}
-	return app.New(app.Config{Listen: *listen, DataDir: *dataDir, MaxBodyBytes: *maxBody, CORSOrigins: splitList(*corsOrigins), CredentialKey: key}, log).Serve(ctx)
+	return app.New(app.Config{Listen: *listen, DataDir: *dataDir, MaxBodyBytes: *maxBody, CORSOrigins: splitList(*corsOrigins), CredentialKey: key, AllowPrivateUpstreams: *allowPrivate}, log).Serve(ctx)
+}
+
+func envBool(key string, fallback bool) bool {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			return parsed
+		}
+	}
+	return fallback
 }
 
 func splitList(value string) []string {
