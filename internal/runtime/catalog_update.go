@@ -82,6 +82,11 @@ func (m *Manager) ReplaceDiscoveredModels(ctx context.Context, providerID string
 	if providerID == "" {
 		return errors.New("provider id is required")
 	}
+	// An empty result is advisory (discovery unavailable or failed): never
+	// delete the last known durable catalog for the provider.
+	if len(models) == 0 {
+		return nil
+	}
 	return m.UpdateCatalog(ctx, func(candidate *Candidate) error {
 		kept := candidate.Models[:0]
 		for _, model := range candidate.Models {

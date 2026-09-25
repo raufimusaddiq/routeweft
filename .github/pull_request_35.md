@@ -54,7 +54,7 @@ Revert this PR to drop discovery; no schema change is introduced and existing pe
 ## Review discipline
 
 - [x] Coherent head ready for review.
-- [x] Prior findings re-read; none exist for this PR.
+- [x] Prior findings re-read and validated. The reviewer flagged that an empty discovered slice would still delete the provider's discovered models, contradicting the documented no-op contract; that was valid, so `ReplaceDiscoveredModels` now returns before mutating when the slice is empty, and the regression test asserts an existing discovered model survives an empty refresh.
 - [x] No new head while FIFO reviewer reviews this exact head absent blocker.
 
 ## Worktree isolation

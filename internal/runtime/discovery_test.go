@@ -68,13 +68,24 @@ func TestReplaceDiscoveredModelsKeepsCustomAndOtherProviders(t *testing.T) {
 			remaining++
 		}
 	}
-	if remaining != 1 {
-		t.Fatalf("empty discovery deleted models: remaining=%d", remaining)
+	if remaining != 4 {
+		t.Fatalf("empty discovery deleted models: remaining=%d want 4 (3 discovered + 1 custom)", remaining)
+	}
+	if _, ok := byIDSnapshot(snapshot)["openrouter/z-ai/glm"]; !ok {
+		t.Fatal("empty discovery erased an existing discovered model")
 	}
 
 	if err := manager.ReplaceDiscoveredModels(ctx, "  ", nil); err == nil {
 		t.Fatal("accepted blank provider id")
 	}
+}
+
+func byIDSnapshot(snapshot *RuntimeSnapshot) map[string]Model {
+	result := make(map[string]Model)
+	for _, model := range snapshot.Models() {
+		result[model.ProviderID+"/"+model.ID] = model
+	}
+	return result
 }
 
 func TestReplaceDiscoveredModelsPersistsAcrossReload(t *testing.T) {
