@@ -51,6 +51,8 @@ New tests cover all five status derivations, exhaustion edge cases (past reset, 
 
 Evidence command: `go test -race ./internal/quota/ ./internal/runtime/ -count=1` (both packages ok).
 
+Reviewer note: the exact-head review for `9c652d2` is APPROVED; a duplicate Hermes check-run on the same head returned an empty body. Re-triggering for a clean check-run only.
+
 ## Rollback
 
 Revert the PR. No schema change and no persisted state, so an earlier binary is unaffected; quota observations simply stop being published.
