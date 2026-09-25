@@ -248,6 +248,9 @@ func (a *App) Serve(ctx context.Context) error {
 		a.ready.Store(false)
 		if a.usage != nil {
 			a.usage.Close()
+			// ctx is already cancelled, so Run performs its final flush now; join it
+			// before the store is closed (BDR-013 shutdown).
+			a.usage.Wait()
 		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

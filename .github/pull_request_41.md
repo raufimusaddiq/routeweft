@@ -53,6 +53,8 @@ The request path performs one non-blocking channel send per completed request; w
 
 New tests: `internal/telemetry/telemetry_test.go` (batch/flush, diagnostic-first shedding, degraded health + lost counter on persistent failure, disabled no-op), `internal/telemetry/sqlite_test.go` (durable `usage_events` + `usage_daily` rollup, empty-batch no-op), `internal/app/app_test.go` (telemetry wired and settings mapping), and updated ingress tests asserting `RequestOutcome` across Gemini streaming and both Ollama paths.
 
+Review fixes: (1) the queue is now a mutex-guarded slice rather than a channel, so eviction removes a queued diagnostic under the lock and can never displace or silently replace a critical event; when the queue holds only critical events the new event increments the visible `Lost` counter instead. Covered by `TestEvictionNeverDropsQueuedCriticalEvents` (concurrent saturation). (2) `App.Serve` now cancels the batcher, joins it with `Service.Wait()` so its final drain/flush completes, and only then closes the store (`TestRunFlushesOnShutdown` proves the join writes every observed event).
+
 ## Rollback
 
 Revert the PR. No schema or persisted state changes; the request path returns to no accounting writer.

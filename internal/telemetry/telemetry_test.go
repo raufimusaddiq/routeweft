@@ -71,6 +71,65 @@ func TestServiceShedsDiagnosticsBeforeCritical(t *testing.T) {
 	}
 }
 
+func TestEvictionNeverDropsQueuedCriticalEvents(t *testing.T) {
+	sink := &recordingSink{}
+	service := New(sink, Options{MaxRecords: 4, BatchSize: 100, FlushInterval: time.Hour, EnqueueTimeout: time.Millisecond, Enabled: true})
+	// Fill with critical events, then flood with more critical events while a
+	// concurrent producer adds diagnostics that must be the ones evicted.
+	for i := 0; i < 4; i++ {
+		service.Record(Event{Class: Critical, RequestID: "kept"})
+	}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			service.Record(Event{Class: Diagnostic, RequestID: "shed"})
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			service.Record(Event{Class: Critical, RequestID: "overflow"})
+		}
+	}()
+	wg.Wait()
+	// Every queued event must still be critical: no diagnostic should have
+	// displaced a critical one, and the queue never exceeds its bound.
+	if service.depth() > 4 {
+		t.Fatalf("queue exceeded bound: %d", service.depth())
+	}
+	for _, event := range service.takeBatch(100) {
+		if event.Class != Critical {
+			t.Fatalf("diagnostic survived while criticals were present: %+v", event)
+		}
+	}
+}
+
+func TestRunFlushesOnShutdown(t *testing.T) {
+	sink := &recordingSink{}
+	service := New(sink, Options{MaxRecords: 64, BatchSize: 8, FlushInterval: time.Hour, EnqueueTimeout: time.Millisecond, Enabled: true})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { service.Run(ctx); close(done) }()
+	for i := 0; i < 20; i++ {
+		service.Record(Event{Class: Critical, RequestID: "r", Status: 200})
+	}
+	cancel()
+	if err := service.FlushNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after cancellation")
+	}
+	service.Wait()
+	if got := sink.count(); got != 20 {
+		t.Fatalf("written=%d want 20", got)
+	}
+}
+
 func TestServiceMarksDegradedOnPersistentFailure(t *testing.T) {
 	sink := &recordingSink{err: errors.New("disk full")}
 	service := New(sink, Options{MaxRecords: 4, BatchSize: 1, FlushInterval: time.Hour, EnqueueTimeout: time.Millisecond, Enabled: true})

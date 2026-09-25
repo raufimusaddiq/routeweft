@@ -73,9 +73,12 @@ var ErrDegraded = errors.New("telemetry writer degraded")
 
 // Service is the bounded async telemetry writer.
 type Service struct {
-	queue chan Event
-	sink  Sink
-	opts  Options
+	mu       sync.Mutex
+	queue    []Event
+	signal   chan struct{}
+	closedCh chan struct{}
+	sink     Sink
+	opts     Options
 
 	lost     atomic.Uint64
 	written  atomic.Uint64
@@ -101,116 +104,137 @@ func New(sink Sink, opts Options) *Service {
 	if opts.EnqueueTimeout <= 0 {
 		opts.EnqueueTimeout = DefaultOptions().EnqueueTimeout
 	}
-	return &Service{queue: make(chan Event, opts.MaxRecords), sink: sink, opts: opts, flushNow: make(chan chan struct{})}
+	return &Service{queue: make([]Event, 0, opts.MaxRecords), signal: make(chan struct{}, 1), closedCh: make(chan struct{}), sink: sink, opts: opts, flushNow: make(chan chan struct{})}
 }
 
-// Record enqueues one event. Critical events get short bounded backpressure and
-// then, if still full, an emergency inline flush; diagnostic events are shed
-// first. A lost critical event increments the visible lost counter.
+// Record enqueues one event. Critical events are never silently dropped:
+// when the queue is full a queued diagnostic is evicted to make room, and only
+// if the queue holds exclusively critical events is the new event counted as
+// lost (and the loss is visible via Lost). Diagnostic events shed first and are
+// never counted as lost accounting.
 func (s *Service) Record(event Event) {
 	if !s.opts.Enabled || s.closed.Load() {
 		return
 	}
-	if s.tryEnqueue(event) {
+	if s.enqueue(event) {
 		return
 	}
 	if event.Class == Diagnostic {
-		// Diagnostic events shed first and are not counted as lost accounting.
 		return
 	}
-	// Critical backpressure: wait briefly for room.
+	// Critical backpressure: wait briefly for the batcher to free room.
 	timer := time.NewTimer(s.opts.EnqueueTimeout)
 	defer timer.Stop()
 	select {
-	case s.queue <- event:
-		return
 	case <-timer.C:
+	case <-s.signal:
+		// A slot may have opened; retry below regardless.
 	}
-	// Emergency: drop the oldest diagnostic to make room, else count the loss.
-	if s.evictDiagnostic() {
-		if s.tryEnqueue(event) {
-			return
-		}
+	if s.enqueue(event) {
+		return
 	}
+	if s.evictDiagnostic() && s.enqueue(event) {
+		return
+	}
+	// Queue is full and holds only critical events: preserve existing criticals
+	// rather than disturb them, and record the new event as a visible loss.
 	s.lost.Add(1)
 }
 
-func (s *Service) tryEnqueue(event Event) bool {
-	select {
-	case s.queue <- event:
-		return true
-	default:
+// enqueue appends under the lock. It reports false when the buffer is full or
+// the service is closed.
+func (s *Service) enqueue(event Event) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed.Load() || len(s.queue) >= cap(s.queue) {
 		return false
 	}
+	s.queue = append(s.queue, event)
+	s.notify()
+	return true
 }
 
-// evictDiagnostic removes one queued diagnostic event to make room for a
-// critical one, preserving critical ordering. It reports whether it evicted.
+// evictDiagnostic removes the oldest queued diagnostic, leaving critical events
+// untouched. It reports whether one was removed.
 func (s *Service) evictDiagnostic() bool {
-	for i := 0; i < cap(s.queue); i++ {
-		select {
-		case event := <-s.queue:
-			if event.Class == Diagnostic {
-				return true
-			}
-			// Preserve critical events, but only if there is room to re-queue.
-			select {
-			case s.queue <- event:
-			default:
-				return true
-			}
-		default:
-			return false
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, event := range s.queue {
+		if event.Class == Diagnostic {
+			s.queue = append(s.queue[:i], s.queue[i+1:]...)
+			return true
 		}
 	}
 	return false
 }
 
+// takeBatch removes and returns up to n queued events under the lock.
+func (s *Service) takeBatch(n int) []Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.queue) == 0 || n <= 0 {
+		return nil
+	}
+	if n > len(s.queue) {
+		n = len(s.queue)
+	}
+	events := append([]Event(nil), s.queue[:n]...)
+	s.queue = append(s.queue[:0], s.queue[n:]...)
+	return events
+}
+
+func (s *Service) notify() {
+	select {
+	case s.signal <- struct{}{}:
+	default:
+	}
+}
+
+// depth reports the current queued event count (test/observability helper).
+func (s *Service) depth() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.queue)
+}
+
 // Run drains the queue in batches until ctx is cancelled or Close is called.
-// It flushes any remaining events before returning.
+// It flushes every remaining event before returning, and signals done so the
+// caller can join it before closing the store (SPEC §21, BND-013 shutdown).
 func (s *Service) Run(ctx context.Context) {
 	if !s.opts.Enabled {
+		close(s.closedCh)
 		return
 	}
+	defer close(s.closedCh)
 	ticker := time.NewTicker(s.opts.FlushInterval)
 	defer ticker.Stop()
-	pending := make([]Event, 0, s.opts.BatchSize)
-	flush := func() {
-		if len(pending) == 0 {
-			return
+	// drainAll flushes every queued event in BatchSize chunks; used on explicit
+	// flush requests and on shutdown so nothing observed is left unwritten.
+	drainAll := func() {
+		for {
+			batch := s.takeBatch(s.opts.BatchSize)
+			if len(batch) == 0 {
+				return
+			}
+			s.flush(batch)
 		}
-		s.flush(pending)
-		pending = pending[:0]
 	}
 	for {
 		select {
 		case <-ctx.Done():
-			pending = s.drain(pending)
-			flush()
+			drainAll()
 			return
 		case done := <-s.flushNow:
-			pending = s.drain(pending)
-			flush()
+			drainAll()
 			close(done)
-		case event := <-s.queue:
-			pending = append(pending, event)
-			if len(pending) >= s.opts.BatchSize {
-				flush()
+		case <-s.signal:
+			batch := s.takeBatch(s.opts.BatchSize)
+			s.flush(batch)
+			if s.depth() > 0 {
+				s.notify()
 			}
 		case <-ticker.C:
-			flush()
-		}
-	}
-}
-
-// drain empties the queue into pending (bounded by MaxRecords) for a final flush.
-func (s *Service) drain(pending []Event) []Event {
-	for {
-		select {
-		case event := <-s.queue:
-			pending = append(pending, event)
-		default:
-			return pending
+			s.flush(s.takeBatch(s.opts.BatchSize))
 		}
 	}
 }
@@ -253,10 +277,19 @@ func (s *Service) FlushNow(ctx context.Context) error {
 	}
 }
 
-// Close stops accepting new events. Run must already be draining for a clean
-// shutdown; the process closes the context first, then calls Close.
+// Close stops accepting new events. Cancel the Run context first, then call
+// Wait to join the final flush before closing the store.
 func (s *Service) Close() {
 	s.closeOnce.Do(func() { s.closed.Store(true) })
+}
+
+// Wait blocks until Run has returned (including its final flush). It returns
+// immediately if the service is disabled or Run was never started.
+func (s *Service) Wait() {
+	if !s.opts.Enabled {
+		return
+	}
+	<-s.closedCh
 }
 
 // Health reports nil while healthy, or ErrDegraded after a persistent storage
