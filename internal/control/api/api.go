@@ -16,6 +16,8 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/backup"
 	"github.com/raufimusaddiq/routeweft/internal/buildinfo"
 	controlevents "github.com/raufimusaddiq/routeweft/internal/control/events"
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/providers/discovery"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
@@ -36,22 +38,28 @@ type KeyManager interface {
 
 // Options configure the control API.
 type Options struct {
-	Accounts       *adminauth.Store
-	Sessions       *adminauth.SessionManager
-	Settings       SettingsStore
-	Keys           KeyManager
-	DB             *sql.DB
-	Runtime        RuntimeReader
-	Providers      []registry.Spec
-	Telemetry      TelemetryReader
-	Events         *controlevents.Bus
-	Logs           *LogBuffer
-	ActiveRequests func() int64
-	Ready          func() bool
-	Build          buildinfo.Info
-	DataDir        string
-	Backup         func(context.Context, string) (backup.Metadata, error)
-	Restore        func(context.Context, string) (backup.Metadata, error)
+	Accounts              *adminauth.Store
+	Sessions              *adminauth.SessionManager
+	Settings              SettingsStore
+	Keys                  KeyManager
+	DB                    *sql.DB
+	Runtime               RuntimeReader
+	Credentials           *credentials.Store
+	CredentialRegistry    *credentials.Registry
+	ProviderCatalog       ProviderCatalog
+	PoolBindings          PoolBindingRefresher
+	AllowPrivateUpstreams bool
+	DiscoveryClient       *discovery.Client
+	Providers             []registry.Spec
+	Telemetry             TelemetryReader
+	Events                *controlevents.Bus
+	Logs                  *LogBuffer
+	ActiveRequests        func() int64
+	Ready                 func() bool
+	Build                 buildinfo.Info
+	DataDir               string
+	Backup                func(context.Context, string) (backup.Metadata, error)
+	Restore               func(context.Context, string) (backup.Metadata, error)
 }
 
 // RuntimeReader exposes immutable active configuration and process-local state.
@@ -67,6 +75,19 @@ type TelemetryReader interface {
 	Lost() uint64
 	LostDiagnostics() uint64
 	Written() uint64
+}
+
+// ProviderCatalog applies model and alias changes through RuntimeSnapshot.
+type ProviderCatalog interface {
+	PutModel(context.Context, runtime.Model) error
+	ReplaceDiscoveredModels(context.Context, string, []runtime.Model) error
+	PutAlias(context.Context, string, runtime.ModelRef) error
+	DeleteAlias(context.Context, string) error
+	SetModelDisabled(context.Context, string, string, bool) error
+}
+
+type PoolBindingRefresher interface {
+	RefreshPoolBindings(context.Context) (*runtime.RuntimeSnapshot, error)
 }
 
 // sessionCookieName is the dashboard session cookie. It is HttpOnly and
@@ -92,6 +113,23 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.Handle("POST /admin/v1/keys", h.requireSessionHandler(http.HandlerFunc(h.handleCreateKey)))
 	mux.Handle("PATCH /admin/v1/keys/{id}", h.requireSessionHandler(http.HandlerFunc(h.handlePatchKey)))
 	mux.Handle("DELETE /admin/v1/keys/{id}", h.requireSessionHandler(http.HandlerFunc(h.handleDeleteKey)))
+	mux.Handle("POST /admin/v1/provider-nodes", h.requireSessionHandler(http.HandlerFunc(h.handlePutProviderNode)))
+	mux.Handle("PATCH /admin/v1/provider-nodes/{id}", h.requireSessionHandler(http.HandlerFunc(h.handlePutProviderNode)))
+	mux.Handle("DELETE /admin/v1/provider-nodes/{id}", h.requireSessionHandler(http.HandlerFunc(h.handleDeleteProviderNode)))
+	mux.Handle("POST /admin/v1/connections", h.requireSessionHandler(http.HandlerFunc(h.handlePutConnection)))
+	mux.Handle("PATCH /admin/v1/connections/{id}", h.requireSessionHandler(http.HandlerFunc(h.handlePutConnection)))
+	mux.Handle("DELETE /admin/v1/connections/{id}", h.requireSessionHandler(http.HandlerFunc(h.handleDeleteConnection)))
+	mux.Handle("POST /admin/v1/connections/{id}/test", h.requireSessionHandler(http.HandlerFunc(h.handleTestConnection)))
+	mux.Handle("POST /admin/v1/connections/{id}/test-models", h.requireSessionHandler(http.HandlerFunc(h.handleTestModels)))
+	mux.Handle("POST /admin/v1/connections/{id}/discover", h.requireSessionHandler(http.HandlerFunc(h.handleDiscoverModels)))
+	mux.Handle("POST /admin/v1/models", h.requireSessionHandler(http.HandlerFunc(h.handlePutModel)))
+	mux.Handle("PATCH /admin/v1/models/disabled", h.requireSessionHandler(http.HandlerFunc(h.handleDisableModel)))
+	mux.Handle("POST /admin/v1/aliases", h.requireSessionHandler(http.HandlerFunc(h.handlePutAlias)))
+	mux.Handle("DELETE /admin/v1/aliases/{alias}", h.requireSessionHandler(http.HandlerFunc(h.handleDeleteAlias)))
+	mux.Handle("POST /admin/v1/pricing", h.requireSessionHandler(http.HandlerFunc(h.handlePutPricing)))
+	mux.Handle("DELETE /admin/v1/pricing", h.requireSessionHandler(http.HandlerFunc(h.handleDeletePricing)))
+	mux.Handle("POST /admin/v1/connections/{id}/proxy", h.requireSessionHandler(http.HandlerFunc(h.handleSetConnectionProxy)))
+	mux.Handle("POST /admin/v1/connections/{id}/order", h.requireSessionHandler(http.HandlerFunc(h.handleMoveConnection)))
 	for _, path := range []string{"overview", "providers", "provider-nodes", "connections", "models", "aliases", "pricing", "combos", "proxy-pools", "keys", "usage", "requests", "quota", "token-saver", "systemone"} {
 		mux.Handle("GET /admin/v1/"+path, h.requireSessionHandler(h.readModel(path)))
 	}

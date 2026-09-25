@@ -131,6 +131,63 @@ ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,provider_id=excluded.provider_i
 	return node, nil
 }
 
+// ListNodes returns provider definitions in stable catalog order without
+// decrypting or exposing connection credentials.
+func (s *Store) ListNodes(ctx context.Context) ([]Node, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,kind,provider_id,name,COALESCE(prefix,''),COALESCE(base_url,''),COALESCE(transports,'[]') FROM provider_nodes ORDER BY provider_id,name,id`)
+	if err != nil {
+		return nil, fmt.Errorf("list provider nodes: %w", err)
+	}
+	defer rows.Close()
+	var nodes []Node
+	for rows.Next() {
+		var node Node
+		var transports string
+		if err := rows.Scan(&node.ID, &node.Kind, &node.ProviderID, &node.Name, &node.Prefix, &node.BaseURL, &transports); err != nil {
+			return nil, err
+		}
+		node.Transports, err = decodeTransports(transports)
+		if err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes, rows.Err()
+}
+
+// GetNode returns one definition without opening any connection secret.
+func (s *Store) GetNode(ctx context.Context, id string) (Node, error) {
+	var node Node
+	var transports string
+	err := s.db.QueryRowContext(ctx, `SELECT id,kind,provider_id,name,COALESCE(prefix,''),COALESCE(base_url,''),COALESCE(transports,'[]') FROM provider_nodes WHERE id=?`, id).Scan(&node.ID, &node.Kind, &node.ProviderID, &node.Name, &node.Prefix, &node.BaseURL, &transports)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Node{}, ErrNotFound
+	}
+	if err != nil {
+		return Node{}, err
+	}
+	node.Transports, err = decodeTransports(transports)
+	return node, err
+}
+
+// DeleteGenericNode refuses to remove built-in provider definitions. Explicit
+// Generic Provider deletion cascades to its connections and is audited by the
+// caller as a destructive operator action.
+func (s *Store) DeleteGenericNode(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, "DELETE FROM provider_nodes WHERE id=? AND kind=?", id, string(NodeGeneric))
+	if err != nil {
+		return fmt.Errorf("delete generic provider node: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // PutConnection creates or replaces one connection, sealing the secret. Writes
 // never persist the plaintext payload and never clear a stored blob with an
 // empty secret (PRD-AUTH-003).
@@ -261,6 +318,101 @@ func (s *Store) SetConnectionEnabled(ctx context.Context, id string, enabled boo
 	result, err := s.db.ExecContext(ctx, "UPDATE provider_connections SET enabled=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", flag, id)
 	if err != nil {
 		return fmt.Errorf("update provider connection: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetConnectionPriority changes stable account order without loading secrets.
+func (s *Store) SetConnectionPriority(ctx context.Context, id string, priority int) error {
+	result, err := s.db.ExecContext(ctx, "UPDATE provider_connections SET priority=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", priority, id)
+	if err != nil {
+		return fmt.Errorf("update provider connection priority: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// MoveConnection swaps one account with its adjacent sibling in stable routing
+// order. A no-op at either end keeps the user action bounded and deterministic.
+func (s *Store) MoveConnection(ctx context.Context, id string, direction int) error {
+	if direction != -1 && direction != 1 {
+		return errors.New("connection move direction must be -1 or 1")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var nodeID string
+	if err := tx.QueryRowContext(ctx, "SELECT node_id FROM provider_connections WHERE id=?", id).Scan(&nodeID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, "SELECT id,priority FROM provider_connections WHERE node_id=? ORDER BY priority,name,id", nodeID)
+	if err != nil {
+		return err
+	}
+	type ordered struct {
+		id       string
+		priority int
+	}
+	items := []ordered{}
+	for rows.Next() {
+		var item ordered
+		if err := rows.Scan(&item.id, &item.priority); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	_ = rows.Close()
+	index := -1
+	for i := range items {
+		if items[i].id == id {
+			index = i
+			break
+		}
+	}
+	next := index + direction
+	if index < 0 {
+		return ErrNotFound
+	}
+	if next >= 0 && next < len(items) {
+		items[index].priority, items[next].priority = items[next].priority, items[index].priority
+		for _, item := range []ordered{items[index], items[next]} {
+			if _, err := tx.ExecContext(ctx, "UPDATE provider_connections SET priority=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", item.priority, item.id); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+// SetConnectionProxy changes a connection's proxy-pool binding without
+// exposing its sealed credential.
+func (s *Store) SetConnectionProxy(ctx context.Context, id, poolID string) error {
+	result, err := s.db.ExecContext(ctx, "UPDATE provider_connections SET proxy_pool_id=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", nullable(poolID), id)
+	if err != nil {
+		return fmt.Errorf("update provider connection proxy: %w", err)
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {

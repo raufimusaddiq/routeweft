@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { EndpointAndKey } from './EndpointAndKey'
 import { Overview } from './Overview'
+import { Providers } from './Providers'
 import { SignIn } from './SignIn'
 import './style.css'
 
@@ -199,7 +200,8 @@ function App() {
           {auth === 'signed-out' && <SignIn onSignedIn={name => { setUsername(name); setAuth('signed-in'); setAuthError('') }} />}
           {auth === 'signed-in' && page === 'Overview' && <Overview onUnauthorized={handleUnauthorized} />}
           {auth === 'signed-in' && page === 'Endpoint & Key' && <EndpointAndKey onUnauthorized={handleUnauthorized} />}
-          {auth === 'signed-in' && page !== 'Overview' && page !== 'Endpoint & Key' && <section className="empty-workspace" aria-labelledby="workspace-title"><span className="material-symbols empty-icon" aria-hidden="true">tune</span><div><h2 id="workspace-title">Workspace shell</h2><p>Operational views are added in their planned increments.</p></div></section>}
+          {auth === 'signed-in' && page === 'Providers' && <Providers onUnauthorized={handleUnauthorized} />}
+          {auth === 'signed-in' && page !== 'Overview' && page !== 'Endpoint & Key' && page !== 'Providers' && <section className="empty-workspace" aria-labelledby="workspace-title"><span className="material-symbols empty-icon" aria-hidden="true">tune</span><div><h2 id="workspace-title">Workspace shell</h2><p>Operational views are added in their planned increments.</p></div></section>}
         </div>
       </main>
     </div>

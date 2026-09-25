@@ -24,6 +24,7 @@ const assert = require('node:assert/strict');
   let createCalls = 0;
   let deleteCalls = 0;
   let patchKeyCalls = 0;
+  let providerPatches = 0;
   const createdKeyID = 'k-ci-1';
   const createdSecret = 'rw_smoke_secret_value';
   await page.route('**/admin/v1/**', async route => {
@@ -52,6 +53,29 @@ const assert = require('node:assert/strict');
 	if (url.pathname.startsWith('/admin/v1/keys/') && method === 'DELETE') {
 	  deleteCalls += 1;
 	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: createdKeyID, revoked: true, configRevision: 10 }) });
+	}
+	if (url.pathname === '/admin/v1/providers' && method === 'GET') {
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'openai', transports: ['openai-chat','openai-responses'], auth: 'api-key', authModes: ['api-key'], defaultBaseURL: 'https://api.openai.com/v1', modelCatalog: 'static', passthroughModels: false, reportsUsage: false, configuredNodes: 1, enabledAccounts: 1 }, { id: 'openrouter', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, configuredNodes: 0, enabledAccounts: 0 }], page: 1, pageSize: 100, total: 2 }) });
+	}
+	if (url.pathname === '/admin/v1/provider-nodes' && method === 'GET') {
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'node-openai', kind: 'builtin', providerId: 'openai', name: 'openai', baseUrl: 'https://api.openai.com/v1', transports: ['openai-chat','openai-responses'] }], page: 1, pageSize: 100, total: 1 }) });
+	}
+	if (url.pathname === '/admin/v1/connections' && method === 'GET') {
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'conn-1', nodeId: 'node-openai', providerId: 'openai', name: 'primary', authKind: 'api-key', identity: 'acct-1', enabled: providerPatches === 0, priority: 0, credentialConfigured: true }], page: 1, pageSize: 100, total: 1 }) });
+	}
+	if (url.pathname === '/admin/v1/models' && method === 'GET') {
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ providerId: 'openai', id: 'gpt-5', name: 'GPT-5', contextWindow: 128000, capabilities: [], disabled: false }], page: 1, pageSize: 100, total: 1 }) });
+	}
+	if ((url.pathname === '/admin/v1/aliases' || url.pathname === '/admin/v1/pricing' || url.pathname === '/admin/v1/proxy-pools') && method === 'GET') {
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [], page: 1, pageSize: 100, total: 0 }) });
+	}
+	if (url.pathname === '/admin/v1/connections/conn-1' && method === 'PATCH') {
+	  providerPatches += 1;
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-1', enabled: false }) });
+	}
+	if (url.pathname.endsWith('/order') && method === 'POST') {
+	  providerPatches += 1;
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-1', direction: 'up' }) });
 	}
     if (url.pathname === '/admin/v1/auth/session') {
       sessionCalls += 1;
@@ -142,6 +166,20 @@ const assert = require('node:assert/strict');
   report.pageAfterNav = await page.locator('#page-title').textContent();
   report.ariaCurrent = await page.locator('a[href="#providers"]').getAttribute('aria-current');
   report.focusAfterDesktopNav = await page.evaluate(() => ({ className: document.activeElement.className, visibility: getComputedStyle(document.activeElement).visibility, display: getComputedStyle(document.activeElement).display }));
+  await page.waitForSelector('.provider-card');
+  report.providerCards = await page.locator('.provider-card').count();
+  await page.locator('.provider-card', { hasText: 'openai' }).first().click();
+  await page.waitForSelector('.connection-row');
+  report.connectionRows = await page.locator('.connection-row').count();
+  report.providerDetail = await page.locator('.provider-summary h2').textContent();
+  report.modelRows = await page.locator('.model-row').count();
+  await page.fill('#provider-filter', 'openrouter');
+  report.filteredCards = await page.locator('.provider-card').count();
+  await page.fill('#provider-filter', '');
+  await page.click('.providers-content .provider-details .connection-row .button-secondary');
+  await page.waitForFunction(() => document.querySelector('.providers-content .connection-row .state-tag').textContent === 'Disabled');
+  report.providerPatches = providerPatches;
+  report.providerDisabledLabel = await page.locator('.connection-row .state-tag').textContent();
   await page.selectOption('#theme-select', 'light');
   report.themeAfterSelect = await page.evaluate(() => document.documentElement.dataset.theme);
   report.stored = await page.evaluate(() => localStorage.getItem('routeweft-theme'));
@@ -219,6 +257,13 @@ const assert = require('node:assert/strict');
   assert.equal(report.themeDark, 'dark');
   assert.equal(report.pageAfterNav, 'Providers');
   assert.equal(report.ariaCurrent, 'page');
+  assert.equal(report.providerCards, 2);
+  assert.equal(report.connectionRows, 1);
+  assert.equal(report.providerDetail, 'openai');
+  assert.equal(report.modelRows, 1);
+  assert.equal(report.filteredCards, 1);
+  assert.equal(report.providerPatches, 1);
+  assert.equal(report.providerDisabledLabel, 'Disabled');
   assert.equal(report.focusAfterDesktopNav.className, 'nav-link nav-link-active');
   assert.notEqual(report.focusAfterDesktopNav.visibility, 'hidden');
   assert.notEqual(report.focusAfterDesktopNav.display, 'none');
