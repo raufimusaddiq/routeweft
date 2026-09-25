@@ -3,7 +3,10 @@
 // transport, auth kind and base URL, and reuses shared adapters.
 package registry
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // AuthKind is a supported provider credential mode.
 type AuthKind string
@@ -66,6 +69,12 @@ type Spec struct {
 	// mode and AuthModes[0] is always Auth. Empty means single-mode (Auth only).
 	AuthModes      []AuthKind
 	DefaultBaseURL string
+	// TransportEndpoints maps a native transport protocol to the relative path
+	// appended to DefaultBaseURL when that transport serves a different path than
+	// the provider origin (for example a Chat path and a separate Messages path).
+	// Missing keys fall back to the shared default for that protocol. A path is
+	// relative, non-empty, without query/fragment and without "."/".." segments.
+	TransportEndpoints map[Protocol]string
 	// ModelCatalog is the baseline model catalog class; PassthroughModels marks
 	// providers that must forward arbitrary operator-supplied IDs.
 	ModelCatalog      ModelCatalog
@@ -127,6 +136,38 @@ func (s Spec) Validate() error {
 	if s.PassthroughModels && s.ModelCatalog != CatalogDynamic && s.ModelCatalog != CatalogPassthrough {
 		return errors.New("passthrough models require a dynamic or passthrough catalog")
 	}
+	for protocol, path := range s.TransportEndpoints {
+		supported := false
+		for _, transport := range s.Transports {
+			if transport == protocol {
+				supported = true
+				break
+			}
+		}
+		if !supported {
+			return errors.New("transport endpoint declared for an unsupported transport")
+		}
+		if err := validateEndpointPath(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateEndpointPath rejects paths that could escape the provider origin or
+// smuggle a query/fragment, matching the dispatch-time endpoint policy.
+func validateEndpointPath(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("transport endpoint path is required")
+	}
+	if strings.HasPrefix(path, "/") || strings.ContainsAny(path, "?#") {
+		return errors.New("transport endpoint must be a relative path without query or fragment")
+	}
+	for _, segment := range strings.Split(path, "/") {
+		if segment == "." || segment == ".." {
+			return errors.New("transport endpoint must not traverse paths")
+		}
+	}
 	return nil
 }
 
@@ -139,6 +180,14 @@ func (s Spec) NativeBinding(source string) (Protocol, bool) {
 		}
 	}
 	return "", false
+}
+
+// EndpointFor returns the relative dispatch path for a native transport. The
+// second result reports whether the provider declared a transport-specific
+// override; callers fall back to their shared default when it is false.
+func (s Spec) EndpointFor(transport Protocol) (string, bool) {
+	path, ok := s.TransportEndpoints[transport]
+	return path, ok
 }
 
 // Catalog is an immutable provider identity index.
@@ -160,6 +209,13 @@ func NewCatalog(specs []Spec) (*Catalog, error) {
 		spec.Quirks = append([]Quirk(nil), spec.Quirks...)
 		spec.StaticModels = append([]string(nil), spec.StaticModels...)
 		spec.AuthModes = append([]AuthKind(nil), spec.AuthModes...)
+		if spec.TransportEndpoints != nil {
+			copied := make(map[Protocol]string, len(spec.TransportEndpoints))
+			for protocol, path := range spec.TransportEndpoints {
+				copied[protocol] = path
+			}
+			spec.TransportEndpoints = copied
+		}
 		indexed[spec.ID] = spec
 	}
 	return &Catalog{specs: indexed}, nil
@@ -176,6 +232,13 @@ func (c *Catalog) Lookup(id string) (Spec, bool) {
 		spec.Quirks = append([]Quirk(nil), spec.Quirks...)
 		spec.StaticModels = append([]string(nil), spec.StaticModels...)
 		spec.AuthModes = append([]AuthKind(nil), spec.AuthModes...)
+		if spec.TransportEndpoints != nil {
+			copied := make(map[Protocol]string, len(spec.TransportEndpoints))
+			for protocol, path := range spec.TransportEndpoints {
+				copied[protocol] = path
+			}
+			spec.TransportEndpoints = copied
+		}
 	}
 	return spec, ok
 }
@@ -186,4 +249,15 @@ func (c *Catalog) Len() int {
 		return 0
 	}
 	return len(c.specs)
+}
+
+// EndpointFor returns the provider-specific relative dispatch path for one
+// native transport, so request dispatch can honor per-protocol endpoints
+// without importing provider packages (SPEC §11 base endpoint rules).
+func (c *Catalog) EndpointFor(providerID, transport string) (string, bool) {
+	spec, ok := c.Lookup(providerID)
+	if !ok {
+		return "", false
+	}
+	return spec.EndpointFor(Protocol(transport))
 }
