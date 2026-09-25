@@ -469,8 +469,16 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 		body = map[string]any{"model": modelID, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}, "stream": false, "options": map[string]int{"num_predict": 1}}
 	case string(registry.TransportSystemOne):
 		// The System One/Jev provider configures the full typed endpoint as its
-		// base URL, so the probe posts verbatim (PRD §6 typesafe).
-		body = map[string]any{"model": modelID, "state": map[string]any{}, "questions": []any{map[string]string{"question": "Reply with OK."}}}
+		// base URL, so the probe posts verbatim (PRD §6 typesafe). The envelope
+		// matches the recorded compatibility oracle: a non-empty state object and
+		// a questions object keyed by question name.
+		body = map[string]any{
+			"model": modelID,
+			"state": map[string]any{"message": "Routeweft System One probe."},
+			"questions": map[string]any{
+				"probe": map[string]string{"type": "noul", "instructions": "Reply with OK."},
+			},
+		}
 	default:
 		result.Error = "model probe is not implemented for this specialized provider transport"
 		return result
@@ -497,7 +505,11 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 		return result
 	}
 	if transportName == string(registry.TransportSystemOne) {
-		// Base URL already points at the typed endpoint; do not append a path.
+		// Base URL already points at the typed endpoint; only a spec-declared
+		// override appends a path, matching ingress dispatch.
+		if endpoint != "" {
+			parsed.Path = strings.TrimRight(parsed.Path, "/") + "/" + strings.TrimLeft(endpoint, "/")
+		}
 		parsed.RawPath = ""
 	} else {
 		parsed.Path = strings.TrimRight(parsed.Path, "/") + "/" + strings.TrimLeft(endpoint, "/")

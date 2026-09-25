@@ -75,8 +75,9 @@ export function SystemOne({ onUnauthorized }: Props) {
     const connection = providerConnections.find(item => item.enabled)
     if (!connection) { setError('Add an enabled connection for this System One provider first.'); return }
     await run('probe', '', async () => {
-      const response = await send(`/connections/${encodeURIComponent(connection.id)}/test-models`, 'POST', { transport: 'systemone', modelIds: [modelID] }) as { results: Array<{ modelId: string; ok: boolean; status?: number; error?: string }> }
-      const result = response.results[0]
+      const response = await send(`/connections/${encodeURIComponent(connection.id)}/test-models`, 'POST', { transport: 'systemone', modelIds: [modelID] }) as { results?: Array<{ modelId: string; ok: boolean; status?: number; error?: string }> } | null
+      const result = response?.results?.[0]
+      if (!result) { setError('The typed request returned no result.'); return }
       setNotice(result.ok ? `Typed request succeeded for ${result.modelId} (HTTP ${result.status}).` : `Typed request failed for ${result.modelId}: ${result.error || `HTTP ${result.status}`}.`)
     })
   }

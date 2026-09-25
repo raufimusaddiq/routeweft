@@ -314,7 +314,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   .providers-layout { grid-template-columns: minmax(0, 1fr); }
   .provider-catalog { max-height: 280px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .combos-layout { grid-template-columns: minmax(0, 1fr); }
-	  .systemone-layout { grid-template-columns: minmax(0, 1fr); }
+    .systemone-layout { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 700px) {
@@ -353,8 +353,8 @@ button:disabled { opacity: .55; cursor: not-allowed; }
     .combos-toolbar { flex-wrap: wrap; }
     .combos-toolbar .count-label { flex: 1 1 100%; }
   .combo-form-grid { grid-template-columns: minmax(0, 1fr); }
-	  .systemone-toolbar { flex-wrap: wrap; }
-	  .systemone-toolbar .count-label { margin-left: 0; flex: 1 1 100%; }
+    .systemone-toolbar { flex-wrap: wrap; }
+    .systemone-toolbar .count-label { margin-left: 0; flex: 1 1 100%; }
 }
 
 @media (max-width: 380px) {

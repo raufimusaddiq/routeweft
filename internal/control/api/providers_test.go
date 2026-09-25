@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -394,6 +395,8 @@ func TestNativeModelProbeIsBoundedAndRedacted(t *testing.T) {
 // The System One/Jev provider configures the full typed endpoint as its base
 // URL, so the typed request workflow posts verbatim with state/questions.
 func TestSystemOneModelProbePostsVerbatim(t *testing.T) {
+	const wantBody = `{"model":"jev","questions":{"probe":{"instructions":"Reply with OK.","type":"noul"}},"state":{"message":"Routeweft System One probe."}}`
+	var gotBody []byte
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/systemone" {
 			t.Errorf("unexpected systemone probe target: %s %s", r.Method, r.URL.Path)
@@ -401,17 +404,7 @@ func TestSystemOneModelProbePostsVerbatim(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer jev-secret" {
 			t.Errorf("auth header=%q", r.Header.Get("Authorization"))
 		}
-		var body struct {
-			Model     string            `json:"model"`
-			State     map[string]any    `json:"state"`
-			Questions []json.RawMessage `json:"questions"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Errorf("decode probe request: %v", err)
-		}
-		if body.Model != "jev" || body.State == nil || len(body.Questions) == 0 {
-			t.Errorf("probe body=%+v", body)
-		}
+		gotBody, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
@@ -429,5 +422,8 @@ func TestSystemOneModelProbePostsVerbatim(t *testing.T) {
 	response := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+connection.ID+"/test-models", `{"transport":"systemone","modelIds":["jev"]}`)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"ok":true`) {
 		t.Fatalf("systemone probe status=%d body=%s", response.Code, response.Body.String())
+	}
+	if string(gotBody) != wantBody {
+		t.Fatalf("probe body=%s want=%s", gotBody, wantBody)
 	}
 }
