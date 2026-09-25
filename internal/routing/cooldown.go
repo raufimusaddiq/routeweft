@@ -46,6 +46,35 @@ func ClassifyStatus(status int, header http.Header) Classification {
 	}
 }
 
+// ClassifyError refines a status-based classification with a normalized
+// provider error kind (SPEC §11 error classification, §14). It returns the
+// zero Classification for an empty or unrecognized kind so callers keep the
+// status-derived result; Retry-After/reset hints from the status path survive
+// because only the outcome is replaced.
+func ClassifyError(kind string, status int) Classification {
+	switch kind {
+	case "auth":
+		return Classification{Outcome: OutcomeAuthRefreshRequired}
+	case "quota":
+		return Classification{Outcome: OutcomeQuotaLock}
+	case "rate-limited":
+		return Classification{Outcome: OutcomeQuotaLock}
+	case "overloaded":
+		return Classification{Outcome: OutcomeFallbackAccount}
+	case "context-length":
+		return Classification{Outcome: OutcomeTerminalClientError}
+	case "not-found":
+		return Classification{Outcome: OutcomeFallbackProvider}
+	case "invalid-input":
+		return Classification{Outcome: OutcomeTerminalClientError}
+	default:
+		if status >= 500 {
+			return Classification{Outcome: OutcomeFallbackAccount}
+		}
+		return Classification{}
+	}
+}
+
 // AllowsFallback reports whether another candidate may be attempted.
 func (c Classification) AllowsFallback() bool {
 	switch c.Outcome {

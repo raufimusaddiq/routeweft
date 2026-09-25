@@ -12,6 +12,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/compat/fixtures"
 	"github.com/raufimusaddiq/routeweft/compat/mockupstream"
 	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
+	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
@@ -168,7 +169,7 @@ func TestMessagesCountTokensMatchesCharEstimator(t *testing.T) {
 }
 
 func TestUsageScannerMergesSplitAnthropicStreamUsageOnlyOnTerminal(t *testing.T) {
-	scanner := &usageScanner{}
+	scanner := &usageScanner{family: shared.FamilyAnthropic}
 	first := []byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":12,\"cache_read_input_tokens\":8,\"cache_creation_input_tokens\":2}}}\n\n")
 	for _, chunk := range [][]byte{first[:23], first[23:], []byte("event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":5}}\n\n")} {
 		if _, err := scanner.Write(chunk); err != nil {
