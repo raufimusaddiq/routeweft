@@ -47,6 +47,8 @@ The observer is invoked by existing provider usage paths, not by the request pat
 
 New tests cover all five status derivations, exhaustion edge cases (past reset, unbounded, unlimited), clamp/NaN handling of percent helpers, most-constrained-window publication, failure-is-not-exhaustion, unknown-provider rejection, exhausted-publishes-zero, and an end-to-end check that the observer feeds `RuntimeState` such that the existing ingress eligibility rule keeps failed-read accounts and drops exhausted ones.
 
+Evidence command: `go test -race ./internal/quota/ ./internal/runtime/ -count=1` (both packages ok).
+
 ## Rollback
 
 Revert the PR. No schema change and no persisted state, so an earlier binary is unaffected; quota observations simply stop being published.
