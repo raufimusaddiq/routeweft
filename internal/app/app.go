@@ -105,6 +105,13 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 		return fmt.Errorf("initialize credential store: %w", err)
 	}
 	registry := credentials.NewRegistry(credentialStore, nil)
+	// Seed the memory-first credential registry so quota reads do not fail with
+	// ErrNotFound before the first refresh.
+	for _, providerID := range []string{"codex", "claude"} {
+		if _, err := registry.Load(ctx, providerID); err != nil {
+			return fmt.Errorf("seed %s credentials: %w", providerID, err)
+		}
+	}
 	observer := quota.Observer{
 		Clients: map[string]quota.UsageClient{
 			"codex":  quota.CodexClient{},
@@ -112,7 +119,7 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 		},
 		Publisher: manager.State(),
 	}
-	a.quota = quota.NewService(credentialStore, registry, observer)
+	a.quota = quota.NewService(credentialStore, registry, observer).WithSeeder(registry)
 	return nil
 }
 

@@ -19,6 +19,13 @@ type CredentialSource interface {
 	Credential(ctx context.Context, connectionID string) (string, error)
 }
 
+// ConnectionSeeder loads a provider's durable connections into the credential
+// registry before they are read. Without this, Credential on an unseeded
+// registry returns ErrNotFound and every quota read fails.
+type ConnectionSeeder interface {
+	Load(ctx context.Context, providerID string) ([]credentials.Connection, error)
+}
+
 // ConnectionSource lists the enabled connections for a provider.
 type ConnectionSource interface {
 	ListConnections(ctx context.Context, providerID string) ([]credentials.Connection, error)
@@ -31,7 +38,11 @@ type ConnectionSource interface {
 type Service struct {
 	Connections ConnectionSource
 	Credentials CredentialSource
-	Observer    Observer
+	// Seeder registers a provider's connections with the credential source before
+	// the first read. Optional, but required for a memory-first registry that is
+	// not otherwise seeded.
+	Seeder   ConnectionSeeder
+	Observer Observer
 
 	mu       sync.Mutex
 	lastErr  map[string]error
@@ -41,6 +52,12 @@ type Service struct {
 // NewService builds a quota refresh service.
 func NewService(connections ConnectionSource, credentials CredentialSource, observer Observer) *Service {
 	return &Service{Connections: connections, Credentials: credentials, Observer: observer, lastErr: make(map[string]error)}
+}
+
+// WithSeeder attaches the connection seeder and returns the service.
+func (s *Service) WithSeeder(seeder ConnectionSeeder) *Service {
+	s.Seeder = seeder
+	return s
 }
 
 // RefreshProvider reads and publishes quota for one provider's enabled
@@ -53,6 +70,13 @@ func (s *Service) RefreshProvider(ctx context.Context, providerID string) error 
 	connections, err := s.Connections.ListConnections(ctx, providerID)
 	if err != nil {
 		return err
+	}
+	// Seed the credential source from durable state before reading, so a
+	// memory-first registry has an entry for every connection.
+	if s.Seeder != nil {
+		if _, err := s.Seeder.Load(ctx, providerID); err != nil {
+			return err
+		}
 	}
 	var firstErr error
 	for _, connection := range connections {
