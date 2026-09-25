@@ -71,7 +71,7 @@ func Builtins() []Spec {
 // arbitrary IDs stay routable.
 func OAuthSpecialized() []Spec {
 	return []Spec{
-		{ID: "xai", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.x.ai/v1", ModelCatalog: CatalogStatic, StaticModels: []string{
+		{ID: "xai", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.x.ai/v1", ModelCatalog: CatalogStatic, StaticModels: []string{
 			"grok-4.6", "grok-4.5", "grok-4", "grok-4-fast-reasoning", "grok-code-fast-1", "grok-3",
 		}},
 		{ID: "github", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses, TransportAnthropic}, Auth: AuthOAuth, DefaultBaseURL: "https://api.githubcopilot.com", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
@@ -85,27 +85,27 @@ func OAuthSpecialized() []Spec {
 			"qwen3-235b-a22b-thinking-2507", "qwen3-32b", "kimi-k2", "deepseek-v3.2", "deepseek-v3.1", "deepseek-v3", "deepseek-r1", "glm-4.7",
 			"iflow-rome-30ba3b",
 		}},
-		{ID: "kimi", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.kimi.com/coding/v1", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
+		{ID: "kimi", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.kimi.com/coding/v1", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
 			"kimi-k3", "k3", "kimi-for-coding", "kimi-for-coding-highspeed", "kimi-k2.7-code", "kimi-k2.7-code-highspeed",
 			"kimi-k2.6", "kimi-k2.5", "kimi-k2.5-thinking", "kimi-latest",
 		}},
-		{ID: "xiaomi-mimo", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.xiaomimimo.com/v1", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
+		{ID: "xiaomi-mimo", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.xiaomimimo.com/v1", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
 			"mimo-x-pro-preview", "mimo-x-flash-preview", "mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-omni", "mimo-v2-flash",
 		}},
 		{ID: "cline", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://api.cline.bot", ModelCatalog: CatalogStatic, StaticModels: []string{
 			"anthropic/claude-opus-4.7", "anthropic/claude-sonnet-4.6", "anthropic/claude-opus-4.6", "openai/gpt-5.3-codex", "openai/gpt-5.4",
 			"google/gemini-3.1-pro-preview", "google/gemini-3.1-flash-lite-preview", "kwaipilot/kat-coder-pro",
 		}},
-		{ID: "clinepass", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.cline.bot", ModelCatalog: CatalogStatic, StaticModels: []string{
+		{ID: "clinepass", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.cline.bot", ModelCatalog: CatalogStatic, StaticModels: []string{
 			"cline-pass/glm-5.2", "cline-pass/kimi-k2.7-code", "cline-pass/kimi-k2.6", "cline-pass/deepseek-v4-pro", "cline-pass/deepseek-v4-flash",
 			"cline-pass/mimo-v2.5", "cline-pass/mimo-v2.5-pro", "cline-pass/minimax-m3", "cline-pass/qwen3.7-max", "cline-pass/qwen3.7-plus",
 		}},
 		{ID: "kilocode", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://api.kilo.ai/api/openrouter", ModelCatalog: CatalogDynamic, PassthroughModels: true},
-		{ID: "codebuddy-cn", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://copilot.tencent.com/v2", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
+		{ID: "codebuddy-cn", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://copilot.tencent.com/v2", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
 			"glm-5.2", "glm-5.1", "glm-5v-turbo", "minimax-m3", "kimi-k2.7", "kimi-k2.6", "hy3", "hy4-preview", "glm-5.3", "glm-5.3-flash",
 			"kimi-k3-1", "deepseek-v4-pro", "deepseek-v4.1-flash",
 		}},
-		{ID: "codebuddy-intl", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://www.codebuddy.ai/v2", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
+		{ID: "codebuddy-intl", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://www.codebuddy.ai/v2", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
 			"glm-5.2", "glm-5.1", "glm-5.0", "glm-5.0-turbo", "glm-5v-turbo", "glm-4.7", "minimax-m3", "minimax-m2.7", "kimi-k2.7", "kimi-k2.6",
 			"kimi-k2.5", "hy3-preview", "deepseek-v4-pro", "deepseek-v4.1-flash", "deepseek-v3-2-volc",
 		}},

@@ -47,9 +47,13 @@ const (
 
 // Spec is one built-in provider identity.
 type Spec struct {
-	ID             string
-	Transports     []Protocol
-	Auth           AuthKind
+	ID         string
+	Transports []Protocol
+	Auth       AuthKind
+	// AuthModes lists every credential mode the provider accepts, in baseline
+	// order, for dual-auth providers (e.g. API key + OAuth). Auth is the default
+	// mode and AuthModes[0] is always Auth. Empty means single-mode (Auth only).
+	AuthModes      []AuthKind
 	DefaultBaseURL string
 	// ModelCatalog is the baseline model catalog class; PassthroughModels marks
 	// providers that must forward arbitrary operator-supplied IDs.
@@ -80,6 +84,23 @@ func (s Spec) Validate() error {
 	case AuthAPIKey, AuthOAuth, AuthCookie, AuthNone:
 	default:
 		return errors.New("unsupported provider auth kind")
+	}
+	if len(s.AuthModes) > 0 {
+		if s.AuthModes[0] != s.Auth {
+			return errors.New("auth modes must lead with the default auth kind")
+		}
+		seen := map[AuthKind]bool{}
+		for _, mode := range s.AuthModes {
+			switch mode {
+			case AuthAPIKey, AuthOAuth, AuthCookie, AuthNone:
+			default:
+				return errors.New("unsupported provider auth mode")
+			}
+			if seen[mode] {
+				return errors.New("duplicate provider auth mode")
+			}
+			seen[mode] = true
+		}
 	}
 	switch s.ModelCatalog {
 	case CatalogStatic, CatalogDynamic, CatalogPassthrough:
@@ -126,6 +147,7 @@ func NewCatalog(specs []Spec) (*Catalog, error) {
 		spec.Transports = append([]Protocol(nil), spec.Transports...)
 		spec.Quirks = append([]Quirk(nil), spec.Quirks...)
 		spec.StaticModels = append([]string(nil), spec.StaticModels...)
+		spec.AuthModes = append([]AuthKind(nil), spec.AuthModes...)
 		indexed[spec.ID] = spec
 	}
 	return &Catalog{specs: indexed}, nil
@@ -141,6 +163,7 @@ func (c *Catalog) Lookup(id string) (Spec, bool) {
 		spec.Transports = append([]Protocol(nil), spec.Transports...)
 		spec.Quirks = append([]Quirk(nil), spec.Quirks...)
 		spec.StaticModels = append([]string(nil), spec.StaticModels...)
+		spec.AuthModes = append([]AuthKind(nil), spec.AuthModes...)
 	}
 	return spec, ok
 }

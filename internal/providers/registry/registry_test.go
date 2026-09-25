@@ -195,6 +195,13 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	if spec, _ := catalog.Lookup("cline"); spec.Auth != AuthOAuth {
 		t.Fatalf("cline auth=%v", spec.Auth)
 	}
+	// Dual-auth rows must expose both approved credential modes.
+	for _, id := range []string{"xai", "kimi", "xiaomi-mimo", "clinepass", "codebuddy-cn", "codebuddy-intl"} {
+		spec, _ := catalog.Lookup(id)
+		if len(spec.AuthModes) != 2 || spec.AuthModes[0] != spec.Auth || spec.AuthModes[1] != AuthOAuth {
+			t.Errorf("dual-auth modes %s = %v (default %v)", id, spec.AuthModes, spec.Auth)
+		}
+	}
 	if spec, _ := catalog.Lookup("gitlab"); spec.Auth != AuthOAuth {
 		t.Fatalf("gitlab auth=%v", spec.Auth)
 	}
@@ -216,5 +223,26 @@ func TestCatalogLookupCopiesStaticModels(t *testing.T) {
 	again, _ := catalog.Lookup("p")
 	if again.StaticModels[0] != "m" {
 		t.Fatal("catalog static model slice leaked")
+	}
+}
+
+func TestDualAuthModesValidationAndCopy(t *testing.T) {
+	for _, invalid := range []Spec{
+		{ID: "p", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthOAuth, AuthAPIKey}, ModelCatalog: CatalogStatic},
+		{ID: "p", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthAPIKey}, ModelCatalog: CatalogStatic},
+		{ID: "p", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, "bogus"}, ModelCatalog: CatalogStatic},
+	} {
+		if _, err := NewCatalog([]Spec{invalid}); err == nil {
+			t.Errorf("accepted invalid auth modes %+v", invalid.AuthModes)
+		}
+	}
+	catalog, err := NewCatalog([]Spec{{ID: "p", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, ModelCatalog: CatalogStatic}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := catalog.Lookup("p")
+	spec.AuthModes[1] = "mutated"
+	if again, _ := catalog.Lookup("p"); again.AuthModes[1] != AuthOAuth {
+		t.Fatal("auth modes slice leaked")
 	}
 }

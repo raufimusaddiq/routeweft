@@ -20,7 +20,7 @@ No OAuth/device/PAT token-exchange or refresh implementation, no connection stor
 - [x] Relevant tests/evidence added.
 - [x] No retained behavior was silently simplified.
 
-Dual-auth providers (xai, kimi, xiaomi-mimo) declare their native Chat plus Responses/Messages transports so a source-matching route skips translation (BDR-010); `github` advertises Chat, Responses and Messages so Copilot's Anthropic shim is reachable. `kilocode` proxies the OpenRouter catalog, so arbitrary IDs stay routable. `cline`/`clinepass` share the cline.bot gateway endpoint. `codebuddy-cn`/`codebuddy-intl` report usage. The dispatch layer now applies the GitHub Copilot VS Code fingerprint, the Cline referer/title pair, and the iFlow/CodeBuddy user-agent from a provider-identity module; unknown providers add no fingerprint and credentials are never placed in identity headers.
+Dual-auth providers (xai, kimi, xiaomi-mimo) declare their native Chat plus Responses/Messages transports so a source-matching route skips translation (BDR-010); `github` advertises Chat, Responses and Messages so Copilot's Anthropic shim is reachable. Because `AuthKind` is single-valued, `Spec` now carries `AuthModes`, an ordered multi-valued credential-mode list whose first entry is the default `Auth`; xai, kimi, xiaomi-mimo, clinepass, codebuddy-cn and codebuddy-intl list both `api-key` and `oauth` per the baseline matrix. `kilocode` proxies the OpenRouter catalog, so arbitrary IDs stay routable. `cline`/`clinepass` share the cline.bot gateway endpoint. `codebuddy-cn`/`codebuddy-intl` report usage. The dispatch layer now applies the GitHub Copilot VS Code fingerprint, the Cline referer/title pair, and the iFlow/CodeBuddy user-agent from a provider-identity module; unknown providers add no fingerprint and credentials are never placed in identity headers.
 
 ## Storage / migration impact
 
@@ -50,7 +50,7 @@ Revert this PR to remove these identities and header hooks; no durable state dep
 ## Review discipline
 
 - [x] Coherent head ready for review.
-- [x] Prior findings re-read; none exist for this PR.
+- [x] Prior findings re-read and validated. The reviewer flagged that dual-auth rows could not represent both approved credential modes on a single-valued `AuthKind`; that was valid, so `Spec.AuthModes` is added with validation, defensive copy, and explicit assertions for every affected provider. Identity-header behavior was unchanged and remains correct.
 - [x] No new head while FIFO reviewer reviews this exact head absent blocker.
 
 ## Worktree isolation
@@ -58,4 +58,3 @@ Revert this PR to remove these identities and header hooks; no durable state dep
 - [x] Dedicated feature worktree.
 - [x] Worktree bound to this branch only.
 - [x] Review fixes remain in this worktree.
-
