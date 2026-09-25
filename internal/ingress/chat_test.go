@@ -53,6 +53,7 @@ func chatHandler(t *testing.T, baseURL string) http.Handler {
 		t.Fatal(err)
 	}
 	handler := New(manager, Options{
+		AllowPrivateUpstreams: true,
 		ProviderResolver: func(_ *runtime.RuntimeSnapshot, model string) (routing.ProviderRef, bool) {
 			if model != "gpt-4o-mini" && model != "fixture-model" {
 				return routing.ProviderRef{}, false
@@ -113,6 +114,7 @@ func TestChatTranslatorUsesTargetEndpointAndHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := New(manager, Options{
+		AllowPrivateUpstreams: true,
 		ProviderResolver: func(*runtime.RuntimeSnapshot, string) (routing.ProviderRef, bool) {
 			return routing.ProviderRef{ProviderID: "anthropic", Protocol: "anthropic-messages", BaseURL: server.URL() + "/v1", APIToken: "provider-secret"}, true
 		},
@@ -279,7 +281,7 @@ func TestChatHandlerPropagatesUpstreamFailure(t *testing.T) {
 		http.Error(w, "upstream down", http.StatusBadGateway)
 	}))
 	defer dead.Close()
-	handler := New(manager, Options{ProviderResolver: func(*runtime.RuntimeSnapshot, string) (routing.ProviderRef, bool) {
+	handler := New(manager, Options{AllowPrivateUpstreams: true, ProviderResolver: func(*runtime.RuntimeSnapshot, string) (routing.ProviderRef, bool) {
 		return routing.ProviderRef{ProviderID: "p", Protocol: "openai-chat", BaseURL: dead.URL}, true
 	}})
 	mux := http.NewServeMux()
@@ -327,7 +329,7 @@ func BenchmarkChatCompletionsNative(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	options := Options{ProviderResolver: func(*runtime.RuntimeSnapshot, string) (routing.ProviderRef, bool) {
+	options := Options{AllowPrivateUpstreams: true, ProviderResolver: func(*runtime.RuntimeSnapshot, string) (routing.ProviderRef, bool) {
 		return routing.ProviderRef{ProviderID: "openai", Protocol: openaiadapter.ChatProtocol, BaseURL: server.URL() + "/v1"}, true
 	}}
 	mux := http.NewServeMux()

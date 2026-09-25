@@ -8,13 +8,13 @@ resolved upstream with byte-exact native wire framing.
 
 No Responses/Messages/Gemini/Ollama/System One routes; no provider catalog,
 accounts, routing strategies, fallback, Combo/Fusion, transforms, prompt cache,
-Usage/Quota, admin API/UI, telemetry workers, or SSRF policy. App-level provider
-resolution stays a delegated hook until the Sprint 3 provider registry lands.
+Usage/Quota, admin API/UI, or telemetry workers. App-level provider resolution
+stays a delegated hook until the Sprint 3 provider registry lands.
 
 ## Contract references
 
 - PRD: §5 (PRD-API-001/005/007), §22
-- SPEC: §9–10 (native-first), §20 (transport/SSRF deferred), §34 (native preservation)
+- SPEC: §9–10 (native-first), §20 (transport/SSRF), §34 (native preservation)
 - BDR: BDR-008, BDR-009, BDR-010
 - Sprint: Sprint 2, PR #7 ("Deliver native path first, then translation hooks")
 
@@ -46,11 +46,12 @@ path.
 
 Details: the existing client-key auth gate is reused; provider credentials are
 injected server-side only and never echoed; hop-by-hop/sensitive client headers
-are not forwarded; provider base URLs must be absolute HTTP(S) without embedded
-userinfo/query/fragment. Central SSRF policy is deliberately deferred to the
-transport/provider PRs (PRD-SEC-003 / SPEC §20, §33; traceability: Sprint 1/5/8),
-so this PR does not invent an ad-hoc policy. Status/error paths were checked for
-credential leakage by test.
+are not forwarded. Central SSRF policy blocks non-public DNS/IP targets at URL
+validation and dial time, rejects redirects, ignores proxy environment variables,
+and provides an explicit trusted-local mode that still blocks metadata/link-local
+targets. Provider base URLs must be absolute HTTP(S) without embedded
+userinfo/query/fragment. Status/error paths and loopback/private rejection are
+tested.
 
 ## Performance impact
 
@@ -58,10 +59,10 @@ credential leakage by test.
 - [x] Hot-path impact includes before/after benchmark evidence.
 
 Details: adds the first inference path (`BenchmarkChatCompletionsNative`), so
-there is no prior same-path baseline. Local evidence (Intel Xeon E5-2680 v4,
-mock upstream, `-count=3`): ~590–644 us/op, 174 allocs/op, ~58 KB/op including
-loopback HTTP. No per-request transport/client allocation; the shared client and
-keep-alive transport are reused.
+there is no prior same-path baseline. Isolated local evidence (Intel Xeon E5-2680
+v4, mock upstream, `-count=3`): ~590–644 us/op, 174 allocs/op, ~58 KB/op;
+concurrent verification made a repeat noisy (~1.28–1.79 ms/op). No per-request
+transport/client allocation; the pooled client and keep-alive transport are reused.
 
 ## Tests
 
@@ -72,7 +73,8 @@ identity + unknown-field preservation, model-remap isolation, required-field and
 malformed-body rejection, native non-streaming passthrough, streaming framing +
 exactly-once terminal, delayed-upstream client-cancellation, auth/upstream-error
 relay without credential leakage, unknown-model 404, oversize 413, dead-upstream
-502, bounded one-attempt route budget.
+502, bounded one-attempt route budget, private/metadata URL denial, loopback
+dial-time denial, redirect refusal, and trusted-local allowance.
 
 ## Rollback
 

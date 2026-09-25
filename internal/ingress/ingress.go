@@ -9,13 +9,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/auth"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
+	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
 // Snapshot provides the immutable request-serving configuration.
@@ -27,9 +27,12 @@ type Snapshot interface {
 type Options struct {
 	MaxBodyBytes     int64
 	CORSOrigins      []string
-	HTTPClient       *http.Client
 	ProviderResolver ProviderResolver
 	TranslateChat    ChatTranslator
+	// AllowPrivateUpstreams is the explicit trusted-local operator policy. It is
+	// off by default so operator-supplied provider URLs cannot reach loopback,
+	// LAN, or metadata addresses.
+	AllowPrivateUpstreams bool
 }
 
 // ProviderResolver is request-time code that uses only the already-loaded
@@ -62,9 +65,9 @@ func New(snapshot Snapshot, opts Options) *Handler {
 	if opts.MaxBodyBytes <= 0 {
 		opts.MaxBodyBytes = DefaultMaxBodyBytes
 	}
-	client := opts.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 0, Transport: http.DefaultTransport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := transport.NewSSRFProtectedClient()
+	if opts.AllowPrivateUpstreams {
+		client = transport.NewTrustedLocalSSRFProtectedClient()
 	}
 	return &Handler{snapshot: snapshot, opts: opts, client: client}
 }
@@ -161,15 +164,13 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) newUpstreamRequest(r *http.Request, provider routing.ProviderRef, endpoint string, body []byte, headers http.Header) (*http.Request, error) {
-	base, err := url.Parse(provider.BaseURL)
-	if err != nil || base.Scheme == "" || base.Host == "" || (base.Scheme != "https" && base.Scheme != "http") {
-		return nil, errors.New("provider base URL must be absolute HTTP(S)")
+	validate := transport.ValidatePublicURL
+	if h.opts.AllowPrivateUpstreams {
+		validate = transport.ValidateTrustedLocalURL
 	}
-	if base.User != nil {
-		return nil, errors.New("provider base URL must not contain user information")
-	}
-	if base.RawQuery != "" || base.Fragment != "" {
-		return nil, errors.New("provider base URL must not contain a query or fragment")
+	base, err := validate(provider.BaseURL)
+	if err != nil {
+		return nil, err
 	}
 	if endpoint == "" || strings.HasPrefix(endpoint, "/") || strings.ContainsAny(endpoint, "?#") {
 		return nil, errors.New("provider endpoint must be a relative path without query or fragment")
