@@ -11,14 +11,17 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/raufimusaddiq/routeweft/internal/ingress"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/store/migrations"
 	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
 )
 
 type Config struct {
-	Listen  string
-	DataDir string
+	Listen       string
+	DataDir      string
+	MaxBodyBytes int64
+	CORSOrigins  []string
 }
 
 type App struct {
@@ -26,12 +29,16 @@ type App struct {
 	log     *slog.Logger
 	store   *sqlite.Store
 	runtime *runtime.Manager
+	ingress *ingress.Handler
 	ready   atomic.Bool
 }
 
 func New(cfg Config, log *slog.Logger) *App {
 	if log == nil {
 		log = slog.Default()
+	}
+	if cfg.MaxBodyBytes <= 0 {
+		cfg.MaxBodyBytes = ingress.DefaultMaxBodyBytes
 	}
 	return &App{cfg: cfg, log: log}
 }
@@ -60,12 +67,16 @@ func (a *App) Initialize(ctx context.Context) error {
 		return fmt.Errorf("initialize runtime: %w", err)
 	}
 	a.store, a.runtime = store, manager
+	a.ingress = ingress.New(manager, ingress.Options{MaxBodyBytes: a.cfg.MaxBodyBytes, CORSOrigins: a.cfg.CORSOrigins})
 	a.ready.Store(true)
 	return nil
 }
 
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
+	if a.ingress != nil {
+		a.ingress.Attach(mux)
+	}
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -80,7 +91,7 @@ func (a *App) Handler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
-	return mux
+	return withRequestID(withBodyLimit(a.cfg.MaxBodyBytes, mux))
 }
 
 func (a *App) Serve(ctx context.Context) error {
@@ -89,7 +100,12 @@ func (a *App) Serve(ctx context.Context) error {
 			return err
 		}
 	}
-	srv := &http.Server{Addr: a.cfg.Listen, Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{
+		Addr:              a.cfg.Listen,
+		Handler:           a.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
 	errCh := make(chan error, 1)
 	go func() {
 		a.log.Info("listening", "addr", a.cfg.Listen)

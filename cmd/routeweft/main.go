@@ -13,11 +13,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/app"
 	"github.com/raufimusaddiq/routeweft/internal/buildinfo"
+	"github.com/raufimusaddiq/routeweft/internal/ingress"
 	appruntime "github.com/raufimusaddiq/routeweft/internal/runtime"
 	storemigrations "github.com/raufimusaddiq/routeweft/internal/store/migrations"
 	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
@@ -355,6 +358,8 @@ func serve(args []string) error {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	listen := flags.String("listen", envOr("ROUTEWEFT_LISTEN", ":21128"), "HTTP listen address")
 	dataDir := flags.String("data-dir", envOr("ROUTEWEFT_DATA_DIR", "/var/lib/routeweft"), "Routeweft data directory")
+	maxBody := flags.Int64("max-body-bytes", envInt64("ROUTEWEFT_MAX_BODY_BYTES", ingress.DefaultMaxBodyBytes), "maximum request body size in bytes")
+	corsOrigins := flags.String("cors-origins", envOr("ROUTEWEFT_CORS_ORIGINS", ""), "comma-separated allowed browser origins")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -364,7 +369,26 @@ func serve(args []string) error {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return app.New(app.Config{Listen: *listen, DataDir: *dataDir}, log).Serve(ctx)
+	return app.New(app.Config{Listen: *listen, DataDir: *dataDir, MaxBodyBytes: *maxBody, CORSOrigins: splitList(*corsOrigins)}, log).Serve(ctx)
+}
+
+func splitList(value string) []string {
+	var out []string
+	for _, item := range strings.Split(value, ",") {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func envInt64(key string, fallback int64) int64 {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
+			return parsed
+		}
+	}
+	return fallback
 }
 
 func envOr(key, fallback string) string {

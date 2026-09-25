@@ -156,6 +156,7 @@ proxy_pools
 combos
 combo_models
 model_aliases
+provider_models
 custom_models
 disabled_models
 pricing_overrides
@@ -176,6 +177,11 @@ Required pragmas/behavior:
 - checkpoint policy measured under telemetry load;
 - one application writer process per database;
 - no transaction held across an upstream network call.
+
+Client API keys store only a one-way digest and a short display prefix. The
+compiled `APIKeyIndex` contains digests and non-secret metadata, never plaintext
+keys. Provider model discovery is cached in `provider_models`; manual models,
+aliases, and disabled-model decisions remain separately normalized.
 
 ## 5. RuntimeSnapshot
 
@@ -778,7 +784,13 @@ ROUTEWEFT_DATA_DIR=/var/lib/routeweft
 ROUTEWEFT_LOG_LEVEL=info
 ROUTEWEFT_TRUSTED_PROXIES=
 ROUTEWEFT_BOOTSTRAP_ADMIN_PASSWORD=
+ROUTEWEFT_MAX_BODY_BYTES=134217728
+ROUTEWEFT_CORS_ORIGINS=
 ```
+
+The public request-body limit defaults to 128 MiB. Cross-origin requests are
+denied unless an explicit comma-separated origin allowlist is configured.
+Preflight requests do not require an API key.
 
 Provider secrets are configured through the admin/control plane or import tooling, not committed config files.
 

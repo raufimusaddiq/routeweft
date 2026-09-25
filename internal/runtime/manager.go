@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+
+	"github.com/raufimusaddiq/routeweft/internal/auth"
 )
 
 var ErrUninitialized = errors.New("runtime snapshot is not initialized")
@@ -55,11 +57,11 @@ func (m *Manager) Update(ctx context.Context, mutate func(*Candidate) error) (*R
 	if err != nil {
 		return nil, err
 	}
-	candidate := &Candidate{Settings: current.Settings()}
+	candidate := &Candidate{Settings: current.Settings(), APIKeys: current.APIKeys().Records(), Models: cloneModelsForConfig(current.models), Aliases: cloneAliases(current.aliases), DisabledModels: cloneDisabled(current.disabledModels)}
 	if err := mutate(candidate); err != nil {
 		return nil, err
 	}
-	config := Config{Revision: current.ConfigRevision() + 1, Settings: cloneSettings(candidate.Settings)}
+	config := Config{Revision: current.ConfigRevision() + 1, Settings: cloneSettings(candidate.Settings), APIKeys: append([]auth.Entry(nil), candidate.APIKeys...), Models: append([]Model(nil), candidate.Models...), Aliases: cloneAliases(candidate.Aliases), DisabledModels: cloneDisabled(candidate.DisabledModels)}
 	nextVersion := m.version.Load() + 1
 	compiled, err := (Compiler{}).Compile(config, nextVersion)
 	if err != nil {
@@ -80,6 +82,9 @@ func (m *Manager) Update(ctx context.Context, mutate func(*Candidate) error) (*R
 			return nil, fmt.Errorf("persist setting %q: %w", key, err)
 		}
 	}
+	if err := persistCatalog(ctx, tx, config); err != nil {
+		return nil, err
+	}
 	const revisionUpsert = "INSERT INTO meta (key,value) VALUES ('config_revision',?) " +
 		"ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')"
 	if _, err := tx.ExecContext(ctx, revisionUpsert, fmt.Sprint(config.Revision)); err != nil {
@@ -95,6 +100,8 @@ func (m *Manager) Update(ctx context.Context, mutate func(*Candidate) error) (*R
 
 func loadConfig(ctx context.Context, db *sql.DB) (Config, error) {
 	config := Config{Settings: defaultSettingsCopy()}
+	config.Aliases = make(map[string]ModelRef)
+	config.DisabledModels = make(map[string]struct{})
 	var raw string
 	err := db.QueryRowContext(ctx, "SELECT value FROM meta WHERE key='config_revision'").Scan(&raw)
 	switch {
@@ -120,5 +127,11 @@ func loadConfig(ctx context.Context, db *sql.DB) (Config, error) {
 		}
 		config.Settings[key] = value
 	}
-	return config, rows.Err()
+	if err := rows.Err(); err != nil {
+		return Config{}, err
+	}
+	if err := loadCatalog(ctx, db, &config); err != nil {
+		return Config{}, err
+	}
+	return config, nil
 }

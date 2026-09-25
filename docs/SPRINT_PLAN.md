@@ -166,6 +166,14 @@ Deliver:
 - alias/custom/disabled model compile primitives;
 - request IDs/limits/CORS.
 
+Implementation scope: compiled key digest index and key lifecycle primitives;
+public API discovery/model list/detail routes; normalized provider-model,
+alias, custom-model and disabled-model snapshot inputs. This PR does not add
+inference POST handlers or an admin API/UI; key/model management is exposed as
+Go runtime mutation primitives until the control API sprint. Request-body
+limits and CORS policy are configured by `ROUTEWEFT_MAX_BODY_BYTES` and
+`ROUTEWEFT_CORS_ORIGINS`; no cross-origin origin is allowed by default.
+
 ### PR 7: OpenAI Chat
 
 Deliver native path first, then translation hooks.
