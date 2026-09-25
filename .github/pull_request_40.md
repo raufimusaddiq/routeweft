@@ -31,6 +31,8 @@ Ingress wiring: every non-2xx upstream response is classified through the shared
 
 Review fix: the native Ollama branch (`POST /v1/api/chat` on an Ollama-protocol provider) now participates in both behaviors. Non-2xx native responses are classified and recorded into `RuntimeState` cooldown visibility with the body still relayed unchanged, and both stream and non-stream success paths extract usage from the final `prompt_eval_count`/`eval_count` object (`copyOllamaNativeStream`). Covered by `TestOllamaChatNativeExtractsUsage` and `TestOllamaChatNativeRecordsUpstreamFailure`.
 
+Second review fix: Gemini `streamGenerateContent` ends by closing the SSE response with no terminal event, so the completion guard dropped its final `usageMetadata`. `usageScanner.reportsUsage(clean)` now treats a clean stream end as completion for the Gemini family (and never for a cancelled/errored relay, SPEC §21). Covered by `TestGeminiStreamExtractsUsageOnCleanEOF`.
+
 ## Storage / migration impact
 
 - [x] No storage/schema/migration impact.

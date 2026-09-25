@@ -267,7 +267,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 				io.Closer
 			}{Reader: io.TeeReader(response.Body, scanner), Closer: response.Body}
 			h.copyMessagesStream(w, r, response)
-			if usage, ok := scanner.usage(); ok && scanner.complete {
+			if usage, ok := scanner.usage(); ok && scanner.reportsUsage(r.Context().Err() == nil) {
 				h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
 			}
 			return
@@ -709,6 +709,17 @@ func (s *usageScanner) Write(chunk []byte) (int, error) {
 }
 
 func (s *usageScanner) usage() (promptcache.Usage, bool) { return s.merged, s.found }
+
+// reportsUsage reports whether a scanner observed a terminal marker or, for
+// Gemini streams that end by closing the response with no terminal event, a
+// clean stream end. A cancelled or errored relay passes clean=false so partial
+// accounting is never reported (SPEC §21).
+func (s *usageScanner) reportsUsage(clean bool) bool {
+	if !s.found {
+		return false
+	}
+	return s.complete || (clean && s.family == shared.FamilyGemini)
+}
 
 // streamTerminalEvent reports whether one decoded SSE event type ends a family's
 // stream. Anthropic uses message_stop; OpenAI families end on the [DONE]

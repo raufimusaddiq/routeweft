@@ -173,6 +173,23 @@ func TestOllamaChatNativeReturnsNdjson(t *testing.T) {
 	}
 }
 
+func TestGeminiStreamExtractsUsageOnCleanEOF(t *testing.T) {
+	exchange := compatFixture(t, fixtures.Gemini, "gemini-streaming")
+	server, err := mockupstream.Start(compatFixtures(t, fixtures.Gemini))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	var got promptcache.Usage
+	var calls int
+	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, ProviderResolver: fixedProvider(geminiadapter.Protocol, server.URL()), OnUsage: func(_, _ string, usage promptcache.Usage) { calls++; got = usage }})
+	recorder := httptest.NewRecorder()
+	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-flash:streamGenerateContent", strings.NewReader(exchange.Request.Body)))
+	if recorder.Code != http.StatusOK || calls != 1 || got.InputTokens != int64(exchange.Usage.InputTokens) || got.OutputTokens != int64(exchange.Usage.OutputTokens) {
+		t.Fatalf("status=%d calls=%d usage=%+v fixture=%+v", recorder.Code, calls, got, exchange.Usage)
+	}
+}
+
 func TestOllamaChatNativeExtractsUsage(t *testing.T) {
 	server, err := mockupstream.Start(nil, mockupstream.WithMatcher(func(_ *http.Request, _ string) mockupstream.Decision {
 		return mockupstream.Decision{Status: http.StatusOK, Headers: map[string]string{"Content-Type": "application/json"}, Body: `{"model":"llama3.2","done":true,"prompt_eval_count":14,"eval_count":9}`}

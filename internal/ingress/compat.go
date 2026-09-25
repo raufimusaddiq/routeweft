@@ -99,7 +99,7 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, source, model
 				io.Closer
 			}{Reader: io.TeeReader(response.Body, scanner), Closer: response.Body}
 			h.copyNativeSSE(w, r, response)
-			if usage, ok := scanner.usage(); ok && scanner.complete {
+			if usage, ok := scanner.usage(); ok && scanner.reportsUsage(r.Context().Err() == nil) {
 				h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
 			}
 			return
