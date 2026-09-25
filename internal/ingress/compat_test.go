@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -176,6 +177,17 @@ func TestOllamaChatRejectsInvalidChatBody(t *testing.T) {
 	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/api/chat", strings.NewReader(`{"model":"","messages":[]}`)))
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("invalid ollama status %d", recorder.Code)
+	}
+}
+
+func TestOllamaStreamConvertsSSEDataToNDJSON(t *testing.T) {
+	handler := New(nil, Options{})
+	body := "event: message\ndata: {\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null}]}\n\ndata: [DONE]\n\n"
+	recorder := httptest.NewRecorder()
+	response := &http.Response{Body: io.NopCloser(strings.NewReader(body))}
+	handler.copyOllamaStream(recorder, httptest.NewRequest(http.MethodPost, "/v1/api/chat", nil), response, "llama3.2")
+	if got := recorder.Body.String(); !strings.Contains(got, `"content":"Hi"`) || !strings.Contains(got, `"done":true`) {
+		t.Fatalf("converted stream %q", got)
 	}
 }
 

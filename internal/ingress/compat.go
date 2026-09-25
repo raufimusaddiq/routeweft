@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -260,10 +261,23 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) copyOllamaStream(w http.ResponseWriter, r *http.Request, response *http.Response, model string) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	flusher, canFlush := w.(http.Flusher)
-	decoder := json.NewDecoder(response.Body)
+	reader := bufio.NewReaderSize(response.Body, 32*1024)
+	writeLine := func(payload map[string]any) {
+		_ = json.NewEncoder(w).Encode(payload)
+		if canFlush {
+			flusher.Flush()
+		}
+	}
 	for {
 		if r.Context().Err() != nil {
 			return
+		}
+		payload, ok := nextSSEData(reader)
+		if !ok {
+			return
+		}
+		if payload == "[DONE]" {
+			break
 		}
 		var chunk struct {
 			Choices []struct {
@@ -273,27 +287,18 @@ func (h *Handler) copyOllamaStream(w http.ResponseWriter, r *http.Request, respo
 				FinishReason *string `json:"finish_reason"`
 			} `json:"choices"`
 		}
-		if err := decoder.Decode(&chunk); err != nil {
-			return
-		}
-		if len(chunk.Choices) == 0 {
+		if json.Unmarshal([]byte(payload), &chunk) != nil || len(chunk.Choices) == 0 {
 			continue
 		}
 		choice := chunk.Choices[0]
 		if choice.Delta.Content != "" {
-			_ = json.NewEncoder(w).Encode(map[string]any{"model": model, "message": map[string]string{"role": "assistant", "content": choice.Delta.Content}, "done": false})
-			if canFlush {
-				flusher.Flush()
-			}
+			writeLine(map[string]any{"model": model, "message": map[string]string{"role": "assistant", "content": choice.Delta.Content}, "done": false})
 		}
 		if choice.FinishReason != nil {
-			_ = json.NewEncoder(w).Encode(map[string]any{"model": model, "message": map[string]string{"role": "assistant", "content": ""}, "done": true})
-			if canFlush {
-				flusher.Flush()
-			}
-			return
+			break
 		}
 	}
+	writeLine(map[string]any{"model": model, "message": map[string]string{"role": "assistant", "content": ""}, "done": true})
 }
 
 func (h *Handler) handleSystemOne(w http.ResponseWriter, r *http.Request) {
@@ -346,6 +351,24 @@ func (h *Handler) copyNativeSSE(w http.ResponseWriter, r *http.Request, response
 		}
 		if err != nil {
 			return
+		}
+	}
+}
+
+// nextSSEData returns the next SSE data payload, skipping comments, event names
+// and blank separators. It reports false when the stream ends.
+func nextSSEData(reader *bufio.Reader) (string, bool) {
+	for {
+		line, err := reader.ReadString('\n')
+		if line == "" && err != nil {
+			return "", false
+		}
+		trimmed := strings.TrimRight(line, "\r\n")
+		if data, ok := strings.CutPrefix(trimmed, "data:"); ok {
+			return strings.TrimSpace(data), true
+		}
+		if err != nil {
+			return "", false
 		}
 	}
 }
