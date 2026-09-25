@@ -20,7 +20,7 @@ This file proves that every major product area has a requirement owner, technica
 | PXPIPE | PRD §12 | SPEC token saver | Sprint 4 | transform/health/log/stats/fail-open tests |
 | Prompt cache | PRD §12 | SPEC prompt cache | Sprint 4 | N/N+1 outbound-body/cache accounting fixtures |
 | Usage/request details | PRD §13 | SPEC telemetry/control | Sprint 6 | seeded accounting/detail/redaction tests |
-| Quota | PRD §13 | SPEC runtime/provider usage | Sprint 5/6 | quota states/reset/action tests |
+| Quota | PRD §13 | SPEC runtime/provider usage | Sprint 5/6 | normalized quota states, failure-not-exhaustion, reset/action tests |
 | Admin/control API | PRD §16 | SPEC /admin/v1 | Sprint 6 | CRUD/auth/revision tests |
 | UI shell/workflows | PRD §14-15 + UI_STYLE | SPEC UI architecture | Sprint 7 | browser smoke/a11y/theme/mobile tests |
 | Security/trusted proxy/SSRF | PRD §17 | SPEC security/transport | Sprint 1/5/8 | negative security fixtures |

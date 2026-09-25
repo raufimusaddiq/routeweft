@@ -77,6 +77,13 @@ func (s *RuntimeState) ObserveQuota(account string, observation QuotaObservation
 	s.quotas[account] = observation
 }
 
+// ObserveQuotaResult is the quota-package publisher contract: one normalized
+// observation per account, memory-first, with no synchronous persistence
+// (SPEC §6, PRD-QUOTA-001).
+func (s *RuntimeState) ObserveQuotaResult(account string, remaining *float64, resetAt time.Time, observedAt time.Time, errText string) {
+	s.ObserveQuota(account, QuotaObservation{Remaining: remaining, ResetAt: resetAt, ObservedAt: observedAt, Err: errText})
+}
+
 // Quota returns the latest account observation.
 func (s *RuntimeState) Quota(account string) (QuotaObservation, bool) {
 	s.mu.Lock()
