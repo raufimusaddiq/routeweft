@@ -89,6 +89,23 @@ func TestReplaceDiscoveredModelsKeepsCustomAndOtherProviders(t *testing.T) {
 	if err := manager.ReplaceDiscoveredModels(ctx, "  ", nil); err == nil {
 		t.Fatal("accepted blank provider id")
 	}
+	// A non-empty slice with only blank IDs must behave like an empty result and
+	// leave the durable catalog untouched.
+	if err := manager.ReplaceDiscoveredModels(ctx, "openrouter", []Model{{ID: "   "}, {ID: ""}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := byIDSnapshot(mustLoad(t, manager))["openrouter/z-ai/glm"]; !ok {
+		t.Fatal("blank-only discovery erased the discovered catalog")
+	}
+}
+
+func mustLoad(t *testing.T, manager *Manager) *RuntimeSnapshot {
+	t.Helper()
+	snapshot, err := manager.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
 }
 
 func byIDSnapshot(snapshot *RuntimeSnapshot) map[string]Model {

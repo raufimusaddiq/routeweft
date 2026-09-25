@@ -82,9 +82,22 @@ func (m *Manager) ReplaceDiscoveredModels(ctx context.Context, providerID string
 	if providerID == "" {
 		return errors.New("provider id is required")
 	}
-	// An empty result is advisory (discovery unavailable or failed): never
-	// delete the last known durable catalog for the provider.
-	if len(models) == 0 {
+	// Filter first: an empty or all-blank result is advisory (discovery
+	// unavailable or failed) and must never delete the last known durable
+	// catalog for the provider.
+	usable := make([]Model, 0, len(models))
+	for _, model := range models {
+		if strings.TrimSpace(model.ID) == "" {
+			continue
+		}
+		model.ProviderID = providerID
+		model.Source = "discovered"
+		if model.Name == "" {
+			model.Name = model.ID
+		}
+		usable = append(usable, model)
+	}
+	if len(usable) == 0 {
 		return nil
 	}
 	return m.UpdateCatalog(ctx, func(candidate *Candidate) error {
@@ -100,15 +113,7 @@ func (m *Manager) ReplaceDiscoveredModels(ctx context.Context, providerID string
 			kept = append(kept, model)
 		}
 		candidate.Models = kept
-		for _, model := range models {
-			if strings.TrimSpace(model.ID) == "" {
-				continue
-			}
-			model.ProviderID = providerID
-			model.Source = "discovered"
-			if model.Name == "" {
-				model.Name = model.ID
-			}
+		for _, model := range usable {
 			candidate.AddModel(model)
 		}
 		return nil
