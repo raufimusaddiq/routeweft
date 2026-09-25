@@ -45,7 +45,17 @@ func Builtins() []Spec {
 		{ID: "vercel-ai-gateway", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://ai-gateway.vercel.sh/v1", ModelCatalog: CatalogDynamic, PassthroughModels: true, ReportsUsage: true},
 		{ID: "volcengine-ark", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://ark.cn-beijing.volces.com/api/coding/v3", ModelCatalog: CatalogStatic},
 	}
-	return append(specs, append(NativeOpenAI(), Codex()...)...)
+	specs = append(specs, NativeOpenAI()...)
+	specs = append(specs, Codex()...)
+	return append(specs, Anthropic()...)
+}
+
+// Anthropic returns the first-party Anthropic Messages identity. Message
+// headers/beta behavior live in the anthropic provider module.
+func Anthropic() []Spec {
+	return []Spec{{ID: "anthropic", Transports: []Protocol{TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.anthropic.com/v1", ModelCatalog: CatalogStatic, StaticModels: []string{
+		"claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-3-5-sonnet-20241022",
+	}}}
 }
 
 // Codex returns the OpenAI Codex OAuth provider identity. Its rotating
