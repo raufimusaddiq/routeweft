@@ -282,6 +282,12 @@ Do not route new inference traffic until readiness recovers.
 
 Production logging should be structured.
 
+`GET /admin/v1/logs` exposes a bounded, newest-first console view of recent
+process log messages for authenticated operators. Only the message text is
+retained; structured attributes are intentionally omitted so a secret cannot be
+exposed by the read model. Credential-shaped message text is redacted or
+dropped before it becomes visible.
+
 Minimum fields where relevant:
 
 - timestamp;

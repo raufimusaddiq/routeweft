@@ -40,6 +40,9 @@ func (h *Handler) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_setting", err.Error())
 		return
 	}
+	if h.opts.Events != nil {
+		h.opts.Events.Publish("config.updated", map[string]any{"resource": "settings", "configRevision": revision})
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"configRevision": revision, "settings": safeSettings(h.opts.Settings.Settings())})
 }
 

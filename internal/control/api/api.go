@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,6 +12,10 @@ import (
 	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/adminauth"
+	"github.com/raufimusaddiq/routeweft/internal/buildinfo"
+	controlevents "github.com/raufimusaddiq/routeweft/internal/control/events"
+	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
+	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
 // SettingsStore reads and mutates durable settings through the runtime manager's
@@ -22,9 +27,33 @@ type SettingsStore interface {
 
 // Options configure the control API.
 type Options struct {
-	Accounts *adminauth.Store
-	Sessions *adminauth.SessionManager
-	Settings SettingsStore
+	Accounts       *adminauth.Store
+	Sessions       *adminauth.SessionManager
+	Settings       SettingsStore
+	DB             *sql.DB
+	Runtime        RuntimeReader
+	Providers      []registry.Spec
+	Telemetry      TelemetryReader
+	Events         *controlevents.Bus
+	Logs           *LogBuffer
+	ActiveRequests func() int64
+	Ready          func() bool
+	Build          buildinfo.Info
+}
+
+// RuntimeReader exposes immutable active configuration and process-local state.
+type RuntimeReader interface {
+	Load() (*runtime.RuntimeSnapshot, error)
+	State() *runtime.RuntimeState
+}
+
+// TelemetryReader exposes read-only batcher health and counters.
+type TelemetryReader interface {
+	Enabled() bool
+	Health() error
+	Lost() uint64
+	LostDiagnostics() uint64
+	Written() uint64
 }
 
 // sessionCookieName is the dashboard session cookie. It is HttpOnly and
@@ -47,6 +76,15 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/v1/auth/session", h.handleSession)
 	mux.HandleFunc("GET /admin/v1/settings", h.requireSession(h.handleGetSettings))
 	mux.HandleFunc("PATCH /admin/v1/settings", h.requireSession(h.handlePatchSettings))
+	for _, path := range []string{"overview", "providers", "provider-nodes", "connections", "models", "aliases", "pricing", "combos", "proxy-pools", "keys", "usage", "requests", "quota", "token-saver", "systemone"} {
+		mux.Handle("GET /admin/v1/"+path, h.requireSessionHandler(h.readModel(path)))
+	}
+	mux.Handle("GET /admin/v1/events", h.requireSessionHandler(http.HandlerFunc(h.handleEvents)))
+	mux.Handle("GET /admin/v1/logs", h.requireSessionHandler(http.HandlerFunc(h.handleLogs)))
+}
+
+func (h *Handler) requireSessionHandler(next http.Handler) http.Handler {
+	return h.requireSession(func(w http.ResponseWriter, r *http.Request) { next.ServeHTTP(w, r) })
 }
 
 // requireSession wraps a handler with session authentication.
