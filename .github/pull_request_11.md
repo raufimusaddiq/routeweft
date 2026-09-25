@@ -35,7 +35,9 @@ New packages/behavior:
 - `internal/routing/cooldown.go`: `ClassifyStatus` maps upstream status to success, retry-same-account, fallback-account, fallback-provider, terminal-client-error, auth-refresh-required or quota-lock. Only `fallback-*` outcomes advance the chain, so client errors cannot create provider storms.
 - `internal/routing/fallback.go`: `AttemptChain` bounds one request to the eligible candidate list; `CooldownDeadline` prefers a trusted reset timestamp, then `Retry-After`, then bounded default backoff.
 - `internal/runtime/state.go`: `RuntimeState` now holds RR cursors, cooldowns and quota observations with narrow locking only, and is never part of the immutable `RuntimeSnapshot` (BDR-006).
-- `internal/transport/pool.go`: `PooledClients` caches exactly one `http.Client` per material transport configuration with dial-time SSRF validation preserved; `ProxyPolicy` supports global proxy, per-connection proxy, no-proxy wildcard/domain rules and rejects non-HTTP(S)/SOCKS schemes.
+Hermes SSRF finding fix: proxy dial validation only sees the proxy address. `destinationGuard.RoundTrip` now validates the target URL and resolves/checks all destination IPs before handing the request to the proxy. `TestProxyClientRejectsPrivateDestinationBeforeProxyDial` verifies a loopback target is rejected without contacting a local proxy.
+
+`internal/transport/pool.go`: `PooledClients` caches one `http.Client` per material transport configuration. `destinationGuard` validates the requested destination URL and every DNS answer before proxy dispatch; the dial guard independently validates the proxy's own destination. Proxy policy supports global/per-connection proxy and no-proxy wildcard/domain rules; proxy schemes are allowlisted.
 - `internal/ingress/policy.go`: ingress consumes the above for strategy resolution, sticky limits, candidate eligibility and cooldown recording.
 
 ## Deferred (explicit, no silent narrowing)

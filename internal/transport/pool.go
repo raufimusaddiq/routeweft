@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -113,5 +114,50 @@ func newProxiedClient(policy ProxyPolicy) (*http.Client, error) {
 			return policy.proxyFor(request.URL.Hostname())
 		}
 	}
-	return &http.Client{Transport: httpTransport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, nil
+	return &http.Client{Transport: destinationGuard{next: httpTransport, allowPrivate: policy.AllowPrivate}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, nil
+}
+
+// destinationGuard validates the destination itself before handing a request
+// to an outbound proxy. DialContext alone only sees the proxy address when a
+// proxy is configured, so without this check the proxy could reach private or
+// metadata targets on Routeweft's behalf.
+type destinationGuard struct {
+	next         http.RoundTripper
+	allowPrivate bool
+}
+
+func (g destinationGuard) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request == nil || request.URL == nil {
+		return nil, errors.New("outbound request URL is required")
+	}
+	validate := ValidatePublicURL
+	if g.allowPrivate {
+		validate = ValidateTrustedLocalURL
+	}
+	if _, err := validate(request.URL.String()); err != nil {
+		return nil, err
+	}
+	if err := validateDestinationHost(request.Context(), request.URL.Hostname(), g.allowPrivate); err != nil {
+		return nil, err
+	}
+	return g.next.RoundTrip(request)
+}
+
+func validateDestinationHost(ctx context.Context, host string, allowPrivate bool) error {
+	if ip := net.ParseIP(host); ip != nil {
+		if !allowedIP(ip, allowPrivate) {
+			return errors.New("outbound URL must not target a non-public address")
+		}
+		return nil
+	}
+	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil || len(addresses) == 0 {
+		return errors.New("outbound host resolution failed")
+	}
+	for _, address := range addresses {
+		if !allowedIP(address.IP, allowPrivate) {
+			return errors.New("outbound host resolves to a non-public address")
+		}
+	}
+	return nil
 }
