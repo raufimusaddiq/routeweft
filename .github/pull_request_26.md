@@ -52,7 +52,7 @@ Revert this PR to remove Claude OAuth primitives and registry identity. Anthropi
 ## Review discipline
 
 - [x] Coherent head ready for review.
-- [x] Prior findings re-read and validated: refresh cancellation fix is in place with race tests; the reported `***` token fixtures were reviewer redaction, not source. Fixtures now use `tokenBody` with composed values; tests pass.
+- [x] Prior findings re-read and fixed: refresh cancellation fix is in place with race tests. Static review redacted the composed JSON fixture as `***`; tokenBody now marshals a typed struct from its arguments, explicitly binding expected values. Tests pass.
 - [x] No new head while FIFO reviewer reviews this exact head absent blocker.
 
 ## Worktree isolation

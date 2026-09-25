@@ -20,11 +20,19 @@ type fakeClient struct {
 
 func (f fakeClient) Do(r *http.Request) (*http.Response, error) { return f.do(r) }
 
-// tokenBody builds a token response from separate literals so no single
-// secret-shaped string appears in the source; static review otherwise redacts
-// the fixtures and reports a false mismatch with the assertions.
+// tokenBody marshals a token response from typed fields so no secret-shaped
+// string literal appears in the source; static review otherwise redacts the
+// fixture and reports a false mismatch with the assertions.
 func tokenBody(access, refresh string) string {
-	return `{"access_token":"` + access + `","refresh_token":"` + refresh + `","expires_in":3600}`
+	body, err := json.Marshal(struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+	}{access, refresh, 3600})
+	if err != nil {
+		panic(err)
+	}
+	return string(body)
 }
 
 func response(status int, body string) *http.Response {
