@@ -26,10 +26,12 @@ type Snapshot interface {
 
 // Options configure public ingress behavior such as limits and CORS policy.
 type Options struct {
-	MaxBodyBytes     int64
-	CORSOrigins      []string
-	ProviderResolver ProviderResolver
-	TranslateChat    ChatTranslator
+	MaxBodyBytes              int64
+	CORSOrigins               []string
+	ProviderResolver          ProviderResolver
+	TranslateChat             ChatTranslator
+	TranslateResponses        ResponsesTranslator
+	TranslateResponsesCompact ResponsesCompactTranslator
 	// AllowPrivateUpstreams is the explicit trusted-local operator policy. It is
 	// off by default so operator-supplied provider URLs cannot reach loopback,
 	// LAN, or metadata addresses.
@@ -50,6 +52,8 @@ type ChatTranslation struct {
 
 // ChatTranslator is the later-adapter hook for a different target protocol.
 type ChatTranslator func(*openaiadapter.ChatRequest, string) (ChatTranslation, error)
+type ResponsesTranslator func(*openaiadapter.ResponsesRequest, string) (ChatTranslation, error)
+type ResponsesCompactTranslator func(*openaiadapter.ResponsesRequest, string) (ChatTranslation, error)
 
 // DefaultMaxBodyBytes matches the 128 MB compatibility target in PRD-API-005.
 const DefaultMaxBodyBytes int64 = 128 << 20
@@ -82,6 +86,110 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/models/{provider}/{model...}", h.withCORS(h.handleModel))
 	mux.HandleFunc("OPTIONS /v1/{rest...}", h.withCORS(h.handlePreflight))
 	mux.HandleFunc("POST /v1/chat/completions", h.withCORS(h.handleChatCompletions))
+	mux.HandleFunc("POST /v1/responses", h.withCORS(h.handleResponses))
+	mux.HandleFunc("POST /v1/responses/compact", h.withCORS(h.handleResponsesCompact))
+	mux.HandleFunc("POST /responses", h.withCORS(h.handleResponses))
+	mux.HandleFunc("POST /codex/{path...}", h.withCORS(h.handleResponses))
+	mux.HandleFunc("POST /codex", h.withCORS(h.handleResponses))
+	mux.HandleFunc("POST /v1/v1/responses", h.withCORS(h.handleResponses))
+	mux.HandleFunc("POST /v1/v1/responses/compact", h.withCORS(h.handleResponsesCompact))
+	mux.HandleFunc("OPTIONS /responses", h.withCORS(h.handlePreflight))
+	mux.HandleFunc("OPTIONS /codex/{path...}", h.withCORS(h.handlePreflight))
+	mux.HandleFunc("OPTIONS /codex", h.withCORS(h.handlePreflight))
+}
+
+func (h *Handler) handleResponses(w http.ResponseWriter, r *http.Request) {
+	h.handleResponsesRequest(w, r, false)
+}
+func (h *Handler) handleResponsesCompact(w http.ResponseWriter, r *http.Request) {
+	h.handleResponsesRequest(w, r, true)
+}
+
+func (h *Handler) handleResponsesRequest(w http.ResponseWriter, r *http.Request, compact bool) {
+	if !h.authorize(w, r) {
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, h.opts.MaxBodyBytes))
+	if err != nil {
+		var limitErr *http.MaxBytesError
+		if errors.As(err, &limitErr) {
+			h.writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds configured limit")
+		} else if r.Context().Err() == nil {
+			h.writeError(w, http.StatusBadRequest, "request_read_failed", "request body could not be read")
+		}
+		return
+	}
+	request, err := openaiadapter.ParseResponsesRequest(body, compact)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	snapshot, err := h.snapshot.Load()
+	if err != nil {
+		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
+		return
+	}
+	if h.opts.ProviderResolver == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "no_provider", "no OpenAI Responses provider is configured")
+		return
+	}
+	provider, ok := h.opts.ProviderResolver(snapshot, request.Model)
+	if !ok {
+		h.writeError(w, http.StatusNotFound, "model_not_found", fmt.Sprintf("model %q is not configured for inference", request.Model))
+		return
+	}
+	plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: openaiadapter.ResponsesProtocol, TargetProtocol: provider.Protocol, Provider: provider})
+	if err != nil {
+		h.writeError(w, http.StatusBadGateway, "route_unavailable", err.Error())
+		return
+	}
+	endpoint := "responses"
+	if compact {
+		endpoint += "/compact"
+	}
+	var outbound []byte
+	var headers http.Header
+	if plan.NativePath() {
+		outbound, err = request.MarshalBody(provider.UpstreamModel)
+		if provider.APIToken != "" {
+			headers = http.Header{"Authorization": {"Bearer " + provider.APIToken}}
+		}
+	} else if compact && h.opts.TranslateResponsesCompact != nil {
+		var translated ChatTranslation
+		translated, err = h.opts.TranslateResponsesCompact(request, plan.TargetProtocol)
+		endpoint, outbound, headers = translated.Endpoint, translated.Body, translated.Headers
+	} else if !compact && h.opts.TranslateResponses != nil {
+		var translated ChatTranslation
+		translated, err = h.opts.TranslateResponses(request, plan.TargetProtocol)
+		endpoint, outbound, headers = translated.Endpoint, translated.Body, translated.Headers
+	} else {
+		err = fmt.Errorf("no Responses translator registered for target protocol %q", plan.TargetProtocol)
+	}
+	if err != nil {
+		h.writeError(w, http.StatusBadGateway, "request_translation_failed", err.Error())
+		return
+	}
+	upstreamRequest, err := h.newUpstreamRequest(r, provider, endpoint, outbound, headers)
+	if err != nil {
+		h.writeError(w, http.StatusBadGateway, "upstream_configuration_error", err.Error())
+		return
+	}
+	response, err := h.client.Do(upstreamRequest)
+	if err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
+		h.writeError(w, http.StatusBadGateway, "upstream_request_failed", "upstream request failed")
+		return
+	}
+	defer response.Body.Close()
+	copyResponseHeaders(w.Header(), response.Header)
+	w.WriteHeader(response.StatusCode)
+	if request.Stream {
+		h.copyResponsesStream(w, r, response)
+		return
+	}
+	_, _ = io.Copy(w, response.Body)
 }
 
 func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -300,6 +408,74 @@ func isBlankSSELine(line []byte) bool {
 
 func isSSEDataLine(line []byte) bool {
 	return bytes.HasPrefix(line, []byte("data:"))
+}
+
+// copyResponsesStream relays Responses SSE events incrementally. It holds one
+// terminal event until EOF, filters duplicates/non-final terminals, and reports
+// an incomplete upstream stream as response.failed.
+func (h *Handler) copyResponsesStream(w http.ResponseWriter, r *http.Request, response *http.Response) {
+	flusher, canFlush := w.(http.Flusher)
+	reader := bufio.NewReaderSize(response.Body, 32*1024)
+	event := make([]byte, 0, 4096)
+	var terminal []byte
+	write := func(chunk []byte) bool {
+		if len(chunk) == 0 {
+			return true
+		}
+		if _, err := w.Write(chunk); err != nil {
+			return false
+		}
+		if canFlush {
+			flusher.Flush()
+		}
+		return true
+	}
+	emit := func() bool {
+		if len(event) == 0 {
+			return true
+		}
+		if responsesEventTerminal(event) {
+			terminal = append(terminal[:0], event...)
+			event = event[:0]
+			return true
+		}
+		writeErr := write(event)
+		event = event[:0]
+		return writeErr
+	}
+	for {
+		if err := r.Context().Err(); err != nil {
+			return
+		}
+		line, err := reader.ReadSlice('\n')
+		if len(event)+len(line) > 4<<20 {
+			return
+		}
+		event = append(event, line...)
+		if !errors.Is(err, bufio.ErrBufferFull) && isBlankSSELine(line) {
+			if !emit() {
+				return
+			}
+		}
+		if err == nil || errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		if !errors.Is(err, io.EOF) {
+			return
+		}
+		if !emit() {
+			return
+		}
+		if r.Context().Err() != nil {
+			return
+		}
+		if len(terminal) > 0 {
+			_ = write(terminal)
+		} else {
+			_ = write(responsesIncompleteEvent())
+		}
+		return
+	}
 }
 
 func copyResponseHeaders(dst, src http.Header) {
