@@ -187,13 +187,8 @@ func (r *Registry) Secret(ctx context.Context, connectionID string) (Secret, err
 		secret = Secret{}
 	}
 	current.mu.Lock()
-	// A concurrent import/register bumped the generation while this exchange was
-	// in flight. Its install is newer, so this stale result must not overwrite it
-	// in memory; the same check gates the durable commit below.
-	if err == nil {
-		current.current = secret
-		current.seeded = true
-	}
+	// Memory publication already happened inside refresh(), under the install
+	// lock and generation check, so a newer import can never be overwritten here.
 	current.inflight = nil
 	call.secret, call.err = secret, err
 	current.mu.Unlock()
@@ -206,10 +201,11 @@ func (r *Registry) Secret(ctx context.Context, connectionID string) (Secret, err
 // bounded and detached so an already-rotated upstream token is not dropped when
 // the caller disappears between exchange and commit (SPEC §19).
 //
-// The staleness check and the durable write execute under the connection's
-// install lock, so an import that lands during the exchange either wins before
-// this write (making it a no-op) or waits until after it. Either order leaves the
-// newer install as the durable and published credential.
+// The staleness check, the durable write, and the in-memory publication all
+// execute under the connection's install lock, so an import that lands during
+// the exchange either wins before this write (making it a no-op) or waits until
+// after it. Either order leaves the newer install as both the durable and the
+// published credential; they can never diverge.
 func (r *Registry) refresh(ctx context.Context, connectionID string, stored Secret, generation uint64, current *entry, exchanger Exchanger) (Secret, error) {
 	refreshed, err := exchanger(ctx, stored)
 	if err != nil {
@@ -240,6 +236,14 @@ func (r *Registry) refresh(ctx context.Context, connectionID string, stored Secr
 			return Secret{}, fmt.Errorf("persist rotated credential: %w", err)
 		}
 	}
+	// Publish in memory in the same critical section as the durable write so an
+	// import cannot interleave and leave memory older than storage. installMu is
+	// still held and the generation was validated above, so nothing can have
+	// replaced this credential since.
+	current.mu.Lock()
+	current.current = refreshed
+	current.seeded = true
+	current.mu.Unlock()
 	return refreshed, nil
 }
 
