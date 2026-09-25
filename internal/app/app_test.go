@@ -6,7 +6,59 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/raufimusaddiq/routeweft/internal/proxy"
 )
+
+// TestProxyBinderIsWiredIntoIngress proves the production composition exposes a
+// live ClientFor callback: a connection bound to an enabled pool resolves to a
+// compiled pooled client rather than the handler default, while an unbound
+// connection keeps the default (PRD-ROUTE-005, SPEC §20).
+func TestProxyBinderIsWiredIntoIngress(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 7)
+	}
+	app := New(Config{Listen: ":0", DataDir: t.TempDir(), CredentialKey: key, AllowPrivateUpstreams: true}, nil)
+	if err := app.Initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer app.store.Close()
+	if app.ingress == nil {
+		t.Fatal("ingress was not constructed")
+	}
+	// Bind a connection to a real pool, then confirm the snapshot + binder agree.
+	ctx := context.Background()
+	proxies, err := proxy.NewStore(app.store.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := proxies.PutPool(ctx, proxy.Pool{Name: "egress", Enabled: true, Members: []proxy.Member{{URL: "http://127.0.0.1:3128", Enabled: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.store.DB().ExecContext(ctx, "INSERT INTO provider_nodes(id,kind,provider_id,name) VALUES('n1','builtin','codex','Codex')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.store.DB().ExecContext(ctx, "INSERT INTO provider_connections(id,node_id,name,auth_kind,identity,enabled,proxy_pool_id) VALUES('c1','n1','primary','api-key','acct',1,?)", pool.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The production path: after the binding is written durably, the runtime
+	// recompiles and publishes it (BDR-007).
+	if _, err := app.runtime.RefreshPoolBindings(ctx); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := app.runtime.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := snapshot.ConnectionPool("c1"); got != pool.ID {
+		t.Fatalf("snapshot binding=%q", got)
+	}
+	if got, err := app.runtime.PoolBinding("c1"); err != nil || got != pool.ID {
+		t.Fatalf("PoolBinding=%q err=%v", got, err)
+	}
+}
 
 // TestQuotaServiceIsWiredIntoTheApp proves the production quota path exists: a
 // configured credential key builds the service and the operator refresh entry

@@ -16,6 +16,18 @@ type Config struct {
 	Aliases        map[string]ModelRef
 	DisabledModels map[string]struct{}
 	Combos         []Combo
+	PoolBindings   map[string]string
+	ProxyPools     []ProxyPool
+}
+
+// ProxyPool is a compiled proxy pool input. It mirrors the durable record but is
+// owned by runtime so the snapshot carries pool membership without importing the
+// proxy package (avoiding an import cycle).
+type ProxyPool struct {
+	ID       string
+	Enabled  bool
+	Strategy string
+	Members  []ProxyMember
 }
 
 // Candidate is mutable only while a serialized configuration update is built.
@@ -26,6 +38,8 @@ type Candidate struct {
 	Aliases        map[string]ModelRef
 	DisabledModels map[string]struct{}
 	Combos         []Combo
+	PoolBindings   map[string]string
+	ProxyPools     []ProxyPool
 }
 
 func (c *Candidate) Set(key, value string)        { c.Settings[key] = value }
@@ -133,7 +147,38 @@ func (Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, error)
 		aliases:        aliases,
 		disabledModels: disabled,
 		combos:         combos,
+		poolBindings:   cloneStringMap(config.PoolBindings),
+		poolPools:      compileProxyPools(config.ProxyPools),
 	}, nil
+}
+
+func compileProxyPools(pools []ProxyPool) map[string]proxyPoolEntry {
+	if len(pools) == 0 {
+		return nil
+	}
+	compiled := make(map[string]proxyPoolEntry, len(pools))
+	for _, pool := range pools {
+		if strings.TrimSpace(pool.ID) == "" {
+			continue
+		}
+		strategy := strings.TrimSpace(pool.Strategy)
+		if strategy == "" {
+			strategy = "round_robin"
+		}
+		compiled[pool.ID] = proxyPoolEntry{enabled: pool.Enabled, strategy: strategy, members: append([]ProxyMember(nil), pool.Members...)}
+	}
+	return compiled
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
 }
 
 func validateCatalog(config Config) error {
