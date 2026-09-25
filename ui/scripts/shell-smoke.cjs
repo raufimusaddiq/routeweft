@@ -1,5 +1,6 @@
 
 const { chromium } = require('playwright-core');
+const assert = require('node:assert/strict');
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.ROUTEWEFT_SMOKE_CHROME || '/root/.cache/ms-playwright/chromium-1148/chrome-linux/chrome', args: ['--no-sandbox'] });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -63,6 +64,25 @@ const { chromium } = require('playwright-core');
   await page.setViewportSize({ width: 320, height: 700 });
   report.tiny = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth + '/' + document.documentElement.clientWidth, titleSize: getComputedStyle(document.querySelector('h1')).fontSize }));
   report.errors = errors;
+  assert.equal(report.navCount, 10);
+  assert.deepEqual(report.groups, ['Operate', 'Route', 'Observe', 'System']);
+  assert.equal(report.sidebarWidth, 248);
+  assert.equal(report.themeDark, 'dark');
+  assert.equal(report.pageAfterNav, 'Providers');
+  assert.equal(report.ariaCurrent, 'page');
+  assert.equal(report.firstFocus, 'skip-link');
+  assert.equal(report.themeAfterReload, 'light');
+  assert.equal(report.sidebarHiddenMobile, true);
+  assert.equal(report.menuAriaExpanded, 'true');
+  assert.equal(report.focusAfterEscape, 'mobile-menu icon-button');
+  assert.equal(report.drawerClosedAfterEscape, true);
+  assert.equal(report.focusAfterBackdrop, 'mobile-menu icon-button');
+  assert.equal(report.scrollWidthVsClient, '390/390');
+  assert.equal(report.wide.scroll, '1920/1920');
+  assert.equal(report.systemLight, 'light');
+  assert.equal(report.systemDark, 'dark');
+  assert.equal(report.tiny.scroll, '320/320');
+  assert.deepEqual(report.errors, []);
   console.log(JSON.stringify(report, null, 2));
   await browser.close();
 })().catch(e => { console.error('FAIL', e); process.exit(1); });
