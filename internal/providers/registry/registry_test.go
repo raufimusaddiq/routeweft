@@ -53,14 +53,14 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	wantIDs := []string{
 		"alicode-intl", "alicode", "alims-intl", "alitp-intl", "api-airforce", "baidu", "bazaarlink", "blackbox", "bluesminds", "byteplus",
 		"cerebras", "chutes", "cohere", "featherless", "fireworks", "groq", "hyperbolic", "kilo-gateway", "llm7", "mistral", "morph", "nebius",
-		"nvidia", "openrouter", "perplexity", "poolside", "sambanova", "siliconflow", "tencent", "together", "venice", "vercel-ai-gateway", "volcengine-ark",
+		"nvidia", "openai", "openrouter", "perplexity", "poolside", "sambanova", "siliconflow", "tencent", "together", "venice", "vercel-ai-gateway", "volcengine-ark",
 	}
 	if catalog.Len() != len(wantIDs) {
 		t.Fatalf("catalog size=%d want=%d", catalog.Len(), len(wantIDs))
 	}
 	for _, id := range wantIDs {
 		spec, ok := catalog.Lookup(id)
-		if !ok || spec.Auth != AuthAPIKey || len(spec.Transports) != 1 || spec.Transports[0] != TransportOpenAIChat || spec.DefaultBaseURL == "" {
+		if !ok || spec.Auth != AuthAPIKey || len(spec.Transports) == 0 || spec.Transports[0] != TransportOpenAIChat || spec.DefaultBaseURL == "" {
 			t.Errorf("incomplete group member %q: %+v present=%v", id, spec, ok)
 		}
 	}
@@ -73,6 +73,16 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	if spec, _ := catalog.Lookup("vercel-ai-gateway"); !spec.ReportsUsage {
 		t.Fatalf("Vercel usage capability missing: %+v", spec)
 	}
+	openai, _ := catalog.Lookup("openai")
+	if len(openai.Transports) != 2 || openai.Transports[0] != TransportOpenAIChat || openai.Transports[1] != TransportOpenAIResponses || len(openai.StaticModels) != 20 {
+		t.Fatalf("OpenAI native capabilities=%+v", openai)
+	}
+	if transport, ok := openai.NativeBinding("openai-responses"); !ok || transport != TransportOpenAIResponses {
+		t.Fatalf("OpenAI Responses binding=%q ok=%v", transport, ok)
+	}
+	if transport, ok := openai.NativeBinding("openai-chat"); !ok || transport != TransportOpenAIChat {
+		t.Fatalf("OpenAI Chat binding=%q ok=%v", transport, ok)
+	}
 	if spec, _ := catalog.Lookup("groq"); !spec.ReportsUsage {
 		t.Fatalf("Groq usage capability missing: %+v", spec)
 	}
@@ -81,5 +91,18 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 		if len(spec.Quirks) != 1 || spec.Quirks[0] != QuirkCacheControl {
 			t.Errorf("cache-control quirk missing for %s: %+v", id, spec)
 		}
+	}
+}
+
+func TestCatalogLookupCopiesStaticModels(t *testing.T) {
+	catalog, err := NewCatalog([]Spec{{ID: "p", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, ModelCatalog: CatalogStatic, StaticModels: []string{"m"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := catalog.Lookup("p")
+	spec.StaticModels[0] = "mutated"
+	again, _ := catalog.Lookup("p")
+	if again.StaticModels[0] != "m" {
+		t.Fatal("catalog static model slice leaked")
 	}
 }
