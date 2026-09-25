@@ -9,7 +9,7 @@ package registry
 // multi-protocol transports, OAuth/cookie auth, specialized wire formats or
 // runtime endpoints are added by their own groups.
 func Builtins() []Spec {
-	return []Spec{
+	specs := []Spec{
 
 		{ID: "alicode-intl", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://coding-intl.dashscope.aliyuncs.com/v1", ModelCatalog: CatalogStatic, Quirks: []Quirk{QuirkCacheControl}},
 		{ID: "alitp-intl", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1", ModelCatalog: CatalogStatic, Quirks: []Quirk{QuirkCacheControl}},
@@ -45,6 +45,17 @@ func Builtins() []Spec {
 		{ID: "vercel-ai-gateway", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://ai-gateway.vercel.sh/v1", ModelCatalog: CatalogDynamic, PassthroughModels: true, ReportsUsage: true},
 		{ID: "volcengine-ark", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://ark.cn-beijing.volces.com/api/coding/v3", ModelCatalog: CatalogStatic},
 	}
+	return append(specs, NativeOpenAI()...)
+}
+
+// NativeOpenAI returns the first-party provider with both source-matching
+// OpenAI transports, as required by PRD-PROV-001.
+func NativeOpenAI() []Spec {
+	return []Spec{{ID: "openai", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.openai.com/v1", ModelCatalog: CatalogStatic, StaticModels: []string{
+		"gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-5-mini", "gpt-5-nano",
+		"gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
+		"o3", "o3-mini", "o3-pro", "o4-mini", "o1", "o1-mini",
+	}}}
 }
 
 // NewBuiltinCatalog validates and indexes the built-in provider group.

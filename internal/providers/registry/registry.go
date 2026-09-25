@@ -55,6 +55,7 @@ type Spec struct {
 	// providers that must forward arbitrary operator-supplied IDs.
 	ModelCatalog      ModelCatalog
 	PassthroughModels bool
+	StaticModels      []string
 	// ReportsUsage marks providers whose upstream usage is accounted.
 	ReportsUsage bool
 	Quirks       []Quirk
@@ -124,6 +125,7 @@ func NewCatalog(specs []Spec) (*Catalog, error) {
 		}
 		spec.Transports = append([]Protocol(nil), spec.Transports...)
 		spec.Quirks = append([]Quirk(nil), spec.Quirks...)
+		spec.StaticModels = append([]string(nil), spec.StaticModels...)
 		indexed[spec.ID] = spec
 	}
 	return &Catalog{specs: indexed}, nil
@@ -138,6 +140,7 @@ func (c *Catalog) Lookup(id string) (Spec, bool) {
 	if ok {
 		spec.Transports = append([]Protocol(nil), spec.Transports...)
 		spec.Quirks = append([]Quirk(nil), spec.Quirks...)
+		spec.StaticModels = append([]string(nil), spec.StaticModels...)
 	}
 	return spec, ok
 }
