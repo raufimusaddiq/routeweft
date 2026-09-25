@@ -101,4 +101,33 @@ func TestDetailStoreUpsertsAndPrunes(t *testing.T) {
 	}
 }
 
+func TestDetailStoreRefreshedRowSurvivesPrune(t *testing.T) {
+	ctx := context.Background()
+	store, sqlStore := newDetailStore(t, 0)
+	defer sqlStore.Close()
+	// A route decision written long ago is refreshed with its final outcome; the
+	// refreshed row must carry a fresh created_at or the next prune deletes it.
+	old := time.Now().AddDate(0, 0, -30)
+	if err := store.WriteRequestDetail(ctx, Detail{RequestID: "req_1", CreatedAt: old, Payload: map[string]any{"stage": "planned"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WriteRequestDetail(ctx, Detail{RequestID: "req_1", RouteMode: "native", Payload: map[string]any{"stage": "final"}}); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := store.PruneNow(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 0 {
+		t.Fatalf("pruned=%d want 0 for a freshly refreshed row", removed)
+	}
+	var detail string
+	if err := sqlStore.DB().QueryRowContext(ctx, "SELECT detail FROM request_details WHERE request_id=?", "req_1").Scan(&detail); err != nil {
+		t.Fatal(err)
+	}
+	if !contains(detail, "final") {
+		t.Fatalf("refreshed detail lost: %s", detail)
+	}
+}
+
 func contains(haystack, needle string) bool { return strings.Contains(haystack, needle) }

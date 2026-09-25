@@ -71,7 +71,7 @@ func (s *SQLiteDetailStore) WriteRequestDetail(ctx context.Context, detail Detai
 		createdAt = time.Now().UTC()
 	}
 	const upsert = `INSERT INTO request_details (request_id,route_mode,detail,created_at) VALUES (?,?,?,?) ` +
-		`ON CONFLICT(request_id) DO UPDATE SET route_mode=excluded.route_mode, detail=excluded.detail`
+		`ON CONFLICT(request_id) DO UPDATE SET route_mode=excluded.route_mode, detail=excluded.detail, created_at=excluded.created_at`
 	if _, err := s.db.ExecContext(ctx, upsert, detail.RequestID, nullable(detail.RouteMode), string(redacted), createdAt.Format("2006-01-02T15:04:05.000Z")); err != nil {
 		return fmt.Errorf("persist request detail: %w", err)
 	}

@@ -52,6 +52,8 @@ Redaction and detail persistence run only in the background batcher on the diagn
 
 New tests: `internal/telemetry/redact_test.go` (nested/key-variant redaction, non-mutation, malformed-JSON rejection, header redaction), `internal/telemetry/detail_test.go` (redacted persistence, oversized payload safety, upsert + retention prune), and `internal/telemetry/telemetry_test.go` (detail routed to the detail sink, never the usage sink; no-op without a detail sink).
 
+Review fix: the detail upsert now also refreshes `created_at` (`created_at=excluded.created_at`), so a route decision written earlier and refreshed with its final outcome is not immediately deleted by the next retention prune. Covered by `TestDetailStoreRefreshedRowSurvivesPrune`.
+
 ## Rollback
 
 Revert the PR. No schema or persisted state changes; the request path returns to the PR41 usage-only writer.
