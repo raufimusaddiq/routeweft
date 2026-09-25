@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/raufimusaddiq/routeweft/internal/transforms"
 	"github.com/raufimusaddiq/routeweft/internal/transport"
@@ -227,10 +228,10 @@ func validateURL(raw string) (*url.URL, error) {
 func size(request transforms.Request) int {
 	total := 0
 	for _, block := range request.System {
-		total += len(block)
+		total += utf8.RuneCountInString(block)
 	}
 	for _, message := range request.Messages {
-		total += len(message.Content)
+		total += utf8.RuneCountInString(message.Content)
 	}
 	return total
 }

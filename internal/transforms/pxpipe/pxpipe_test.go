@@ -83,6 +83,21 @@ func TestPXPIPEOversizedResponseFailsOpen(t *testing.T) {
 	}
 }
 
+func TestPXPIPEThresholdCountsRunesNotBytes(t *testing.T) {
+	input := transforms.Request{Messages: []transforms.Message{{Role: "user", Content: strings.Repeat("界", 5)}}}
+	var diagnostic Diagnostic
+	transform := Transform{Enabled: true, URL: "https://pxpipe.example", MinChars: 6, Client: fakeClient{do: func(*http.Request) (*http.Response, error) {
+		t.Fatal("service called below rune threshold")
+		return nil, nil
+	}}, Diagnostics: func(got Diagnostic) { diagnostic = got }}
+	if _, err := transform.Apply(input); err != nil {
+		t.Fatal(err)
+	}
+	if !diagnostic.Skipped || diagnostic.InputChars != 5 {
+		t.Fatalf("diagnostic=%+v", diagnostic)
+	}
+}
+
 func TestPXPIPETimeoutHealthAndServiceStats(t *testing.T) {
 	transform := Transform{Enabled: true, URL: "https://pxpipe.example/api", MinChars: 1, Timeout: 10 * time.Millisecond, Client: fakeClient{do: func(request *http.Request) (*http.Response, error) {
 		if request.Method == http.MethodGet {
