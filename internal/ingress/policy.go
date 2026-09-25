@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
@@ -23,6 +24,10 @@ type AccountProvider func(*runtime.RuntimeSnapshot, string, string) (routing.Pro
 
 // DefaultStickyLimit mirrors the compiled stickyRoundRobinLimit default.
 const DefaultStickyLimit uint64 = 3
+
+// errorBodyPeek bounds how much of an upstream error body is buffered for
+// classification before it is relayed to the client unchanged (SPEC §14).
+const errorBodyPeek int64 = 32 << 10
 
 // PlanCombo orders the selected members of one Combo candidate list. It
 // applies capability reorder and capacity adapters before Combo-local strategy
@@ -375,4 +380,24 @@ func (h *Handler) recordClassification(account string, classification routing.Cl
 // classifyResponse is the shared classification entry point for ingress retries.
 func classifyResponse(status int, header http.Header) routing.Classification {
 	return routing.ClassifyStatus(status, header)
+}
+
+// recordUpstreamFailure classifies one non-2xx upstream response using the
+// shared provider error mapping and records cooldown visibility in RuntimeState
+// (SPEC §14 "cooldown is visible immediately"). It never changes the response
+// relayed to the client: only the retry classification is normalized. peek is a
+// bounded prefix of the upstream error body.
+func (h *Handler) recordUpstreamFailure(provider routing.ProviderRef, status int, header http.Header, peek []byte) {
+	if h.opts.State == nil {
+		return
+	}
+	classification := classifyResponse(status, header)
+	info := shared.ParseError(provider.Protocol, status, peek)
+	if mapped := routing.ClassifyError(info.Kind.String(), status); mapped.Outcome != "" {
+		// Keep Retry-After/reset hints from the status path.
+		mapped.RetryAfterSeconds = classification.RetryAfterSeconds
+		mapped.ResetAt = classification.ResetAt
+		classification = mapped
+	}
+	h.recordClassification(provider.ConnectionID, classification, time.Now())
 }

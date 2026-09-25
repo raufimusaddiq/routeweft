@@ -22,6 +22,7 @@ import (
 	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
 	codexprovider "github.com/raufimusaddiq/routeweft/internal/providers/codex"
 	"github.com/raufimusaddiq/routeweft/internal/providers/oauthheaders"
+	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
@@ -251,15 +252,22 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	defer response.Body.Close()
 	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		prefix, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyPeek))
+		h.recordUpstreamFailure(provider, response.StatusCode, response.Header, prefix)
+		_, _ = w.Write(prefix)
+		_, _ = io.Copy(w, response.Body)
+		return
+	}
 	if request.Stream {
 		if h.opts.OnUsage != nil {
-			scanner := &usageScanner{}
+			scanner := &usageScanner{family: shared.FamilyAnthropic}
 			response.Body = struct {
 				io.Reader
 				io.Closer
 			}{Reader: io.TeeReader(response.Body, scanner), Closer: response.Body}
 			h.copyMessagesStream(w, r, response)
-			if usage, ok := scanner.usage(); ok && scanner.complete {
+			if usage, ok := scanner.usage(); ok && scanner.reportsUsage(r.Context().Err() == nil) {
 				h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
 			}
 			return
@@ -267,10 +275,10 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		h.copyMessagesStream(w, r, response)
 		return
 	}
-	if h.opts.OnUsage != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
+	if h.opts.OnUsage != nil {
 		responseBody, readErr := io.ReadAll(response.Body)
 		if readErr == nil {
-			if usage, ok := promptcache.ParseAnthropicUsage(responseBody); ok {
+			if usage, ok := shared.ParseUsage(shared.FamilyAnthropic, responseBody); ok {
 				h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
 			}
 		}
@@ -657,10 +665,12 @@ func isSSEDataLine(line []byte) bool {
 	return bytes.HasPrefix(line, []byte("data:"))
 }
 
-// usageScanner observes a streamed Anthropic SSE body and merges the usage
-// fields the upstream reports. It only latches completion on the terminal
-// message_stop event so a cancelled stream never reports partial accounting.
+// usageScanner observes a streamed SSE body for one protocol family and merges
+// the usage fields the upstream reports. It only latches completion on the
+// family's terminal event so a cancelled stream never reports partial
+// accounting (SPEC §21 bounded Usage, PRD §13).
 type usageScanner struct {
+	family   string
 	buffer   []byte
 	merged   promptcache.Usage
 	found    bool
@@ -680,13 +690,17 @@ func (s *usageScanner) Write(chunk []byte) (int, error) {
 			continue
 		}
 		payload := bytes.TrimSpace(line[len("data:"):])
+		if bytes.Equal(payload, []byte("[DONE]")) {
+			s.complete = true
+			continue
+		}
 		var event struct {
 			Type string `json:"type"`
 		}
-		if json.Unmarshal(payload, &event) == nil && event.Type == "message_stop" {
+		if json.Unmarshal(payload, &event) == nil && streamTerminalEvent(s.family, event.Type) {
 			s.complete = true
 		}
-		if usage, ok := promptcache.ParseAnthropicUsage(payload); ok {
+		if usage, ok := shared.ParseUsage(s.family, payload); ok {
 			s.merged = s.merged.Merge(usage)
 			s.found = true
 		}
@@ -695,6 +709,27 @@ func (s *usageScanner) Write(chunk []byte) (int, error) {
 }
 
 func (s *usageScanner) usage() (promptcache.Usage, bool) { return s.merged, s.found }
+
+// reportsUsage reports whether a scanner observed a terminal marker or, for
+// Gemini streams that end by closing the response with no terminal event, a
+// clean stream end. A cancelled or errored relay passes clean=false so partial
+// accounting is never reported (SPEC §21).
+func (s *usageScanner) reportsUsage(clean bool) bool {
+	if !s.found {
+		return false
+	}
+	return s.complete || (clean && s.family == shared.FamilyGemini)
+}
+
+// streamTerminalEvent reports whether one decoded SSE event type ends a family's
+// stream. Anthropic uses message_stop; OpenAI families end on the [DONE]
+// sentinel, which the scanner advances on a blank/generic terminal instead.
+func streamTerminalEvent(family, eventType string) bool {
+	if family == shared.FamilyAnthropic {
+		return eventType == "message_stop"
+	}
+	return eventType == "response.completed" || eventType == "response.done"
+}
 
 // copyResponsesStream relays Responses SSE events incrementally. It holds one
 // terminal event until EOF, filters duplicates/non-final terminals, and reports

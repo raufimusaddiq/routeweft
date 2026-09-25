@@ -87,3 +87,30 @@ func TestCooldownDeadlineHonorsResetAndRetryAfter(t *testing.T) {
 		t.Fatalf("retry deadline %s", got)
 	}
 }
+
+func TestClassifyErrorRefinesNormalizedKinds(t *testing.T) {
+	cases := []struct {
+		kind    string
+		status  int
+		outcome Outcome
+	}{
+		{"auth", http.StatusUnauthorized, OutcomeAuthRefreshRequired},
+		{"quota", http.StatusForbidden, OutcomeQuotaLock},
+		{"rate-limited", http.StatusTooManyRequests, OutcomeQuotaLock},
+		{"overloaded", http.StatusServiceUnavailable, OutcomeFallbackAccount},
+		{"context-length", http.StatusBadRequest, OutcomeTerminalClientError},
+		{"invalid-input", http.StatusBadRequest, OutcomeTerminalClientError},
+		{"not-found", http.StatusNotFound, OutcomeFallbackProvider},
+	}
+	for _, tc := range cases {
+		if got := ClassifyError(tc.kind, tc.status); got.Outcome != tc.outcome {
+			t.Fatalf("kind=%q outcome=%q want=%q", tc.kind, got.Outcome, tc.outcome)
+		}
+	}
+	if got := ClassifyError("unknown", http.StatusBadGateway); got.Outcome != OutcomeFallbackAccount {
+		t.Fatalf("unknown 5xx outcome=%q", got.Outcome)
+	}
+	if got := ClassifyError("", http.StatusBadRequest); got.Outcome != "" {
+		t.Fatalf("empty kind should not classify, got %q", got.Outcome)
+	}
+}

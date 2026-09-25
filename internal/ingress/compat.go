@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	ollamaadapter "github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	systemoneadapter "github.com/raufimusaddiq/routeweft/internal/protocol/systemone"
+	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
@@ -82,8 +84,37 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, source, model
 	defer response.Body.Close()
 	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		prefix, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyPeek))
+		h.recordUpstreamFailure(provider, response.StatusCode, response.Header, prefix)
+		_, _ = w.Write(prefix)
+		_, _ = io.Copy(w, response.Body)
+		return
+	}
 	if stream {
+		if h.opts.OnUsage != nil {
+			scanner := &usageScanner{family: provider.Protocol}
+			response.Body = struct {
+				io.Reader
+				io.Closer
+			}{Reader: io.TeeReader(response.Body, scanner), Closer: response.Body}
+			h.copyNativeSSE(w, r, response)
+			if usage, ok := scanner.usage(); ok && scanner.reportsUsage(r.Context().Err() == nil) {
+				h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
+			}
+			return
+		}
 		h.copyNativeSSE(w, r, response)
+		return
+	}
+	if h.opts.OnUsage != nil {
+		responseBody, readErr := io.ReadAll(response.Body)
+		if readErr == nil {
+			if usage, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
+				h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
+			}
+		}
+		_, _ = w.Write(responseBody)
 		return
 	}
 	_, _ = io.Copy(w, response.Body)
@@ -229,8 +260,29 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer response.Body.Close()
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			prefix, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyPeek))
+			h.recordUpstreamFailure(provider, response.StatusCode, response.Header, prefix)
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			w.WriteHeader(response.StatusCode)
+			_, _ = w.Write(prefix)
+			_, _ = io.Copy(w, response.Body)
+			return
+		}
 		if request.Stream {
 			h.copyOllamaStream(w, r, response, request.Model)
+			return
+		}
+		if h.opts.OnUsage != nil {
+			responseBody, readErr := io.ReadAll(response.Body)
+			if readErr == nil {
+				if usage, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
+					h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
+				}
+			}
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			w.WriteHeader(response.StatusCode)
+			_, _ = w.Write(responseBody)
 			return
 		}
 		w.Header().Set("Content-Type", "application/x-ndjson")
@@ -258,11 +310,75 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	defer response.Body.Close()
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.WriteHeader(response.StatusCode)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		prefix, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyPeek))
+		h.recordUpstreamFailure(provider, response.StatusCode, response.Header, prefix)
+		_, _ = w.Write(prefix)
+		_, _ = io.Copy(w, response.Body)
+		return
+	}
 	if request.Stream {
+		if h.opts.OnUsage != nil {
+			h.copyOllamaNativeStream(w, r, response, provider)
+			return
+		}
 		h.copyNativeSSE(w, r, response)
 		return
 	}
+	if h.opts.OnUsage != nil {
+		responseBody, readErr := io.ReadAll(response.Body)
+		if readErr == nil {
+			if usage, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
+				h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
+			}
+		}
+		_, _ = w.Write(responseBody)
+		return
+	}
 	_, _ = io.Copy(w, response.Body)
+}
+
+// copyOllamaNativeStream relays a native Ollama ndjson stream byte-for-byte
+// while extracting usage from each line. Ollama reports prompt_eval_count and
+// eval_count on the final {"done":true} object (PRD §13), so the last complete
+// object wins and a cancelled stream reports nothing.
+func (h *Handler) copyOllamaNativeStream(w http.ResponseWriter, r *http.Request, response *http.Response, provider routing.ProviderRef) {
+	flusher, canFlush := w.(http.Flusher)
+	reader := bufio.NewReaderSize(response.Body, 32*1024)
+	var pending []byte
+	for {
+		if r.Context().Err() != nil {
+			return
+		}
+		line, err := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			if _, writeErr := w.Write(line); writeErr != nil {
+				return
+			}
+			if canFlush {
+				flusher.Flush()
+			}
+			pending = append(pending, line...)
+			for {
+				index := bytes.IndexByte(pending, '\n')
+				if index < 0 {
+					break
+				}
+				if usage, ok := shared.ParseUsage(provider.Protocol, bytes.TrimSpace(pending[:index])); ok {
+					h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
+				}
+				pending = pending[index+1:]
+			}
+		}
+		if err != nil {
+			if len(pending) > 0 {
+				if usage, ok := shared.ParseUsage(provider.Protocol, bytes.TrimSpace(pending)); ok {
+					h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
+				}
+			}
+			return
+		}
+	}
 }
 
 func (h *Handler) copyOllamaStream(w http.ResponseWriter, r *http.Request, response *http.Response, model string) {
