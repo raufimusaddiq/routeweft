@@ -71,7 +71,7 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, source, model
 		h.writeError(w, http.StatusBadGateway, "upstream_configuration_error", err.Error())
 		return
 	}
-	response, err := h.client.Do(upstreamRequest)
+	response, err := h.clientFor(provider).Do(upstreamRequest)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return
@@ -221,7 +221,7 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, http.StatusBadGateway, "upstream_configuration_error", err.Error())
 			return
 		}
-		response, err := h.client.Do(translatedRequest)
+		response, err := h.clientFor(provider).Do(translatedRequest)
 		if err != nil {
 			if r.Context().Err() == nil {
 				h.writeError(w, http.StatusBadGateway, "upstream_request_failed", "upstream request failed")
@@ -248,7 +248,7 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadGateway, "upstream_configuration_error", err.Error())
 		return
 	}
-	response, err := h.client.Do(upstreamRequest)
+	response, err := h.clientFor(provider).Do(upstreamRequest)
 	if err != nil {
 		if r.Context().Err() == nil {
 			h.writeError(w, http.StatusBadGateway, "upstream_request_failed", "upstream request failed")

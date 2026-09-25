@@ -11,7 +11,7 @@ This file proves that every major product area has a requirement owner, technica
 | Generic Provider | PRD §7 | SPEC Generic Provider section | Sprint 5 | native Chat/Responses/Messages + validation/SSRF/model fallback fixtures |
 | Credentials/import/refresh | PRD §8 | SPEC OAuth/provider modules | Sprint 5 | sealed-at-rest store, rotation/singleflight/import fixtures |
 | Models/aliases/pricing | PRD §9 | SPEC RuntimeSnapshot/provider catalog | Sprint 2/5 | model list/alias/custom/disabled/dynamic catalog tests |
-| Provider/account routing | PRD §10 | SPEC routing/runtime state | Sprint 3 | fill-first/RR/sticky/fallback/quota/cooldown tests |
+| Provider/account routing | PRD §10 | SPEC routing/runtime state | Sprint 3 | fill-first/RR/sticky/fallback/quota/cooldown tests; proxy pool binding/policy tests |
 | Combo | PRD §11 | SPEC Combo | Sprint 3 | ordered/RR/sticky/capability fixtures |
 | Fusion | PRD §11 | SPEC Fusion | Sprint 3 | fan-out/quorum/grace/timeout/judge fixtures |
 | Capacity adapters | PRD §11 | SPEC Combo capability | Sprint 3 | empty/deselect/RR/context-trim fixtures |

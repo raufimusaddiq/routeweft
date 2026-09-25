@@ -65,6 +65,11 @@ type Options struct {
 	// per protocol (SPEC §11 base endpoint rules) do not reuse one shared path.
 	// It returns ok=false to keep the caller's shared default endpoint.
 	EndpointFor func(providerID string, transport string) (string, bool)
+	// ClientFor returns the pooled outbound client for one connection's compiled
+	// proxy policy, so a per-connection proxy pool is honored on the request path
+	// without building a transport per request (SPEC §20, PRD-ROUTE-005). It
+	// returns nil to use the handler's default SSRF-protected client.
+	ClientFor func(connectionID string) *http.Client
 }
 
 // ProviderResolver is request-time code that uses only the already-loaded
@@ -108,6 +113,18 @@ func New(snapshot Snapshot, opts Options) *Handler {
 		client = transport.NewTrustedLocalSSRFProtectedClient()
 	}
 	return &Handler{snapshot: snapshot, opts: opts, client: client}
+}
+
+// clientFor resolves the outbound client for one provider connection, honoring a
+// per-connection proxy pool when configured and falling back to the handler's
+// default SSRF-protected client otherwise (SPEC §20).
+func (h *Handler) clientFor(provider routing.ProviderRef) *http.Client {
+	if h.opts.ClientFor != nil && provider.ConnectionID != "" {
+		if client := h.opts.ClientFor(provider.ConnectionID); client != nil {
+			return client
+		}
+	}
+	return h.client
 }
 
 // Attach registers the public inference routes on the shared mux.
@@ -223,7 +240,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadGateway, "upstream_configuration_error", err.Error())
 		return
 	}
-	response, err := h.client.Do(upstreamRequest)
+	response, err := h.clientFor(provider).Do(upstreamRequest)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return
@@ -399,7 +416,7 @@ func (h *Handler) handleResponsesRequest(w http.ResponseWriter, r *http.Request,
 		h.writeError(w, http.StatusBadGateway, "upstream_configuration_error", err.Error())
 		return
 	}
-	response, err := h.client.Do(upstreamRequest)
+	response, err := h.clientFor(provider).Do(upstreamRequest)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return
@@ -482,7 +499,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		h.writeError(w, http.StatusBadGateway, "upstream_configuration_error", err.Error())
 		return
 	}
-	response, err := h.client.Do(upstreamRequest)
+	response, err := h.clientFor(provider).Do(upstreamRequest)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return
