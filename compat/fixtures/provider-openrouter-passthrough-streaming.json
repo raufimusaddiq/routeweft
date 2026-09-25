@@ -1,0 +1,27 @@
+{
+  "id": "provider-openrouter-passthrough-streaming",
+  "protocol": "openai-chat",
+  "kind": "streaming",
+  "description": "Dynamic passthrough gateway (OpenRouter-style) with a vendor-prefixed model id; the stream must relay byte-for-byte and terminate exactly once.",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer fixture-provider-credential"
+    },
+    "body": "{\"model\":\"anthropic/claude-sonnet-4\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hi.\"}],\"stream\":true}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/event-stream"
+    },
+    "body": "data: {\"id\":\"chatcmpl-or-fixture\",\"object\":\"chat.completion.chunk\",\"created\":1735689600,\"model\":\"anthropic/claude-sonnet-4\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hi\"}}]}\n\ndata: {\"id\":\"chatcmpl-or-fixture\",\"object\":\"chat.completion.chunk\",\"created\":1735689600,\"model\":\"anthropic/claude-sonnet-4\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":1,\"total_tokens\":6}}\n\ndata: [DONE]\n\n"
+  },
+  "usage": {
+    "inputTokens": 5,
+    "outputTokens": 1
+  },
+  "terminal": "[DONE]"
+}

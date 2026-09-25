@@ -1,0 +1,27 @@
+{
+  "id": "provider-xiaomi-mimo-messages-nonstreaming",
+  "protocol": "anthropic-messages",
+  "kind": "non-streaming",
+  "description": "Xiaomi MiMo native Messages transport served on a provider-specific path (source-matching route, no translation), preserving tools, thinking, system and cache_control.",
+  "request": {
+    "method": "POST",
+    "path": "/anthropic/v1/messages",
+    "headers": {
+      "content-type": "application/json",
+      "x-api-key": "fixture-provider-credential",
+      "anthropic-version": "2023-06-01"
+    },
+    "body": "{\"model\":\"mimo-v2.5-pro\",\"max_tokens\":16,\"system\":[{\"type\":\"text\",\"text\":\"You are a terse assistant.\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":1024},\"tools\":[{\"name\":\"get_weather\",\"description\":\"Look up weather.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"]}}],\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Say hi.\",\"cache_control\":{\"type\":\"ephemeral\"}}]}]}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"id\":\"msg_mimo_fixture\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"mimo-v2.5-pro\",\"content\":[{\"type\":\"text\",\"text\":\"Hi.\"}],\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":8,\"output_tokens\":2}}"
+  },
+  "usage": {
+    "inputTokens": 8,
+    "outputTokens": 2
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "id": "provider-cline-envelope-nonstreaming",
+  "protocol": "openai-chat",
+  "kind": "non-streaming",
+  "description": "Cline gateway Chat response: the upstream wraps non-streaming results in a success/data envelope that must be unwrapped.",
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/chat/completions",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer fixture-provider-credential",
+      "http-referer": "https://cline.bot",
+      "x-title": "Cline"
+    },
+    "body": "{\"model\":\"anthropic/claude-opus-4.7\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hi.\"}],\"max_tokens\":16}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"success\":true,\"data\":{\"id\":\"chatcmpl-cline-fixture\",\"object\":\"chat.completion\",\"created\":1735689600,\"model\":\"anthropic/claude-opus-4.7\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hi.\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":2,\"total_tokens\":13}}}"
+  },
+  "usage": {
+    "inputTokens": 11,
+    "outputTokens": 2
+  }
+}
