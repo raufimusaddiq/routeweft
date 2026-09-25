@@ -7,7 +7,7 @@ Deliver:
 - a protocol-neutral request-transform pipeline that runs the token savers in the binding order RTK -> Headroom -> Caveman -> Ponytail -> PXPIPE;
 - fail-open step semantics (a non-essential transform failure cannot fail a valid request);
 - client per-request bypass;
-- RTK tool-result compression;
+- semantics-preserving RTK JSON tool-result minification;
 - deterministic, idempotent Caveman and Ponytail policy injection at configured levels.
 
 ## Non-goals
@@ -28,7 +28,7 @@ No Headroom or PXPIPE implementation (PR 15/16) and no prompt-cache anchoring (P
 - [x] No retained behavior was silently simplified.
 
 - `internal/transforms`: `Request`/`Message` neutral view, `Transform` interface, and `Pipeline.Run` which clones input, skips on `Bypass`, and applies each step fail-open (a failed step's output is discarded and the previous request is kept). Step order is caller-declared and tested to match BDR-012.
-- `internal/transforms/rtk`: folds consecutive duplicate tool-result lines into a single annotated line. This is lossless for unique content and preserves order, rather than truncating unseen middle context.
+- `internal/transforms/rtk`: minifies valid JSON tool results by removing insignificant whitespace; non-JSON tool results remain byte-identical. `UseNumber` preserves numeric values; duplicate array entries and string values remain untouched.
 - `internal/transforms/caveman` and `.../ponytail`: insert a deterministic, level-specific policy block (lite/full/ultra) marked `[routeweft:caveman]` / `[routeweft:ponytail]`. Insertion is idempotent and placed after existing Routeweft policy blocks but before caller instructions, so repeated runs and translated protocols cannot duplicate or reorder blocks.
 - Enable flags/levels map to the existing compiled settings `rtkEnabled`, `cavemanEnabled`/`cavemanLevel`, `ponytailEnabled`/`ponytailLevel`.
 
@@ -54,7 +54,7 @@ Details: pipeline operates on in-memory request copies only; no SQLite read or c
 
 ## Tests
 
-`go test ./...`; `go test -race ./...`; `go vet ./...`; `go build ./...`; UI `npm run typecheck`, `npm run build`. Coverage: declared normative order, fail-open rollback isolation, client bypass, input immutability, RTK duplicate folding preserving unique content/order, non-tool content untouched, idempotent policy injection and block ordering.
+`go test ./...`; `go test -race ./...`; `go vet ./...`; `go build ./...`; UI `npm run typecheck`, `npm run build`. Coverage: declared normative order, fail-open rollback isolation, client bypass, input immutability, RTK JSON minification preserving structure and non-JSON byte identity, non-tool content untouched, idempotent policy injection and block ordering.
 
 ## Rollback
 

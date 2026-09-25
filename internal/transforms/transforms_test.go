@@ -80,10 +80,16 @@ func TestTokenSaverTransformsAreIdempotentAndPreserveOtherMessages(t *testing.T)
 	}
 }
 
-func TestRTKPreservesOrderAndMeaningWhenFoldingRepeatedToolLines(t *testing.T) {
-	input := transforms.Request{Messages: []transforms.Message{{Role: "tool", Content: "a\na\na\nb", ToolResult: true}}}
+func TestRTKMinifiesJSONAndPreservesNonJSONToolResults(t *testing.T) {
+	input := transforms.Request{Messages: []transforms.Message{
+		{Role: "tool", Content: "{ \"count\" : 1, \"rows\" : [ 1, 1, 2 ] }", ToolResult: true},
+		{Role: "tool", Content: "a\na\na\nb", ToolResult: true},
+	}}
 	got := (transforms.Pipeline{Steps: []transforms.Transform{rtk.Transform{Enabled: true}}}).Run(input)
-	if got.Messages[0].Content != "a [repeated 3 times]\nb" {
-		t.Fatalf("RTK output=%q", got.Messages[0].Content)
+	if got.Messages[0].Content != `{"count":1,"rows":[1,1,2]}` {
+		t.Fatalf("JSON output=%q", got.Messages[0].Content)
+	}
+	if got.Messages[1].Content != input.Messages[1].Content {
+		t.Fatalf("non-JSON content changed: %q", got.Messages[1].Content)
 	}
 }

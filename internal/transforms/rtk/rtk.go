@@ -3,7 +3,9 @@
 package rtk
 
 import (
-	"strconv"
+	"bytes"
+	"encoding/json"
+	"io"
 	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/transforms"
@@ -16,9 +18,9 @@ type Transform struct {
 
 func (Transform) Name() string { return "rtk" }
 
-// Apply folds consecutive duplicate lines in tool results, preserving exact
-// content and order while reducing repeated context. Non-tool turns pass
-// through unchanged.
+// Apply minifies JSON tool results by removing insignificant whitespace between
+// tokens. Structurally non-JSON results are left byte-identical, so RTK never
+// invents or drops content (SPEC §17.1).
 func (t Transform) Apply(request transforms.Request) (transforms.Request, error) {
 	if !t.Enabled {
 		return request, nil
@@ -34,22 +36,32 @@ func (t Transform) Apply(request transforms.Request) (transforms.Request, error)
 }
 
 func compress(content string) string {
-	lines := strings.Split(content, "\n")
-	if len(lines) < 2 {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
 		return content
 	}
-	folded := make([]string, 0, len(lines))
-	for i := 0; i < len(lines); {
-		j := i + 1
-		for j < len(lines) && lines[j] == lines[i] {
-			j++
-		}
-		if j-i > 1 {
-			folded = append(folded, lines[i]+" [repeated "+strconv.Itoa(j-i)+" times]")
-		} else {
-			folded = append(folded, lines[i])
-		}
-		i = j
+	if trimmed[0] != '{' && trimmed[0] != '[' {
+		return content
 	}
-	return strings.Join(folded, "\n")
+	decoder := json.NewDecoder(strings.NewReader(trimmed))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return content
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return content
+	}
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return content
+	}
+	minified := strings.TrimSuffix(buffer.String(), "\n")
+	if minified == "" {
+		return content
+	}
+	return minified
 }
