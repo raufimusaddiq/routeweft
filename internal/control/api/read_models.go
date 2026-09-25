@@ -365,12 +365,16 @@ func (h *Handler) combos(w http.ResponseWriter, r *http.Request) error {
 	}
 	items := snapshot.Combos()
 	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+	payload := make([]map[string]any, 0, len(items))
+	for _, combo := range items {
+		payload = append(payload, comboJSON(combo, snapshot.ConfigRevision()))
+	}
 	p, err := readPage(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_page", err.Error())
 		return nil
 	}
-	writeJSON(w, http.StatusOK, pageResponse(itemsSlice(items, p), p, int64(len(items))))
+	writeJSON(w, http.StatusOK, pageResponse(slice(payload, p), p, int64(len(payload))))
 	return nil
 }
 

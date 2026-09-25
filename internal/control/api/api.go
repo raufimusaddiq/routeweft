@@ -48,6 +48,7 @@ type Options struct {
 	CredentialRegistry    *credentials.Registry
 	ProviderCatalog       ProviderCatalog
 	PoolBindings          PoolBindingRefresher
+	Combos                ComboManager
 	AllowPrivateUpstreams bool
 	DiscoveryClient       *discovery.Client
 	Providers             []registry.Spec
@@ -90,6 +91,12 @@ type PoolBindingRefresher interface {
 	RefreshPoolBindings(context.Context) (*runtime.RuntimeSnapshot, error)
 }
 
+// ComboManager applies Combo mutations through the compiled snapshot protocol.
+type ComboManager interface {
+	PutCombo(context.Context, runtime.Combo) (*runtime.RuntimeSnapshot, error)
+	DeleteCombo(context.Context, string) (*runtime.RuntimeSnapshot, error)
+}
+
 // sessionCookieName is the dashboard session cookie. It is HttpOnly and
 // SameSite=Strict; Secure is set when the request arrived over TLS.
 const sessionCookieName = "routeweft_admin_session"
@@ -128,6 +135,11 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.Handle("DELETE /admin/v1/aliases/{alias}", h.requireSessionHandler(http.HandlerFunc(h.handleDeleteAlias)))
 	mux.Handle("POST /admin/v1/pricing", h.requireSessionHandler(http.HandlerFunc(h.handlePutPricing)))
 	mux.Handle("DELETE /admin/v1/pricing", h.requireSessionHandler(http.HandlerFunc(h.handleDeletePricing)))
+	mux.Handle("POST /admin/v1/combos", h.requireSessionHandler(http.HandlerFunc(h.handlePutCombo)))
+	mux.Handle("PUT /admin/v1/combos/{id}", h.requireSessionHandler(http.HandlerFunc(h.handlePutCombo)))
+	mux.Handle("DELETE /admin/v1/combos/{id}", h.requireSessionHandler(http.HandlerFunc(h.handleDeleteCombo)))
+	mux.HandleFunc("GET /admin/v1/capability-adapters", h.requireSession(h.handleGetCapabilityAdapters))
+	mux.Handle("PUT /admin/v1/capability-adapters/{capability}", h.requireSessionHandler(http.HandlerFunc(h.handlePutCapabilityAdapter)))
 	mux.Handle("POST /admin/v1/connections/{id}/proxy", h.requireSessionHandler(http.HandlerFunc(h.handleSetConnectionProxy)))
 	mux.Handle("POST /admin/v1/connections/{id}/order", h.requireSessionHandler(http.HandlerFunc(h.handleMoveConnection)))
 	for _, path := range []string{"overview", "providers", "provider-nodes", "connections", "models", "aliases", "pricing", "combos", "proxy-pools", "keys", "usage", "requests", "quota", "token-saver", "systemone"} {

@@ -25,6 +25,9 @@ const assert = require('node:assert/strict');
   let deleteCalls = 0;
   let patchKeyCalls = 0;
   let providerPatches = 0;
+	let comboCreated = false;
+	let comboPayload = null;
+	let adapterEnabled = false;
   const createdKeyID = 'k-ci-1';
   const createdSecret = 'rw_smoke_secret_value';
   await page.route('**/admin/v1/**', async route => {
@@ -68,6 +71,22 @@ const assert = require('node:assert/strict');
 	}
 	if ((url.pathname === '/admin/v1/aliases' || url.pathname === '/admin/v1/pricing' || url.pathname === '/admin/v1/proxy-pools') && method === 'GET') {
 	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [], page: 1, pageSize: 100, total: 0 }) });
+	}
+	if (url.pathname === '/admin/v1/combos' && method === 'GET') {
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: comboCreated ? [{ id: 'combo-1', name: 'daily', strategy: 'sticky-round-robin', stickyLimit: 3, judgeModel: '', fusionEnabled: true, members: [{ providerId: 'openai', modelId: 'gpt-5', position: 0, selected: true }] }] : [], page: 1, pageSize: 100, total: comboCreated ? 1 : 0 }) });
+	}
+	if (url.pathname === '/admin/v1/combos' && method === 'POST') {
+	  comboCreated = true;
+	  const payload = route.request().postDataJSON();
+	  comboPayload = { id: 'combo-1', ...payload };
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(comboPayload) });
+	}
+	if (url.pathname === '/admin/v1/capability-adapters' && method === 'GET') {
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ capability: 'vision', enabled: adapterEnabled, pool: [] }, { capability: 'audio-input', enabled: false, pool: [] }, { capability: 'pdf', enabled: false, pool: [] }, { capability: 'video-input', enabled: false, pool: [] }] }) });
+	}
+	if (url.pathname === '/admin/v1/capability-adapters/vision' && method === 'PUT') {
+	  adapterEnabled = route.request().postDataJSON().enabled;
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ capability: 'vision', enabled: adapterEnabled, pool: [], configRevision: 11 }) });
 	}
 	if (url.pathname === '/admin/v1/connections/conn-1' && method === 'PATCH') {
 	  providerPatches += 1;
@@ -180,6 +199,32 @@ const assert = require('node:assert/strict');
   await page.waitForFunction(() => document.querySelector('.providers-content .connection-row .state-tag').textContent === 'Disabled');
   report.providerPatches = providerPatches;
   report.providerDisabledLabel = await page.locator('.connection-row .state-tag').textContent();
+	// Combo & Capability Adapter workflow (PRD 11).
+	await page.click('a[href="#combo-capability-adapter"]');
+	await page.waitForSelector('.combos-content');
+	report.comboEmpty = await page.locator('.combo-list-panel .empty-keys').textContent();
+	await page.click('.combos-toolbar .button-primary');
+	await page.waitForSelector('.combo-form');
+	await page.fill('.combo-form-grid input', 'daily');
+	await page.selectOption('.combo-form-grid select', 'sticky-round-robin');
+	await page.selectOption('.member-picker select', { label: 'openai / gpt-5' });
+	await page.click('.member-picker .button-secondary');
+	report.memberRows = await page.locator('.member-row').count();
+	report.memberLabel = await page.locator('.member-row code').textContent();
+	await page.click('.member-row .member-actions .button-secondary:nth-child(3)');
+	report.memberDeselected = await page.locator('.member-row .state-tag').textContent();
+	await page.click('.member-row .member-actions .button-secondary:nth-child(3)');
+	await page.click('.combo-form > .button-primary');
+	await page.waitForSelector('.combo-row');
+	report.comboRowName = await page.locator('.combo-row strong').textContent();
+	report.comboCreated = comboCreated;
+	report.comboStrategy = comboCreated ? comboPayload.strategy : '';
+	report.adapterCards = await page.locator('.adapter-card').count();
+	report.adapterInitial = await page.locator('.adapter-card').first().locator('small').textContent();
+	await page.locator('.adapter-card').first().locator('.adapter-header .button-secondary').click();
+	await page.waitForFunction(() => document.querySelector('.adapter-card small').textContent.includes('empty pool is a no-op'));
+	report.adapterAfterEnable = await page.locator('.adapter-card').first().locator('small').textContent();
+	report.adapterEnabled = adapterEnabled;
   await page.selectOption('#theme-select', 'light');
   report.themeAfterSelect = await page.evaluate(() => document.documentElement.dataset.theme);
   report.stored = await page.evaluate(() => localStorage.getItem('routeweft-theme'));
@@ -264,6 +309,17 @@ const assert = require('node:assert/strict');
   assert.equal(report.filteredCards, 1);
   assert.equal(report.providerPatches, 1);
   assert.equal(report.providerDisabledLabel, 'Disabled');
+	assert.match(report.comboEmpty, /No Combos yet/);
+	assert.equal(report.memberRows, 1);
+	assert.equal(report.memberLabel, 'openai / gpt-5');
+	assert.equal(report.memberDeselected, 'Deselected');
+	assert.equal(report.comboRowName, 'daily');
+	assert.equal(report.comboCreated, true);
+	assert.equal(report.comboStrategy, 'sticky-round-robin');
+	assert.equal(report.adapterCards, 2);
+	assert.match(report.adapterInitial, /Disabled/);
+	assert.match(report.adapterAfterEnable, /empty pool is a no-op/);
+	assert.equal(report.adapterEnabled, true);
   assert.equal(report.focusAfterDesktopNav.className, 'nav-link nav-link-active');
   assert.notEqual(report.focusAfterDesktopNav.visibility, 'hidden');
   assert.notEqual(report.focusAfterDesktopNav.display, 'none');
