@@ -205,8 +205,10 @@ func (h *Handler) copyStream(w http.ResponseWriter, r *http.Request, response *h
 	flusher, canFlush := w.(http.Flusher)
 	reader := bufio.NewReaderSize(response.Body, 32*1024)
 	lineCandidate := make([]byte, 0, len("data: [DONE]\r\n"))
-	longLine := false
+	passLine := false
 	skipTerminalBlank := false
+	eventHasData := false
+	eventHasContent := false
 	write := func(chunk []byte) bool {
 		if len(chunk) == 0 {
 			return true
@@ -224,36 +226,51 @@ func (h *Handler) copyStream(w http.ResponseWriter, r *http.Request, response *h
 			return
 		}
 		line, err := reader.ReadSlice('\n')
-		if longLine {
+		completeLine := !errors.Is(err, bufio.ErrBufferFull)
+		bypassedLine := false
+		if passLine {
 			if !write(line) {
 				return
 			}
-		} else if len(lineCandidate)+len(line) <= cap(lineCandidate) {
-			lineCandidate = append(lineCandidate, line...)
-		} else {
-			if !write(lineCandidate) || !write(line) {
-				return
+			if completeLine {
+				passLine = false
 			}
-			lineCandidate = lineCandidate[:0]
-			longLine = true
-		}
-		if !errors.Is(err, bufio.ErrBufferFull) {
-			if longLine {
-				longLine = false
-			} else {
-				switch {
-				case isTerminalLine(lineCandidate):
-					skipTerminalBlank = true
-				case skipTerminalBlank && isBlankSSELine(lineCandidate):
-					skipTerminalBlank = false
-				default:
-					skipTerminalBlank = false
-					if !write(lineCandidate) {
-						return
-					}
+		} else {
+			if len(lineCandidate)+len(line) > cap(lineCandidate) {
+				eventHasData = eventHasData || isSSEDataLine(lineCandidate)
+				eventHasContent = true
+				if !write(lineCandidate) || !write(line) {
+					return
 				}
 				lineCandidate = lineCandidate[:0]
+				bypassedLine = true
+				passLine = !completeLine
+			} else {
+				lineCandidate = append(lineCandidate, line...)
 			}
+		}
+		if completeLine && !bypassedLine && !passLine {
+			switch {
+			case isTerminalLine(lineCandidate) && !eventHasData:
+				skipTerminalBlank = !eventHasContent
+			case skipTerminalBlank && isBlankSSELine(lineCandidate):
+				skipTerminalBlank = false
+				eventHasData, eventHasContent = false, false
+			default:
+				skipTerminalBlank = false
+				if !write(lineCandidate) {
+					return
+				}
+				if isSSEDataLine(lineCandidate) {
+					eventHasData = true
+				}
+				if isBlankSSELine(lineCandidate) {
+					eventHasData, eventHasContent = false, false
+				} else {
+					eventHasContent = true
+				}
+			}
+			lineCandidate = lineCandidate[:0]
 		}
 		if err == nil || errors.Is(err, bufio.ErrBufferFull) {
 			continue
@@ -261,7 +278,7 @@ func (h *Handler) copyStream(w http.ResponseWriter, r *http.Request, response *h
 		if !errors.Is(err, io.EOF) {
 			return
 		}
-		if !longLine && !isTerminalLine(lineCandidate) && !write(lineCandidate) {
+		if !passLine && !isTerminalLine(lineCandidate) && !write(lineCandidate) {
 			return
 		}
 		if r.Context().Err() == nil {
@@ -279,6 +296,10 @@ func isTerminalLine(line []byte) bool {
 
 func isBlankSSELine(line []byte) bool {
 	return bytes.Equal(line, []byte("\n")) || bytes.Equal(line, []byte("\r\n"))
+}
+
+func isSSEDataLine(line []byte) bool {
+	return bytes.HasPrefix(line, []byte("data:"))
 }
 
 func copyResponseHeaders(dst, src http.Header) {

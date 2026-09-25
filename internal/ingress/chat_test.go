@@ -168,6 +168,7 @@ func TestChatStreamEnforcesSingleFinalTerminalMarker(t *testing.T) {
 		{name: "duplicate", body: "data: [DONE]\n\ndata: {\"late\":true}\n\ndata: [DONE]\n\n", want: "data: {\"late\":true}\n\ndata: [DONE]\n\n"},
 		{name: "already-final", body: "data: {\"chunk\":1}\n\ndata: [DONE]\n\n", want: "data: {\"chunk\":1}\n\ndata: [DONE]\n\n"},
 		{name: "large-duplicate", body: "data: {\"pad\":\"" + strings.Repeat("x", 200) + "\"}\n\ndata: [DONE]\n\ndata: " + strings.Repeat("y", 128) + "\n\ndata: [DONE]\n\n", want: "data: {\"pad\":\"" + strings.Repeat("x", 200) + "\"}\n\ndata: " + strings.Repeat("y", 128) + "\n\ndata: [DONE]\n\n"},
+		{name: "long-non-terminal", body: "data: " + strings.Repeat("z", 4096) + "\n\ndata: [DONE]\n\n", want: "data: " + strings.Repeat("z", 4096) + "\n\ndata: [DONE]\n\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
