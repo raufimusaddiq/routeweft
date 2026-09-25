@@ -15,6 +15,7 @@ type Config struct {
 	Models         []Model
 	Aliases        map[string]ModelRef
 	DisabledModels map[string]struct{}
+	Combos         []Combo
 }
 
 // Candidate is mutable only while a serialized configuration update is built.
@@ -24,6 +25,7 @@ type Candidate struct {
 	Models         []Model
 	Aliases        map[string]ModelRef
 	DisabledModels map[string]struct{}
+	Combos         []Combo
 }
 
 func (c *Candidate) Set(key, value string)        { c.Settings[key] = value }
@@ -118,6 +120,10 @@ func (Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, error)
 		settings[key] = value
 	}
 	models, aliases, disabled := compileCatalog(config.Models, config.Aliases, config.DisabledModels)
+	combos, err := compileCombos(config.Combos, models)
+	if err != nil {
+		return nil, err
+	}
 	return &RuntimeSnapshot{
 		version:        version,
 		configRevision: config.Revision,
@@ -126,6 +132,7 @@ func (Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, error)
 		models:         models,
 		aliases:        aliases,
 		disabledModels: disabled,
+		combos:         combos,
 	}, nil
 }
 

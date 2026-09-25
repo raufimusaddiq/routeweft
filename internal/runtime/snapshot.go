@@ -13,6 +13,7 @@ type RuntimeSnapshot struct {
 	models         map[string]Model
 	aliases        map[string]ModelRef
 	disabledModels map[string]struct{}
+	combos         map[string]Combo
 }
 
 func (s *RuntimeSnapshot) Version() uint64        { return s.version }

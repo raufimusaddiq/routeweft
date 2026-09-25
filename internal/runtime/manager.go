@@ -57,11 +57,11 @@ func (m *Manager) Update(ctx context.Context, mutate func(*Candidate) error) (*R
 	if err != nil {
 		return nil, err
 	}
-	candidate := &Candidate{Settings: current.Settings(), APIKeys: current.APIKeys().Records(), Models: cloneModelsForConfig(current.models), Aliases: cloneAliases(current.aliases), DisabledModels: cloneDisabled(current.disabledModels)}
+	candidate := &Candidate{Settings: current.Settings(), APIKeys: current.APIKeys().Records(), Models: cloneModelsForConfig(current.models), Aliases: cloneAliases(current.aliases), DisabledModels: cloneDisabled(current.disabledModels), Combos: current.Combos()}
 	if err := mutate(candidate); err != nil {
 		return nil, err
 	}
-	config := Config{Revision: current.ConfigRevision() + 1, Settings: cloneSettings(candidate.Settings), APIKeys: append([]auth.Entry(nil), candidate.APIKeys...), Models: append([]Model(nil), candidate.Models...), Aliases: cloneAliases(candidate.Aliases), DisabledModels: cloneDisabled(candidate.DisabledModels)}
+	config := Config{Revision: current.ConfigRevision() + 1, Settings: cloneSettings(candidate.Settings), APIKeys: append([]auth.Entry(nil), candidate.APIKeys...), Models: append([]Model(nil), candidate.Models...), Aliases: cloneAliases(candidate.Aliases), DisabledModels: cloneDisabled(candidate.DisabledModels), Combos: append([]Combo(nil), candidate.Combos...)}
 	nextVersion := m.version.Load() + 1
 	compiled, err := (Compiler{}).Compile(config, nextVersion)
 	if err != nil {
@@ -83,6 +83,9 @@ func (m *Manager) Update(ctx context.Context, mutate func(*Candidate) error) (*R
 		}
 	}
 	if err := persistCatalog(ctx, tx, config); err != nil {
+		return nil, err
+	}
+	if err := persistCombos(ctx, tx, config.Combos); err != nil {
 		return nil, err
 	}
 	const revisionUpsert = "INSERT INTO meta (key,value) VALUES ('config_revision',?) " +
@@ -133,5 +136,10 @@ func loadConfig(ctx context.Context, db *sql.DB) (Config, error) {
 	if err := loadCatalog(ctx, db, &config); err != nil {
 		return Config{}, err
 	}
+	combos, err := loadCombos(ctx, db)
+	if err != nil {
+		return Config{}, err
+	}
+	config.Combos = combos
 	return config, nil
 }

@@ -23,6 +23,106 @@ type AccountProvider func(*runtime.RuntimeSnapshot, string, string) (routing.Pro
 // DefaultStickyLimit mirrors the compiled stickyRoundRobinLimit default.
 const DefaultStickyLimit uint64 = 3
 
+// PlanCombo orders the selected members of one Combo candidate list. It
+// applies capability reorder and capacity adapters before Combo-local strategy
+// rotation (SPEC §15.2-15.4). A named Combo overrides the direct model route.
+func (h *Handler) PlanCombo(snapshot *runtime.RuntimeSnapshot, name string, requirements []routing.CapabilityRequirement) ([]runtime.ComboMember, bool) {
+	combo, ok := snapshot.ComboByName(name)
+	if !ok {
+		return nil, false
+	}
+	members := combo.Resolve()
+	routed := make([]routing.Member, 0, len(members))
+	for _, member := range members {
+		capabilities, contextWindow, _ := snapshot.ModelCapabilities(member.ProviderID, member.ModelID)
+		routed = append(routed, routing.Member{ProviderID: member.ProviderID, ModelID: member.ModelID, Position: member.Position, Capabilities: capabilities, ContextWindow: contextWindow})
+	}
+	if len(requirements) > 0 {
+		if !anySatisfies(routed, requirements) {
+			routed = append(routing.AdapterCandidates(requirements, nil), routed...)
+		}
+		routed = routing.OrderCombo(routed, requirements)
+	}
+	strategy := routing.StrategyFillFirst
+	switch snapshot.ComboStrategy(name) {
+	case "round-robin":
+		strategy = routing.StrategyRoundRobin
+	case "sticky-round-robin":
+		strategy = routing.StrategyStickyRR
+	}
+	cursor := uint64(0)
+	if h.opts.State != nil && strategy != routing.StrategyFillFirst {
+		cursor = h.opts.State.NextCursor("combo|" + combo.ID)
+	}
+	selection := routing.Select(routing.SelectOptions{
+		Strategy:    strategy,
+		StickyLimit: snapshot.ComboStickyLimit(name),
+		Cursor:      cursor,
+		Accounts:    comboAccounts(routed),
+	})
+	ordered := make([]runtime.ComboMember, 0, len(selection.Candidates))
+	for position, candidate := range selection.Candidates {
+		providerID, modelID, _ := strings.Cut(candidate.ID, "\x00")
+		ordered = append(ordered, runtime.ComboMember{ProviderID: providerID, ModelID: modelID, Position: position, Selected: true})
+	}
+	if len(requirements) > 0 {
+		ordered = restoreCapablePrefix(ordered, requirements, snapshot)
+	}
+	return ordered, true
+}
+
+func satisfies(member routing.Member, requirements []routing.CapabilityRequirement) bool {
+	for _, requirement := range requirements {
+		if !member.Has(requirement.Name) {
+			return false
+		}
+	}
+	return true
+}
+
+// restoreCapablePrefix re-applies the capability ordering over the rotated
+// selection so the capable tier stays ahead while rotation only permutes the
+// fallback tail (SPEC §15.3).
+func restoreCapablePrefix(ordered []runtime.ComboMember, requirements []routing.CapabilityRequirement, snapshot *runtime.RuntimeSnapshot) []runtime.ComboMember {
+	capable := make([]runtime.ComboMember, 0, len(ordered))
+	rest := make([]runtime.ComboMember, 0, len(ordered))
+	for _, member := range ordered {
+		capabilities, _, _ := snapshot.ModelCapabilities(member.ProviderID, member.ModelID)
+		if satisfies(routing.Member{Capabilities: capabilities}, requirements) {
+			capable = append(capable, member)
+		} else {
+			rest = append(rest, member)
+		}
+	}
+	return append(capable, rest...)
+}
+
+func anySatisfies(members []routing.Member, requirements []routing.CapabilityRequirement) bool {
+	for _, member := range members {
+		satisfied := true
+		for _, requirement := range requirements {
+			if !member.Has(requirement.Name) {
+				satisfied = false
+				break
+			}
+		}
+		if satisfied {
+			return true
+		}
+	}
+	return false
+}
+
+// comboAccounts encodes provider and model without an ambiguous separator so
+// selection order can be decoded losslessly.
+func comboAccounts(members []routing.Member) []routing.Account {
+	accounts := make([]routing.Account, 0, len(members))
+	for _, member := range members {
+		accounts = append(accounts, routing.Account{ID: member.ProviderID + "\x00" + member.ModelID, Priority: member.Position, Enabled: true})
+	}
+	return accounts
+}
+
 // PlanAttempts builds the ordered candidate list for one request from the
 // immutable snapshot plus RuntimeState cooldown/quota observations
 // (SPEC §13, PRD-ROUTE-002/004).

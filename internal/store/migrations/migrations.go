@@ -16,7 +16,7 @@ type Migration struct {
 }
 
 // All returns the ordered migration set owned by Routeweft.
-func All() []Migration { return []Migration{v1, v2} }
+func All() []Migration { return []Migration{v1, v2, v3} }
 
 // LatestVersion is the schema version Routeweft compiles against.
 func LatestVersion() int {
