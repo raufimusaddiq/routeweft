@@ -51,6 +51,7 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 		t.Fatal(err)
 	}
 	wantIDs := []string{
+		"claude",
 		"gemini",
 		"anthropic",
 		"alicode-intl", "alicode", "alims-intl", "alitp-intl", "api-airforce", "baidu", "bazaarlink", "blackbox", "bluesminds", "byteplus",
@@ -96,6 +97,9 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	}
 	if spec, _ := catalog.Lookup("gemini"); spec.Auth != AuthAPIKey || spec.Transports[0] != TransportGemini || len(spec.StaticModels) != 11 {
 		t.Fatalf("gemini spec=%+v", spec)
+	}
+	if spec, _ := catalog.Lookup("claude"); spec.Auth != AuthOAuth || spec.Transports[0] != TransportAnthropic || !spec.ReportsUsage || len(spec.StaticModels) != 5 {
+		t.Fatalf("claude spec=%+v", spec)
 	}
 	for _, id := range []string{"alicode-intl", "alitp-intl"} {
 		spec, _ := catalog.Lookup(id)
