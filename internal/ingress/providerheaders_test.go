@@ -20,6 +20,24 @@ func TestCodexProviderHeadersCarryCLIFingerprint(t *testing.T) {
 	}
 }
 
+func TestOAuthSpecializedProviderHeaders(t *testing.T) {
+	github := openAIProviderHeaders(routing.ProviderRef{ProviderID: "github", Protocol: "openai-chat", APIToken: "token"})
+	if github.Get("Authorization") != "Bearer token" || github.Get("copilot-integration-id") != "vscode-chat" || github.Get("editor-version") != "vscode/1.110.0" {
+		t.Fatalf("github headers=%v", github)
+	}
+	cline := openAIProviderHeaders(routing.ProviderRef{ProviderID: "cline", Protocol: "openai-chat", APIToken: "token"})
+	if cline.Get("HTTP-Referer") != "https://cline.bot" || cline.Get("X-Title") != "Cline" {
+		t.Fatalf("cline headers=%v", cline)
+	}
+	if iflow := openAIProviderHeaders(routing.ProviderRef{ProviderID: "iflow", Protocol: "openai-chat", APIToken: "token"}); iflow.Get("User-Agent") != "iFlow-Cli" {
+		t.Fatalf("iflow headers=%v", iflow)
+	}
+	plain := openAIProviderHeaders(routing.ProviderRef{ProviderID: "mistral", Protocol: "openai-chat", APIToken: "token"})
+	if plain.Get("copilot-integration-id") != "" || plain.Get("User-Agent") != "" {
+		t.Fatalf("unexpected fingerprint on plain provider: %v", plain)
+	}
+}
+
 func TestAnthropicProviderHeaderPolicy(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	keyed := anthropicHeaders(request, routing.ProviderRef{ProviderID: "anthropic", APIToken: "key"})
@@ -29,6 +47,12 @@ func TestAnthropicProviderHeaderPolicy(t *testing.T) {
 	oauth := anthropicHeaders(request, routing.ProviderRef{ProviderID: "claude", APIToken: "token"})
 	if oauth.Get("Authorization") != "Bearer token" || oauth.Get("X-Api-Key") != "" || oauth.Get("User-Agent") == "" {
 		t.Fatalf("claude headers=%v", oauth)
+	}
+	// GitHub Copilot's native Messages route must authenticate as bearer and
+	// carry the Copilot fingerprint, not x-api-key.
+	github := anthropicHeaders(request, routing.ProviderRef{ProviderID: "github", APIToken: "copilot-token"})
+	if github.Get("Authorization") != "Bearer copilot-token" || github.Get("X-Api-Key") != "" || github.Get("copilot-integration-id") != "vscode-chat" || github.Get("editor-version") != "vscode/1.110.0" {
+		t.Fatalf("github messages headers=%v", github)
 	}
 	clientOptIn := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 	clientOptIn.Header.Set("Anthropic-Beta", "client-beta")
