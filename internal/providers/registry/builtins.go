@@ -50,7 +50,23 @@ func Builtins() []Spec {
 	specs = append(specs, Anthropic()...)
 	specs = append(specs, Gemini()...)
 	specs = append(specs, Claude()...)
-	return append(specs, MultiTransport()...)
+	specs = append(specs, MultiTransport()...)
+	return append(specs, LocalAndNoAuth()...)
+}
+
+// LocalAndNoAuth returns no-auth/passthrough, hosted Ollama, local Ollama and
+// SystemOne-served providers. ollama-local targets a loopback address, which is
+// first-class per the provider baseline and requires the explicit trusted-local
+// operator policy at request time.
+func LocalAndNoAuth() []Spec {
+	return []Spec{
+		{ID: "mimo-free", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, DefaultBaseURL: "https://api.xiaomimimo.com/api/free-ai/openai/chat", ModelCatalog: CatalogDynamic, PassthroughModels: true},
+		{ID: "mmf", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, DefaultBaseURL: "https://api.xiaomimimo.com/api/free-ai/openai/chat", ModelCatalog: CatalogStatic},
+		{ID: "opencode", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, DefaultBaseURL: "https://opencode.ai", ModelCatalog: CatalogDynamic, PassthroughModels: true},
+		{ID: "ollama", Transports: []Protocol{TransportOllama}, Auth: AuthAPIKey, DefaultBaseURL: "https://ollama.com", ModelCatalog: CatalogStatic},
+		{ID: "ollama-local", Transports: []Protocol{TransportOllama}, Auth: AuthNone, DefaultBaseURL: "http://localhost:11434", ModelCatalog: CatalogStatic},
+		{ID: "typesafe", Transports: []Protocol{TransportSystemOne}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.typesafe.ai/v1/systemone", ModelCatalog: CatalogStatic},
+	}
 }
 
 // MultiTransport returns providers that advertise more than one native LLM
