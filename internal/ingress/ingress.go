@@ -18,6 +18,9 @@ import (
 	ollamaadapter "github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	systemoneadapter "github.com/raufimusaddiq/routeweft/internal/protocol/systemone"
+	anthropicprovider "github.com/raufimusaddiq/routeweft/internal/providers/anthropic"
+	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
+	codexprovider "github.com/raufimusaddiq/routeweft/internal/providers/codex"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
@@ -251,18 +254,42 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 // anthropicHeaders sets the provider credential and version headers. Routeweft
 // forwards the client's anthropic-beta opt-in but never the client credential.
+// Claude OAuth connections authenticate with a bearer token and identify as the
+// Claude CLI; API-key connections use x-api-key.
 func anthropicHeaders(r *http.Request, provider routing.ProviderRef) http.Header {
 	headers := http.Header{}
-	if provider.APIToken != "" {
+	if provider.ProviderID == "claude" && provider.APIToken != "" {
+		headers.Set("Authorization", "Bearer "+provider.APIToken)
+		for name, value := range claudeprovider.Headers() {
+			headers.Set(name, value)
+		}
+	} else if provider.APIToken != "" {
 		headers.Set("X-Api-Key", provider.APIToken)
 	}
 	if version := r.Header.Get("Anthropic-Version"); version != "" {
 		headers.Set("Anthropic-Version", version)
 	} else {
-		headers.Set("Anthropic-Version", "2023-06-01")
+		headers.Set("Anthropic-Version", anthropicprovider.Version)
 	}
 	if beta := r.Header.Get("Anthropic-Beta"); beta != "" {
 		headers.Set("Anthropic-Beta", beta)
+	} else if provider.ProviderID == "anthropic" {
+		headers.Set("Anthropic-Beta", anthropicprovider.Beta)
+	}
+	return headers
+}
+
+// openAIProviderHeaders applies the provider credential plus any provider
+// identity headers, such as the Codex CLI fingerprint on Codex Responses.
+func openAIProviderHeaders(provider routing.ProviderRef) http.Header {
+	headers := http.Header{}
+	if provider.APIToken != "" {
+		headers.Set("Authorization", "Bearer "+provider.APIToken)
+	}
+	if provider.ProviderID == "codex" {
+		for name, value := range codexprovider.Headers() {
+			headers.Set(name, value)
+		}
 	}
 	return headers
 }
@@ -320,9 +347,7 @@ func (h *Handler) handleResponsesRequest(w http.ResponseWriter, r *http.Request,
 	var headers http.Header
 	if plan.NativePath() {
 		outbound, err = request.MarshalBody(provider.UpstreamModel)
-		if provider.APIToken != "" {
-			headers = http.Header{"Authorization": {"Bearer " + provider.APIToken}}
-		}
+		headers = openAIProviderHeaders(provider)
 	} else if compact && h.opts.TranslateResponsesCompact != nil {
 		var translated ChatTranslation
 		translated, err = h.opts.TranslateResponsesCompact(request, plan.TargetProtocol)
@@ -404,9 +429,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	var headers http.Header
 	if plan.NativePath() {
 		outbound, err = request.MarshalBody(provider.UpstreamModel)
-		if provider.APIToken != "" {
-			headers = http.Header{"Authorization": {"Bearer " + provider.APIToken}}
-		}
+		headers = openAIProviderHeaders(provider)
 	} else if h.opts.TranslateChat != nil {
 		var translated ChatTranslation
 		translated, err = h.opts.TranslateChat(request, plan.TargetProtocol)
