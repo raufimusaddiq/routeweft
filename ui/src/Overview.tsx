@@ -87,6 +87,13 @@ export function Overview({ onUnauthorized }: Props) {
           Refresh
         </button>
       </div>
+      {error && (
+        <section className="page-error refresh-error" role="alert">
+          <span className="material-symbols" aria-hidden="true">error</span>
+          <p>{error}</p>
+          <button className="button-secondary" type="button" disabled={loading} onClick={() => void load()}>Retry</button>
+        </section>
+      )}
 
       <section className="metrics-grid" aria-label="Gateway summary">
         <Metric label="Gateway" value={ready ? 'Ready' : 'Not ready'} note={`Version ${summary.runtime.version || 'unknown'}`} icon="dns" />
