@@ -274,22 +274,25 @@ func (r *Registry) Import(ctx context.Context, connectionID, identity string, se
 	// install lock, so a refresh cannot interleave between them and overwrite this
 	// import with a stale rotated secret.
 	current.installMu.Lock()
+	defer current.installMu.Unlock()
 	current.mu.Lock()
 	current.generation++
 	current.mu.Unlock()
 	if err := r.store.RotateSecret(ctx, connectionID, secret); err != nil {
-		current.installMu.Unlock()
 		return err
 	}
-	if err := r.store.RecordCredentialEvent(ctx, connectionID, "import", ""); err != nil {
-		current.installMu.Unlock()
-		return err
-	}
+	// Publish to memory immediately after the durable secret is committed, in the
+	// same critical section, so the served and durable credentials can never
+	// diverge even if the following audit write fails.
 	current.mu.Lock()
 	current.current = secret
 	current.seeded = true
 	current.mu.Unlock()
-	current.installMu.Unlock()
+	// Audit bookkeeping is advisory: the import already succeeded durably, so a
+	// failed event write must not report the credential install as failed.
+	if err := r.store.RecordCredentialEvent(ctx, connectionID, "import", ""); err != nil {
+		return fmt.Errorf("credential import succeeded but audit write failed: %w", err)
+	}
 	return nil
 }
 
