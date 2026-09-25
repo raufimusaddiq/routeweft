@@ -53,7 +53,57 @@ func Builtins() []Spec {
 	specs = append(specs, MultiTransport()...)
 	specs = append(specs, LocalAndNoAuth()...)
 	specs = append(specs, APIGateways()...)
-	return append(specs, OAuthSpecialized()...)
+	specs = append(specs, OAuthSpecialized()...)
+	return append(specs, SpecializedWire()...)
+}
+
+// SpecializedWire returns providers from PROVIDER_BASELINE's Specialized
+// transport class plus the remaining dual-auth/passthrough identities. Each
+// entry names its provider-specific wire protocol (BDR-009); the wire adapter,
+// Google/AWS/RSA credential flows, import helpers and quota clients land in
+// their own assigned Sprint 5 slices. Cookie/session providers keep arbitrary
+// current model ids routable.
+//
+// kenari advertises Chat, Responses and Messages natively so a source-matching
+// route skips translation (BDR-010). `azure` is operator-configurable: its base
+// URL is supplied per connection, so the seeded origin stays empty and the
+// endpoint is resolved from provider-specific data at request time.
+func SpecializedWire() []Spec {
+	return []Spec{
+		{ID: "antigravity", Transports: []Protocol{TransportAntigravity}, Auth: AuthOAuth, DefaultBaseURL: "https://cloudcode-pa.googleapis.com", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
+			"gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.1-pro-preview",
+		}},
+		{ID: "gemini-cli", Transports: []Protocol{TransportGeminiCLI}, Auth: AuthOAuth, DefaultBaseURL: "https://cloudcode-pa.googleapis.com/v1internal", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
+			"gemini-3.1-pro-preview", "gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview",
+			"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+		}},
+		{ID: "cursor", Transports: []Protocol{TransportCursor}, Auth: AuthOAuth, DefaultBaseURL: "https://api2.cursor.sh", ModelCatalog: CatalogStatic, StaticModels: []string{
+			"default", "claude-4.5-opus-high-thinking", "claude-4.5-opus-high", "claude-4.5-sonnet-thinking", "claude-4.5-sonnet", "claude-4.5-haiku",
+			"claude-4.5-opus", "gpt-5.2-codex", "claude-4.6-opus-max", "claude-4.6-sonnet-medium-thinking", "kimi-k2.5", "gemini-3-flash-preview", "gpt-5.2", "gpt-5.3-codex",
+		}},
+		{ID: "qoder", Transports: []Protocol{TransportQoder}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api3.qoder.sh", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
+			"ultimate", "auto", "performance", "efficient", "lite", "qmodel_38max", "qmodel_latest", "qmodel", "qfmodel", "kmodel_latest", "kmodel", "gmodel", "gfmodel", "dmodel", "dfmodel", "mmodel",
+		}},
+		{ID: "kiro", Transports: []Protocol{TransportKiro}, Auth: AuthOAuth, AuthModes: []AuthKind{AuthOAuth, AuthAPIKey}, DefaultBaseURL: "https://runtime.us-east-1.kiro.dev", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
+			"claude-opus-5", "claude-opus-5-thinking", "claude-opus-4.8", "claude-opus-4.7", "claude-sonnet-4.6", "claude-sonnet-4.5",
+		}},
+		{ID: "vertex", Transports: []Protocol{TransportVertex}, Auth: AuthAPIKey, DefaultBaseURL: "https://aiplatform.googleapis.com", ModelCatalog: CatalogStatic, StaticModels: []string{
+			"gemini-3.1-pro-preview", "gemini-3.1-flash-lite-preview", "gemini-3-flash-preview", "gemini-2.5-flash",
+		}},
+		{ID: "commandcode", Transports: []Protocol{TransportCommandCode}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.commandcode.ai/alpha", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
+			"deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash", "moonshotai/Kimi-K2.6", "moonshotai/Kimi-K2.5", "zai-org/GLM-5.1", "zai-org/GLM-5",
+			"MiniMaxAI/MiniMax-M2.7", "MiniMaxAI/MiniMax-M2.5", "Qwen/Qwen3.6-Max-Preview", "Qwen/Qwen3.6-Plus", "stepfun/Step-3.5-Flash",
+		}},
+		{ID: "grok-cli", Transports: []Protocol{TransportOpenAIResponses}, Auth: AuthOAuth, DefaultBaseURL: "https://cli-chat-proxy.grok.com", ModelCatalog: CatalogStatic, ReportsUsage: true},
+		{ID: "grok-web", Transports: []Protocol{TransportGrokWeb}, Auth: AuthCookie, DefaultBaseURL: "https://grok.com", ModelCatalog: CatalogPassthrough, PassthroughModels: true},
+		{ID: "perplexity-web", Transports: []Protocol{TransportPerplexityWeb}, Auth: AuthCookie, DefaultBaseURL: "https://www.perplexity.ai", ModelCatalog: CatalogStatic, StaticModels: []string{
+			"pplx-auto", "pplx-sonar", "pplx-gpt", "pplx-gemini", "pplx-sonnet", "pplx-opus", "pplx-nemotron",
+		}},
+		{ID: "kenari", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://kenari.id", ModelCatalog: CatalogDynamic, PassthroughModels: true, ReportsUsage: true},
+		{ID: "zed", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://cloud.zed.dev", ModelCatalog: CatalogPassthrough, PassthroughModels: true, ReportsUsage: true},
+		{ID: "kimchi", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://llm.kimchi.dev/openai/v1", ModelCatalog: CatalogPassthrough, PassthroughModels: true},
+		{ID: "azure", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "", ModelCatalog: CatalogStatic},
+	}
 }
 
 // OAuthSpecialized returns the OAuth/PAT/cookie credential providers that
