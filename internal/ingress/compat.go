@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	geminiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/gemini"
 	ollamaadapter "github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
@@ -16,6 +17,7 @@ import (
 	systemoneadapter "github.com/raufimusaddiq/routeweft/internal/protocol/systemone"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
+	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
 )
 
 // dispatch resolves the requested model, builds one bounded plan, selects the
@@ -23,6 +25,7 @@ import (
 // and incremental streaming (SPEC §8-§9). nativeBody/nativeHeaders run only on
 // the native path; translated is the cross-protocol hook for later adapters.
 func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, source, model string, native nativeSpec, translated translateHook, stream bool) {
+	started := time.Now()
 	snapshot, err := h.snapshot.Load()
 	if err != nil {
 		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
@@ -89,32 +92,37 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, source, model
 		h.recordUpstreamFailure(provider, response.StatusCode, response.Header, prefix)
 		_, _ = w.Write(prefix)
 		_, _ = io.Copy(w, response.Body)
+		h.emitOutcome(r, provider, response.StatusCode, stream, promptcache.Usage{}, started)
 		return
 	}
 	if stream {
-		if h.opts.OnUsage != nil {
+		if h.opts.OnRequestComplete != nil {
 			scanner := &usageScanner{family: provider.Protocol}
 			response.Body = struct {
 				io.Reader
 				io.Closer
 			}{Reader: io.TeeReader(response.Body, scanner), Closer: response.Body}
 			h.copyNativeSSE(w, r, response)
-			if usage, ok := scanner.usage(); ok && scanner.reportsUsage(r.Context().Err() == nil) {
-				h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
+			usage, _ := scanner.usage()
+			if !scanner.reportsUsage(r.Context().Err() == nil) {
+				usage = promptcache.Usage{}
 			}
+			h.emitOutcome(r, provider, response.StatusCode, true, usage, started)
 			return
 		}
 		h.copyNativeSSE(w, r, response)
 		return
 	}
-	if h.opts.OnUsage != nil {
+	if h.opts.OnRequestComplete != nil {
 		responseBody, readErr := io.ReadAll(response.Body)
+		usage := promptcache.Usage{}
 		if readErr == nil {
-			if usage, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
-				h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
+			if parsed, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
+				usage = parsed
 			}
 		}
 		_, _ = w.Write(responseBody)
+		h.emitOutcome(r, provider, response.StatusCode, false, usage, started)
 		return
 	}
 	_, _ = io.Copy(w, response.Body)
@@ -237,6 +245,7 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusNotFound, "model_not_found", "model is not configured")
 		return
 	}
+	started := time.Now()
 	if provider.Protocol != ollamaadapter.Protocol {
 		if h.opts.TranslateChat == nil {
 			h.writeError(w, http.StatusBadGateway, "request_translation_failed", "no Chat-to-provider translator registered")
@@ -267,22 +276,26 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(response.StatusCode)
 			_, _ = w.Write(prefix)
 			_, _ = io.Copy(w, response.Body)
+			h.emitOutcome(r, provider, response.StatusCode, false, promptcache.Usage{}, started)
 			return
 		}
 		if request.Stream {
 			h.copyOllamaStream(w, r, response, request.Model)
+			h.emitOutcome(r, provider, response.StatusCode, true, promptcache.Usage{}, started)
 			return
 		}
-		if h.opts.OnUsage != nil {
+		if h.opts.OnRequestComplete != nil {
 			responseBody, readErr := io.ReadAll(response.Body)
+			usage := promptcache.Usage{}
 			if readErr == nil {
-				if usage, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
-					h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
+				if parsed, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
+					usage = parsed
 				}
 			}
 			w.Header().Set("Content-Type", "application/x-ndjson")
 			w.WriteHeader(response.StatusCode)
 			_, _ = w.Write(responseBody)
+			h.emitOutcome(r, provider, response.StatusCode, false, usage, started)
 			return
 		}
 		w.Header().Set("Content-Type", "application/x-ndjson")
@@ -315,24 +328,28 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 		h.recordUpstreamFailure(provider, response.StatusCode, response.Header, prefix)
 		_, _ = w.Write(prefix)
 		_, _ = io.Copy(w, response.Body)
+		h.emitOutcome(r, provider, response.StatusCode, request.Stream, promptcache.Usage{}, started)
 		return
 	}
 	if request.Stream {
-		if h.opts.OnUsage != nil {
-			h.copyOllamaNativeStream(w, r, response, provider)
+		if h.opts.OnRequestComplete != nil {
+			usage := h.copyOllamaNativeStream(w, r, response, provider)
+			h.emitOutcome(r, provider, response.StatusCode, true, usage, started)
 			return
 		}
 		h.copyNativeSSE(w, r, response)
 		return
 	}
-	if h.opts.OnUsage != nil {
+	if h.opts.OnRequestComplete != nil {
 		responseBody, readErr := io.ReadAll(response.Body)
+		usage := promptcache.Usage{}
 		if readErr == nil {
-			if usage, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
-				h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
+			if parsed, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
+				usage = parsed
 			}
 		}
 		_, _ = w.Write(responseBody)
+		h.emitOutcome(r, provider, response.StatusCode, false, usage, started)
 		return
 	}
 	_, _ = io.Copy(w, response.Body)
@@ -341,19 +358,21 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 // copyOllamaNativeStream relays a native Ollama ndjson stream byte-for-byte
 // while extracting usage from each line. Ollama reports prompt_eval_count and
 // eval_count on the final {"done":true} object (PRD §13), so the last complete
-// object wins and a cancelled stream reports nothing.
-func (h *Handler) copyOllamaNativeStream(w http.ResponseWriter, r *http.Request, response *http.Response, provider routing.ProviderRef) {
+// object wins and a cancelled stream reports nothing. It returns the usage it
+// observed so the caller can publish one accounting record.
+func (h *Handler) copyOllamaNativeStream(w http.ResponseWriter, r *http.Request, response *http.Response, provider routing.ProviderRef) promptcache.Usage {
 	flusher, canFlush := w.(http.Flusher)
 	reader := bufio.NewReaderSize(response.Body, 32*1024)
 	var pending []byte
+	usage := promptcache.Usage{}
 	for {
 		if r.Context().Err() != nil {
-			return
+			return promptcache.Usage{}
 		}
 		line, err := reader.ReadBytes('\n')
 		if len(line) > 0 {
 			if _, writeErr := w.Write(line); writeErr != nil {
-				return
+				return promptcache.Usage{}
 			}
 			if canFlush {
 				flusher.Flush()
@@ -364,19 +383,19 @@ func (h *Handler) copyOllamaNativeStream(w http.ResponseWriter, r *http.Request,
 				if index < 0 {
 					break
 				}
-				if usage, ok := shared.ParseUsage(provider.Protocol, bytes.TrimSpace(pending[:index])); ok {
-					h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
+				if parsed, ok := shared.ParseUsage(provider.Protocol, bytes.TrimSpace(pending[:index])); ok {
+					usage = parsed
 				}
 				pending = pending[index+1:]
 			}
 		}
 		if err != nil {
 			if len(pending) > 0 {
-				if usage, ok := shared.ParseUsage(provider.Protocol, bytes.TrimSpace(pending)); ok {
-					h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
+				if parsed, ok := shared.ParseUsage(provider.Protocol, bytes.TrimSpace(pending)); ok {
+					usage = parsed
 				}
 			}
-			return
+			return usage
 		}
 	}
 }

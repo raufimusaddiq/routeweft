@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/store/migrations"
 	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
+	"github.com/raufimusaddiq/routeweft/internal/telemetry"
 )
 
 type Config struct {
@@ -49,6 +51,23 @@ func loadSnapshot(manager *runtime.Manager) func() *runtime.RuntimeSnapshot {
 	}
 }
 
+// telemetryOptions maps the compiled observability settings onto the bounded
+// queue configuration (SPEC §21). Invalid values fall back to the defaults.
+func telemetryOptions(settings map[string]string) telemetry.Options {
+	opts := telemetry.DefaultOptions()
+	opts.Enabled = settings["enableObservability"] == "true"
+	if value, err := strconv.Atoi(settings["observabilityMaxRecords"]); err == nil && value > 0 {
+		opts.MaxRecords = value
+	}
+	if value, err := strconv.Atoi(settings["observabilityBatchSize"]); err == nil && value > 0 {
+		opts.BatchSize = value
+	}
+	if value, err := strconv.Atoi(settings["observabilityFlushIntervalMs"]); err == nil && value > 0 {
+		opts.FlushInterval = time.Duration(value) * time.Millisecond
+	}
+	return opts
+}
+
 type App struct {
 	cfg     Config
 	log     *slog.Logger
@@ -56,6 +75,7 @@ type App struct {
 	runtime *runtime.Manager
 	ingress *ingress.Handler
 	quota   *quota.Service
+	usage   *telemetry.Service
 	ready   atomic.Bool
 }
 
@@ -93,6 +113,13 @@ func (a *App) Initialize(ctx context.Context) error {
 		return fmt.Errorf("initialize runtime: %w", err)
 	}
 	a.store, a.runtime = store, manager
+	snapshot, err := manager.Load()
+	if err != nil {
+		_ = store.Close()
+		return fmt.Errorf("load initial snapshot: %w", err)
+	}
+	usage := telemetry.New(telemetry.NewSQLiteSink(store.DB()), telemetryOptions(snapshot.Settings()))
+	a.usage = usage
 	binder := proxy.NewBinder(loadSnapshot(manager))
 	binder.AllowLocal = a.cfg.AllowPrivateUpstreams
 	a.ingress = ingress.New(manager, ingress.Options{
@@ -102,6 +129,21 @@ func (a *App) Initialize(ctx context.Context) error {
 		AllowPrivateUpstreams: a.cfg.AllowPrivateUpstreams,
 		ClientFor: func(connectionID string) *http.Client {
 			return binder.ClientFor(context.Background(), connectionID)
+		},
+		OnRequestComplete: func(outcome ingress.RequestOutcome) {
+			usage.Record(telemetry.Event{
+				Class:        telemetry.Critical,
+				RequestID:    outcome.RequestID,
+				ProviderID:   outcome.ProviderID,
+				ModelID:      outcome.ModelID,
+				ConnectionID: outcome.ConnectionID,
+				Status:       outcome.Status,
+				InputTokens:  outcome.InputTokens,
+				OutputTokens: outcome.OutputTokens,
+				CacheRead:    outcome.CacheRead,
+				CacheWrite:   outcome.CacheWrite,
+				DurationMS:   outcome.Duration.Milliseconds(),
+			})
 		},
 	})
 	if err := a.initializeQuota(ctx, store, manager); err != nil {
@@ -183,6 +225,11 @@ func (a *App) Serve(ctx context.Context) error {
 		MaxHeaderBytes:    1 << 20,
 	}
 	errCh := make(chan error, 1)
+	if a.usage != nil && a.usage.Enabled() {
+		// SPEC §21: the batcher is the only usage writer; the request path only
+		// enqueues, so a normal success never synchronously writes SQLite.
+		go a.usage.Run(ctx)
+	}
 	if a.quota != nil {
 		// PRD-QUOTA-001: provider quota refresh runs in the background and must not
 		// block normal inference. A refresh error is recorded, never fatal.
@@ -199,6 +246,9 @@ func (a *App) Serve(ctx context.Context) error {
 		return fmt.Errorf("serve: %w", err)
 	case <-ctx.Done():
 		a.ready.Store(false)
+		if a.usage != nil {
+			a.usage.Close()
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {

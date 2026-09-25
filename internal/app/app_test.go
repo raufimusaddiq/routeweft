@@ -83,6 +83,41 @@ func TestQuotaServiceIsWiredIntoTheApp(t *testing.T) {
 
 // TestQuotaServiceSkippedWithoutKey documents that a keyless deployment still
 // boots, since there are then no sealed provider connections to read quota for.
+func TestTelemetryServiceIsWiredIntoTheApp(t *testing.T) {
+	application := New(Config{Listen: ":0", DataDir: t.TempDir()}, nil)
+	if err := application.Initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if application.usage == nil {
+		t.Fatal("telemetry service not wired")
+	}
+	// Observability is opt-in (compiled default false), so a fresh app is wired
+	// but idle until an operator enables it.
+	if application.usage.Enabled() {
+		t.Fatal("telemetry should be disabled by default until enableObservability is set")
+	}
+	if application.usage.Health() != nil || application.usage.Lost() != 0 {
+		t.Fatalf("unexpected telemetry health/lost: %v/%d", application.usage.Health(), application.usage.Lost())
+	}
+}
+
+func TestTelemetryOptionsMapSettings(t *testing.T) {
+	opts := telemetryOptions(map[string]string{
+		"enableObservability":          "true",
+		"observabilityMaxRecords":      "250",
+		"observabilityBatchSize":       "50",
+		"observabilityFlushIntervalMs": "1500",
+	})
+	if !opts.Enabled || opts.MaxRecords != 250 || opts.BatchSize != 50 || opts.FlushInterval != 1500*time.Millisecond {
+		t.Fatalf("options=%+v", opts)
+	}
+	// Invalid values fall back to defaults.
+	opts = telemetryOptions(map[string]string{"observabilityMaxRecords": "nope"})
+	if opts.MaxRecords != 1000 || opts.Enabled {
+		t.Fatalf("fallback options=%+v", opts)
+	}
+}
+
 func TestQuotaServiceSkippedWithoutKey(t *testing.T) {
 	app := New(Config{Listen: ":0", DataDir: t.TempDir()}, nil)
 	if err := app.Initialize(context.Background()); err != nil {

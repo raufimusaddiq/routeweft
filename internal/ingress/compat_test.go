@@ -17,7 +17,6 @@ import (
 	systemoneadapter "github.com/raufimusaddiq/routeweft/internal/protocol/systemone"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
-	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
 )
 
 func compatFixtures(t *testing.T, protocol fixtures.Protocol) []fixtures.Exchange {
@@ -180,9 +179,9 @@ func TestGeminiStreamExtractsUsageOnCleanEOF(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer server.Close()
-	var got promptcache.Usage
+	var got RequestOutcome
 	var calls int
-	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, ProviderResolver: fixedProvider(geminiadapter.Protocol, server.URL()), OnUsage: func(_, _ string, usage promptcache.Usage) { calls++; got = usage }})
+	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, ProviderResolver: fixedProvider(geminiadapter.Protocol, server.URL()), OnRequestComplete: func(outcome RequestOutcome) { calls++; got = outcome }})
 	recorder := httptest.NewRecorder()
 	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-flash:streamGenerateContent", strings.NewReader(exchange.Request.Body)))
 	if recorder.Code != http.StatusOK || calls != 1 || got.InputTokens != int64(exchange.Usage.InputTokens) || got.OutputTokens != int64(exchange.Usage.OutputTokens) {
@@ -198,9 +197,9 @@ func TestOllamaChatNativeExtractsUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer server.Close()
-	var got promptcache.Usage
+	var got RequestOutcome
 	var calls int
-	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, ProviderResolver: fixedProvider(ollamaadapter.Protocol, server.URL()), OnUsage: func(_, _ string, usage promptcache.Usage) { calls++; got = usage }})
+	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, ProviderResolver: fixedProvider(ollamaadapter.Protocol, server.URL()), OnRequestComplete: func(outcome RequestOutcome) { calls++; got = outcome }})
 	recorder := httptest.NewRecorder()
 	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/api/chat", strings.NewReader(`{"model":"llama3.2","messages":[{"role":"user","content":"hi"}],"stream":false}`)))
 	if recorder.Code != http.StatusOK || calls != 1 || got.InputTokens != 14 || got.OutputTokens != 9 {
