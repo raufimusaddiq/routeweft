@@ -73,8 +73,8 @@ INSERT INTO custom_models(id,provider_id,model_id,display_name) VALUES('m1','pro
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 2 {
-		t.Fatalf("version %d, want 2", version)
+	if version != LatestVersion() {
+		t.Fatalf("version %d, want %d", version, LatestVersion())
 	}
 	var keyName, modelName string
 	if err := store.DB().QueryRowContext(ctx, "SELECT name FROM api_keys WHERE id='k1'").Scan(&keyName); err != nil {
