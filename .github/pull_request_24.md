@@ -53,6 +53,8 @@ Revert this PR to remove first-party Gemini API-key identity; shared Gemini prot
 - [x] Prior findings re-read; none exist for this PR.
 - [x] No new head while FIFO reviewer reviews this exact head absent blocker.
 
+CI/review retrigger: Hermes check failed without publishing a review or details URL payload; CI passed. Documentation-only head refresh.
+
 ## Worktree isolation
 
 - [x] Dedicated feature worktree.
