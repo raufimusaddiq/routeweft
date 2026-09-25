@@ -51,6 +51,7 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 		t.Fatal(err)
 	}
 	wantIDs := []string{
+		"mimo-free", "mmf", "opencode", "ollama", "ollama-local", "typesafe",
 		"deepseek", "glm", "glm-cn", "minimax", "minimax-cn", "xiaomi-tokenplan",
 		"claude",
 		"gemini",
@@ -64,7 +65,7 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	}
 	for _, id := range wantIDs {
 		spec, ok := catalog.Lookup(id)
-		if !ok || len(spec.Transports) == 0 || spec.DefaultBaseURL == "" || (spec.Auth != AuthAPIKey && spec.Auth != AuthOAuth) {
+		if !ok || len(spec.Transports) == 0 || spec.DefaultBaseURL == "" {
 			t.Errorf("incomplete group member %q: %+v present=%v", id, spec, ok)
 		}
 	}
@@ -119,6 +120,21 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	}
 	if spec, _ := catalog.Lookup("glm-cn"); len(spec.Transports) != 1 || spec.Transports[0] != TransportOpenAIChat {
 		t.Fatalf("glm-cn spec=%+v", spec)
+	}
+	for _, id := range []string{"mimo-free", "opencode"} {
+		spec, _ := catalog.Lookup(id)
+		if spec.Auth != AuthNone || spec.ModelCatalog != CatalogDynamic || !spec.PassthroughModels {
+			t.Errorf("no-auth passthrough %s spec=%+v", id, spec)
+		}
+	}
+	if spec, _ := catalog.Lookup("ollama-local"); spec.Auth != AuthNone || spec.Transports[0] != TransportOllama || spec.DefaultBaseURL != "http://localhost:11434" {
+		t.Fatalf("ollama-local spec=%+v", spec)
+	}
+	if spec, _ := catalog.Lookup("ollama"); spec.Auth != AuthAPIKey || spec.Transports[0] != TransportOllama {
+		t.Fatalf("ollama spec=%+v", spec)
+	}
+	if spec, _ := catalog.Lookup("typesafe"); spec.Transports[0] != TransportSystemOne || spec.Auth != AuthAPIKey {
+		t.Fatalf("typesafe spec=%+v", spec)
 	}
 	for _, id := range []string{"alicode-intl", "alitp-intl"} {
 		spec, _ := catalog.Lookup(id)
