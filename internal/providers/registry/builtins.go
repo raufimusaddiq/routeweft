@@ -48,7 +48,15 @@ func Builtins() []Spec {
 	specs = append(specs, NativeOpenAI()...)
 	specs = append(specs, Codex()...)
 	specs = append(specs, Anthropic()...)
-	return append(specs, Gemini()...)
+	specs = append(specs, Gemini()...)
+	return append(specs, Claude()...)
+}
+
+// Claude returns the Claude Code OAuth identity using shared Anthropic Messages.
+func Claude() []Spec {
+	return []Spec{{ID: "claude", Transports: []Protocol{TransportAnthropic}, Auth: AuthOAuth, DefaultBaseURL: "https://api.anthropic.com/v1", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
+		"claude-opus-5", "claude-fable-5-1", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5-20251001",
+	}}}
 }
 
 // Gemini returns the first-party Gemini GenerateContent identity.
