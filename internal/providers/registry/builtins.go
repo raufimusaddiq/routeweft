@@ -164,7 +164,7 @@ func OAuthSpecialized() []Spec {
 			"cline-pass/glm-5.2", "cline-pass/kimi-k2.7-code", "cline-pass/kimi-k2.6", "cline-pass/deepseek-v4-pro", "cline-pass/deepseek-v4-flash",
 			"cline-pass/mimo-v2.5", "cline-pass/mimo-v2.5-pro", "cline-pass/minimax-m3", "cline-pass/qwen3.7-max", "cline-pass/qwen3.7-plus",
 		}},
-		{ID: "kilocode", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://api.kilo.ai/api/openrouter", ModelCatalog: CatalogDynamic, PassthroughModels: true},
+		{ID: "kilocode", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://api.kilo.ai/api", DiscoveryPath: "gateway/models", ModelCatalog: CatalogDynamic, PassthroughModels: true},
 		{ID: "codebuddy-cn", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://copilot.tencent.com/v2", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
 			"glm-5.2", "glm-5.1", "glm-5v-turbo", "minimax-m3", "kimi-k2.7", "kimi-k2.6", "hy3", "hy4-preview", "glm-5.3", "glm-5.3-flash",
 			"kimi-k3-1", "deepseek-v4-pro", "deepseek-v4.1-flash",

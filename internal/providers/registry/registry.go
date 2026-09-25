@@ -75,6 +75,11 @@ type Spec struct {
 	// Missing keys fall back to the shared default for that protocol. A path is
 	// relative, non-empty, without query/fragment and without "."/".." segments.
 	TransportEndpoints map[Protocol]string
+	// DiscoveryPath overrides the relative model-discovery path appended to
+	// DefaultBaseURL. Empty uses the shared OpenAI-compatible "models"
+	// convention. Providers whose catalog lives elsewhere (for example an
+	// OpenRouter-style gateway) set this explicitly.
+	DiscoveryPath string
 	// ModelCatalog is the baseline model catalog class; PassthroughModels marks
 	// providers that must forward arbitrary operator-supplied IDs.
 	ModelCatalog      ModelCatalog

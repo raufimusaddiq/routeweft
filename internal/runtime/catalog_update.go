@@ -73,6 +73,53 @@ func (m *Manager) PutModel(ctx context.Context, model Model) error {
 	return m.UpdateCatalog(ctx, func(candidate *Candidate) error { candidate.AddModel(model); return nil })
 }
 
+// ReplaceDiscoveredModels atomically swaps one provider's discovered catalog
+// for the supplied IDs while preserving custom (operator-managed) models and
+// any alias/disabled decisions. Discovery failure is advisory, so an empty list
+// is a no-op rather than a destructive delete (PROVIDER_BASELINE §7).
+func (m *Manager) ReplaceDiscoveredModels(ctx context.Context, providerID string, models []Model) error {
+	providerID = strings.TrimSpace(providerID)
+	if providerID == "" {
+		return errors.New("provider id is required")
+	}
+	// Filter first: an empty or all-blank result is advisory (discovery
+	// unavailable or failed) and must never delete the last known durable
+	// catalog for the provider.
+	usable := make([]Model, 0, len(models))
+	for _, model := range models {
+		if strings.TrimSpace(model.ID) == "" {
+			continue
+		}
+		model.ProviderID = providerID
+		model.Source = "discovered"
+		if model.Name == "" {
+			model.Name = model.ID
+		}
+		usable = append(usable, model)
+	}
+	if len(usable) == 0 {
+		return nil
+	}
+	return m.UpdateCatalog(ctx, func(candidate *Candidate) error {
+		kept := candidate.Models[:0]
+		for _, model := range candidate.Models {
+			// Remove only this provider's previously discovered entries. Custom
+			// (operator-managed) and seeded/static models have other sources and
+			// must survive a discovery refresh so the seed stays available offline
+			// (PROVIDER_BASELINE §7).
+			if model.ProviderID == providerID && model.Source == "discovered" {
+				continue
+			}
+			kept = append(kept, model)
+		}
+		candidate.Models = kept
+		for _, model := range usable {
+			candidate.AddModel(model)
+		}
+		return nil
+	})
+}
+
 // PutAlias creates or replaces a model alias.
 func (m *Manager) PutAlias(ctx context.Context, alias string, target ModelRef) error {
 	return m.UpdateCatalog(ctx, func(candidate *Candidate) error { candidate.SetAlias(alias, target); return nil })
