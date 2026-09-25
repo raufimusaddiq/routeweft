@@ -58,3 +58,5 @@ Review fixes: (1) the queue is now a mutex-guarded slice rather than a channel, 
 ## Rollback
 
 Revert the PR. No schema or persisted state changes; the request path returns to no accounting writer.
+
+<!-- re-review trigger -->
