@@ -18,6 +18,24 @@ const (
 // Protocol names a shared protocol adapter family (docs/PROVIDER_BASELINE.md §2).
 type Protocol string
 
+// ModelCatalog classifies how a provider exposes its model list (PROVIDER_BASELINE column).
+type ModelCatalog string
+
+// Quirk names a provider-specific behavior requirement from PROVIDER_BASELINE.
+type Quirk string
+
+const (
+	// QuirkCacheControl marks providers whose cache-control handling differs
+	// from the shared adapter default and must be preserved.
+	QuirkCacheControl Quirk = "cache-control"
+)
+
+const (
+	CatalogStatic      ModelCatalog = "static"
+	CatalogDynamic     ModelCatalog = "dynamic"
+	CatalogPassthrough ModelCatalog = "passthrough"
+)
+
 const (
 	TransportOpenAIChat      Protocol = "openai-chat"
 	TransportOpenAIResponses Protocol = "openai-responses"
@@ -33,6 +51,13 @@ type Spec struct {
 	Transports     []Protocol
 	Auth           AuthKind
 	DefaultBaseURL string
+	// ModelCatalog is the baseline model catalog class; PassthroughModels marks
+	// providers that must forward arbitrary operator-supplied IDs.
+	ModelCatalog      ModelCatalog
+	PassthroughModels bool
+	// ReportsUsage marks providers whose upstream usage is accounted.
+	ReportsUsage bool
+	Quirks       []Quirk
 }
 
 // Validate rejects incomplete or duplicated provider identities.
@@ -54,6 +79,19 @@ func (s Spec) Validate() error {
 	case AuthAPIKey, AuthOAuth, AuthCookie, AuthNone:
 	default:
 		return errors.New("unsupported provider auth kind")
+	}
+	switch s.ModelCatalog {
+	case CatalogStatic, CatalogDynamic, CatalogPassthrough:
+	default:
+		return errors.New("unsupported provider model catalog")
+	}
+	for _, quirk := range s.Quirks {
+		if quirk != QuirkCacheControl {
+			return errors.New("unsupported provider quirk")
+		}
+	}
+	if s.PassthroughModels && s.ModelCatalog != CatalogDynamic && s.ModelCatalog != CatalogPassthrough {
+		return errors.New("passthrough models require a dynamic or passthrough catalog")
 	}
 	return nil
 }
@@ -85,6 +123,7 @@ func NewCatalog(specs []Spec) (*Catalog, error) {
 			return nil, errors.New("duplicate provider " + spec.ID)
 		}
 		spec.Transports = append([]Protocol(nil), spec.Transports...)
+		spec.Quirks = append([]Quirk(nil), spec.Quirks...)
 		indexed[spec.ID] = spec
 	}
 	return &Catalog{specs: indexed}, nil
@@ -98,6 +137,7 @@ func (c *Catalog) Lookup(id string) (Spec, bool) {
 	spec, ok := c.specs[id]
 	if ok {
 		spec.Transports = append([]Protocol(nil), spec.Transports...)
+		spec.Quirks = append([]Quirk(nil), spec.Quirks...)
 	}
 	return spec, ok
 }
