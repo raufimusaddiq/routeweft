@@ -31,6 +31,7 @@ const assert = require('node:assert/strict');
     }
     if (url.pathname === '/admin/v1/overview') {
       overviewCalls += 1;
+      if (overviewCalls === 2) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'read_failed' } }) });
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(overviewPayload) });
     }
     return route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
@@ -53,6 +54,13 @@ const assert = require('node:assert/strict');
   report.signOutLabel = await page.locator('.sign-out').textContent();
   report.monospaceValue = await page.locator('.technical-value').first().evaluate(el => getComputedStyle(el).fontFamily);
   report.overviewScroll = await page.evaluate(() => document.documentElement.scrollWidth + '/' + document.documentElement.clientWidth);
+  await page.click('.refresh-button');
+  await page.waitForSelector('.refresh-error');
+  report.refreshError = await page.locator('.refresh-error').innerText();
+  report.staleMetricAfterRefreshError = await page.locator('.metric-value').first().textContent();
+  await page.click('.refresh-error button');
+  await page.waitForFunction(() => !document.querySelector('.refresh-error'));
+  report.overviewCallsAfterRetry = overviewCalls;
   await page.emulateMedia({ colorScheme: 'dark' });
   report.navCount = await page.locator('nav a').count();
   report.groups = await page.locator('.nav-group h2').allTextContents();
@@ -115,6 +123,9 @@ const assert = require('node:assert/strict');
   assert.equal(report.passwordMasked, 'password');
   assert.equal(report.loginCalls, 1);
   assert.equal(report.initialOverviewCalls, 1);
+  assert.match(report.refreshError, /Overview is temporarily unavailable/);
+  assert.equal(report.staleMetricAfterRefreshError, 'Ready');
+  assert.equal(report.overviewCallsAfterRetry, 3);
   assert.match(report.overviewAlert, /3 failed requests/);
   assert.match(report.overviewAlert, /telemetry is degraded/);
   assert.equal(report.sessionCalls, 1);
