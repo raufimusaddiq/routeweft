@@ -90,8 +90,11 @@ func (m *Manager) ReplaceDiscoveredModels(ctx context.Context, providerID string
 	return m.UpdateCatalog(ctx, func(candidate *Candidate) error {
 		kept := candidate.Models[:0]
 		for _, model := range candidate.Models {
-			// Keep custom models and every other provider's models untouched.
-			if model.ProviderID == providerID && model.Source != "custom" {
+			// Remove only this provider's previously discovered entries. Custom
+			// (operator-managed) and seeded/static models have other sources and
+			// must survive a discovery refresh so the seed stays available offline
+			// (PROVIDER_BASELINE §7).
+			if model.ProviderID == providerID && model.Source == "discovered" {
 				continue
 			}
 			kept = append(kept, model)
