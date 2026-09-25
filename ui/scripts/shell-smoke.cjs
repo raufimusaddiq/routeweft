@@ -28,6 +28,9 @@ const assert = require('node:assert/strict');
   let comboCreated = false;
   let comboPayload = null;
   let adapterEnabled = false;
+	let systemOneModelAdded = false;
+	let systemOneProbeCalls = 0;
+	let systemOneProbeTransport = '';
   const createdKeyID = 'k-ci-1';
   const createdSecret = 'rw_smoke_secret_value';
   await page.route('**/admin/v1/**', async route => {
@@ -61,11 +64,23 @@ const assert = require('node:assert/strict');
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'openai', transports: ['openai-chat','openai-responses'], auth: 'api-key', authModes: ['api-key'], defaultBaseURL: 'https://api.openai.com/v1', modelCatalog: 'static', passthroughModels: false, reportsUsage: false, configuredNodes: 1, enabledAccounts: 1 }, { id: 'openrouter', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, configuredNodes: 0, enabledAccounts: 0 }], page: 1, pageSize: 100, total: 2 }) });
   }
   if (url.pathname === '/admin/v1/provider-nodes' && method === 'GET') {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'node-openai', kind: 'builtin', providerId: 'openai', name: 'openai', baseUrl: 'https://api.openai.com/v1', transports: ['openai-chat','openai-responses'] }], page: 1, pageSize: 100, total: 1 }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'node-openai', kind: 'builtin', providerId: 'openai', name: 'openai', baseUrl: 'https://api.openai.com/v1', transports: ['openai-chat','openai-responses'] }, { id: 'node-jev', kind: 'builtin', providerId: 'typesafe', name: 'typesafe', baseUrl: 'https://api.typesafe.ai/v1/systemone', transports: ['systemone'] }], page: 1, pageSize: 100, total: 2 }) });
   }
-  if (url.pathname === '/admin/v1/connections' && method === 'GET') {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'conn-1', nodeId: 'node-openai', providerId: 'openai', name: 'primary', authKind: 'api-key', identity: 'acct-1', enabled: providerPatches === 0, priority: 0, credentialConfigured: true }], page: 1, pageSize: 100, total: 1 }) });
-  }
+	if (url.pathname === '/admin/v1/connections' && method === 'GET') {
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'conn-1', nodeId: 'node-openai', providerId: 'openai', name: 'primary', authKind: 'api-key', identity: 'acct-1', enabled: providerPatches === 0, priority: 0, credentialConfigured: true }, { id: 'conn-jev', nodeId: 'node-jev', providerId: 'typesafe', name: 'jev', authKind: 'api-key', identity: 'acct-jev', enabled: true, priority: 0, credentialConfigured: true }], page: 1, pageSize: 100, total: 2 }) });
+	}
+	if (url.pathname === '/admin/v1/systemone' && method === 'GET') {
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: systemOneModelAdded ? [{ providerId: 'typesafe', id: 'jev', name: 'jev', capabilities: [], disabled: false }, { providerId: 'typesafe', id: 'jev-mini', name: 'jev-mini', capabilities: [], disabled: false }] : [{ providerId: 'typesafe', id: 'jev', name: 'jev', capabilities: [], disabled: false }], page: 1, pageSize: 100, total: 1 }) });
+	}
+	if (url.pathname === '/admin/v1/models' && method === 'POST') {
+	  systemOneModelAdded = true;
+	  return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ providerId: 'typesafe', id: 'jev-mini' }) });
+	}
+	if (url.pathname === '/admin/v1/connections/conn-jev/test-models' && method === 'POST') {
+	  systemOneProbeCalls += 1;
+	  systemOneProbeTransport = route.request().postDataJSON().transport;
+	  return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ connectionId: 'conn-jev', transport: 'systemone', results: [{ modelId: 'jev', ok: true, status: 200 }] }) });
+	}
   if (url.pathname === '/admin/v1/models' && method === 'GET') {
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ providerId: 'openai', id: 'gpt-5', name: 'GPT-5', contextWindow: 128000, capabilities: [], disabled: false }], page: 1, pageSize: 100, total: 1 }) });
   }
@@ -225,6 +240,23 @@ const assert = require('node:assert/strict');
   await page.waitForFunction(() => document.querySelector('.adapter-card small').textContent.includes('empty pool is a no-op'));
   report.adapterAfterEnable = await page.locator('.adapter-card').first().locator('small').textContent();
   report.adapterEnabled = adapterEnabled;
+	// System One typed request workflow (PRD 11, PRD-API-001).
+	await page.click('a[href="#system-one"]');
+	await page.waitForSelector('.systemone-content');
+	report.systemOneProviders = await page.locator('#systemone-provider option').allTextContents();
+	await page.waitForSelector('.systemone-layout');
+	report.systemOneModels = await page.locator('.systemone-layout .model-row code').allTextContents();
+	await page.fill('.systemone-layout .provider-inline-form input', 'jev-mini');
+	await page.click('.systemone-layout .provider-inline-form button');
+	await page.waitForFunction(() => document.querySelectorAll('.systemone-layout .model-row').length === 2);
+	report.systemOneModelsAfterAdd = await page.locator('.systemone-layout .model-row code').allTextContents();
+	report.systemOneModelAdded = systemOneModelAdded;
+	await page.selectOption('.systemone-run select', 'jev');
+	await page.click('.systemone-run .button-primary');
+	await page.waitForSelector('.inline-notice');
+	report.systemOneNotice = await page.locator('.inline-notice').textContent();
+	report.systemOneProbeCalls = systemOneProbeCalls;
+	report.systemOneProbeTransport = systemOneProbeTransport;
   await page.selectOption('#theme-select', 'light');
   report.themeAfterSelect = await page.evaluate(() => document.documentElement.dataset.theme);
   report.stored = await page.evaluate(() => localStorage.getItem('routeweft-theme'));
@@ -319,7 +351,14 @@ const assert = require('node:assert/strict');
   assert.equal(report.adapterCards, 2);
   assert.match(report.adapterInitial, /Disabled/);
   assert.match(report.adapterAfterEnable, /empty pool is a no-op/);
-  assert.equal(report.adapterEnabled, true);
+	assert.equal(report.adapterEnabled, true);
+	assert.deepEqual(report.systemOneProviders, ['typesafe']);
+	assert.deepEqual(report.systemOneModels, ['jev']);
+	assert.deepEqual(report.systemOneModelsAfterAdd, ['jev', 'jev-mini']);
+	assert.equal(report.systemOneModelAdded, true);
+	assert.match(report.systemOneNotice, /Typed request succeeded for jev \(HTTP 200\)/);
+	assert.equal(report.systemOneProbeCalls, 1);
+	assert.equal(report.systemOneProbeTransport, 'systemone');
   assert.equal(report.focusAfterDesktopNav.className, 'nav-link nav-link-active');
   assert.notEqual(report.focusAfterDesktopNav.visibility, 'hidden');
   assert.notEqual(report.focusAfterDesktopNav.display, 'none');
