@@ -51,6 +51,7 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 		t.Fatal(err)
 	}
 	wantIDs := []string{
+		"antigravity", "gemini-cli", "cursor", "qoder", "kiro", "vertex", "commandcode", "grok-cli", "grok-web", "perplexity-web", "kenari", "zed", "kimchi", "azure",
 		"xai", "github", "gitlab", "iflow", "kimi", "xiaomi-mimo", "cline", "clinepass", "kilocode", "codebuddy-cn", "codebuddy-intl",
 		"vertex-partner", "tokenrouter", "perplexity-agent", "opencode-go", "cloudflare-ai",
 		"mimo-free", "mmf", "opencode", "ollama", "ollama-local", "typesafe",
@@ -67,7 +68,9 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	}
 	for _, id := range wantIDs {
 		spec, ok := catalog.Lookup(id)
-		if !ok || len(spec.Transports) == 0 || spec.DefaultBaseURL == "" {
+		// azure resolves its endpoint from operator connection data, so its
+		// seeded origin is intentionally empty.
+		if !ok || len(spec.Transports) == 0 || (spec.DefaultBaseURL == "" && id != "azure") {
 			t.Errorf("incomplete group member %q: %+v present=%v", id, spec, ok)
 		}
 	}
@@ -204,6 +207,51 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	}
 	if spec, _ := catalog.Lookup("gitlab"); spec.Auth != AuthOAuth {
 		t.Fatalf("gitlab auth=%v", spec.Auth)
+	}
+	// Specialized-wire providers must carry their provider-specific protocol and
+	// preserve the baseline auth/catalog semantics.
+	for id, transport := range map[string]Protocol{
+		"antigravity": TransportAntigravity, "gemini-cli": TransportGeminiCLI, "cursor": TransportCursor,
+		"qoder": TransportQoder, "kiro": TransportKiro, "vertex": TransportVertex, "commandcode": TransportCommandCode,
+		"grok-web": TransportGrokWeb, "perplexity-web": TransportPerplexityWeb,
+	} {
+		spec, _ := catalog.Lookup(id)
+		if len(spec.Transports) != 1 || spec.Transports[0] != transport {
+			t.Errorf("specialized %s transports=%v want=%q", id, spec.Transports, transport)
+		}
+	}
+	if spec, _ := catalog.Lookup("grok-cli"); spec.Auth != AuthOAuth || spec.Transports[0] != TransportOpenAIResponses || !spec.ReportsUsage {
+		t.Fatalf("grok-cli spec=%+v", spec)
+	}
+	if spec, _ := catalog.Lookup("grok-web"); spec.Auth != AuthCookie || spec.ModelCatalog != CatalogPassthrough || !spec.PassthroughModels {
+		t.Fatalf("grok-web spec=%+v", spec)
+	}
+	if spec, _ := catalog.Lookup("perplexity-web"); spec.Auth != AuthCookie || spec.Transports[0] != TransportPerplexityWeb {
+		t.Fatalf("perplexity-web spec=%+v", spec)
+	}
+	if spec, _ := catalog.Lookup("zed"); spec.Auth != AuthOAuth || !spec.ReportsUsage || !spec.PassthroughModels || spec.ModelCatalog != CatalogPassthrough {
+		t.Fatalf("zed spec=%+v", spec)
+	}
+	if spec, _ := catalog.Lookup("kimchi"); len(spec.AuthModes) != 2 || spec.AuthModes[1] != AuthOAuth || !spec.PassthroughModels {
+		t.Fatalf("kimchi spec=%+v", spec)
+	}
+	if spec, _ := catalog.Lookup("qoder"); len(spec.AuthModes) != 2 || spec.AuthModes[0] != AuthAPIKey || spec.AuthModes[1] != AuthOAuth {
+		t.Fatalf("qoder dual-auth spec=%+v", spec)
+	}
+	if spec, _ := catalog.Lookup("kiro"); len(spec.AuthModes) != 2 || spec.AuthModes[0] != AuthOAuth || spec.AuthModes[1] != AuthAPIKey {
+		t.Fatalf("kiro dual-auth spec=%+v", spec)
+	}
+	kenari, _ := catalog.Lookup("kenari")
+	if len(kenari.Transports) != 3 || kenari.ModelCatalog != CatalogDynamic || !kenari.PassthroughModels || !kenari.ReportsUsage {
+		t.Fatalf("kenari spec=%+v", kenari)
+	}
+	for _, protocol := range []string{"openai-chat", "openai-responses", "anthropic-messages"} {
+		if _, ok := kenari.NativeBinding(protocol); !ok {
+			t.Errorf("kenari missing native binding %q", protocol)
+		}
+	}
+	if spec, _ := catalog.Lookup("azure"); spec.DefaultBaseURL != "" || spec.Auth != AuthAPIKey || spec.Transports[0] != TransportOpenAIChat {
+		t.Fatalf("azure spec=%+v", spec)
 	}
 	for _, id := range []string{"alicode-intl", "alitp-intl"} {
 		spec, _ := catalog.Lookup(id)

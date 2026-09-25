@@ -43,6 +43,17 @@ const (
 	TransportGemini          Protocol = "gemini"
 	TransportOllama          Protocol = "ollama"
 	TransportSystemOne       Protocol = "systemone"
+	// Provider-specific wire formats from PROVIDER_BASELINE's Specialized class.
+	// They own a dedicated adapter rather than reusing a shared protocol family.
+	TransportAntigravity   Protocol = "antigravity"
+	TransportGeminiCLI     Protocol = "gemini-cli"
+	TransportGrokWeb       Protocol = "grok-web"
+	TransportPerplexityWeb Protocol = "perplexity-web"
+	TransportQoder         Protocol = "qoder"
+	TransportKiro          Protocol = "kiro"
+	TransportCursor        Protocol = "cursor"
+	TransportVertex        Protocol = "vertex"
+	TransportCommandCode   Protocol = "commandcode"
 )
 
 // Spec is one built-in provider identity.
@@ -75,7 +86,8 @@ func (s Spec) Validate() error {
 	}
 	for _, transport := range s.Transports {
 		switch transport {
-		case TransportOpenAIChat, TransportOpenAIResponses, TransportAnthropic, TransportGemini, TransportOllama, TransportSystemOne:
+		case TransportOpenAIChat, TransportOpenAIResponses, TransportAnthropic, TransportGemini, TransportOllama, TransportSystemOne,
+			TransportAntigravity, TransportGeminiCLI, TransportGrokWeb, TransportPerplexityWeb, TransportQoder, TransportKiro, TransportCursor, TransportVertex, TransportCommandCode:
 		default:
 			return errors.New("unsupported provider transport")
 		}
