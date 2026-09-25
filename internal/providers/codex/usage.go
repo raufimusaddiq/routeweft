@@ -145,6 +145,8 @@ func (c UsageClient) ConsumeResetCredit(ctx context.Context, accessToken, redeem
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
+	request.Header.Set("OpenAI-Beta", resetCreditsBetaHeader)
+	request.Header.Set("originator", Originator)
 	c.authorize(request, accessToken)
 	response, err := c.do(request)
 	if err != nil {

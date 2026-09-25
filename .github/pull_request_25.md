@@ -50,7 +50,7 @@ Revert this PR to remove Codex Usage/reset-credit clients; OAuth credential core
 ## Review discipline
 
 - [x] Coherent head ready for review.
-- [x] Prior findings re-read; none exist for this PR.
+- [x] Prior findings re-read and fixed: reset-credit consume now sends `OpenAI-Beta: codex-1` and `originator: codex_cli_rs`, asserted by the POST fixture.
 - [x] No new head while FIFO reviewer reviews this exact head absent blocker.
 
 ## Worktree isolation

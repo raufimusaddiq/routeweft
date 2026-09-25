@@ -52,6 +52,9 @@ func TestResetCreditsListingAndConsume(t *testing.T) {
 			if !strings.Contains(string(body), "redeem_request_id") || r.Header.Get("Content-Type") != "application/json" {
 				t.Errorf("consume request body=%s headers=%v", body, r.Header)
 			}
+			if r.Header.Get("OpenAI-Beta") != "codex-1" || r.Header.Get("originator") != Originator {
+				t.Errorf("consume identity headers=%v", r.Header)
+			}
 			return response(200, `{"code":"reset","windows_reset":2,"message":"ok"}`), nil
 		}
 		return response(200, `{"available_count":2,"credits":[{"status":"available","granted_at":"2026-06-18T00:25:18Z","expires_at":null},{"status":"redeemed","granted_at":"bad-date"}]}`), nil
