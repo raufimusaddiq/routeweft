@@ -12,41 +12,16 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
-// SettingsSource supplies the compiled outbound-proxy settings
-// (outboundProxyEnabled/outboundProxyUrl/noProxy) from the active snapshot.
-type SettingsSource func() map[string]string
-
-// BindingSource resolves one connection's bound proxy pool id.
-type BindingSource interface {
-	ConnectionPool(ctx context.Context, connectionID string) (string, error)
-}
-
-// SnapshotBindingSource reads pool bindings from the immutable runtime snapshot,
-// so the request path never opens SQLite (SPEC §5). Bindings are loaded into the
-// snapshot by the control mutation that edits a connection.
-type SnapshotBindingSource struct {
-	Snapshot func() *runtime.RuntimeSnapshot
-}
-
-// ConnectionPool reports the pool id bound to a connection, if any.
-func (s SnapshotBindingSource) ConnectionPool(_ context.Context, connectionID string) (string, error) {
-	if s.Snapshot == nil {
-		return "", nil
-	}
-	snapshot := s.Snapshot()
-	if snapshot == nil {
-		return "", nil
-	}
-	return snapshot.ConnectionPool(connectionID), nil
-}
+// SnapshotSource returns the active immutable runtime snapshot. Proxy selection
+// reads only the snapshot, so it never synchronously queries SQLite on the
+// request path (SPEC §5, §20).
+type SnapshotSource func() *runtime.RuntimeSnapshot
 
 // Binder compiles and caches the per-connection outbound client that honors a
 // bound proxy pool (PRD-ROUTE-005, SPEC §20). It is the production wiring behind
 // ingress Options.ClientFor.
 type Binder struct {
-	Pools    *Store
-	Settings SettingsSource
-	Bindings BindingSource
+	Snapshot SnapshotSource
 	Clients  *transport.PooledClients
 
 	// allowLocal mirrors the trusted-local operator policy so proxy tests can
@@ -59,19 +34,23 @@ type Binder struct {
 }
 
 // NewBinder builds a proxy binder with a fresh pooled-client cache.
-func NewBinder(pools *Store, settings SettingsSource, bindings BindingSource) *Binder {
-	return &Binder{Pools: pools, Settings: settings, Bindings: bindings, Clients: transport.NewPooledClients(), cursors: make(map[string]uint64)}
+func NewBinder(snapshot SnapshotSource) *Binder {
+	return &Binder{Snapshot: snapshot, Clients: transport.NewPooledClients(), cursors: make(map[string]uint64)}
 }
 
 // ClientFor returns the pooled client for one connection's compiled proxy
 // policy, or nil when no proxy applies so ingress keeps its default client.
-func (b *Binder) ClientFor(ctx context.Context, connectionID string) *http.Client {
-	if b == nil || b.Clients == nil {
+func (b *Binder) ClientFor(_ context.Context, connectionID string) *http.Client {
+	if b == nil || b.Clients == nil || b.Snapshot == nil {
 		return nil
 	}
-	global := b.global()
-	binding := b.binding(ctx, connectionID)
-	resolver := Resolver{Global: global, Store: b.Pools}
+	snapshot := b.Snapshot()
+	if snapshot == nil {
+		return nil
+	}
+	global := b.global(snapshot)
+	binding := b.binding(snapshot, connectionID)
+	resolver := Resolver{Global: global}
 	policy := resolver.Policy(binding)
 	if !policy.Enabled || (policy.GlobalProxyURL == "" && policy.ConnectionProxyURL == "") {
 		return nil
@@ -83,26 +62,45 @@ func (b *Binder) ClientFor(ctx context.Context, connectionID string) *http.Clien
 	return client
 }
 
-func (b *Binder) binding(ctx context.Context, connectionID string) Binding {
-	if b.Bindings == nil || b.Pools == nil || connectionID == "" {
+func (b *Binder) binding(snapshot *runtime.RuntimeSnapshot, connectionID string) Binding {
+	if connectionID == "" {
 		return Binding{}
 	}
-	poolID, err := b.Bindings.ConnectionPool(ctx, connectionID)
-	if err != nil || strings.TrimSpace(poolID) == "" {
+	poolID := strings.TrimSpace(snapshot.ConnectionPool(connectionID))
+	if poolID == "" {
 		return Binding{}
 	}
-	pool, err := b.Pools.GetPool(ctx, poolID)
-	if err != nil || !pool.Enabled {
+	strategy, members, ok := snapshot.ProxyPool(poolID)
+	if !ok {
 		// A missing or disabled pool is not a hard failure; the connection falls
 		// back to the global proxy setting.
 		return Binding{}
 	}
 	cursor := b.nextCursor(poolID)
-	member, ok := SelectMember(pool, cursor, pool.Strategy)
+	member, ok := selectMember(members, cursor, Strategy(strategy))
 	if !ok {
 		return Binding{}
 	}
-	return Binding{PoolID: poolID, MemberURL: member.URL, RotationUsed: len(pool.Members) > 1}
+	return Binding{PoolID: poolID, MemberURL: member.URL, RotationUsed: len(members) > 1}
+}
+
+// selectMember chooses from compiled snapshot members. It mirrors SelectMember
+// but operates on the snapshot's member view, keeping the hot path free of the
+// durable Store type.
+func selectMember(members []runtime.ProxyMember, cursor uint64, strategy Strategy) (runtime.ProxyMember, bool) {
+	eligible := make([]runtime.ProxyMember, 0, len(members))
+	for _, member := range members {
+		if member.Enabled && strings.TrimSpace(member.URL) != "" {
+			eligible = append(eligible, member)
+		}
+	}
+	if len(eligible) == 0 {
+		return runtime.ProxyMember{}, false
+	}
+	if strategy == StrategyFillFirst {
+		return eligible[0], true
+	}
+	return eligible[cursor%uint64(len(eligible))], true
 }
 
 func (b *Binder) nextCursor(poolID string) uint64 {
@@ -116,14 +114,14 @@ func (b *Binder) nextCursor(poolID string) uint64 {
 	return value
 }
 
-func (b *Binder) global() GlobalConfig {
-	if b.Settings == nil {
+func (b *Binder) global(snapshot *runtime.RuntimeSnapshot) GlobalConfig {
+	if snapshot == nil {
 		if b.AllowLocal {
 			return GlobalConfig{AllowLocal: true}
 		}
 		return GlobalConfig{}
 	}
-	settings := b.Settings()
+	settings := snapshot.Settings()
 	enabled, _ := strconv.ParseBool(strings.TrimSpace(settings["outboundProxyEnabled"]))
 	return GlobalConfig{
 		Enabled:    enabled,

@@ -42,6 +42,8 @@ Proxy URLs are validated before persistence, and outbound requests still pass th
 
 Clients remain cached per material transport configuration via the existing `PooledClients`; the request path performs one map lookup by connection ID. No per-request transport construction.
 
+Review fix: the request path is now **database-free**. Pool membership and connection→pool bindings are compiled into the immutable `RuntimeSnapshot` during the standard compile-before-commit protocol (`Manager.RefreshPoolBindings`), and `Binder` reads only the published snapshot. `TestProxySelectionIsDatabaseFreeOnTheHotPath` closes the SQLite store and asserts proxy selection still resolves, proving no per-request `GetPool`/SQL round trip.
+
 ## Tests
 
 `gofmt -l internal cmd`; `go build ./...`; `go vet ./...`; `go test -race ./...` (29 packages ok, no FAIL); `git diff --check`; UI `npm ci`, `npm run typecheck`, `npm run build`. All pass.

@@ -14,8 +14,13 @@ func (m *Manager) RefreshPoolBindings(ctx context.Context) (*RuntimeSnapshot, er
 	if err != nil {
 		return nil, err
 	}
+	pools, err := loadProxyPools(ctx, m.db)
+	if err != nil {
+		return nil, err
+	}
 	return m.Update(ctx, func(candidate *Candidate) error {
 		candidate.PoolBindings = bindings
+		candidate.ProxyPools = pools
 		return nil
 	})
 }

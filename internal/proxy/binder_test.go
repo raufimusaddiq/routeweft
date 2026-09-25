@@ -3,39 +3,40 @@ package proxy
 import (
 	"context"
 	"testing"
+
+	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
-type staticBindings map[string]string
-
-func (s staticBindings) ConnectionPool(_ context.Context, connectionID string) (string, error) {
-	return s[connectionID], nil
-}
-
-// TestBinderCompilesConnectionClientFromBoundPool proves the production wiring:
-// a connection bound to an enabled pool gets a pooled client compiled from that
-// pool, while an unbound connection falls back to the global setting.
-func TestBinderCompilesConnectionClientFromBoundPool(t *testing.T) {
-	ctx := context.Background()
-	store := testStore(t)
-	pool, err := store.PutPool(ctx, Pool{Name: "egress", Enabled: true, Strategy: StrategyRoundRobin, Members: []Member{
-		{URL: "http://pool-a.example:3128", Enabled: true},
-		{URL: "http://pool-b.example:3128", Enabled: true},
-	}})
+// testSnapshot compiles an immutable snapshot carrying settings, connection
+// bindings and proxy pools, so the binder can be exercised without any SQLite
+// read on the request path.
+func testSnapshot(t *testing.T, settings map[string]string, bindings map[string]string, pools []runtime.ProxyPool) *runtime.RuntimeSnapshot {
+	t.Helper()
+	snapshot, err := (runtime.Compiler{}).Compile(runtime.Config{Settings: settings, PoolBindings: bindings, ProxyPools: pools}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings := map[string]string{"outboundProxyEnabled": "false", "outboundProxyUrl": "", "noProxy": "[]"}
-	binder := NewBinder(store, func() map[string]string { return settings }, staticBindings{"conn-bound": pool.ID})
-	bound := binder.ClientFor(ctx, "conn-bound")
-	if bound == nil {
+	return snapshot
+}
+
+// TestBinderCompilesConnectionClientFromBoundPool proves the production wiring:
+// a connection bound to an enabled pool gets a pooled client compiled from the
+// snapshot alone (no SQLite), while an unbound connection without a global proxy
+// falls back to the default client.
+func TestBinderCompilesConnectionClientFromBoundPool(t *testing.T) {
+	ctx := context.Background()
+	pool := runtime.ProxyPool{ID: "pool-1", Enabled: true, Strategy: "round_robin", Members: []runtime.ProxyMember{
+		{URL: "http://pool-a.example:3128", Enabled: true},
+		{URL: "http://pool-b.example:3128", Enabled: true},
+	}}
+	snapshot := testSnapshot(t, map[string]string{"outboundProxyUrl": ""}, map[string]string{"conn-bound": "pool-1"}, []runtime.ProxyPool{pool})
+	binder := NewBinder(func() *runtime.RuntimeSnapshot { return snapshot })
+	if binder.ClientFor(ctx, "conn-bound") == nil {
 		t.Fatal("bound pool did not compile a client")
 	}
-	// Round-robin advances per call, and the same material config is cached.
-	if second := binder.ClientFor(ctx, "conn-bound"); second == nil {
+	if binder.ClientFor(ctx, "conn-bound") == nil {
 		t.Fatal("bound pool stopped compiling a client")
 	}
-	// With no global proxy configured, an unbound connection has no proxy at all
-	// and must fall back to the handler's default client (nil here).
 	if unbound := binder.ClientFor(ctx, "conn-unbound"); unbound != nil {
 		t.Fatal("unbound connection without a global proxy must use the default client")
 	}
@@ -43,34 +44,33 @@ func TestBinderCompilesConnectionClientFromBoundPool(t *testing.T) {
 
 func TestBinderDisabledPoolFallsBackToGlobal(t *testing.T) {
 	ctx := context.Background()
-	store := testStore(t)
-	pool, err := store.PutPool(ctx, Pool{Name: "off", Enabled: false, Members: []Member{{URL: "http://pool.example:3128", Enabled: true}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	settings := map[string]string{"outboundProxyEnabled": "true", "outboundProxyUrl": "http://global.example:3128"}
-	binder := NewBinder(store, func() map[string]string { return settings }, staticBindings{"conn": pool.ID})
+	pool := runtime.ProxyPool{ID: "off", Enabled: false, Members: []runtime.ProxyMember{{URL: "http://pool.example:3128", Enabled: true}}}
+	snapshot := testSnapshot(t, map[string]string{"outboundProxyEnabled": "true", "outboundProxyUrl": "http://global.example:3128"}, map[string]string{"conn": "off"}, []runtime.ProxyPool{pool})
+	binder := NewBinder(func() *runtime.RuntimeSnapshot { return snapshot })
 	if binder.ClientFor(ctx, "conn") == nil {
 		t.Fatal("disabled pool must fall back to the enabled global proxy")
 	}
 }
 
-func TestBinderNilWhenNothingConfigured(t *testing.T) {
+func TestBinderMissingPoolFallsBackToGlobal(t *testing.T) {
 	ctx := context.Background()
-	store := testStore(t)
-	binder := NewBinder(store, func() map[string]string { return map[string]string{} }, staticBindings{})
-	if binder.ClientFor(ctx, "conn") != nil {
-		t.Fatal("no proxy configured should return the default client (nil)")
+	snapshot := testSnapshot(t, map[string]string{"outboundProxyEnabled": "true", "outboundProxyUrl": "http://global.example:3128"}, map[string]string{"conn": "does-not-exist"}, nil)
+	binder := NewBinder(func() *runtime.RuntimeSnapshot { return snapshot })
+	if binder.ClientFor(ctx, "conn") == nil {
+		t.Fatal("missing pool must fall back to the global proxy")
 	}
 }
 
-func TestBinderMissingPoolFallsBackToGlobal(t *testing.T) {
+func TestBinderNilWhenNothingConfigured(t *testing.T) {
 	ctx := context.Background()
-	store := testStore(t)
-	settings := map[string]string{"outboundProxyEnabled": "true", "outboundProxyUrl": "http://global.example:3128"}
-	binder := NewBinder(store, func() map[string]string { return settings }, staticBindings{"conn": "does-not-exist"})
-	if binder.ClientFor(ctx, "conn") == nil {
-		t.Fatal("missing pool must fall back to the global proxy")
+	snapshot := testSnapshot(t, map[string]string{}, nil, nil)
+	binder := NewBinder(func() *runtime.RuntimeSnapshot { return snapshot })
+	if binder.ClientFor(ctx, "conn") != nil {
+		t.Fatal("no proxy configured should return the default client (nil)")
+	}
+	// A nil snapshot is also safe: no proxy resolution happens.
+	if NewBinder(func() *runtime.RuntimeSnapshot { return nil }).ClientFor(ctx, "conn") != nil {
+		t.Fatal("nil snapshot should return the default client (nil)")
 	}
 }
 
