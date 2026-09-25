@@ -5,7 +5,45 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
+
+// TestQuotaServiceIsWiredIntoTheApp proves the production quota path exists: a
+// configured credential key builds the service and the operator refresh entry
+// point runs against the real store/registry wiring.
+func TestQuotaServiceIsWiredIntoTheApp(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	app := New(Config{Listen: ":0", DataDir: t.TempDir(), CredentialKey: key, QuotaRefreshInterval: time.Hour}, nil)
+	if err := app.Initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer app.store.Close()
+	if app.quota == nil {
+		t.Fatal("quota service was not initialized")
+	}
+	if err := app.RefreshQuota(context.Background()); err != nil {
+		t.Fatalf("refresh with no configured connections: %v", err)
+	}
+}
+
+// TestQuotaServiceSkippedWithoutKey documents that a keyless deployment still
+// boots, since there are then no sealed provider connections to read quota for.
+func TestQuotaServiceSkippedWithoutKey(t *testing.T) {
+	app := New(Config{Listen: ":0", DataDir: t.TempDir()}, nil)
+	if err := app.Initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer app.store.Close()
+	if app.quota != nil {
+		t.Fatal("quota service initialized without a credential key")
+	}
+	if err := app.RefreshQuota(context.Background()); err != nil {
+		t.Fatalf("no-op refresh returned an error: %v", err)
+	}
+}
 
 func TestLiveHealth(t *testing.T) {
 	rr := httptest.NewRecorder()

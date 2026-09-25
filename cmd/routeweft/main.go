@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -360,6 +361,7 @@ func serve(args []string) error {
 	dataDir := flags.String("data-dir", envOr("ROUTEWEFT_DATA_DIR", "/var/lib/routeweft"), "Routeweft data directory")
 	maxBody := flags.Int64("max-body-bytes", envInt64("ROUTEWEFT_MAX_BODY_BYTES", ingress.DefaultMaxBodyBytes), "maximum request body size in bytes")
 	corsOrigins := flags.String("cors-origins", envOr("ROUTEWEFT_CORS_ORIGINS", ""), "comma-separated allowed browser origins")
+	credentialKey := flags.String("credential-key", envOr("ROUTEWEFT_CREDENTIAL_KEY", ""), "base64 credential master key sealing provider secrets at rest")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -369,7 +371,15 @@ func serve(args []string) error {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return app.New(app.Config{Listen: *listen, DataDir: *dataDir, MaxBodyBytes: *maxBody, CORSOrigins: splitList(*corsOrigins)}, log).Serve(ctx)
+	var key []byte
+	if trimmed := strings.TrimSpace(*credentialKey); trimmed != "" {
+		decoded, err := base64.StdEncoding.DecodeString(trimmed)
+		if err != nil {
+			return fmt.Errorf("decode credential key: %w", err)
+		}
+		key = decoded
+	}
+	return app.New(app.Config{Listen: *listen, DataDir: *dataDir, MaxBodyBytes: *maxBody, CORSOrigins: splitList(*corsOrigins), CredentialKey: key}, log).Serve(ctx)
 }
 
 func splitList(value string) []string {

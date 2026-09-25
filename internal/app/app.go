@@ -11,7 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/ingress"
+	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
+	quota "github.com/raufimusaddiq/routeweft/internal/quota"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/store/migrations"
 	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
@@ -22,6 +25,13 @@ type Config struct {
 	DataDir      string
 	MaxBodyBytes int64
 	CORSOrigins  []string
+	// CredentialKey seals provider credentials at rest (internal/credentials).
+	// It is optional so the process still boots for a deployment that only serves
+	// the inference surface with no stored provider connections yet.
+	CredentialKey []byte
+	// QuotaRefreshInterval controls the periodic provider quota refresh. Zero uses
+	// the default interval.
+	QuotaRefreshInterval time.Duration
 }
 
 type App struct {
@@ -30,6 +40,7 @@ type App struct {
 	store   *sqlite.Store
 	runtime *runtime.Manager
 	ingress *ingress.Handler
+	quota   *quota.Service
 	ready   atomic.Bool
 }
 
@@ -68,7 +79,47 @@ func (a *App) Initialize(ctx context.Context) error {
 	}
 	a.store, a.runtime = store, manager
 	a.ingress = ingress.New(manager, ingress.Options{MaxBodyBytes: a.cfg.MaxBodyBytes, CORSOrigins: a.cfg.CORSOrigins, State: manager.State()})
+	if err := a.initializeQuota(ctx, store, manager); err != nil {
+		_ = store.Close()
+		return err
+	}
 	a.ready.Store(true)
+	return nil
+}
+
+// initializeQuota wires the production quota path: provider usage reads are
+// normalized and published to RuntimeState, reusing the same durable,
+// singleflight-refreshed credentials inference uses. It is skipped when no
+// credential master key is configured, in which case there are no stored
+// provider connections to read quota for.
+func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager *runtime.Manager) error {
+	if len(a.cfg.CredentialKey) == 0 {
+		return nil
+	}
+	sealer, err := credentials.NewSealer(a.cfg.CredentialKey)
+	if err != nil {
+		return fmt.Errorf("initialize credential sealer: %w", err)
+	}
+	credentialStore, err := credentials.NewStore(store.DB(), sealer)
+	if err != nil {
+		return fmt.Errorf("initialize credential store: %w", err)
+	}
+	registry := credentials.NewRegistry(credentialStore, nil)
+	// Seed the memory-first credential registry so quota reads do not fail with
+	// ErrNotFound before the first refresh.
+	for _, providerID := range []string{"codex", "claude"} {
+		if _, err := registry.Load(ctx, providerID); err != nil {
+			return fmt.Errorf("seed %s credentials: %w", providerID, err)
+		}
+	}
+	observer := quota.Observer{
+		Clients: map[string]quota.UsageClient{
+			"codex":  quota.CodexClient{},
+			"claude": quota.ClaudeClient{Client: &claudeprovider.UsageClient{}},
+		},
+		Publisher: manager.State(),
+	}
+	a.quota = quota.NewService(credentialStore, registry, observer).WithSeeder(registry)
 	return nil
 }
 
@@ -107,6 +158,11 @@ func (a *App) Serve(ctx context.Context) error {
 		MaxHeaderBytes:    1 << 20,
 	}
 	errCh := make(chan error, 1)
+	if a.quota != nil {
+		// PRD-QUOTA-001: provider quota refresh runs in the background and must not
+		// block normal inference. A refresh error is recorded, never fatal.
+		go a.quota.Run(ctx, a.cfg.QuotaRefreshInterval)
+	}
 	go func() {
 		a.log.Info("listening", "addr", a.cfg.Listen)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -128,4 +184,14 @@ func (a *App) Serve(ctx context.Context) error {
 		}
 		return nil
 	}
+}
+
+// RefreshQuota refreshes provider quota for every configured usage client. The
+// control plane calls it for an operator-initiated refresh; it never blocks the
+// inference path.
+func (a *App) RefreshQuota(ctx context.Context) error {
+	if a.quota == nil {
+		return nil
+	}
+	return a.quota.RefreshAll(ctx)
 }

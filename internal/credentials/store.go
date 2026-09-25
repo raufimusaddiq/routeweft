@@ -48,8 +48,11 @@ type Node struct {
 // raw credential material only in memory; the store seals it before persisting
 // and callers must never log it.
 type Connection struct {
-	ID          string
-	NodeID      string
+	ID     string
+	NodeID string
+	// ProviderID is the owning node's provider identity, resolved on read so
+	// consumers (routing, quota) do not need a second node lookup.
+	ProviderID  string
 	Name        string
 	AuthKind    AuthKind
 	Identity    string
@@ -218,7 +221,7 @@ func (s *Store) RotateSecret(ctx context.Context, connectionID string, secret Se
 
 // GetConnection returns one connection with its decrypted secret.
 func (s *Store) GetConnection(ctx context.Context, id string) (Connection, error) {
-	const query = "SELECT id,node_id,name,auth_kind,identity,COALESCE(secret_blob,''),enabled,priority,COALESCE(proxy_pool_id,'') FROM provider_connections WHERE id=?"
+	const query = "SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,c.identity,COALESCE(c.secret_blob,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,'') FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id WHERE c.id=?"
 	row := s.db.QueryRowContext(ctx, query, id)
 	connection, err := s.scanConnection(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -230,7 +233,7 @@ func (s *Store) GetConnection(ctx context.Context, id string) (Connection, error
 // ListConnections returns a provider's connections in routing order: priority
 // ascending, then name, so selection is deterministic across restarts.
 func (s *Store) ListConnections(ctx context.Context, providerID string) ([]Connection, error) {
-	const query = `SELECT c.id,c.node_id,c.name,c.auth_kind,c.identity,COALESCE(c.secret_blob,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,'')
+	const query = `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,c.identity,COALESCE(c.secret_blob,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,'')
 FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id
 WHERE n.provider_id=? ORDER BY c.priority,c.name,c.id`
 	rows, err := s.db.QueryContext(ctx, query, providerID)
@@ -302,7 +305,7 @@ func (s *Store) scanConnection(scan func(...any) error) (Connection, error) {
 	var connection Connection
 	var blob string
 	var enabled int
-	if err := scan(&connection.ID, &connection.NodeID, &connection.Name, &connection.AuthKind, &connection.Identity, &blob, &enabled, &connection.Priority, &connection.ProxyPoolID); err != nil {
+	if err := scan(&connection.ID, &connection.NodeID, &connection.ProviderID, &connection.Name, &connection.AuthKind, &connection.Identity, &blob, &enabled, &connection.Priority, &connection.ProxyPoolID); err != nil {
 		return Connection{}, err
 	}
 	connection.Enabled = enabled != 0
