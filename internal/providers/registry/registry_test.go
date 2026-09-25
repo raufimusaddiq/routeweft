@@ -51,6 +51,7 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 		t.Fatal(err)
 	}
 	wantIDs := []string{
+		"deepseek", "glm", "glm-cn", "minimax", "minimax-cn", "xiaomi-tokenplan",
 		"claude",
 		"gemini",
 		"anthropic",
@@ -100,6 +101,24 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	}
 	if spec, _ := catalog.Lookup("claude"); spec.Auth != AuthOAuth || spec.Transports[0] != TransportAnthropic || !spec.ReportsUsage || len(spec.StaticModels) != 5 {
 		t.Fatalf("claude spec=%+v", spec)
+	}
+	for _, id := range []string{"deepseek", "glm", "minimax", "minimax-cn", "xiaomi-tokenplan"} {
+		spec, _ := catalog.Lookup(id)
+		if len(spec.Transports) != 2 || spec.Transports[0] != TransportOpenAIChat || spec.Transports[1] != TransportAnthropic {
+			t.Errorf("multi-transport %s spec=%+v", id, spec)
+		}
+		if transport, ok := spec.NativeBinding("anthropic-messages"); !ok || transport != TransportAnthropic {
+			t.Errorf("%s messages binding=%q ok=%v", id, transport, ok)
+		}
+		if transport, ok := spec.NativeBinding("openai-chat"); !ok || transport != TransportOpenAIChat {
+			t.Errorf("%s chat binding=%q ok=%v", id, transport, ok)
+		}
+	}
+	if spec, _ := catalog.Lookup("deepseek"); len(spec.Quirks) != 1 || spec.Quirks[0] != QuirkCacheControl {
+		t.Fatalf("deepseek quirks=%+v", spec)
+	}
+	if spec, _ := catalog.Lookup("glm-cn"); len(spec.Transports) != 1 || spec.Transports[0] != TransportOpenAIChat {
+		t.Fatalf("glm-cn spec=%+v", spec)
 	}
 	for _, id := range []string{"alicode-intl", "alitp-intl"} {
 		spec, _ := catalog.Lookup(id)

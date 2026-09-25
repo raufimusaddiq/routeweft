@@ -49,7 +49,23 @@ func Builtins() []Spec {
 	specs = append(specs, Codex()...)
 	specs = append(specs, Anthropic()...)
 	specs = append(specs, Gemini()...)
-	return append(specs, Claude()...)
+	specs = append(specs, Claude()...)
+	return append(specs, MultiTransport()...)
+}
+
+// MultiTransport returns providers that advertise more than one native LLM
+// transport so a source-matching route can skip translation (BDR-010). The
+// source-matching transport is chosen at request time; the shared base URL is
+// the provider origin, and per-transport endpoints live in provider modules.
+func MultiTransport() []Spec {
+	return []Spec{
+		{ID: "deepseek", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.deepseek.com", ModelCatalog: CatalogStatic, ReportsUsage: true, Quirks: []Quirk{QuirkCacheControl}},
+		{ID: "glm", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.z.ai", ModelCatalog: CatalogStatic, ReportsUsage: true},
+		{ID: "glm-cn", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://open.bigmodel.cn/api/coding/paas/v4", ModelCatalog: CatalogStatic, ReportsUsage: true},
+		{ID: "minimax", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.minimax.io", ModelCatalog: CatalogStatic, ReportsUsage: true},
+		{ID: "minimax-cn", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.minimaxi.com", ModelCatalog: CatalogStatic, ReportsUsage: true},
+		{ID: "xiaomi-tokenplan", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://token-plan-sgp.xiaomimimo.com/v1", ModelCatalog: CatalogStatic},
+	}
 }
 
 // Claude returns the Claude Code OAuth identity using shared Anthropic Messages.
