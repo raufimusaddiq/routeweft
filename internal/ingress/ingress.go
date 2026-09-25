@@ -21,6 +21,7 @@ import (
 	anthropicprovider "github.com/raufimusaddiq/routeweft/internal/providers/anthropic"
 	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
 	codexprovider "github.com/raufimusaddiq/routeweft/internal/providers/codex"
+	"github.com/raufimusaddiq/routeweft/internal/providers/oauthheaders"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
@@ -290,6 +291,9 @@ func openAIProviderHeaders(provider routing.ProviderRef) http.Header {
 		for name, value := range codexprovider.Headers() {
 			headers.Set(name, value)
 		}
+	}
+	for name, value := range oauthheaders.Headers(provider.ProviderID) {
+		headers.Set(name, value)
 	}
 	return headers
 }

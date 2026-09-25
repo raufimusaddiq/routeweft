@@ -51,6 +51,7 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 		t.Fatal(err)
 	}
 	wantIDs := []string{
+		"xai", "github", "gitlab", "iflow", "kimi", "xiaomi-mimo", "cline", "clinepass", "kilocode", "codebuddy-cn", "codebuddy-intl",
 		"vertex-partner", "tokenrouter", "perplexity-agent", "opencode-go", "cloudflare-ai",
 		"mimo-free", "mmf", "opencode", "ollama", "ollama-local", "typesafe",
 		"deepseek", "glm", "glm-cn", "minimax", "minimax-cn", "xiaomi-tokenplan",
@@ -155,6 +156,47 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	}
 	if spec, _ := catalog.Lookup("vertex-partner"); spec.Transports[0] != TransportOpenAIChat || spec.DefaultBaseURL != "https://aiplatform.googleapis.com" {
 		t.Fatalf("vertex-partner spec=%+v", spec)
+	}
+	if spec, _ := catalog.Lookup("github"); spec.Auth != AuthOAuth || len(spec.Transports) != 3 || !spec.ReportsUsage {
+		t.Fatalf("github spec=%+v", spec)
+	}
+	github, _ := catalog.Lookup("github")
+	if transport, ok := github.NativeBinding("anthropic-messages"); !ok || transport != TransportAnthropic {
+		t.Fatalf("github messages binding=%q ok=%v", transport, ok)
+	}
+	if spec, _ := catalog.Lookup("xai"); len(spec.Transports) != 2 || spec.Transports[1] != TransportOpenAIResponses || spec.Auth != AuthAPIKey {
+		t.Fatalf("xai spec=%+v", spec)
+	}
+	xai, _ := catalog.Lookup("xai")
+	if transport, ok := xai.NativeBinding("openai-responses"); !ok || transport != TransportOpenAIResponses {
+		t.Fatalf("xai responses binding=%q ok=%v", transport, ok)
+	}
+	for _, id := range []string{"kimi", "xiaomi-mimo"} {
+		spec, _ := catalog.Lookup(id)
+		if len(spec.Transports) != 2 || spec.Transports[0] != TransportOpenAIChat || spec.Transports[1] != TransportAnthropic || !spec.ReportsUsage {
+			t.Errorf("dual-transport %s spec=%+v", id, spec)
+		}
+	}
+	if spec, _ := catalog.Lookup("kilocode"); spec.ModelCatalog != CatalogDynamic || !spec.PassthroughModels || spec.Auth != AuthOAuth {
+		t.Fatalf("kilocode spec=%+v", spec)
+	}
+	for _, id := range []string{"codebuddy-cn", "codebuddy-intl"} {
+		spec, _ := catalog.Lookup(id)
+		if !spec.ReportsUsage || spec.Transports[0] != TransportOpenAIChat || len(spec.StaticModels) == 0 {
+			t.Errorf("codebuddy %s spec=%+v", id, spec)
+		}
+	}
+	for _, id := range []string{"cline", "clinepass", "gitlab", "iflow"} {
+		spec, _ := catalog.Lookup(id)
+		if spec.Transports[0] != TransportOpenAIChat {
+			t.Errorf("oauth-specialized %s transports=%v", id, spec.Transports)
+		}
+	}
+	if spec, _ := catalog.Lookup("cline"); spec.Auth != AuthOAuth {
+		t.Fatalf("cline auth=%v", spec.Auth)
+	}
+	if spec, _ := catalog.Lookup("gitlab"); spec.Auth != AuthOAuth {
+		t.Fatalf("gitlab auth=%v", spec.Auth)
 	}
 	for _, id := range []string{"alicode-intl", "alitp-intl"} {
 		spec, _ := catalog.Lookup(id)
