@@ -14,7 +14,10 @@ import (
 
 	"github.com/raufimusaddiq/routeweft/internal/auth"
 	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
+	geminiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/gemini"
+	ollamaadapter "github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
+	systemoneadapter "github.com/raufimusaddiq/routeweft/internal/protocol/systemone"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/transport"
@@ -34,6 +37,9 @@ type Options struct {
 	TranslateResponses        ResponsesTranslator
 	TranslateResponsesCompact ResponsesCompactTranslator
 	TranslateMessages         MessagesTranslator
+	TranslateGemini           GeminiTranslator
+	TranslateOllama           OllamaTranslator
+	TranslateSystemOne        SystemOneTranslator
 	// AllowPrivateUpstreams is the explicit trusted-local operator policy. It is
 	// off by default so operator-supplied provider URLs cannot reach loopback,
 	// LAN, or metadata addresses.
@@ -57,6 +63,9 @@ type ChatTranslator func(*openaiadapter.ChatRequest, string) (ChatTranslation, e
 type ResponsesTranslator func(*openaiadapter.ResponsesRequest, string) (ChatTranslation, error)
 type ResponsesCompactTranslator func(*openaiadapter.ResponsesRequest, string) (ChatTranslation, error)
 type MessagesTranslator func(*anthropicadapter.MessagesRequest, string) (ChatTranslation, error)
+type GeminiTranslator func(*geminiadapter.Request, string) (ChatTranslation, error)
+type OllamaTranslator func(*ollamaadapter.Request, string) (ChatTranslation, error)
+type SystemOneTranslator func(*systemoneadapter.Request, string) (ChatTranslation, error)
 
 // DefaultMaxBodyBytes matches the 128 MB compatibility target in PRD-API-005.
 const DefaultMaxBodyBytes int64 = 128 << 20
@@ -107,6 +116,12 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/v1/messages/count_tokens", h.withCORS(h.handleCountTokens))
 	mux.HandleFunc("OPTIONS /messages", h.withCORS(h.handlePreflight))
 	mux.HandleFunc("OPTIONS /messages/count_tokens", h.withCORS(h.handlePreflight))
+	mux.HandleFunc("GET /v1beta/models", h.withCORS(h.handleGeminiModels))
+	mux.HandleFunc("OPTIONS /v1beta/{rest...}", h.withCORS(h.handlePreflight))
+	mux.HandleFunc("POST /v1beta/models/{rest...}", h.withCORS(h.handleGeminiRoute))
+	mux.HandleFunc("POST /v1/api/chat", h.withCORS(h.handleOllamaChat))
+	mux.HandleFunc("POST /v1/systemone", h.withCORS(h.handleSystemOne))
+	mux.HandleFunc("OPTIONS /v1/systemone", h.withCORS(h.handlePreflight))
 }
 
 func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
@@ -391,15 +406,17 @@ func (h *Handler) newUpstreamRequest(r *http.Request, provider routing.ProviderR
 	if err != nil {
 		return nil, err
 	}
-	if endpoint == "" || strings.HasPrefix(endpoint, "/") || strings.ContainsAny(endpoint, "?#") {
-		return nil, errors.New("provider endpoint must be a relative path without query or fragment")
-	}
-	for _, segment := range strings.Split(endpoint, "/") {
-		if segment == "." || segment == ".." {
-			return nil, errors.New("provider endpoint must not traverse paths")
+	if endpoint != "" {
+		if strings.HasPrefix(endpoint, "/") || strings.ContainsAny(endpoint, "?#") {
+			return nil, errors.New("provider endpoint must be a relative path without query or fragment")
 		}
+		for _, segment := range strings.Split(endpoint, "/") {
+			if segment == "." || segment == ".." {
+				return nil, errors.New("provider endpoint must not traverse paths")
+			}
+		}
+		base.Path = strings.TrimRight(base.Path, "/") + "/" + endpoint
 	}
-	base.Path = strings.TrimRight(base.Path, "/") + "/" + endpoint
 	base.RawPath = ""
 	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, base.String(), bytes.NewReader(body))
 	if err != nil {
