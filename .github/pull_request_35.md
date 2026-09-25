@@ -54,7 +54,7 @@ Revert this PR to drop discovery; no schema change is introduced and existing pe
 ## Review discipline
 
 - [x] Coherent head ready for review.
-- [x] Prior findings re-read and validated. Finding 1 (empty slice erased the discovered catalog): fixed with an early return. Finding 2 (discovery had no production caller): fixed with `registry.Spec.DiscoveryPath` + `discovery.Sync`/`SyncSpec` + `Manager.ReplaceDiscoveredCatalogFor`. Finding 3 (`SyncSpec` mutated the caller-owned client's trusted-local policy, leaking SSRF relaxation across calls and racing under concurrency): fixed by running each call on a copy of the client with its own policy, plus sequential and concurrent regression tests.
+- [x] Prior findings re-read and validated. Finding 1 (empty slice erased the discovered catalog): fixed with an early return. Finding 2 (discovery had no production caller): fixed with `registry.Spec.DiscoveryPath` + `discovery.Sync`/`SyncSpec` + `Manager.ReplaceDiscoveredCatalogFor`. Finding 3 (`SyncSpec` mutated the caller-owned client's trusted-local policy, leaking SSRF relaxation across calls and racing under concurrency): fixed by running each call on a copy of the client with its own policy, plus sequential and concurrent regression tests. Retrigger: Hermes reported literal `***` tokens in discovery source, but none exist (`rg '\*\*\*' internal/providers/discovery` is empty and `go build ./...`/`go test -race ./...` pass); this is the known static-review artifact that redacts secret-shaped identifiers from the payload. Documentation-only head refresh to re-run the review.
 - [x] No new head while FIFO reviewer reviews this exact head absent blocker.
 
 ## Worktree isolation
