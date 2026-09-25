@@ -177,14 +177,23 @@ func (r *Refresher) Token(ctx context.Context) (string, error) {
 	refreshToken := r.current.RefreshToken
 	r.mu.Unlock()
 
-	operationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
+	// The refresh obeys caller cancellation so an abandoned request does not
+	// commit rotated credentials for work nobody is waiting on. Only the durable
+	// commit window is detached, and it is bounded, so already-rotated tokens are
+	// not silently lost (SPEC §19 / PRD-AUTH-003).
+	operationCtx, cancel := context.WithTimeout(ctx, refreshTimeout)
 	defer cancel()
 	tokens, err := r.refresh(operationCtx, refreshToken)
 	if err == nil && strings.TrimSpace(tokens.RefreshToken) == "" {
 		tokens.RefreshToken = refreshToken
 	}
 	if err == nil {
-		err = r.persist(operationCtx, tokens)
+		// Persist under a bounded detached context: the refresh completed and the
+		// upstream refresh token is now rotated, so the commit must not be dropped
+		// just because the caller went away between refresh and commit.
+		commitCtx, commitCancel := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
+		err = r.persist(commitCtx, tokens)
+		commitCancel()
 	}
 	if err != nil {
 		tokens = Tokens{}
@@ -255,6 +264,9 @@ func tokenRequest(ctx context.Context, config Config, body map[string]string, cl
 	request.Header.Set("Accept", "application/json")
 	response, err := client.Do(request)
 	if err != nil {
+		if ctx.Err() != nil {
+			return Tokens{}, ctx.Err()
+		}
 		return Tokens{}, errors.New("claude token request failed")
 	}
 	defer response.Body.Close()

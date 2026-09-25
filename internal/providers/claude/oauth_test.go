@@ -120,3 +120,44 @@ func TestRefresherPersistenceFailureDoesNotExposeToken(t *testing.T) {
 		t.Fatalf("missing persistence err=%v", err)
 	}
 }
+
+func TestRefresherHonorsCallerCancellationBeforeCommit(t *testing.T) {
+	started := make(chan struct{})
+	var persisted atomic.Int64
+	r := &Refresher{Client: fakeClient{do: func(r *http.Request) (*http.Response, error) {
+		close(started)
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	}}, Persist: func(context.Context, Tokens) error { persisted.Add(1); return nil }}
+	r.Seed(Tokens{RefreshToken: "refresh", Expiry: time.Now().Add(-time.Minute)})
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { _, err := r.Token(ctx); errCh <- err }()
+	<-started
+	cancel()
+	if err := <-errCh; !errors.Is(err, context.Canceled) {
+		t.Fatalf("err=%v", err)
+	}
+	if persisted.Load() != 0 {
+		t.Fatalf("persisted abandoned refresh: %d", persisted.Load())
+	}
+}
+
+func TestRefresherCommitsRotatedTokenAfterCallerLeaves(t *testing.T) {
+	refreshDone := make(chan struct{})
+	var persisted atomic.Int64
+	r := &Refresher{Client: fakeClient{do: func(*http.Request) (*http.Response, error) {
+		close(refreshDone)
+		return response(200, `{"access_token":"new","refresh_token":"rotated","expires_in":3600}`), nil
+	}}, Persist: func(context.Context, Tokens) error { persisted.Add(1); return nil }}
+	r.Seed(Tokens{RefreshToken: "refresh", Expiry: time.Now().Add(-time.Minute)})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); _, _ = r.Token(ctx) }()
+	<-refreshDone
+	cancel()
+	<-done
+	if persisted.Load() != 1 {
+		t.Fatalf("rotated token not committed: %d", persisted.Load())
+	}
+}
