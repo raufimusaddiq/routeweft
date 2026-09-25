@@ -41,3 +41,25 @@ func responsesEventTerminal(event []byte) bool {
 func responsesIncompleteEvent() []byte {
 	return []byte("event: response.failed\ndata: {\"type\":\"response.failed\",\"sequence_number\":0,\"response\":{\"status\":\"failed\",\"error\":{\"code\":\"upstream_incomplete\",\"message\":\"upstream stream ended without a terminal event\"}}}\n\n")
 }
+
+func messagesEventTerminal(event []byte) bool {
+	for _, line := range bytes.Split(event, []byte("\n")) {
+		line = bytes.TrimSuffix(line, []byte("\r"))
+		if bytes.Equal(line, []byte("event: message_stop")) {
+			return true
+		}
+		if bytes.HasPrefix(line, []byte("data:")) {
+			var envelope struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:"))), &envelope) == nil && envelope.Type == "message_stop" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func messagesIncompleteEvent() []byte {
+	return []byte("event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"upstream stream ended before message_stop\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+}
