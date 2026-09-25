@@ -47,7 +47,17 @@ func Builtins() []Spec {
 	}
 	specs = append(specs, NativeOpenAI()...)
 	specs = append(specs, Codex()...)
-	return append(specs, Anthropic()...)
+	specs = append(specs, Anthropic()...)
+	return append(specs, Gemini()...)
+}
+
+// Gemini returns the first-party Gemini GenerateContent identity.
+func Gemini() []Spec {
+	return []Spec{{ID: "gemini", Transports: []Protocol{TransportGemini}, Auth: AuthAPIKey, DefaultBaseURL: "https://generativelanguage.googleapis.com/v1beta/models", ModelCatalog: CatalogStatic, StaticModels: []string{
+		"gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite",
+		"gemini-3.1-pro-preview", "gemini-3.1-flash-lite-preview", "gemini-3-flash-preview",
+		"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemma-4-31b-it",
+	}}}
 }
 
 // Anthropic returns the first-party Anthropic Messages identity. Message
