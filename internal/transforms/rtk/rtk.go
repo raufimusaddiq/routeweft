@@ -5,7 +5,6 @@ package rtk
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/transforms"
@@ -43,23 +42,11 @@ func compress(content string) string {
 	if trimmed[0] != '{' && trimmed[0] != '[' {
 		return content
 	}
-	decoder := json.NewDecoder(strings.NewReader(trimmed))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return content
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return content
-	}
 	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(value); err != nil {
+	if err := json.Compact(&buffer, []byte(trimmed)); err != nil {
 		return content
 	}
-	minified := strings.TrimSuffix(buffer.String(), "\n")
+	minified := buffer.String()
 	if minified == "" {
 		return content
 	}
