@@ -15,7 +15,6 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
-	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
 )
 
 func TestMessagesReportsReportedCacheUsage(t *testing.T) {
@@ -25,21 +24,21 @@ func TestMessagesReportsReportedCacheUsage(t *testing.T) {
 	}
 	defer server.Close()
 	exchange := anthropicFixture(t, "anthropic-messages-nonstreaming")
-	var got promptcache.Usage
+	var got RequestOutcome
 	var calls int
-	handler := anthropicHandlerWithUsage(t, server.URL(), func(providerID, model string, usage promptcache.Usage) {
+	handler := anthropicHandlerWithUsage(t, server.URL(), func(outcome RequestOutcome) {
 		calls++
-		if providerID != "anthropic" {
-			t.Errorf("providerID=%s", providerID)
+		if outcome.ProviderID != "anthropic" {
+			t.Errorf("providerID=%s", outcome.ProviderID)
 		}
-		got = usage
+		got = outcome
 	})
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(exchange.Request.Body)))
 	if recorder.Code != http.StatusOK || calls != 1 {
 		t.Fatalf("status=%d calls=%d", recorder.Code, calls)
 	}
-	if got.CacheReadTokens != int64(exchange.Usage.CacheReadTokens) || got.OutputTokens != int64(exchange.Usage.OutputTokens) {
+	if got.CacheRead != int64(exchange.Usage.CacheReadTokens) || got.OutputTokens != int64(exchange.Usage.OutputTokens) || got.Status != http.StatusOK {
 		t.Fatalf("usage=%+v fixture=%+v", got, exchange.Usage)
 	}
 }
@@ -74,14 +73,14 @@ func anthropicHandler(t *testing.T, baseURL string) http.Handler {
 	return anthropicHandlerWithUsage(t, baseURL, nil)
 }
 
-func anthropicHandlerWithUsage(t *testing.T, baseURL string, onUsage func(string, string, promptcache.Usage)) http.Handler {
+func anthropicHandlerWithUsage(t *testing.T, baseURL string, onUsage func(RequestOutcome)) http.Handler {
 	t.Helper()
 	manager := newManager(t)
 	_, key, err := manager.CreateAPIKey(context.Background(), "messages")
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := New(manager, Options{AllowPrivateUpstreams: true, OnUsage: onUsage, ProviderResolver: func(_ *runtime.RuntimeSnapshot, model string) (routing.ProviderRef, bool) {
+	handler := New(manager, Options{AllowPrivateUpstreams: true, OnRequestComplete: onUsage, ProviderResolver: func(_ *runtime.RuntimeSnapshot, model string) (routing.ProviderRef, bool) {
 		if !strings.HasPrefix(model, "claude-") {
 			return routing.ProviderRef{}, false
 		}

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/auth"
 	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
@@ -51,9 +52,11 @@ type Options struct {
 	State                     *runtime.RuntimeState
 	Strategy                  routing.Strategy
 	StickyLimit               uint64
-	// OnUsage receives upstream-reported token counts, including cache counts.
-	// The later telemetry PR wires this callback to the bounded Usage queue.
-	OnUsage func(providerID, model string, usage promptcache.Usage)
+	// OnRequestComplete receives one bounded accounting record per finished
+	// upstream request: attribution, status, route timing and any upstream-reported
+	// token usage (including cache counts). The telemetry PR wires it to the
+	// bounded Usage queue; it is never called on the client-cancelled path.
+	OnRequestComplete func(RequestOutcome)
 	// TransformFinalBody runs Routeweft token savers on the final outbound body
 	// before cache anchors are applied (BDR-012). Errors leave the body unchanged.
 	TransformFinalBody func(protocol string, body []byte) ([]byte, error)
@@ -71,6 +74,22 @@ type Options struct {
 	// without building a transport per request (SPEC §20, PRD-ROUTE-005). It
 	// returns nil to use the handler's default SSRF-protected client.
 	ClientFor func(connectionID string) *http.Client
+}
+
+// RequestOutcome is one completed-request accounting record (SPEC §21 critical
+// class). Token fields are zero when the upstream reported no usage.
+type RequestOutcome struct {
+	RequestID    string
+	ProviderID   string
+	ModelID      string
+	ConnectionID string
+	Status       int
+	InputTokens  int64
+	OutputTokens int64
+	CacheRead    int64
+	CacheWrite   int64
+	Duration     time.Duration
+	Stream       bool
 }
 
 // ProviderResolver is request-time code that uses only the already-loaded
@@ -128,6 +147,39 @@ func (h *Handler) clientFor(provider routing.ProviderRef) *http.Client {
 	return h.client
 }
 
+// emitOutcome publishes one accounting record when the telemetry hook is wired
+// and the client did not cancel. requestID is the correlation id the app
+// middleware assigned and echoed on the request.
+func (h *Handler) emitOutcome(r *http.Request, provider routing.ProviderRef, status int, stream bool, usage promptcache.Usage, started time.Time) {
+	if h.opts.OnRequestComplete == nil {
+		return
+	}
+	if r != nil && r.Context().Err() != nil {
+		return
+	}
+	requestID := ""
+	if r != nil {
+		requestID = r.Header.Get("X-Request-Id")
+	}
+	duration := time.Duration(0)
+	if !started.IsZero() {
+		duration = time.Since(started)
+	}
+	h.opts.OnRequestComplete(RequestOutcome{
+		RequestID:    requestID,
+		ProviderID:   provider.ProviderID,
+		ModelID:      provider.UpstreamModel,
+		ConnectionID: provider.ConnectionID,
+		Status:       status,
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+		CacheRead:    usage.CacheReadTokens,
+		CacheWrite:   usage.CacheWriteTokens,
+		Duration:     duration,
+		Stream:       stream,
+	})
+}
+
 // Attach registers the public inference routes on the shared mux.
 func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1", h.withCORS(h.handleIndex))
@@ -164,6 +216,7 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 }
 
 func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	if !h.authorize(w, r) {
 		return
 	}
@@ -257,32 +310,37 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		h.recordUpstreamFailure(provider, response.StatusCode, response.Header, prefix)
 		_, _ = w.Write(prefix)
 		_, _ = io.Copy(w, response.Body)
+		h.emitOutcome(r, provider, response.StatusCode, request.Stream, promptcache.Usage{}, started)
 		return
 	}
 	if request.Stream {
-		if h.opts.OnUsage != nil {
+		if h.opts.OnRequestComplete != nil {
 			scanner := &usageScanner{family: shared.FamilyAnthropic}
 			response.Body = struct {
 				io.Reader
 				io.Closer
 			}{Reader: io.TeeReader(response.Body, scanner), Closer: response.Body}
 			h.copyMessagesStream(w, r, response)
-			if usage, ok := scanner.usage(); ok && scanner.reportsUsage(r.Context().Err() == nil) {
-				h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
+			usage, _ := scanner.usage()
+			if !scanner.reportsUsage(r.Context().Err() == nil) {
+				usage = promptcache.Usage{}
 			}
+			h.emitOutcome(r, provider, response.StatusCode, true, usage, started)
 			return
 		}
 		h.copyMessagesStream(w, r, response)
 		return
 	}
-	if h.opts.OnUsage != nil {
+	if h.opts.OnRequestComplete != nil {
 		responseBody, readErr := io.ReadAll(response.Body)
+		usage := promptcache.Usage{}
 		if readErr == nil {
-			if usage, ok := shared.ParseUsage(shared.FamilyAnthropic, responseBody); ok {
-				h.opts.OnUsage(provider.ProviderID, provider.UpstreamModel, usage)
+			if parsed, ok := shared.ParseUsage(shared.FamilyAnthropic, responseBody); ok {
+				usage = parsed
 			}
 		}
 		_, _ = w.Write(responseBody)
+		h.emitOutcome(r, provider, response.StatusCode, false, usage, started)
 		return
 	}
 	_, _ = io.Copy(w, response.Body)
