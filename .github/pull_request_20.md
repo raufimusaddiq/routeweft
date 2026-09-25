@@ -27,6 +27,8 @@ Codex OAuth/PKCE, rotating credentials, CLI fingerprint headers, review-model ma
 
 Provider metadata only.
 
+CI retrigger note: no product change; this commit exists only to re-run the review check after a review-environment delivery failure.
+
 ## Security impact
 
 - [x] No security-boundary impact.
