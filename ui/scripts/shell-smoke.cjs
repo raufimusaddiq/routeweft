@@ -30,6 +30,7 @@ const assert = require('node:assert/strict');
   let adapterEnabled = false;
   let systemOneModelAdded = false;
   let usageSummaryCalls = 0;
+	let quotaRefreshCalls = 0;
   let usagePeriod = '7d';
   let systemOneProbeCalls = 0;
   let systemOneProbeTransport = '';
@@ -88,6 +89,13 @@ const assert = require('node:assert/strict');
   }
   if (url.pathname === '/admin/v1/usage' && method === 'GET') {
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 1, requestId: 'req-abc', status: 200, providerId: 'openai', modelId: 'gpt-5', inputTokens: 100, outputTokens: 20, cacheReadTokens: 10, cacheWriteTokens: 0, durationMs: 300, ttftMs: 80, createdAt: '2026-09-25T20:00:00Z' }], page: 1, pageSize: 50, total: 1 }) });
+  }
+  if (url.pathname === '/admin/v1/quota' && method === 'GET') {
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ connectionId: 'conn-1', providerId: 'openai', name: 'primary', enabled: true, status: 'available', remaining: 42, resetAt: '2026-09-26T01:00:00Z', observedAt: '2026-09-25T23:30:00Z' }, { connectionId: 'conn-2', providerId: 'anthropic', name: 'claude', enabled: false, status: 'exhausted', remaining: 0, resetAt: '2026-09-26T02:00:00Z', observedAt: '2026-09-25T23:30:00Z' }], page: 1, pageSize: 100, total: 2 }) });
+  }
+  if (url.pathname === '/admin/v1/quota/refresh' && method === 'POST') {
+    quotaRefreshCalls += 1;
+    return route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ accepted: true }) });
   }
   if (url.pathname === '/admin/v1/models' && method === 'POST') {
     systemOneModelAdded = true;
@@ -287,6 +295,17 @@ const assert = require('node:assert/strict');
   await page.waitForFunction(() => document.querySelector('.usage-toolbar .count-label').textContent.includes('since'));
   report.usagePeriodAfterChange = usagePeriod;
   report.usageSummaryCalls = usageSummaryCalls;
+	// Quota Tracker (PRD-QUOTA-001).
+	await page.click('a[href="#quota-tracker"]');
+	await page.waitForSelector('.quota-content');
+	await page.waitForSelector('.quota-row');
+	report.quotaRows = await page.locator('.quota-row').count();
+	report.quotaRemaining = await page.locator('.quota-remaining').allTextContents();
+	report.quotaStatuses = await page.locator('.quota-row .state-tag').allTextContents();
+	await page.click('.quota-toolbar .button-primary');
+	await page.waitForSelector('.inline-notice');
+	report.quotaNotice = await page.locator('.inline-notice').textContent();
+	report.quotaRefreshCalls = quotaRefreshCalls;
   await page.selectOption('#theme-select', 'light');
   report.themeAfterSelect = await page.evaluate(() => document.documentElement.dataset.theme);
   report.stored = await page.evaluate(() => localStorage.getItem('routeweft-theme'));
@@ -398,7 +417,12 @@ const assert = require('node:assert/strict');
   assert.equal(report.usageEventRows, 1);
   assert.equal(report.usagePeriod, '7d');
   assert.equal(report.usagePeriodAfterChange, '24h');
-  assert.equal(report.usageSummaryCalls >= 2, true);
+	assert.equal(report.usageSummaryCalls >= 2, true);
+	assert.equal(report.quotaRows, 2);
+	assert.deepEqual(report.quotaRemaining, ['42 remaining', '0 remaining']);
+	assert.deepEqual(report.quotaStatuses, ['available', 'exhausted', 'disabled']);
+	assert.match(report.quotaNotice, /never blocks inference/);
+	assert.equal(report.quotaRefreshCalls, 1);
   assert.equal(report.focusAfterDesktopNav.className, 'nav-link nav-link-active');
   assert.notEqual(report.focusAfterDesktopNav.visibility, 'hidden');
   assert.notEqual(report.focusAfterDesktopNav.display, 'none');

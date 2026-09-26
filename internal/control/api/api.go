@@ -49,6 +49,7 @@ type Options struct {
 	ProviderCatalog       ProviderCatalog
 	PoolBindings          PoolBindingRefresher
 	Combos                ComboManager
+	QuotaRefresher        func(context.Context) error
 	AllowPrivateUpstreams bool
 	DiscoveryClient       *discovery.Client
 	Providers             []registry.Spec
@@ -146,6 +147,7 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 		mux.Handle("GET /admin/v1/"+path, h.requireSessionHandler(h.readModel(path)))
 	}
 	mux.HandleFunc("GET /admin/v1/usage/summary", h.requireSession(h.handleUsageSummary))
+	mux.HandleFunc("POST /admin/v1/quota/refresh", h.requireSession(h.handleQuotaRefresh))
 	mux.Handle("GET /admin/v1/events", h.requireSessionHandler(http.HandlerFunc(h.handleEvents)))
 	mux.Handle("GET /admin/v1/logs", h.requireSessionHandler(http.HandlerFunc(h.handleLogs)))
 	mux.Handle("GET /admin/v1/backup", h.requireSessionHandler(http.HandlerFunc(h.handleBackup)))
