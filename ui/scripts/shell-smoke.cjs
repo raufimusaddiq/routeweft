@@ -360,7 +360,7 @@ const assert = require('node:assert/strict');
   await page.waitForFunction(() => document.querySelector('.inline-notice') && document.querySelector('.inline-notice').textContent.includes('Caveman level saved'));
   report.cavemanLevel = tokenSaverSettings.cavemanLevel;
   await page.click('.feature-row .button-secondary');
-  await page.waitForFunction(() => document.querySelector('.inline-notice').textContent.includes('RTK'));
+  await page.waitForFunction(() => document.querySelector('.inline-notice')?.textContent.includes('RTK'));
   report.rtkAfterToggle = tokenSaverSettings.rtkEnabled;
   report.tokenSaverPatches = tokenSaverPatches;
   // Console Log (PRD §14).
@@ -481,6 +481,104 @@ const assert = require('node:assert/strict');
   await page.setViewportSize({ width: 320, height: 700 });
   report.tiny = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth + '/' + document.documentElement.clientWidth, titleSize: getComputedStyle(document.querySelector('h1')).fontSize }));
   report.errors = errors;
+  // UI_STYLE.md §15 accessibility audit: name/label rules, contrast, heading
+  // order, landmark presence, and reduced-motion behavior. Runs on the live
+  // stubbed DOM rather than a static source scrape.
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  report.a11y = await page.evaluate(() => {
+    const luminance = color => {
+      const match = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(color);
+      if (!match) return null;
+      const channel = value => {
+        const scaled = Number(value) / 255;
+        return scaled <= 0.03928 ? scaled / 12.92 : Math.pow((scaled + 0.055) / 1.055, 2.4);
+      };
+      return 0.2126 * channel(match[1]) + 0.7152 * channel(match[2]) + 0.0722 * channel(match[3]);
+    };
+    const contrast = element => {
+      const style = getComputedStyle(element);
+      let background = style.backgroundColor;
+      let parent = element.parentElement;
+      while (parent && (background === 'rgba(0, 0, 0, 0)' || background === 'transparent')) {
+        background = getComputedStyle(parent).backgroundColor;
+        parent = parent.parentElement;
+      }
+      const foreground = luminance(style.color);
+      const backdrop = luminance(background);
+      if (foreground === null || backdrop === null) return null;
+      const lighter = Math.max(foreground, backdrop);
+      const darker = Math.min(foreground, backdrop);
+      return (lighter + 0.05) / (darker + 0.05);
+    };
+    const invisible = element => element.offsetParent === null && getComputedStyle(element).position !== 'fixed';
+    const nameOf = element => {
+      const label = element.getAttribute('aria-label');
+      if (label && label.trim()) return label.trim();
+      const labelledBy = element.getAttribute('aria-labelledby');
+      if (labelledBy) {
+        const text = labelledBy.split(/\s+/).map(id => document.getElementById(id)?.textContent || '').join(' ').trim();
+        if (text) return text;
+      }
+      const content = (element.textContent || '').trim();
+      return content.length > 0 ? content : '';
+    };
+    const buttons = [...document.querySelectorAll('button')].filter(element => !invisible(element));
+    const unlabeledButtons = buttons.filter(element => !nameOf(element)).map(element => element.className || element.outerHTML.slice(0, 60));
+    const unlabeledInputs = [...document.querySelectorAll('input:not([type="hidden"]), select, textarea')]
+      .filter(element => !invisible(element))
+      .filter(element => {
+        if (element.getAttribute('aria-label')?.trim()) return false;
+        if (element.id && document.querySelector('label[for="' + element.id + '"]')) return false;
+        return !(element.closest('label')?.textContent || '').trim();
+      })
+      .map(element => element.id || element.name || element.outerHTML.slice(0, 60));
+    const lowContrast = [...document.querySelectorAll('body *')]
+      .filter(element => !invisible(element))
+      .filter(element => [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim()))
+      .map(element => ({ element, ratio: contrast(element) }))
+      .filter(entry => entry.ratio !== null && entry.ratio < 4.5)
+      .map(entry => ({ className: entry.element.className, ratio: Math.round(entry.ratio * 100) / 100 }));
+    const landmarks = {
+      main: document.querySelectorAll('main').length,
+      nav: document.querySelectorAll('nav').length,
+      h1: document.querySelectorAll('h1').length,
+    };
+    const headings = [...document.querySelectorAll('h1, h2, h3, h4')]
+      .map(element => ({ level: Number(element.tagName.slice(1)), text: (element.textContent || '').trim().slice(0, 40) }));
+    const headingSkips = [];
+    for (let index = 1; index < headings.length; index += 1) {
+      if (headings[index].level - headings[index - 1].level > 1) headingSkips.push([headings[index - 1], headings[index]]);
+    }
+    const focusable = [...document.querySelectorAll('a[href], button, input, select, textarea')].filter(element => !invisible(element) && !element.disabled);
+    const skipLink = document.querySelector('.skip-link');
+    const skipLinkVisibleOnFocus = (() => {
+      if (!skipLink) return false;
+      const before = getComputedStyle(skipLink).transform;
+      skipLink.focus();
+      skipLink.classList.add('smoke-focus');
+      const after = getComputedStyle(skipLink).transform;
+      const focused = document.activeElement === skipLink;
+      skipLink.blur();
+      return focused && (before !== after || getComputedStyle(skipLink).outlineStyle !== 'none');
+    })();
+    return {
+      unlabeledButtons,
+      unlabeledInputs,
+      lowContrast,
+      landmarks,
+      headingSkips,
+      focusableCount: focusable.length,
+      skipLinkVisibleOnFocus,
+    };
+  });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.waitForTimeout(200);
+  report.reducedMotion = await page.evaluate(() => ({
+    navDuration: getComputedStyle(document.querySelector('.nav-link')).transitionDuration,
+    buttonDuration: getComputedStyle(document.querySelector('.button-secondary')).transitionDuration,
+    animation: getComputedStyle(document.querySelector('.usage-bar') || document.body).animationDuration,
+  }));
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   console.log(JSON.stringify(report, null, 2));
   assert.deepEqual(report.overviewMetrics, ['Ready', '2', '1', '1,200']);
   assert.equal(report.signInPrompt, 'Sign in to Routeweft');
@@ -599,6 +697,19 @@ const assert = require('node:assert/strict');
   assert.equal(report.systemLight, 'light');
   assert.equal(report.systemDark, 'dark');
   assert.equal(report.tiny.scroll, '320/320');
+  assert.deepEqual(report.a11y.unlabeledButtons, []);
+  assert.deepEqual(report.a11y.unlabeledInputs, []);
+  assert.deepEqual(report.a11y.lowContrast, []);
+  assert.equal(report.a11y.landmarks.main >= 1, true);
+  assert.equal(report.a11y.landmarks.nav >= 1, true);
+  assert.equal(report.a11y.landmarks.h1, 1);
+  assert.deepEqual(report.a11y.headingSkips, []);
+  assert.equal(report.a11y.skipLinkVisibleOnFocus, true);
+  assert.equal(report.a11y.focusableCount > 20, true);
+  assert.equal(report.reducedMotion.navDuration.endsWith('s'), true);
+  assert.equal(parseFloat(report.reducedMotion.navDuration) <= 0.001, true);
+  assert.equal(parseFloat(report.reducedMotion.buttonDuration) <= 0.001, true);
+  assert.equal(parseFloat(report.reducedMotion.animation) <= 0.001, true);
   assert.deepEqual(report.errors, []);
   await browser.close();
 })().catch(e => { console.error('FAIL', e); process.exit(1); });
