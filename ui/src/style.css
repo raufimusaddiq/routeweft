@@ -24,7 +24,7 @@
   --border-subtle: #e5e3db;
   --text-main: #202225;
   --text-muted: #6d6d68;
-  --text-subtle: #96968f;
+  --text-subtle: #686863;
   --danger: #cf222e;
   --success: #087a53;
   --warning: #956400;
@@ -55,8 +55,8 @@
   --border: #37383b;
   --border-subtle: #292a2d;
   --text-main: #f1f0ec;
-  --text-muted: #a3a29c;
-  --text-subtle: #74746f;
+  --text-muted: #bcbab4;
+  --text-subtle: #a3a29c;
   --danger: #ef4444;
   --success: #22c55e;
   --warning: #fbbf24;
