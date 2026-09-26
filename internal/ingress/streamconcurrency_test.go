@@ -1,8 +1,10 @@
 package ingress
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -100,23 +102,14 @@ func TestStreamConcurrencyLevels(t *testing.T) {
 			if got := active.Load(); got != 0 {
 				t.Fatalf("%d inference requests still active after all streams returned", got)
 			}
-
+			// A leaked request goroutine would keep the active counter above zero,
+			// which the check above already fails on; the counter is deterministic
+			// where a raw goroutine count would count pooled idle connections.
 		})
 	}
 }
 
-func concurrentName(n int) string {
-	switch n {
-	case 1:
-		return "concurrency-1"
-	case 10:
-		return "concurrency-10"
-	case 50:
-		return "concurrency-50"
-	default:
-		return "concurrency-100"
-	}
-}
+func concurrentName(n int) string { return fmt.Sprintf("concurrency-%d", n) }
 
 // countingActive wraps a handler to observe how many inference requests are
 // inside it at once, mirroring the app's active-request accounting.
@@ -133,5 +126,3 @@ func countingActive(next http.Handler, active, peak *atomic.Int64) http.Handler 
 		next.ServeHTTP(w, r)
 	})
 }
-
-// waitGoroutines polls until goroutine count settles near the pre-test baseline.
