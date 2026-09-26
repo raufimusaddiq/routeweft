@@ -339,6 +339,22 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .quota-remaining { color: var(--text-main); font-variant-numeric: tabular-nums; }
 .quota-reset, .quota-row .count-label { color: var(--text-muted); }
 
+.token-saver-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.token-saver-toolbar .count-label { margin-right: auto; }
+.token-saver-panel { margin-bottom: 16px; }
+.feature-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; border-top: 1px solid var(--border-subtle); padding: 12px 0; }
+.feature-main { display: grid; flex: 1 1 200px; min-width: 0; gap: 4px; }
+.feature-main strong { font-size: 12px; }
+.feature-main small { color: var(--text-subtle); font-size: 10px; }
+.feature-row button { min-height: 32px; padding-inline: 9px; font-size: 10px; }
+.token-saver-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 16px; }
+.setting-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; border-top: 1px solid var(--border-subtle); padding: 12px 0 0; }
+.setting-row + .setting-row { border-top: 0; padding-top: 10px; }
+.setting-row label { display: grid; flex: 1 1 180px; gap: 6px; color: var(--text-muted); font-size: 11px; font-weight: 600; }
+.setting-row input, .setting-row select { width: 100%; }
+.setting-row button { min-height: 36px; }
+.token-saver-footnote { margin-top: 14px; }
+
 @media (max-width: 900px) {
   .workspace-inner { padding-inline: 28px; }
   .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -394,6 +410,9 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   .usage-toolbar .count-label { margin-left: 0; flex: 1 1 100%; }
   .quota-toolbar { flex-wrap: wrap; }
   .quota-toolbar .count-label { margin-right: 0; flex: 1 1 100%; }
+  .token-saver-toolbar { flex-wrap: wrap; }
+  .token-saver-toolbar .count-label { margin-right: 0; flex: 1 1 100%; }
+  .token-saver-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 380px) {
