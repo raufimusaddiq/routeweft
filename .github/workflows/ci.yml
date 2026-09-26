@@ -44,3 +44,8 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -t routeweft:ci .
       - run: test "$(docker image inspect routeweft:ci --format '{{.Config.Entrypoint}}')" = '[/routeweft]'
+      - name: Enforce production image budget
+        run: |
+          image_bytes=$(docker image inspect routeweft:ci --format '{{.Size}}')
+          echo "Image: ${image_bytes} bytes; goal: 104857600 bytes (100 MiB); stretch: 62914560 bytes (60 MiB)"
+          test "$image_bytes" -le 104857600

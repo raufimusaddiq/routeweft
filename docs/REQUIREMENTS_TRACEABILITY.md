@@ -26,7 +26,7 @@ This file proves that every major product area has a requirement owner, technica
 | Security/trusted proxy/SSRF | PRD §17 | SPEC security/transport | Sprint 1/5/8 | negative security fixtures, including global outbound-proxy URL policy; cross-package SSRF suite (`internal/security/suite_test.go`) covering loopback/RFC1918/link-local/metadata/IPv6 corpus, strict vs trusted-local split, redirect non-following, Generic Provider + discovery + Headroom/PXPIPE entry points, spoofed-`X-Forwarded-For` throttle isolation, and malformed-URL shape rejection |
 | SQLite/snapshot | PRD §18 | SPEC store/runtime | Sprint 1/8 | migration/mutation/race/restore tests; SQLite contention suite (`internal/store/sqlite/contention_test.go`) proving concurrent readers/writers and independent connection pools complete without busy errors, lost writes, or integrity failures |
 | Backup/restore | PRD §18 | SPEC backup/restore | Sprint 1/6/8 | candidate validation + rollback rehearsal (`internal/app/restore_test.go`: backup, non-mutating restore-check, activation, restart persistence, and intact pre-restore rollback artifact) |
-| Performance | PRD §19 | SPEC/bench | Sprint 1/8 | benchmark report |
+| Performance | PRD §19 | SPEC/bench | Sprint 1/8 | benchmark report; CI production container-size gate reports actual bytes and enforces the 100 MiB image goal (`.github/workflows/ci.yml`) |
 | Operations/rollback | PRD §18-20 | RUNBOOK | Sprint 8 | install/upgrade/rollback rehearsal |
 
 ## Product blocker check
