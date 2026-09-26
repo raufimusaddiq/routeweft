@@ -13,7 +13,7 @@ This file proves that every major product area has a requirement owner, technica
 | Models/aliases/pricing | PRD §9 | SPEC RuntimeSnapshot/provider catalog | Sprint 2/5 | model list/alias/custom/disabled/dynamic catalog tests |
 | Provider/account routing | PRD §10 | SPEC routing/runtime state | Sprint 3 | fill-first/RR/sticky/fallback/quota/cooldown tests; proxy pool binding/policy tests |
 | Combo | PRD §11 | SPEC Combo | Sprint 3 | ordered/RR/sticky/capability fixtures |
-| Fusion | PRD §11 | SPEC Fusion | Sprint 3 | fan-out/quorum/grace/timeout/judge fixtures |
+| Fusion | PRD §11 | SPEC Fusion | Sprint 3/8 | fan-out/quorum/grace/timeout/judge fixtures; Fusion concurrency suite (`internal/routing/fusionconcurrency_test.go`) proving the MaxConcurrent cap is enforced (excess runs return `ErrFusionBusy`), per-run panel answers stay isolated with no cross-talk, admission slots release after the burst, and concurrent runs share one frozen config race-free |
 | Capacity adapters | PRD §11 | SPEC Combo capability | Sprint 3 | empty/deselect/RR/context-trim fixtures |
 | RTK/Caveman/Ponytail | PRD §12 | SPEC token saver | Sprint 4 | individual + combination fixtures |
 | Headroom | PRD §12 | SPEC token saver | Sprint 4 | fail-open/status/timeout/diagnostic tests |
