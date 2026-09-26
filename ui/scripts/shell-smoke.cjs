@@ -29,6 +29,8 @@ const assert = require('node:assert/strict');
   let comboPayload = null;
   let adapterEnabled = false;
   let systemOneModelAdded = false;
+  let usageSummaryCalls = 0;
+  let usagePeriod = '7d';
   let systemOneProbeCalls = 0;
   let systemOneProbeTransport = '';
   const createdKeyID = 'k-ci-1';
@@ -71,6 +73,21 @@ const assert = require('node:assert/strict');
   }
   if (url.pathname === '/admin/v1/systemone' && method === 'GET') {
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: systemOneModelAdded ? [{ providerId: 'typesafe', id: 'jev', name: 'jev', capabilities: [], disabled: false }, { providerId: 'typesafe', id: 'jev-mini', name: 'jev-mini', capabilities: [], disabled: false }] : [{ providerId: 'typesafe', id: 'jev', name: 'jev', capabilities: [], disabled: false }], page: 1, pageSize: 100, total: 1 }) });
+  }
+  if (url.pathname === '/admin/v1/usage/summary' && method === 'GET') {
+    usageSummaryCalls += 1;
+    usagePeriod = url.searchParams.get('period');
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      period: usagePeriod, since: '2026-09-18T00:00:00.000Z',
+      totals: { requests: 120, inputTokens: 9000, outputTokens: 3000, cacheReadTokens: 4000, cacheWriteTokens: 500, errors: 3, avgDurationMs: 420, avgTtftMs: 90 },
+      series: [{ day: '2026-09-24', requests: 70, inputTokens: 5000, outputTokens: 1800, cacheReadTokens: 2000, cacheWriteTokens: 200 }, { day: '2026-09-25', requests: 50, inputTokens: 4000, outputTokens: 1200, cacheReadTokens: 2000, cacheWriteTokens: 300 }],
+      providers: [{ key: 'openai', requests: 100, inputTokens: 8000, outputTokens: 2800, errors: 2 }, { key: 'anthropic', requests: 20, inputTokens: 1000, outputTokens: 200, errors: 1 }],
+      models: [{ key: 'openai/gpt-5', requests: 90, inputTokens: 7000, outputTokens: 2500, errors: 1 }],
+      statuses: [{ key: '200', requests: 117, inputTokens: 9000, outputTokens: 3000, errors: 0 }, { key: '500', requests: 3, inputTokens: 0, outputTokens: 0, errors: 3 }],
+    }) });
+  }
+  if (url.pathname === '/admin/v1/usage' && method === 'GET') {
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 1, requestId: 'req-abc', status: 200, providerId: 'openai', modelId: 'gpt-5', inputTokens: 100, outputTokens: 20, cacheReadTokens: 10, cacheWriteTokens: 0, durationMs: 300, ttftMs: 80, createdAt: '2026-09-25T20:00:00Z' }], page: 1, pageSize: 50, total: 1 }) });
   }
   if (url.pathname === '/admin/v1/models' && method === 'POST') {
     systemOneModelAdded = true;
@@ -257,6 +274,19 @@ const assert = require('node:assert/strict');
   report.systemOneNotice = await page.locator('.inline-notice').textContent();
   report.systemOneProbeCalls = systemOneProbeCalls;
   report.systemOneProbeTransport = systemOneProbeTransport;
+  // Usage & request details (PRD 13, PRD-OBS-001/002).
+  await page.click('a[href="#usage"]');
+  await page.waitForSelector('.usage-content');
+  await page.waitForSelector('.usage-chart');
+  report.usageMetrics = await page.locator('.usage-metrics .metric-value').allTextContents();
+  report.usageBars = await page.locator('.usage-bar').count();
+  report.usageProviderRows = await page.locator('.breakdown-row').count();
+  report.usageEventRows = await page.locator('.usage-event').count();
+  report.usagePeriod = usagePeriod;
+  await page.selectOption('#usage-period', '24h');
+  await page.waitForFunction(() => document.querySelector('.usage-toolbar .count-label').textContent.includes('since'));
+  report.usagePeriodAfterChange = usagePeriod;
+  report.usageSummaryCalls = usageSummaryCalls;
   await page.selectOption('#theme-select', 'light');
   report.themeAfterSelect = await page.evaluate(() => document.documentElement.dataset.theme);
   report.stored = await page.evaluate(() => localStorage.getItem('routeweft-theme'));
@@ -359,6 +389,16 @@ const assert = require('node:assert/strict');
   assert.match(report.systemOneNotice, /Typed request succeeded for jev \(HTTP 200\)/);
   assert.equal(report.systemOneProbeCalls, 1);
   assert.equal(report.systemOneProbeTransport, 'systemone');
+  assert.equal(report.usageMetrics[0], '120');
+  assert.equal(report.usageMetrics[1], '12,000');
+  assert.equal(report.usageMetrics[2], '4,500');
+  assert.equal(report.usageMetrics[3], '420 ms');
+  assert.equal(report.usageBars, 2);
+  assert.equal(report.usageProviderRows, 5);
+  assert.equal(report.usageEventRows, 1);
+  assert.equal(report.usagePeriod, '7d');
+  assert.equal(report.usagePeriodAfterChange, '24h');
+  assert.equal(report.usageSummaryCalls >= 2, true);
   assert.equal(report.focusAfterDesktopNav.className, 'nav-link nav-link-active');
   assert.notEqual(report.focusAfterDesktopNav.visibility, 'hidden');
   assert.notEqual(report.focusAfterDesktopNav.display, 'none');
