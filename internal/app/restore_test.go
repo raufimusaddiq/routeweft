@@ -86,6 +86,90 @@ func TestActivateRestorePreservesRollbackAndRecompiles(t *testing.T) {
 	}
 }
 
+// TestBackupRestoreRehearsal verifies the operator's backup, check, activation,
+// restart and rollback-artifact sequence using disposable Routeweft state.
+func TestBackupRestoreRehearsal(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	application := New(Config{Listen: ":0", DataDir: dataDir}, nil)
+	if err := application.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if application.store != nil {
+			_ = application.store.Close()
+		}
+	}()
+
+	if _, err := application.runtime.SetSettings(ctx, map[string]string{"rtkEnabled": "false"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(t.TempDir(), "rehearsal.sqlite")
+	metadata, err := application.CreateBackup(ctx, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := application.runtime.SetSettings(ctx, map[string]string{"rtkEnabled": "true"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	check, err := application.StageRestore(ctx, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if check.Metadata.ConfigRevision != metadata.ConfigRevision {
+		t.Fatalf("checked revision=%d, backup revision=%d", check.Metadata.ConfigRevision, metadata.ConfigRevision)
+	}
+	check.Discard()
+	if application.runtime.Settings()["rtkEnabled"] != "true" {
+		t.Fatal("restore check changed live state")
+	}
+
+	candidate, err := application.StageRestore(ctx, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer candidate.Discard()
+	if err := application.activateRestore(ctx, candidate); err != nil {
+		t.Fatal(err)
+	}
+	if application.runtime.Settings()["rtkEnabled"] != "false" || !application.ready.Load() {
+		t.Fatal("restore did not publish backed-up settings and readiness")
+	}
+	rollbacks, err := filepath.Glob(application.DatabasePath() + ".pre-restore-*")
+	if err != nil || len(rollbacks) != 1 {
+		t.Fatalf("rollback artifacts=%v err=%v", rollbacks, err)
+	}
+	prior, err := sqlite.Open(ctx, rollbacks[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var priorSetting string
+	if err := prior.DB().QueryRowContext(ctx, "SELECT value FROM settings WHERE key='rtkEnabled'").Scan(&priorSetting); err != nil {
+		t.Fatal(err)
+	}
+	if err := prior.IntegrityCheck(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := prior.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if priorSetting != "true" {
+		t.Fatalf("rollback setting=%q, want pre-restore value true", priorSetting)
+	}
+	if err := application.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	application.store = nil
+	restarted := New(Config{Listen: ":0", DataDir: dataDir}, nil)
+	if err := restarted.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.store.Close()
+	if restarted.runtime.Settings()["rtkEnabled"] != "false" || !restarted.ready.Load() {
+		t.Fatal("restored state did not survive restart")
+	}
+}
+
 func TestServeResumesAfterRestoreRequest(t *testing.T) {
 	dataDir := t.TempDir()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
