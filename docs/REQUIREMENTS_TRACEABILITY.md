@@ -6,7 +6,7 @@ This file proves that every major product area has a requirement owner, technica
 
 | Product area | Requirement source | Technical source | Planned sprint/PR family | Release-blocking evidence |
 |---|---|---|---|---|
-| Public API + aliases | PRD §5 | SPEC request/protocol sections | Sprint 2 | protocol fixtures, auth/CORS/body/h2c/cancel tests |
+| Public API + aliases | PRD §5 | SPEC request/protocol sections | Sprint 2/8 | protocol fixtures, auth/CORS/body/h2c/cancel tests; large-body suite (`internal/ingress/largebody_test.go`) proving 128 MiB-class exact-limit acceptance with byte-exact forwarding, one-byte-over 413 with no upstream leak, inclusive default-limit guard, and streaming cancellation propagation |
 | Built-in providers (80) | PRD §6 + PROVIDER_BASELINE | SPEC provider modules (identity, auth, discovery, quota, error mapping, Usage extraction) | Sprint 5 | every provider row implemented/tested for broad-provider GA; shared error-map/Usage fixtures per protocol family |
 | Generic Provider | PRD §7 | SPEC Generic Provider section | Sprint 5 | native Chat/Responses/Messages + validation/SSRF/model fallback fixtures |
 | Credentials/import/refresh | PRD §8 | SPEC OAuth/provider modules | Sprint 5 | sealed-at-rest store, rotation/singleflight/import fixtures |
