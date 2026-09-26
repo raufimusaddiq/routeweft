@@ -257,6 +257,7 @@ func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager 
 		ProviderCatalog:       manager,
 		PoolBindings:          manager,
 		Combos:                manager,
+		QuotaRefresher:        a.RefreshQuota,
 		AllowPrivateUpstreams: a.cfg.AllowPrivateUpstreams,
 		DiscoveryClient:       &discovery.Client{},
 		Telemetry:             a.usage,
