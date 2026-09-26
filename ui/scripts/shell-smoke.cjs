@@ -36,6 +36,12 @@ const assert = require('node:assert/strict');
   let systemOneProbeTransport = '';
   let tokenSaverSettings = { rtkEnabled: 'true', headroomEnabled: 'false', headroomUrl: 'http://localhost:8787', headroomCompressUserMessages: 'false', headroomTimeoutMs: '3000', cavemanEnabled: 'false', cavemanLevel: 'full', ponytailEnabled: 'false', ponytailLevel: 'full', pxpipeEnabled: 'false', pxpipeAutoInstall: 'true', pxpipeMinChars: '25000', pxpipeTimeoutMs: '15000' };
   let tokenSaverPatches = 0;
+  let logRequests = 0;
+  let lastLogURL = '';
+  const logs = Array.from({ length: 51 }, (_, index) => {
+    const id = 51 - index;
+    return { id, time: `2026-09-26T01:${String(index % 60).padStart(2, '0')}:00Z`, level: id === 17 ? 'ERROR' : 'INFO', message: id === 17 ? 'upstream connection timeout' : `service event ${id}`, attributes: id === 17 ? { providerId: 'openai', retry: 1 } : {} };
+  });
   const createdKeyID = 'k-ci-1';
   const createdSecret = 'rw_smoke_secret_value';
   await page.route('**/admin/v1/**', async route => {
@@ -101,6 +107,17 @@ const assert = require('node:assert/strict');
   if (url.pathname === '/admin/v1/quota/refresh' && method === 'POST') {
     quotaRefreshCalls += 1;
     return route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ accepted: true }) });
+  }
+  if (url.pathname === '/admin/v1/logs' && method === 'GET') {
+    logRequests += 1;
+    lastLogURL = url.search;
+    const level = (url.searchParams.get('level') || '').toUpperCase();
+    const query = (url.searchParams.get('query') || '').toLowerCase();
+    const filtered = logs.filter(item => (!level || item.level === level) && (!query || item.message.toLowerCase().includes(query) || JSON.stringify(item.attributes).toLowerCase().includes(query)));
+    const pageNumber = Number(url.searchParams.get('page') || 1);
+    const size = Number(url.searchParams.get('pageSize') || 50);
+    const items = filtered.slice((pageNumber - 1) * size, pageNumber * size);
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items, page: pageNumber, pageSize: size, total: filtered.length }) });
   }
   if (url.pathname === '/admin/v1/models' && method === 'POST') {
     systemOneModelAdded = true;
@@ -324,6 +341,31 @@ const assert = require('node:assert/strict');
   await page.waitForFunction(() => document.querySelector('.inline-notice').textContent.includes('RTK'));
   report.rtkAfterToggle = tokenSaverSettings.rtkEnabled;
   report.tokenSaverPatches = tokenSaverPatches;
+  // Console Log (PRD §14).
+  await page.click('a[href="#console-log"]');
+  await page.waitForSelector('.console-log-content');
+  await page.waitForSelector('.console-log-row');
+  report.logRowsFirstPage = await page.locator('.console-log-row').count();
+  report.logFirstMessage = await page.locator('.console-log-row p').first().textContent();
+  report.logPageOne = await page.locator('.console-log-pagination .count-label').textContent();
+  await page.locator('.console-log-pagination button').last().click();
+  await page.waitForFunction(() => document.querySelector('.console-log-pagination .count-label').textContent.includes('Page 2'));
+  report.logRowsSecondPage = await page.locator('.console-log-row').count();
+  await page.selectOption('#console-log-level', 'ERROR');
+  await page.fill('#console-log-query', 'timeout');
+  await page.locator('.console-log-toolbar button[type="submit"]').click();
+  await page.waitForFunction(() => document.querySelector('.console-log-pagination .count-label').textContent.includes('Page 1 of 1'));
+  report.logFilteredRows = await page.locator('.console-log-row').count();
+  report.logFilteredMessage = await page.locator('.console-log-row p').textContent();
+  await page.locator('.console-log-row summary').click();
+  report.logDetails = await page.locator('.console-log-row pre').textContent();
+  await page.locator('.console-log-toolbar button[type="button"]').click();
+  await page.fill('#console-log-query', 'not-found');
+  await page.locator('.console-log-toolbar button[type="submit"]').click();
+  await page.waitForSelector('.console-log-content .empty-keys');
+  report.logEmptyState = await page.locator('.console-log-content .empty-keys').textContent();
+  report.logRequests = logRequests;
+  report.lastLogURL = lastLogURL;
   await page.selectOption('#theme-select', 'light');
   report.themeAfterSelect = await page.evaluate(() => document.documentElement.dataset.theme);
   report.stored = await page.evaluate(() => localStorage.getItem('routeweft-theme'));
@@ -446,6 +488,16 @@ const assert = require('node:assert/strict');
   assert.equal(report.cavemanLevel, 'ultra');
   assert.equal(report.rtkAfterToggle, 'false');
   assert.equal(report.tokenSaverPatches, 3);
+  assert.equal(report.logRowsFirstPage, 50);
+  assert.match(report.logFirstMessage, /service event 51/);
+  assert.match(report.logPageOne, /Page 1 of 2/);
+  assert.equal(report.logRowsSecondPage, 1);
+  assert.equal(report.logFilteredRows, 1);
+  assert.equal(report.logFilteredMessage, 'upstream connection timeout');
+  assert.match(report.logDetails, /openai/);
+  assert.match(report.logEmptyState, /No logs match/);
+  assert.match(report.lastLogURL, /query=not-found/);
+  assert.equal(report.logRequests, 5);
   assert.equal(report.focusAfterDesktopNav.className, 'nav-link nav-link-active');
   assert.notEqual(report.focusAfterDesktopNav.visibility, 'hidden');
   assert.notEqual(report.focusAfterDesktopNav.display, 'none');
