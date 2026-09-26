@@ -27,7 +27,7 @@ This file proves that every major product area has a requirement owner, technica
 | SQLite/snapshot | PRD §18 | SPEC store/runtime | Sprint 1/8 | migration/mutation/race/restore tests; SQLite contention suite (`internal/store/sqlite/contention_test.go`) proving concurrent readers/writers and independent connection pools complete without busy errors, lost writes, or integrity failures |
 | Backup/restore | PRD §18 | SPEC backup/restore | Sprint 1/6/8 | candidate validation + rollback rehearsal (`internal/app/restore_test.go`: backup, non-mutating restore-check, activation, restart persistence, and intact pre-restore rollback artifact) |
 | Performance | PRD §19 | SPEC/bench | Sprint 1/8 | benchmark report (`docs/S8_RESOURCE_BENCHMARK.md`) with native/stream CPU, test-process post-burst RSS and live-service health RSS; CI production container-size gate reports actual bytes and enforces the 100 MiB image goal (`.github/workflows/ci.yml`) |
-| Operations/rollback | PRD §18-20 | RUNBOOK | Sprint 8 | install/upgrade/rollback rehearsal |
+| Operations/rollback | PRD §18-20 | RUNBOOK | Sprint 8 | install/upgrade/rollback rehearsal (`internal/app/upgrade_test.go`: pre-upgrade backup, additive schema upgrade preserving records, older-binary rejection, and rollback to the pre-upgrade backup) |
 
 ## Product blocker check
 
