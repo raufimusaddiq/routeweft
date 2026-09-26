@@ -95,8 +95,14 @@ func (s *Server) Close() error {
 	return s.http.Shutdown(ctx)
 }
 
+// maxFixtureBodyBytes bounds how much mock-upstream request body is buffered for
+// fixture matching. It is deliberately above the 128 MiB public ingress limit so
+// large-body and long-context compatibility tests can drive real payloads through
+// the mock without a second, artificial cap masking product behavior.
+const maxFixtureBodyBytes = 160 << 20
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxFixtureBodyBytes))
 	if err != nil {
 		http.Error(w, `{"error":{"message":"mock request exceeds 1 MiB fixture limit"}}`, http.StatusRequestEntityTooLarge)
 		return
