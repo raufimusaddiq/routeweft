@@ -93,6 +93,18 @@ func TestChangePasswordRequiresCurrentPasswordAndRevokesSessions(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	handler.Attach(mux)
+	foreign := httptest.NewRequest(http.MethodPost, "/admin/v1/auth/password", strings.NewReader(`{"currentPassword":"s3cret","newPassword":"stolen"}`))
+	foreign.Header.Set("Origin", "https://sibling.example")
+	foreign.Header.Set("Sec-Fetch-Site", "same-site")
+	foreign.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+	blocked := httptest.NewRecorder()
+	mux.ServeHTTP(blocked, foreign)
+	if blocked.Code != http.StatusForbidden {
+		t.Fatalf("sibling-origin password change status=%d want 403", blocked.Code)
+	}
+	if _, ok := handler.opts.Sessions.Lookup(session.ID); !ok {
+		t.Fatal("rejected cross-origin password change revoked the session")
+	}
 	change := func(current, next string) *httptest.ResponseRecorder {
 		t.Helper()
 		body := `{"currentPassword":"` + current + `","newPassword":"` + next + `"}`
