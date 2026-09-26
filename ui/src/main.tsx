@@ -6,6 +6,7 @@ import { Overview } from './Overview'
 import { Providers } from './Providers'
 import { SignIn } from './SignIn'
 import { SystemOne } from './SystemOne'
+import { Usage } from './Usage'
 import './style.css'
 
 type Theme = 'light' | 'dark' | 'system'
@@ -204,8 +205,9 @@ function App() {
           {auth === 'signed-in' && page === 'Endpoint & Key' && <EndpointAndKey onUnauthorized={handleUnauthorized} />}
           {auth === 'signed-in' && page === 'Providers' && <Providers onUnauthorized={handleUnauthorized} />}
           {auth === 'signed-in' && page === 'Combo & Capability Adapter' && <Combos onUnauthorized={handleUnauthorized} />}
-      {auth === 'signed-in' && page === 'System One' && <SystemOne onUnauthorized={handleUnauthorized} />}
-      {auth === 'signed-in' && page !== 'Overview' && page !== 'Endpoint & Key' && page !== 'Providers' && page !== 'Combo & Capability Adapter' && page !== 'System One' && <section className="empty-workspace" aria-labelledby="workspace-title"><span className="material-symbols empty-icon" aria-hidden="true">tune</span><div><h2 id="workspace-title">Workspace shell</h2><p>Operational views are added in their planned increments.</p></div></section>}
+          {auth === 'signed-in' && page === 'System One' && <SystemOne onUnauthorized={handleUnauthorized} />}
+          {auth === 'signed-in' && page === 'Usage' && <Usage onUnauthorized={handleUnauthorized} />}
+          {auth === 'signed-in' && page !== 'Overview' && page !== 'Endpoint & Key' && page !== 'Providers' && page !== 'Combo & Capability Adapter' && page !== 'System One' && page !== 'Usage' && <section className="empty-workspace" aria-labelledby="workspace-title"><span className="material-symbols empty-icon" aria-hidden="true">tune</span><div><h2 id="workspace-title">Workspace shell</h2><p>Operational views are added in their planned increments.</p></div></section>}
         </div>
       </main>
     </div>
