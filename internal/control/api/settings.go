@@ -34,6 +34,12 @@ func (h *Handler) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "empty_patch", "at least one setting must be set or removed")
 		return
 	}
+	if proxyURL, ok := body.Set["outboundProxyUrl"]; ok && proxyURL != "" {
+		if _, err := h.validateOutboundURL(proxyURL); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_setting", "outbound proxy URL is not allowed")
+			return
+		}
+	}
 	revision, err := h.opts.Settings.SetSettings(r.Context(), body.Set, body.Remove)
 	if err != nil {
 		// An allowlist rejection is a client error; anything else is internal.

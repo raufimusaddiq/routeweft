@@ -115,6 +115,7 @@ func New(opts Options) *Handler { return &Handler{opts: opts, throttler: newThro
 func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/v1/auth/login", h.requireSameOrigin(h.handleLogin))
 	mux.HandleFunc("POST /admin/v1/auth/logout", h.requireSameOrigin(h.handleLogout))
+	mux.HandleFunc("POST /admin/v1/auth/password", h.requireSession(h.handleChangePassword))
 	mux.HandleFunc("GET /admin/v1/auth/session", h.handleSession)
 	mux.HandleFunc("GET /admin/v1/settings", h.requireSession(h.handleGetSettings))
 	mux.HandleFunc("PATCH /admin/v1/settings", h.requireSession(h.handlePatchSettings))

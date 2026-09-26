@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"reflect"
 	"testing"
 )
 
@@ -74,5 +75,37 @@ func TestSetSettingsAllowsRequireAPIKey(t *testing.T) {
 	}
 	if manager.Settings()["requireApiKey"] != "true" {
 		t.Fatalf("requireApiKey after remove=%q want compiled default true", manager.Settings()["requireApiKey"])
+	}
+}
+
+func TestSetSettingsRejectsMalformedValuesWithoutMutation(t *testing.T) {
+	ctx := context.Background()
+	manager, store := newTestManager(t)
+	defer store.Close()
+	before := manager.Settings()
+	cases := []struct{ key, value string }{
+		{"requireApiKey", "maybe"},
+		{"providerStrategy", "random"},
+		{"comboStrategy", "roundrobin"},
+		{"stickyRoundRobinLimit", "-1"},
+		{"observabilityBatchSize", "0"},
+		{"providerStrategies", `[]`},
+		{"providerStrategies", `{"openai":"unknown"}`},
+		{"comboStrategies", `null`},
+		{"quotaVisibility", `[]`},
+		{"providerCompatibility", `null`},
+		{"noProxy", `{}`},
+		{"outboundProxyUrl", "file:///etc/passwd"},
+		{"outboundProxyUrl", "http://proxy.example:65536"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.key+"/"+tc.value, func(t *testing.T) {
+			if _, err := manager.SetSettings(ctx, map[string]string{tc.key: tc.value}, nil); err == nil {
+				t.Fatalf("accepted malformed setting %s=%q", tc.key, tc.value)
+			}
+			if after := manager.Settings(); !reflect.DeepEqual(after, before) {
+				t.Fatalf("rejected mutation changed settings: got=%v want=%v", after, before)
+			}
+		})
 	}
 }
