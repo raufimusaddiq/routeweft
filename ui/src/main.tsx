@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Combos } from './Combos'
+import { ConsoleLog } from './ConsoleLog'
 import { EndpointAndKey } from './EndpointAndKey'
 import { Overview } from './Overview'
 import { Providers } from './Providers'
@@ -211,7 +212,8 @@ function App() {
           {auth === 'signed-in' && page === 'Usage' && <Usage onUnauthorized={handleUnauthorized} />}
           {auth === 'signed-in' && page === 'Quota Tracker' && <Quota onUnauthorized={handleUnauthorized} />}
           {auth === 'signed-in' && page === 'Token Saver' && <TokenSaver onUnauthorized={handleUnauthorized} />}
-          {auth === 'signed-in' && page !== 'Overview' && page !== 'Endpoint & Key' && page !== 'Providers' && page !== 'Combo & Capability Adapter' && page !== 'System One' && page !== 'Usage' && page !== 'Quota Tracker' && page !== 'Token Saver' && <section className="empty-workspace" aria-labelledby="workspace-title"><span className="material-symbols empty-icon" aria-hidden="true">tune</span><div><h2 id="workspace-title">Workspace shell</h2><p>Operational views are added in their planned increments.</p></div></section>}
+          {auth === 'signed-in' && page === 'Console Log' && <ConsoleLog onUnauthorized={handleUnauthorized} />}
+          {auth === 'signed-in' && page !== 'Overview' && page !== 'Endpoint & Key' && page !== 'Providers' && page !== 'Combo & Capability Adapter' && page !== 'System One' && page !== 'Usage' && page !== 'Quota Tracker' && page !== 'Token Saver' && page !== 'Console Log' && <section className="empty-workspace" aria-labelledby="workspace-title"><span className="material-symbols empty-icon" aria-hidden="true">tune</span><div><h2 id="workspace-title">Workspace shell</h2><p>Operational views are added in their planned increments.</p></div></section>}
         </div>
       </main>
     </div>
