@@ -2,9 +2,11 @@ package runtime
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
+	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -92,8 +94,8 @@ func (m *Manager) SetSettings(ctx context.Context, values map[string]string, rem
 		if strings.ContainsRune(key, 0) || len(value) > 1<<20 {
 			return 0, fmt.Errorf("invalid setting %q", key)
 		}
-		if key == "requireApiKey" && value != "true" && value != "false" {
-			return 0, errors.New("setting \"requireApiKey\" must be \"true\" or \"false\"")
+		if err := validateSettingValue(key, value); err != nil {
+			return 0, err
 		}
 	}
 	snapshot, err := m.Update(ctx, func(candidate *Candidate) error {
@@ -109,4 +111,80 @@ func (m *Manager) SetSettings(ctx context.Context, values map[string]string, rem
 		return 0, err
 	}
 	return snapshot.ConfigRevision(), nil
+}
+
+func validateSettingValue(key, value string) error {
+	invalid := func() error { return fmt.Errorf("setting %q has an invalid value", key) }
+	switch key {
+	case "requireApiKey", "enableObservability", "outboundProxyEnabled", "dnsToolEnabled", "rtkEnabled", "headroomEnabled", "headroomCompressUserMessages", "cavemanEnabled", "ponytailEnabled", "pxpipeEnabled", "pxpipeAutoInstall":
+		if value != "true" && value != "false" {
+			return invalid()
+		}
+	case "providerStrategy":
+		if value != "" && value != "fill-first" && value != "round-robin" && value != "sticky-round-robin" {
+			return invalid()
+		}
+	case "comboStrategy":
+		if value != "" && value != "fallback" && value != "round-robin" && value != "sticky-round-robin" {
+			return invalid()
+		}
+	case "cavemanLevel", "ponytailLevel":
+		if value != "lite" && value != "full" && value != "ultra" {
+			return invalid()
+		}
+	case "stickyRoundRobinLimit", "comboStickyRoundRobinLimit", "observabilityMaxRecords", "observabilityBatchSize", "observabilityFlushIntervalMs", "observabilityMaxJsonSize":
+		number, err := strconv.Atoi(value)
+		minimum := 1
+		if key == "stickyRoundRobinLimit" || key == "comboStickyRoundRobinLimit" {
+			minimum = 0
+		}
+		if err != nil || number < minimum {
+			return invalid()
+		}
+	case "providerStrategies":
+		var entries map[string]string
+		if json.Unmarshal([]byte(value), &entries) != nil || entries == nil {
+			return invalid()
+		}
+		for _, strategy := range entries {
+			if strategy != "fill-first" && strategy != "round-robin" && strategy != "sticky-round-robin" {
+				return invalid()
+			}
+		}
+	case "comboStrategies":
+		var entries map[string]string
+		if json.Unmarshal([]byte(value), &entries) != nil || entries == nil {
+			return invalid()
+		}
+		for _, strategy := range entries {
+			if strategy != "fallback" && strategy != "round-robin" && strategy != "sticky-round-robin" {
+				return invalid()
+			}
+		}
+	case "quotaVisibility", "providerCompatibility":
+		var entries map[string]json.RawMessage
+		if json.Unmarshal([]byte(value), &entries) != nil || entries == nil {
+			return invalid()
+		}
+	case "noProxy":
+		var entries []string
+		if json.Unmarshal([]byte(value), &entries) != nil || entries == nil {
+			return invalid()
+		}
+	case "outboundProxyUrl":
+		if value == "" {
+			return nil
+		}
+		parsed, err := url.Parse(value)
+		if err != nil || parsed.Host == "" || parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return invalid()
+		}
+		if port := parsed.Port(); port != "" {
+			portNumber, err := strconv.Atoi(port)
+			if err != nil || portNumber < 1 || portNumber > 65535 {
+				return invalid()
+			}
+		}
+	}
+	return nil
 }

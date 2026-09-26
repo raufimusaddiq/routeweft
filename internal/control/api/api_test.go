@@ -64,14 +64,71 @@ func newAPI(t *testing.T, settings SettingsStore) (*Handler, *adminauth.Store, *
 func TestAdminRoutesRequireSession(t *testing.T) {
 	handler, _, store := newAPI(t, &fakeSettings{values: map[string]string{}})
 	defer store.Close()
+	mux := http.NewServeMux()
+	handler.Attach(mux)
 	for _, target := range []string{"/admin/v1/settings"} {
 		recorder := httptest.NewRecorder()
-		mux := http.NewServeMux()
-		handler.Attach(mux)
 		mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, target, nil))
 		if recorder.Code != http.StatusUnauthorized {
 			t.Fatalf("%s status=%d want 401", target, recorder.Code)
 		}
+	}
+	password := httptest.NewRecorder()
+	mux.ServeHTTP(password, httptest.NewRequest(http.MethodPost, "/admin/v1/auth/password", strings.NewReader(`{"currentPassword":"x","newPassword":"y"}`)))
+	if password.Code != http.StatusUnauthorized {
+		t.Fatalf("password route status=%d want 401", password.Code)
+	}
+}
+
+func TestChangePasswordRequiresCurrentPasswordAndRevokesSessions(t *testing.T) {
+	handler, accounts, store := newAPI(t, &fakeSettings{values: map[string]string{}})
+	defer store.Close()
+	session, err := handler.opts.Sessions.Create(adminauth.Account{ID: "a1", Username: "operator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherSession, err := handler.opts.Sessions.Create(adminauth.Account{ID: "a1", Username: "operator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	handler.Attach(mux)
+	change := func(current, next string) *httptest.ResponseRecorder {
+		t.Helper()
+		body := `{"currentPassword":"` + current + `","newPassword":"` + next + `"}`
+		request := httptest.NewRequest(http.MethodPost, "/admin/v1/auth/password", strings.NewReader(body))
+		request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, request)
+		return recorder
+	}
+	if response := change("wrong", "new-secret"); response.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong current password status=%d want 401", response.Code)
+	}
+	if _, ok := handler.opts.Sessions.Lookup(session.ID); !ok {
+		t.Fatal("failed password change revoked the current session")
+	}
+	if _, valid, err := accounts.Authenticate(context.Background(), "operator", "s3cret"); err != nil || !valid {
+		t.Fatalf("failed password change changed stored password: valid=%v err=%v", valid, err)
+	}
+	if response := change("s3cret", "new-secret"); response.Code != http.StatusNoContent {
+		t.Fatalf("password change status=%d body=%s", response.Code, response.Body.String())
+	} else {
+		cookies := response.Result().Cookies()
+		if len(cookies) != 1 || cookies[0].MaxAge >= 0 || !cookies[0].Secure || !cookies[0].HttpOnly {
+			t.Fatalf("session cookie not securely expired: %+v", cookies)
+		}
+	}
+	for _, token := range []string{session.ID, otherSession.ID} {
+		if _, ok := handler.opts.Sessions.Lookup(token); ok {
+			t.Fatal("password change did not revoke every admin session")
+		}
+	}
+	if _, valid, err := accounts.Authenticate(context.Background(), "operator", "new-secret"); err != nil || !valid {
+		t.Fatalf("new password invalid: valid=%v err=%v", valid, err)
+	}
+	if _, valid, err := accounts.Authenticate(context.Background(), "operator", "s3cret"); err != nil || valid {
+		t.Fatalf("old password still accepted after rotation: valid=%v err=%v", valid, err)
 	}
 }
 
@@ -181,6 +238,33 @@ func TestPatchSettingsRejectsEmptyAndInvalid(t *testing.T) {
 		if recorder.Code != http.StatusBadRequest {
 			t.Fatalf("body=%s status=%d want 400", body, recorder.Code)
 		}
+	}
+}
+
+func TestPatchSettingsAppliesSSRFPolicyToGlobalProxyURL(t *testing.T) {
+	settings := &fakeSettings{values: map[string]string{}}
+	handler, _, store := newAPI(t, settings)
+	defer store.Close()
+	session, err := handler.opts.Sessions.Create(adminauth.Account{ID: "a1", Username: "operator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	handler.Attach(mux)
+	request := httptest.NewRequest(http.MethodPatch, "/admin/v1/settings", strings.NewReader(`{"set":{"outboundProxyUrl":"http://127.0.0.1:3128"}}`))
+	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest || settings.values["outboundProxyUrl"] != "" {
+		t.Fatalf("private proxy status=%d settings=%v", recorder.Code, settings.values)
+	}
+	handler.opts.AllowPrivateUpstreams = true
+	request = httptest.NewRequest(http.MethodPatch, "/admin/v1/settings", strings.NewReader(`{"set":{"outboundProxyUrl":"http://127.0.0.1:3128"}}`))
+	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || settings.values["outboundProxyUrl"] != "http://127.0.0.1:3128" {
+		t.Fatalf("trusted-local proxy status=%d settings=%v body=%s", recorder.Code, settings.values, recorder.Body.String())
 	}
 }
 

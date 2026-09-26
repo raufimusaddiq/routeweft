@@ -701,11 +701,24 @@ PATCH  /admin/v1/keys/{id}       {paused: bool} pause/resume without deleting
 DELETE /admin/v1/keys/{id}       revoke; the compiled key index drops it immediately
 ```
 
+Dashboard password rotation uses `POST /admin/v1/auth/password` with the
+current and replacement password. It is same-origin and session-gated; the
+current password is reverified before changing the stored hash. All sessions
+for that admin, including the caller, are invalidated after success and the
+browser must sign in again.
+
 Keys are created, paused, resumed, and revoked through the compiled
 `RuntimeSnapshot` candidate protocol (BDR-007), so the request path never reads
 SQLite to validate a key. `requireApiKey` is writable through
 `PATCH /admin/v1/settings` and accepts only `"true"`/`"false"`; the compiled
 default is `true` (PRD §15).
+
+Settings updates reject malformed booleans, strategy names, positive integer
+limits, strategy override maps, no-proxy string arrays, and global proxy URLs
+disallowed by the shared SSRF policy before the configuration transaction
+begins. `quotaVisibility` and
+`providerCompatibility` are retained as JSON objects; their runtime semantics
+remain unspecified by the current product contract.
 
 List APIs have bounded pagination and stable sort.
 

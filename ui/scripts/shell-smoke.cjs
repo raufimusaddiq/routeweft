@@ -34,8 +34,12 @@ const assert = require('node:assert/strict');
   let usagePeriod = '7d';
   let systemOneProbeCalls = 0;
   let systemOneProbeTransport = '';
-  let tokenSaverSettings = { rtkEnabled: 'true', headroomEnabled: 'false', headroomUrl: 'http://localhost:8787', headroomCompressUserMessages: 'false', headroomTimeoutMs: '3000', cavemanEnabled: 'false', cavemanLevel: 'full', ponytailEnabled: 'false', ponytailLevel: 'full', pxpipeEnabled: 'false', pxpipeAutoInstall: 'true', pxpipeMinChars: '25000', pxpipeTimeoutMs: '15000' };
+  let tokenSaverSettings = { providerStrategy: 'fill-first', stickyRoundRobinLimit: '3', providerStrategies: '{}', comboStrategy: 'fallback', comboStickyRoundRobinLimit: '1', comboStrategies: '{}', quotaVisibility: '{}', enableObservability: 'false', observabilityMaxRecords: '1000', observabilityBatchSize: '20', observabilityFlushIntervalMs: '5000', observabilityMaxJsonSize: '5242880', outboundProxyEnabled: 'false', outboundProxyUrl: '[redacted]', noProxy: '[]', dnsToolEnabled: 'false', providerCompatibility: '{}', rtkEnabled: 'true', headroomEnabled: 'false', headroomUrl: 'http://localhost:8787', headroomCompressUserMessages: 'false', headroomTimeoutMs: '3000', cavemanEnabled: 'false', cavemanLevel: 'full', ponytailEnabled: 'false', ponytailLevel: 'full', pxpipeEnabled: 'false', pxpipeAutoInstall: 'true', pxpipeMinChars: '25000', pxpipeTimeoutMs: '15000' };
   let tokenSaverPatches = 0;
+  let passwordAttempts = 0;
+  let currentAdminPassword = 'not-a-real-secret';
+  let restoreChecks = 0;
+  let restoreActivations = 0;
   let logRequests = 0;
   let lastLogURL = '';
   const logs = Array.from({ length: 51 }, (_, index) => {
@@ -48,7 +52,7 @@ const assert = require('node:assert/strict');
     const url = new URL(route.request().url());
     const method = route.request().method();
   if (url.pathname === '/admin/v1/settings' && method === 'GET') {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ settings: { requireApiKey: settingsRequireApiKey, ...tokenSaverSettings }, writable: ['requireApiKey', 'cavemanLevel', 'ponytailLevel'] }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ settings: { requireApiKey: settingsRequireApiKey, ...tokenSaverSettings }, writable: ['requireApiKey', ...Object.keys(tokenSaverSettings)] }) });
   }
   if (url.pathname === '/admin/v1/settings' && method === 'PATCH') {
     const patch = route.request().postDataJSON().set;
@@ -56,6 +60,24 @@ const assert = require('node:assert/strict');
     if (patch.requireApiKey !== undefined) settingsRequireApiKey = String(patch.requireApiKey);
     for (const [key, value] of Object.entries(patch)) if (key !== 'requireApiKey') tokenSaverSettings[key] = String(value);
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ configRevision: 8, settings: { requireApiKey: settingsRequireApiKey, ...tokenSaverSettings } }) });
+  }
+  if (url.pathname === '/admin/v1/auth/password' && method === 'POST') {
+    passwordAttempts += 1;
+    const body = route.request().postDataJSON();
+    if (body.currentPassword !== currentAdminPassword) return route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: { code: 'invalid_credentials', message: 'Current password is incorrect.' } }) });
+    currentAdminPassword = body.newPassword;
+    return route.fulfill({ status: 204 });
+  }
+  if (url.pathname === '/admin/v1/backup' && method === 'GET') {
+    return route.fulfill({ status: 200, contentType: 'application/zip', headers: { 'Content-Disposition': 'attachment; filename="routeweft-backup.zip"' }, body: Buffer.from('sanitized-smoke-backup') });
+  }
+  if (url.pathname === '/admin/v1/backup/restore/check' && method === 'POST') {
+    restoreChecks += 1;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ valid: true, schemaVersion: 1, configRevision: 8 }) });
+  }
+  if (url.pathname === '/admin/v1/backup/restore' && method === 'POST') {
+    restoreActivations += 1;
+    return route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ accepted: true, activation: 'scheduled', schemaVersion: 1, configRevision: 8 }) });
   }
   if (url.pathname === '/admin/v1/keys' && method === 'GET') {
     keyListCalls += 1;
@@ -366,6 +388,57 @@ const assert = require('node:assert/strict');
   report.logEmptyState = await page.locator('.console-log-content .empty-keys').textContent();
   report.logRequests = logRequests;
   report.lastLogURL = lastLogURL;
+  // Settings (PRD §14-15).
+  await page.click('a[href="#settings"]');
+  await page.waitForSelector('.settings-content');
+  report.dashboardLoginState = await page.locator('.setting-toggle').first().locator('.state-tag').textContent();
+  await page.selectOption('#setting-providerStrategy', 'round-robin');
+  await page.locator('.settings-field', { has: page.locator('#setting-providerStrategy') }).locator('button').click();
+  await page.waitForFunction(() => document.querySelector('.inline-notice')?.textContent.includes('Provider strategy saved'));
+  report.providerStrategy = tokenSaverSettings.providerStrategy;
+  await page.locator('.setting-toggle').filter({ hasText: 'Require client API key' }).locator('button').click();
+  await page.waitForFunction(() => document.querySelector('.inline-notice')?.textContent.includes('Require client API key updated'));
+  report.requireApiKeyAfterToggle = settingsRequireApiKey;
+  await page.locator('.settings-json-field').filter({ hasText: 'Provider strategy overrides' }).locator('textarea').fill('{"openai":"sticky-round-robin"}');
+  await page.locator('.settings-json-field').filter({ hasText: 'Provider strategy overrides' }).locator('button').click();
+  await page.waitForFunction(() => document.querySelector('.inline-notice')?.textContent.includes('Provider strategy overrides saved'));
+  report.providerStrategies = tokenSaverSettings.providerStrategies;
+  await page.fill('#setting-observabilityMaxRecords', '0');
+  await page.locator('.settings-field', { has: page.locator('#setting-observabilityMaxRecords') }).locator('button').click();
+  await page.waitForFunction(() => document.querySelector('.settings-content .auth-error')?.textContent.includes('at least 1'));
+  report.invalidSettingError = await page.locator('.settings-content .auth-error').textContent();
+  await page.fill('#setting-observabilityMaxRecords', '1500');
+  await page.locator('.settings-field', { has: page.locator('#setting-observabilityMaxRecords') }).locator('button').click();
+  await page.waitForFunction(() => document.querySelector('.inline-notice')?.textContent.includes('Maximum retained records saved'));
+  report.observabilityMaxRecords = tokenSaverSettings.observabilityMaxRecords;
+  const [backupDownload] = await Promise.all([page.waitForEvent('download'), page.click('.settings-download')]);
+  report.backupFilename = backupDownload.suggestedFilename();
+  await page.locator('#restore-file').setInputFiles({ name: 'routeweft-test.zip', mimeType: 'application/zip', buffer: Buffer.from('sanitized-smoke-backup') });
+  await page.click('.settings-restore button');
+  await page.waitForSelector('.restore-check-result');
+  report.restoreCheckResult = await page.locator('.restore-check-result').innerText();
+  page.once('dialog', dialog => dialog.accept());
+  await page.click('.restore-check-result .button-danger');
+  await page.waitForSelector('.sign-in-panel');
+  report.restoreChecks = restoreChecks;
+  report.restoreActivations = restoreActivations;
+  await page.fill('#admin-username', 'operator');
+  await page.fill('#admin-password', 'not-a-real-secret');
+  await page.locator('.sign-in-panel button[type="submit"]').click();
+  await page.waitForSelector('.settings-content');
+  await page.fill('#change-password-current', 'wrong-password');
+  await page.fill('#change-password-new', 'rotated-secret');
+  await page.fill('#change-password-confirm', 'rotated-secret');
+  await page.locator('.settings-password button[type="submit"]').click();
+  await page.waitForFunction(() => document.querySelector('.settings-content .auth-error')?.textContent.includes('Current password is incorrect'));
+  report.passwordError = await page.locator('.settings-content .auth-error').textContent();
+  await page.fill('#change-password-current', 'not-a-real-secret');
+  await page.fill('#change-password-new', 'rotated-secret');
+  await page.fill('#change-password-confirm', 'rotated-secret');
+  await page.locator('.settings-password button[type="submit"]').click();
+  await page.waitForSelector('.sign-in-panel');
+  report.passwordAttempts = passwordAttempts;
+  report.adminPasswordRotated = currentAdminPassword === 'rotated-secret';
   await page.selectOption('#theme-select', 'light');
   report.themeAfterSelect = await page.evaluate(() => document.documentElement.dataset.theme);
   report.stored = await page.evaluate(() => localStorage.getItem('routeweft-theme'));
@@ -498,6 +571,19 @@ const assert = require('node:assert/strict');
   assert.match(report.logEmptyState, /No logs match/);
   assert.match(report.lastLogURL, /query=not-found/);
   assert.equal(report.logRequests, 5);
+  assert.equal(report.dashboardLoginState, 'Required');
+  assert.equal(report.providerStrategy, 'round-robin');
+  assert.equal(report.requireApiKeyAfterToggle, 'true');
+  assert.equal(report.providerStrategies, '{"openai":"sticky-round-robin"}');
+  assert.match(report.invalidSettingError, /whole number of at least 1/);
+  assert.equal(report.observabilityMaxRecords, '1500');
+  assert.equal(report.backupFilename, 'routeweft-backup.zip');
+  assert.match(report.restoreCheckResult, /Valid · schema 1 · config revision 8/);
+  assert.equal(report.restoreChecks, 1);
+  assert.equal(report.restoreActivations, 1);
+  assert.match(report.passwordError, /Current password is incorrect/);
+  assert.equal(report.passwordAttempts, 2);
+  assert.equal(report.adminPasswordRotated, true);
   assert.equal(report.focusAfterDesktopNav.className, 'nav-link nav-link-active');
   assert.notEqual(report.focusAfterDesktopNav.visibility, 'hidden');
   assert.notEqual(report.focusAfterDesktopNav.display, 'none');
