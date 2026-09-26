@@ -98,16 +98,18 @@ func periodOrDefault(period string) string {
 }
 
 // usageDailySeries returns per-day request/token totals, capped at a bounded
-// number of days so the response cannot grow without limit. The newest days are
-// kept (DESC + LIMIT in a subquery) and then presented oldest-first for charting.
+// number of days so the response cannot grow without limit. usage_daily is keyed
+// (day, provider_id, model_id), so the rows must be aggregated to one row per
+// day *before* the LIMIT bounds days; the newest days are then presented
+// oldest-first for charting.
 func (h *Handler) usageDailySeries(ctx context.Context, since string) ([]map[string]any, error) {
-	query := "SELECT day,COALESCE(SUM(requests),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cache_read_tokens),0),COALESCE(SUM(cache_write_tokens),0) FROM (SELECT * FROM usage_daily"
+	query := "SELECT day,COALESCE(SUM(requests),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cache_read_tokens),0),COALESCE(SUM(cache_write_tokens),0) FROM (SELECT day,SUM(requests) AS requests,SUM(input_tokens) AS input_tokens,SUM(output_tokens) AS output_tokens,SUM(cache_read_tokens) AS cache_read_tokens,SUM(cache_write_tokens) AS cache_write_tokens FROM usage_daily"
 	var args []any
 	if since != "" {
 		query += " WHERE day >= ?"
 		args = append(args, since[:10])
 	}
-	query += " ORDER BY day DESC LIMIT 366) GROUP BY day ORDER BY day"
+	query += " GROUP BY day ORDER BY day DESC LIMIT 366) GROUP BY day ORDER BY day"
 	rows, err := h.opts.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err

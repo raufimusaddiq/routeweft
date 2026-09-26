@@ -10,8 +10,8 @@ type Props = { onUnauthorized: () => void }
 const periods = [['24h', 'Last 24 hours'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['all', 'All time']]
 const numberFormat = new Intl.NumberFormat()
 
-// Rough cost signal only; authoritative pricing lives in the pricing overrides.
-function cost(totals: Totals) {
+// Total tokens (input + output). Authoritative cost lives in the pricing overrides.
+function totalTokens(totals: Totals) {
   const tokens = totals.inputTokens + totals.outputTokens
   return numberFormat.format(tokens)
 }
@@ -62,7 +62,7 @@ export function Usage({ onUnauthorized }: Props) {
     {summary && <>
       <div className="metrics-grid usage-metrics">
         <section className="metric" aria-label="Requests"><div className="metric-label"><span className="material-symbols" aria-hidden="true">monitoring</span>Requests</div><p className="metric-value">{numberFormat.format(summary.totals.requests)}</p><p className="metric-note">{numberFormat.format(summary.totals.errors)} error{summary.totals.errors === 1 ? '' : 's'}</p></section>
-        <section className="metric" aria-label="Tokens"><div className="metric-label"><span className="material-symbols" aria-hidden="true">arrow_downward</span>Tokens</div><p className="metric-value">{cost(summary.totals)}</p><p className="metric-note">input {numberFormat.format(summary.totals.inputTokens)} · output {numberFormat.format(summary.totals.outputTokens)}</p></section>
+        <section className="metric" aria-label="Tokens"><div className="metric-label"><span className="material-symbols" aria-hidden="true">arrow_downward</span>Tokens</div><p className="metric-value">{totalTokens(summary.totals)}</p><p className="metric-note">input {numberFormat.format(summary.totals.inputTokens)} · output {numberFormat.format(summary.totals.outputTokens)}</p></section>
         <section className="metric" aria-label="Cache tokens"><div className="metric-label"><span className="material-symbols" aria-hidden="true">bolt</span>Cache tokens</div><p className="metric-value">{numberFormat.format(summary.totals.cacheReadTokens + summary.totals.cacheWriteTokens)}</p><p className="metric-note">read {numberFormat.format(summary.totals.cacheReadTokens)} · write {numberFormat.format(summary.totals.cacheWriteTokens)}</p></section>
         <section className="metric" aria-label="Latency"><div className="metric-label"><span className="material-symbols" aria-hidden="true">speed</span>Latency</div><p className="metric-value">{summary.totals.avgDurationMs !== undefined ? `${summary.totals.avgDurationMs} ms` : '—'}</p><p className="metric-note">TTFT {summary.totals.avgTtftMs !== undefined ? `${summary.totals.avgTtftMs} ms` : '—'}</p></section>
       </div>

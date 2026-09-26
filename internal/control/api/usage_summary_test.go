@@ -100,8 +100,9 @@ func TestUsageSummaryAggregatesAndAttributes(t *testing.T) {
 	}
 }
 
-// period=all must bound the newest days, not freeze on the oldest year once an
-// install exceeds the series cap.
+// period=all must bound the newest *days*, not the newest rows, once an install
+// exceeds the series cap. usage_daily is keyed (day, provider, model), so the
+// fixture seeds several rows per day to prove rows != days.
 func TestUsageSummarySeriesKeepsNewestDays(t *testing.T) {
 	_, mux, store, _, cookie := newProvidersAPI(t, false, nil)
 	defer store.Close()
@@ -109,8 +110,10 @@ func TestUsageSummarySeriesKeepsNewestDays(t *testing.T) {
 	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	for i := 0; i < 400; i++ {
 		day := start.AddDate(0, 0, i).Format("2006-01-02")
-		if _, err := store.DB().ExecContext(ctx, "INSERT INTO usage_daily(day,provider_id,model_id,requests,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens) VALUES(?,?,?,?,?,?,?,?)", day, "openai", "gpt-5", 1, 10, 5, 0, 0); err != nil {
-			t.Fatal(err)
+		for _, model := range []string{"gpt-5", "gpt-5-mini", "gpt-4o"} {
+			if _, err := store.DB().ExecContext(ctx, "INSERT INTO usage_daily(day,provider_id,model_id,requests,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens) VALUES(?,?,?,?,?,?,?,?)", day, "openai", model, 1, 10, 5, 0, 0); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	recorder := doJSON(t, mux, cookie, http.MethodGet, "/admin/v1/usage/summary?period=all", "")
@@ -126,7 +129,7 @@ func TestUsageSummarySeriesKeepsNewestDays(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(body.Series) != 366 {
-		t.Fatalf("series=%d want 366", len(body.Series))
+		t.Fatalf("series=%d want 366 days", len(body.Series))
 	}
 	newest := start.AddDate(0, 0, 399).Format("2006-01-02")
 	oldest := start.AddDate(0, 0, 34).Format("2006-01-02")
