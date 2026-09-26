@@ -30,21 +30,26 @@ const assert = require('node:assert/strict');
   let adapterEnabled = false;
   let systemOneModelAdded = false;
   let usageSummaryCalls = 0;
-	let quotaRefreshCalls = 0;
+  let quotaRefreshCalls = 0;
   let usagePeriod = '7d';
   let systemOneProbeCalls = 0;
   let systemOneProbeTransport = '';
+  let tokenSaverSettings = { rtkEnabled: 'true', headroomEnabled: 'false', headroomUrl: 'http://localhost:8787', headroomCompressUserMessages: 'false', headroomTimeoutMs: '3000', cavemanEnabled: 'false', cavemanLevel: 'full', ponytailEnabled: 'false', ponytailLevel: 'full', pxpipeEnabled: 'false', pxpipeAutoInstall: 'true', pxpipeMinChars: '25000', pxpipeTimeoutMs: '15000' };
+  let tokenSaverPatches = 0;
   const createdKeyID = 'k-ci-1';
   const createdSecret = 'rw_smoke_secret_value';
   await page.route('**/admin/v1/**', async route => {
     const url = new URL(route.request().url());
     const method = route.request().method();
   if (url.pathname === '/admin/v1/settings' && method === 'GET') {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ settings: { requireApiKey: settingsRequireApiKey }, writable: ['requireApiKey'] }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ settings: { requireApiKey: settingsRequireApiKey, ...tokenSaverSettings }, writable: ['requireApiKey', 'cavemanLevel', 'ponytailLevel'] }) });
   }
   if (url.pathname === '/admin/v1/settings' && method === 'PATCH') {
-    settingsRequireApiKey = String(route.request().postDataJSON().set.requireApiKey);
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ configRevision: 8, settings: { requireApiKey: settingsRequireApiKey } }) });
+    const patch = route.request().postDataJSON().set;
+    tokenSaverPatches += 1;
+    if (patch.requireApiKey !== undefined) settingsRequireApiKey = String(patch.requireApiKey);
+    for (const [key, value] of Object.entries(patch)) if (key !== 'requireApiKey') tokenSaverSettings[key] = String(value);
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ configRevision: 8, settings: { requireApiKey: settingsRequireApiKey, ...tokenSaverSettings } }) });
   }
   if (url.pathname === '/admin/v1/keys' && method === 'GET') {
     keyListCalls += 1;
@@ -295,17 +300,30 @@ const assert = require('node:assert/strict');
   await page.waitForFunction(() => document.querySelector('.usage-toolbar .count-label').textContent.includes('since'));
   report.usagePeriodAfterChange = usagePeriod;
   report.usageSummaryCalls = usageSummaryCalls;
-	// Quota Tracker (PRD-QUOTA-001).
-	await page.click('a[href="#quota-tracker"]');
-	await page.waitForSelector('.quota-content');
-	await page.waitForSelector('.quota-row');
-	report.quotaRows = await page.locator('.quota-row').count();
-	report.quotaRemaining = await page.locator('.quota-remaining').allTextContents();
-	report.quotaStatuses = await page.locator('.quota-row .state-tag').allTextContents();
-	await page.click('.quota-toolbar .button-primary');
-	await page.waitForSelector('.inline-notice');
-	report.quotaNotice = await page.locator('.inline-notice').textContent();
-	report.quotaRefreshCalls = quotaRefreshCalls;
+  // Quota Tracker (PRD-QUOTA-001).
+  await page.click('a[href="#quota-tracker"]');
+  await page.waitForSelector('.quota-content');
+  await page.waitForSelector('.quota-row');
+  report.quotaRows = await page.locator('.quota-row').count();
+  report.quotaRemaining = await page.locator('.quota-remaining').allTextContents();
+  report.quotaStatuses = await page.locator('.quota-row .state-tag').allTextContents();
+  await page.click('.quota-toolbar .button-primary');
+  await page.waitForSelector('.inline-notice');
+  report.quotaNotice = await page.locator('.inline-notice').textContent();
+  report.quotaRefreshCalls = quotaRefreshCalls;
+  // Token Saver (PRD-XFORM-001/004/005).
+  await page.click('a[href="#token-saver"]');
+  await page.waitForSelector('.token-saver-content');
+  report.tokenSaverFeatures = await page.locator('.feature-row').count();
+  report.tokenSaverRtkLabel = await page.locator('.feature-row').first().locator('.state-tag').textContent();
+  await page.selectOption('select[aria-label="Caveman level"]', 'ultra');
+  await page.locator('.setting-row', { has: page.locator('select[aria-label="Caveman level"]') }).locator('button').click();
+  await page.waitForFunction(() => document.querySelector('.inline-notice') && document.querySelector('.inline-notice').textContent.includes('Caveman level saved'));
+  report.cavemanLevel = tokenSaverSettings.cavemanLevel;
+  await page.click('.feature-row .button-secondary');
+  await page.waitForFunction(() => document.querySelector('.inline-notice').textContent.includes('RTK'));
+  report.rtkAfterToggle = tokenSaverSettings.rtkEnabled;
+  report.tokenSaverPatches = tokenSaverPatches;
   await page.selectOption('#theme-select', 'light');
   report.themeAfterSelect = await page.evaluate(() => document.documentElement.dataset.theme);
   report.stored = await page.evaluate(() => localStorage.getItem('routeweft-theme'));
@@ -417,12 +435,17 @@ const assert = require('node:assert/strict');
   assert.equal(report.usageEventRows, 1);
   assert.equal(report.usagePeriod, '7d');
   assert.equal(report.usagePeriodAfterChange, '24h');
-	assert.equal(report.usageSummaryCalls >= 2, true);
-	assert.equal(report.quotaRows, 2);
-	assert.deepEqual(report.quotaRemaining, ['42 remaining', '0 remaining']);
-	assert.deepEqual(report.quotaStatuses, ['available', 'exhausted', 'disabled']);
-	assert.match(report.quotaNotice, /never blocks inference/);
-	assert.equal(report.quotaRefreshCalls, 1);
+  assert.equal(report.usageSummaryCalls >= 2, true);
+  assert.equal(report.quotaRows, 2);
+  assert.deepEqual(report.quotaRemaining, ['42 remaining', '0 remaining']);
+  assert.deepEqual(report.quotaStatuses, ['available', 'exhausted', 'disabled']);
+  assert.match(report.quotaNotice, /never blocks inference/);
+  assert.equal(report.quotaRefreshCalls, 1);
+  assert.equal(report.tokenSaverFeatures, 7);
+  assert.equal(report.tokenSaverRtkLabel, 'Enabled');
+  assert.equal(report.cavemanLevel, 'ultra');
+  assert.equal(report.rtkAfterToggle, 'false');
+  assert.equal(report.tokenSaverPatches, 3);
   assert.equal(report.focusAfterDesktopNav.className, 'nav-link nav-link-active');
   assert.notEqual(report.focusAfterDesktopNav.visibility, 'hidden');
   assert.notEqual(report.focusAfterDesktopNav.display, 'none');
