@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -50,6 +51,7 @@ func newProvidersAPI(t *testing.T, allowPrivate bool, upstream *discovery.Client
 	specs := []registry.Spec{
 		{ID: "openai", Transports: []registry.Protocol{registry.TransportOpenAIChat, registry.TransportOpenAIResponses}, Auth: registry.AuthAPIKey, DefaultBaseURL: "https://api.openai.com/v1", ModelCatalog: registry.CatalogStatic, StaticModels: []string{"gpt-5"}},
 		{ID: "anthropic", Transports: []registry.Protocol{registry.TransportAnthropic}, Auth: registry.AuthAPIKey, DefaultBaseURL: "https://api.anthropic.com/v1", ModelCatalog: registry.CatalogStatic, StaticModels: []string{"claude-sonnet-4"}},
+		{ID: "typesafe", Transports: []registry.Protocol{registry.TransportSystemOne}, Auth: registry.AuthAPIKey, DefaultBaseURL: "https://api.typesafe.ai/v1/systemone", ModelCatalog: registry.CatalogStatic, StaticModels: []string{"jev"}},
 	}
 	handler := New(Options{
 		Accounts: accounts, Sessions: sessions, Settings: manager, Keys: manager,
@@ -387,5 +389,41 @@ func TestNativeModelProbeIsBoundedAndRedacted(t *testing.T) {
 	bad := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+connection.ID+"/test-models", string(encoded))
 	if bad.Code != http.StatusBadRequest {
 		t.Fatalf("batch limit status=%d", bad.Code)
+	}
+}
+
+// The System One/Jev provider configures the full typed endpoint as its base
+// URL, so the typed request workflow posts verbatim with state/questions.
+func TestSystemOneModelProbePostsVerbatim(t *testing.T) {
+	const wantBody = `{"model":"jev","questions":{"probe":{"instructions":"Reply with OK.","type":"noul"}},"state":{"message":"Routeweft System One probe."}}`
+	var gotBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/systemone" {
+			t.Errorf("unexpected systemone probe target: %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer jev-secret" {
+			t.Errorf("auth header=%q", r.Header.Get("Authorization"))
+		}
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+	_, mux, store, credStore, cookie := newProvidersAPI(t, true, &discovery.Client{HTTP: upstream.Client()})
+	defer store.Close()
+	node, err := credStore.PutNode(context.Background(), credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "typesafe", Name: "typesafe", BaseURL: upstream.URL + "/v1/systemone", Transports: []string{"systemone"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := credStore.PutConnection(context.Background(), credentials.Connection{NodeID: node.ID, Name: "typesafe", Identity: "acct", AuthKind: credentials.AuthAPIKey, Enabled: true, Secret: credentials.Secret{AccessToken: "jev-secret"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+connection.ID+"/test-models", `{"transport":"systemone","modelIds":["jev"]}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"ok":true`) {
+		t.Fatalf("systemone probe status=%d body=%s", response.Code, response.Body.String())
+	}
+	if string(gotBody) != wantBody {
+		t.Fatalf("probe body=%s want=%s", gotBody, wantBody)
 	}
 }

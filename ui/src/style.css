@@ -296,6 +296,15 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .adapter-pool code { flex: 1; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10px; }
 .adapter-pool button { min-height: 30px; padding-inline: 9px; font-size: 10px; }
 
+.systemone-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.systemone-toolbar label { color: var(--text-muted); font-size: 11px; font-weight: 600; }
+.systemone-toolbar .count-label { margin-left: auto; }
+.systemone-layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 16px; }
+.systemone-run { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; margin: 12px 0; }
+.systemone-run label { display: grid; flex: 1 1 180px; gap: 6px; color: var(--text-muted); font-size: 11px; font-weight: 600; }
+.systemone-run select { width: 100%; }
+.systemone-run button { min-height: 36px; }
+
 @media (max-width: 900px) {
   .workspace-inner { padding-inline: 28px; }
   .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -304,7 +313,8 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   .transport-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .providers-layout { grid-template-columns: minmax(0, 1fr); }
   .provider-catalog { max-height: 280px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .combos-layout { grid-template-columns: minmax(0, 1fr); }
+  .combos-layout { grid-template-columns: minmax(0, 1fr); }
+    .systemone-layout { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 700px) {
@@ -342,7 +352,9 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   .providers-toolbar .button-primary, .providers-toolbar .button-secondary { flex: 1; }
     .combos-toolbar { flex-wrap: wrap; }
     .combos-toolbar .count-label { flex: 1 1 100%; }
-    .combo-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .combo-form-grid { grid-template-columns: minmax(0, 1fr); }
+    .systemone-toolbar { flex-wrap: wrap; }
+    .systemone-toolbar .count-label { margin-left: 0; flex: 1 1 100%; }
 }
 
 @media (max-width: 380px) {
