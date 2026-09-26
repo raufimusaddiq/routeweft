@@ -380,8 +380,8 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   .combo-form-grid { grid-template-columns: minmax(0, 1fr); }
     .systemone-toolbar { flex-wrap: wrap; }
   .systemone-toolbar .count-label { margin-left: 0; flex: 1 1 100%; }
-    .usage-toolbar { flex-wrap: wrap; }
-    .usage-toolbar .count-label { margin-left: 0; flex: 1 1 100%; }
+  .usage-toolbar { flex-wrap: wrap; }
+  .usage-toolbar .count-label { margin-left: 0; flex: 1 1 100%; }
 }
 
 @media (max-width: 380px) {

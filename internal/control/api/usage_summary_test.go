@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
+	"time"
 )
 
 func TestUsageSummaryRequiresSession(t *testing.T) {
@@ -37,8 +39,9 @@ func TestUsageSummaryAggregatesAndAttributes(t *testing.T) {
 		"2026-09-24": {{"openai", "gpt-5", 200, 100, 20}, {"openai", "gpt-5", 200, 50, 10}, {"anthropic", "claude", 500, 0, 0}},
 		"2026-09-25": {{"openai", "gpt-5", 200, 30, 5}},
 	} {
-		for _, row := range rows {
-			if _, err := store.DB().ExecContext(ctx, "INSERT INTO usage_events(request_id,provider_id,model_id,status,input_tokens,output_tokens,created_at) VALUES(?,?,?,?,?,?,?)", "req-"+day+row.model, row.provider, row.model, row.status, row.input, row.output, day+"T12:00:00.000Z"); err != nil {
+		for i, row := range rows {
+			requestID := fmt.Sprintf("req-%s-%s-%d", day, row.model, i)
+			if _, err := store.DB().ExecContext(ctx, "INSERT INTO usage_events(request_id,provider_id,model_id,status,input_tokens,output_tokens,created_at) VALUES(?,?,?,?,?,?,?)", requestID, row.provider, row.model, row.status, row.input, row.output, day+"T12:00:00.000Z"); err != nil {
 				t.Fatal(err)
 			}
 			if row.status >= 200 && row.status < 300 {
@@ -94,5 +97,43 @@ func TestUsageSummaryAggregatesAndAttributes(t *testing.T) {
 	}
 	if !foundError {
 		t.Fatalf("status breakdown missing 500: %+v", body.Statuses)
+	}
+}
+
+// period=all must bound the newest days, not freeze on the oldest year once an
+// install exceeds the series cap.
+func TestUsageSummarySeriesKeepsNewestDays(t *testing.T) {
+	_, mux, store, _, cookie := newProvidersAPI(t, false, nil)
+	defer store.Close()
+	ctx := context.Background()
+	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 400; i++ {
+		day := start.AddDate(0, 0, i).Format("2006-01-02")
+		if _, err := store.DB().ExecContext(ctx, "INSERT INTO usage_daily(day,provider_id,model_id,requests,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens) VALUES(?,?,?,?,?,?,?,?)", day, "openai", "gpt-5", 1, 10, 5, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recorder := doJSON(t, mux, cookie, http.MethodGet, "/admin/v1/usage/summary?period=all", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Series []struct {
+			Day string `json:"day"`
+		} `json:"series"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Series) != 366 {
+		t.Fatalf("series=%d want 366", len(body.Series))
+	}
+	newest := start.AddDate(0, 0, 399).Format("2006-01-02")
+	oldest := start.AddDate(0, 0, 34).Format("2006-01-02")
+	if body.Series[len(body.Series)-1].Day != newest {
+		t.Fatalf("newest day=%s want %s", body.Series[len(body.Series)-1].Day, newest)
+	}
+	if body.Series[0].Day != oldest {
+		t.Fatalf("oldest kept day=%s want %s", body.Series[0].Day, oldest)
 	}
 }

@@ -50,7 +50,7 @@ func (h *Handler) handleUsageSummary(w http.ResponseWriter, r *http.Request) {
 		where = " WHERE created_at >= ?"
 		args = append(args, since)
 	}
-	totals := map[string]any{"requests": int64(0), "inputTokens": int64(0), "outputTokens": int64(0), "cacheReadTokens": int64(0), "cacheWriteTokens": int64(0), "errors": int64(0), "durationMs": int64(0), "ttftMs": int64(0), "timedRequests": int64(0), "ttftRequests": int64(0)}
+	totals := map[string]any{"requests": int64(0), "inputTokens": int64(0), "outputTokens": int64(0), "cacheReadTokens": int64(0), "cacheWriteTokens": int64(0), "errors": int64(0)}
 	row := h.opts.DB.QueryRowContext(ctx, "SELECT COUNT(*),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cache_read_tokens),0),COALESCE(SUM(cache_write_tokens),0),COALESCE(SUM(CASE WHEN status < 200 OR status >= 300 THEN 1 ELSE 0 END),0),COALESCE(SUM(duration_ms),0),COALESCE(SUM(ttft_ms),0),COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN ttft_ms IS NOT NULL THEN 1 ELSE 0 END),0) FROM usage_events"+where, args...)
 	var requests, input, output, cacheRead, cacheWrite, errors, durationSum, ttftSum, timed, ttftCount int64
 	if err := row.Scan(&requests, &input, &output, &cacheRead, &cacheWrite, &errors, &durationSum, &ttftSum, &timed, &ttftCount); err != nil {
@@ -98,15 +98,16 @@ func periodOrDefault(period string) string {
 }
 
 // usageDailySeries returns per-day request/token totals, capped at a bounded
-// number of days so the response cannot grow without limit.
+// number of days so the response cannot grow without limit. The newest days are
+// kept (DESC + LIMIT in a subquery) and then presented oldest-first for charting.
 func (h *Handler) usageDailySeries(ctx context.Context, since string) ([]map[string]any, error) {
-	query := "SELECT day,COALESCE(SUM(requests),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cache_read_tokens),0),COALESCE(SUM(cache_write_tokens),0) FROM usage_daily"
+	query := "SELECT day,COALESCE(SUM(requests),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cache_read_tokens),0),COALESCE(SUM(cache_write_tokens),0) FROM (SELECT * FROM usage_daily"
 	var args []any
 	if since != "" {
 		query += " WHERE day >= ?"
 		args = append(args, since[:10])
 	}
-	query += " GROUP BY day ORDER BY day LIMIT 366"
+	query += " ORDER BY day DESC LIMIT 366) GROUP BY day ORDER BY day"
 	rows, err := h.opts.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
