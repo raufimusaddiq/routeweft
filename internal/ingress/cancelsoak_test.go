@@ -129,7 +129,20 @@ func TestNonStreamingCancellationSoak(t *testing.T) {
 		}
 		cancel()
 	}
-	if got := len(server.Requests()); got != iterations {
-		t.Fatalf("upstream saw %d requests, want %d", got, iterations)
+	// The gateway cancels each upstream request as soon as this client's
+	// deadline fires. The mock records a request only after it has buffered the
+	// body, so its accounting can trail the client's return under load. Poll the
+	// recorded count instead of asserting immediately, otherwise a correct
+	// implementation intermittently reports fewer upstream requests than were
+	// actually issued (the request was sent, but the handler had not recorded it).
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if got := len(server.Requests()); got == iterations {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("upstream saw %d requests, want %d", len(server.Requests()), iterations)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
