@@ -101,7 +101,9 @@ func TestStreamingCancellationSoak(t *testing.T) {
 func TestNonStreamingCancellationSoak(t *testing.T) {
 	const iterations = 100
 	body := `{"model":"gpt-4o-mini","messages":[{"role":"user","content":"x"}]}`
+	seen := make(chan struct{}, 1)
 	server, err := mockupstream.Start(nil, mockupstream.WithMatcher(func(*http.Request, string) mockupstream.Decision {
+		seen <- struct{}{}
 		return mockupstream.Decision{Status: http.StatusOK, Headers: map[string]string{"Content-Type": "application/json"}, Body: `{"ok":true}`, Delay: 5 * time.Second}
 	}))
 	if err != nil {
@@ -114,7 +116,7 @@ func TestNonStreamingCancellationSoak(t *testing.T) {
 	})
 	authed := bearer(mux, key)
 	for i := 0; i < iterations; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+		ctx, cancel := context.WithCancel(context.Background())
 		request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body)).WithContext(ctx)
 		request.Header.Set("Content-Type", "application/json")
 		done := make(chan struct{})
@@ -122,27 +124,22 @@ func TestNonStreamingCancellationSoak(t *testing.T) {
 			authed.ServeHTTP(httptest.NewRecorder(), request)
 			close(done)
 		}()
+		// Cancel only after the mock has received this request; a timer can
+		// fire before dispatch under race-detector or host contention.
+		select {
+		case <-seen:
+		case <-time.After(2 * time.Second):
+			cancel()
+			t.Fatalf("iteration %d did not reach upstream", i)
+		}
+		cancel()
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
-			t.Fatalf("iteration %d did not return after deadline cancellation", i)
+			t.Fatalf("iteration %d did not return after client cancellation", i)
 		}
-		cancel()
 	}
-	// The gateway cancels each upstream request as soon as this client's
-	// deadline fires. The mock records a request only after it has buffered the
-	// body, so its accounting can trail the client's return under load. Poll the
-	// recorded count instead of asserting immediately, otherwise a correct
-	// implementation intermittently reports fewer upstream requests than were
-	// actually issued (the request was sent, but the handler had not recorded it).
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if got := len(server.Requests()); got == iterations {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("upstream saw %d requests, want %d", len(server.Requests()), iterations)
-		}
-		time.Sleep(10 * time.Millisecond)
+	if got := len(server.Requests()); got != iterations {
+		t.Fatalf("upstream saw %d requests, want %d", got, iterations)
 	}
 }
