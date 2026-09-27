@@ -258,6 +258,65 @@ Each provider group needs:
 - Usage extraction;
 - fixtures.
 
+### Sprint 5 completion PRs (added after the Sprint 8 audit)
+
+The merged Sprint 5 PRs delivered the provider catalog, credential store,
+singleflight refresh, quota normalization and model discovery, but the running
+process still constructs inference ingress without a provider/account resolver,
+without cross-protocol translators and without the token-saver pipeline, and no
+provider exposes production-readiness metadata. PRD §20.3 broad-provider GA and
+SPEC §32/§36 therefore are not satisfied by the catalog alone. These PRs finish
+Sprint 5 before any further sprint work; they are ordered so each is reviewable
+in isolation.
+
+#### PR 5.1: Generic/OpenAI-compatible provider runtime wiring (independent)
+
+- Deliver app-side `ingress.ProviderResolver`/`Candidates`/`AccountProvider`
+  adapters over `credentials.Resolver` with a compiled provider-identity
+  fallback (base URL, transports, per-transport endpoints).
+- Wire the resolver into `internal/app` for native `openai-chat` and
+  `openai-responses` providers, plus Generic Provider nodes.
+- Evidence: an end-to-end test that a configured connection and catalog model
+  reach a mock upstream (native path), plus account-strategy/cooldown selection
+  tests. No cross-protocol translation in this PR.
+
+#### PR 5.2: cross-protocol translators (depends on 5.1)
+
+- Deliver Chat/Responses/Messages/Gemini/Ollama/System One cross-protocol
+  translators and the `Translate*` ingress hooks for non-native targets
+  (SPEC §9.3, §10).
+- Evidence: per-protocol translation fixtures covering messages/system/tools/
+  reasoning/terminal semantics and a translated dispatch test per pair.
+
+#### PR 5.3: transforms and prompt-cache pipeline wiring (depends on 5.1)
+
+- Deliver app-side `TransformFinalBody` wiring for RTK/Headroom/Caveman/
+  Ponytail/PXPIPE in the normative order plus final-body cache anchoring
+  (BDR-012, PRD-CACHE-001), honoring client bypass and fail-open semantics.
+- Evidence: ordered pipeline tests on a real outbound body and N/N+1 cache
+  anchor fixtures through the wired ingress.
+
+#### PR 5.4: provider readiness metadata (independent)
+
+- Deliver `ProviderReadiness` (`ready`/`experimental`/`unavailable`) as a
+  provider/build capability per SPEC §36, expose it in the provider read model
+  and the Providers UI so an unimplemented provider is never shown as
+  production-ready.
+- Evidence: registry/read-model tests proving every active baseline row maps to
+  an explicit readiness, and a UI assertion that readiness renders separately
+  from enabled/disabled.
+
+#### PR 5.5: specialized provider modules (depends on 5.2; one PR per family)
+
+- Deliver the specialized-wire and OAuth/cookie/PAT modules that the merged
+  catalog PR explicitly deferred: request/stream codecs, credential flows,
+  import/auto-import helpers, usage/quota clients and fixtures, grouped by
+  family (for example Google/AWS, cookie/session, device-token).
+- Evidence: PROVIDER_BASELINE §11 acceptance items per provider row.
+
+Broad-provider GA is reached only when every one of the 80 active rows is
+`ready` under SPEC §36.
+
 ## Sprint 6 — Telemetry and control plane
 
 ### PR: Usage/telemetry
