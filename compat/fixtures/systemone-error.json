@@ -1,0 +1,16 @@
+{
+  "id": "systemone-error",
+  "protocol": "systemone",
+  "kind": "upstream-error",
+  "description": "Synthetic provider-owned primitive validation error; gateway must not invent primitive validation or rewrite the response.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": "{\"model\":\"jev-latest\",\"state\":null,\"questions\":{\"future\":null}}"
+  },
+  "response": {
+    "status": 422,
+    "headers": {"content-type": "application/json", "x-request-id": "fixture-typed-error"},
+    "body": "{\"error\":{\"message\":\"Synthetic unknown question type\",\"question\":\"future\"}}"
+  }
+}

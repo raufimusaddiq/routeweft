@@ -58,6 +58,9 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, source, model
 		return
 	}
 	defer response.Body.Close()
+	if source == systemoneadapter.Protocol {
+		stream = strings.EqualFold(strings.TrimSpace(strings.SplitN(response.Header.Get("Content-Type"), ";", 2)[0]), "text/event-stream")
+	}
 	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -72,9 +75,9 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, source, model
 				io.Reader
 				io.Closer
 			}{Reader: io.TeeReader(response.Body, scanner), Closer: response.Body}
-			h.copyNativeSSE(w, r, response)
+			relayErr := h.copyNativeSSE(w, r, response)
 			usage, _ := scanner.usage()
-			if !scanner.reportsUsage(r.Context().Err() == nil) {
+			if !scanner.reportsUsage(relayErr == nil && r.Context().Err() == nil) {
 				usage = promptcache.Usage{}
 			}
 			h.emitOutcome(r, provider, response.StatusCode, true, usage, started)
@@ -371,7 +374,7 @@ func (h *Handler) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 		body:     func(upstream string) ([]byte, error) { return request.MarshalBody(upstream) },
 		headers:  openAIProviderHeaders,
 	}
-	h.dispatch(w, r, systemoneadapter.Protocol, request.Model, native, systemoneTranslate(h.opts.TranslateSystemOne, request), false)
+	h.dispatch(w, r, systemoneadapter.Protocol, strings.TrimSpace(request.Model), native, systemoneTranslate(h.opts.TranslateSystemOne, request), false)
 }
 
 func systemoneTranslate(translator SystemOneTranslator, request *systemoneadapter.Request) translateHook {
@@ -381,26 +384,29 @@ func systemoneTranslate(translator SystemOneTranslator, request *systemoneadapte
 	return func(target string) (ChatTranslation, error) { return translator(request, target) }
 }
 
-// copyNativeSSE relays Gemini/Ollama compatibility streams without decoding the
+// copyNativeSSE relays native compatibility streams without decoding the
 // body, preserving client-disconnect cancellation and incremental flushing.
-func (h *Handler) copyNativeSSE(w http.ResponseWriter, r *http.Request, response *http.Response) {
+func (h *Handler) copyNativeSSE(w http.ResponseWriter, r *http.Request, response *http.Response) error {
 	flusher, canFlush := w.(http.Flusher)
 	buffer := make([]byte, 32*1024)
 	for {
 		if r.Context().Err() != nil {
-			return
+			return r.Context().Err()
 		}
 		n, err := response.Body.Read(buffer)
 		if n > 0 {
 			if _, writeErr := w.Write(buffer[:n]); writeErr != nil {
-				return
+				return writeErr
 			}
 			if canFlush {
 				flusher.Flush()
 			}
 		}
 		if err != nil {
-			return
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
 		}
 	}
 }

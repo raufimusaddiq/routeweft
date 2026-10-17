@@ -21,6 +21,80 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
 )
 
+func TestCustomTypedNodeAndCloudflareAccountWorkflow(t *testing.T) {
+	paths := make(chan string, 3)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths <- r.URL.Path
+		if r.Header.Get("Authorization") != "Bearer synthetic" {
+			t.Error("provider credential missing")
+		}
+		io.Copy(io.Discard, r.Body)
+		io.WriteString(w, `{"answers":{"probe":true}}`)
+	}))
+	defer upstream.Close()
+	h, mux, store, creds, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	for _, spec := range registry.Builtins() {
+		if spec.ID == "cloudflare-ai" {
+			h.opts.Providers = append(h.opts.Providers, spec)
+		}
+	}
+	node := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/provider-nodes", `{"kind":"generic","name":"Typed","prefix":"typed","baseUrl":"`+upstream.URL+`/typed/evaluate","transports":["systemone"]}`)
+	if node.Code != 200 {
+		t.Fatalf("typed node: %d %s", node.Code, node.Body)
+	}
+	var saved struct{ ID string }
+	if err := json.Unmarshal(node.Body.Bytes(), &saved); err != nil {
+		t.Fatal(err)
+	}
+	connection := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections", `{"nodeId":"`+saved.ID+`","name":"Typed","identity":"typed","secret":{"accessToken":"synthetic"}}`)
+	if connection.Code != 200 || json.Unmarshal(connection.Body.Bytes(), &saved) != nil {
+		t.Fatalf("typed connection: %d %s", connection.Code, connection.Body)
+	}
+	probe := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+saved.ID+"/test-models", `{"transport":"systemone","modelIds":["custom-model"]}`)
+	if probe.Code != 200 || !strings.Contains(probe.Body.String(), `"ok":true`) {
+		t.Fatalf("typed probe: %d %s", probe.Code, probe.Body)
+	}
+	mixed := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/provider-nodes", `{"kind":"generic","name":"Bad","prefix":"bad","baseUrl":"`+upstream.URL+`","transports":["systemone","openai-chat"]}`)
+	if mixed.Code != 400 {
+		t.Fatalf("mixed typed/chat endpoint accepted: %d", mixed.Code)
+	}
+	cf, err := creds.PutNode(context.Background(), credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "cloudflare-ai", Name: "Cloudflare", BaseURL: upstream.URL + "/accounts", Transports: []string{"openai-chat", "systemone"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection = doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections", `{"nodeId":"`+cf.ID+`","name":"CF","identity":"cf","accountId":"account-a","secret":{"accessToken":"synthetic"}}`)
+	if connection.Code != 200 || json.Unmarshal(connection.Body.Bytes(), &saved) != nil {
+		t.Fatalf("CF connection: %d %s", connection.Code, connection.Body)
+	}
+	patched := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+saved.ID, `{"name":"renamed"}`)
+	if patched.Code != 200 || !strings.Contains(patched.Body.String(), `"accountId":"account-a"`) {
+		t.Fatalf("account ID lost on patch: %d %s", patched.Code, patched.Body)
+	}
+	listed := doJSON(t, mux, cookie, http.MethodGet, "/admin/v1/connections", "")
+	if listed.Code != 200 || !strings.Contains(listed.Body.String(), `"accountId":"account-a"`) || strings.Contains(listed.Body.String(), "synthetic") {
+		t.Fatalf("account metadata missing or secret exposed: %d %s", listed.Code, listed.Body)
+	}
+	for _, protocol := range []string{"systemone", "openai-chat"} {
+		model := "@cf/cloudflare/clef"
+		if protocol == "openai-chat" {
+			model = "@cf/meta/llama"
+		}
+		probe = doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+saved.ID+"/test-models", `{"transport":"`+protocol+`","modelIds":["`+model+`"]}`)
+		if probe.Code != 200 || !strings.Contains(probe.Body.String(), `"ok":true`) {
+			t.Fatalf("CF probe: %d %s", probe.Code, probe.Body)
+		}
+	}
+	invalid := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+saved.ID, `{"accountId":"../escape"}`)
+	if invalid.Code != 400 {
+		t.Fatalf("unsafe account ID accepted: %d", invalid.Code)
+	}
+	gotPaths := []string{<-paths, <-paths, <-paths}
+	if strings.Join(gotPaths, ",") != "/typed/evaluate,/accounts/account-a/ai/run/@cf/cloudflare/clef,/accounts/account-a/ai/v1/chat/completions" {
+		t.Fatalf("wrong typed endpoints: %v", gotPaths)
+	}
+}
+
 func newProvidersAPI(t *testing.T, allowPrivate bool, upstream *discovery.Client) (*Handler, *http.ServeMux, *sqlite.Store, *credentials.Store, *http.Cookie) {
 	t.Helper()
 	ctx := context.Background()

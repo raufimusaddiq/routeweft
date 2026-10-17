@@ -11,6 +11,56 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 )
 
+func TestSystemOneSeedsAndCloudflareAccountEndpoints(t *testing.T) {
+	m, s := providerStore(t)
+	ctx := context.Background()
+	for _, provider := range []string{"typesafe", "cloudflare-ai"} {
+		node, err := s.PutNode(ctx, credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: provider, Name: provider})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.PutConnection(ctx, credentials.Connection{ID: provider, NodeID: node.ID, Name: provider, Identity: provider, AuthKind: credentials.AuthNone, Enabled: true, AccountID: "account-a"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, _ := m.Load()
+	for _, tc := range []struct{ model, account, source, endpoint string }{
+		{"typesafe/jev-latest", "typesafe", "systemone", ""},
+		{"cloudflare-ai/@cf/cloudflare/clef", "cloudflare-ai", "systemone", "account-a/ai/run/@cf/cloudflare/clef"},
+		{"cloudflare-ai/@cf/cloudflare/clef-flash", "cloudflare-ai", "systemone", "account-a/ai/run/@cf/cloudflare/clef-flash"},
+	} {
+		got, ok := snapshot.AccountProvider(tc.model, tc.account, tc.source, nil)
+		if !ok || got.Protocol != tc.source || got.Endpoint != tc.endpoint {
+			t.Fatalf("provider=%+v ok=%v expected=%+v", got, ok, tc)
+		}
+	}
+	if _, ok := snapshot.AccountProvider("cloudflare-ai/@cf/cloudflare/clef", "cloudflare-ai", "openai-chat", nil); ok {
+		t.Fatal("typed model selected as chat")
+	}
+	connection, err := s.GetConnection(ctx, "cloudflare-ai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection.AccountID = "account-b"
+	if _, err := s.PutConnection(ctx, connection); err != nil {
+		t.Fatal(err)
+	}
+	current, _ := m.Load()
+	old, _ := snapshot.AccountProvider("cloudflare-ai/@cf/cloudflare/clef", "cloudflare-ai", "systemone", nil)
+	updated, _ := current.AccountProvider("cloudflare-ai/@cf/cloudflare/clef", "cloudflare-ai", "systemone", nil)
+	if old.Endpoint != "account-a/ai/run/@cf/cloudflare/clef" || updated.Endpoint != "account-b/ai/run/@cf/cloudflare/clef" {
+		t.Fatalf("snapshot account metadata mutated: %s / %s", old.Endpoint, updated.Endpoint)
+	}
+	connection.AccountID = ""
+	if _, err := s.PutConnection(ctx, connection); err != nil {
+		t.Fatal(err)
+	}
+	current, _ = m.Load()
+	if _, ok := current.AccountProvider("cloudflare-ai/@cf/cloudflare/clef", "cloudflare-ai", "systemone", nil); ok {
+		t.Fatal("unconfigured Cloudflare account selected")
+	}
+}
+
 func providerStore(t *testing.T) (*Manager, *credentials.Store) {
 	t.Helper()
 	m, db := newTestManager(t)
