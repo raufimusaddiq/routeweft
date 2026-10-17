@@ -47,7 +47,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 	// Key policy is checked before any resolution so a restricted key cannot
 	// probe which models, aliases or Combos exist.
 	if !requestPermitted(callerKey(r, snapshot), snapshot, model) {
-		return nil, routing.ProviderRef{}, &dispatchError{403, "model_not_allowed", fmt.Sprintf("this API key may not use model %q", model)}
+		return nil, routing.ProviderRef{}, &dispatchError{403, "model_not_allowed", modelNotAllowed(model)}
 	}
 	var candidates []routing.ProviderRef
 	if h.opts.Candidates != nil && h.opts.AccountProvider != nil {

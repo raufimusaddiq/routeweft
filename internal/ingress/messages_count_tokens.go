@@ -41,7 +41,7 @@ func (h *Handler) handleCountTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if model, _ := payload["model"].(string); model != "" && !requestPermitted(callerKey(r, snapshot), snapshot, model) {
-		h.writeError(w, http.StatusForbidden, "model_not_allowed", "this API key may not use model \""+model+"\"")
+		h.writeError(w, http.StatusForbidden, "model_not_allowed", modelNotAllowed(model))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"input_tokens": estimateAnthropicInputTokens(payload)})

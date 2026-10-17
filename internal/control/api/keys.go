@@ -40,7 +40,7 @@ func (h *Handler) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"key":    map[string]any{"id": entry.ID, "name": entry.Name, "prefix": entry.Prefix, "enabled": !entry.Disabled, "paused": entry.Paused, "access": accessJSON(entry.Restricted, entry.Allow)},
+		"key":    keyJSON(entry),
 		"secret": secret, "configRevision": h.activeConfigRevision(),
 	})
 }
@@ -62,7 +62,6 @@ func (h *Handler) handlePatchKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	result := map[string]any{"id": id}
 	var policy *runtime.KeyAccess
 	if body.Access != nil {
 		allow, ok := h.checkAccess(w, body.Access)
@@ -70,18 +69,18 @@ func (h *Handler) handlePatchKey(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		policy = &runtime.KeyAccess{Restricted: *body.Access.Restricted, Allow: allow}
-		result["access"] = accessJSON(policy.Restricted, allow)
 	}
 	// Pause and access change together or not at all.
 	if err := h.opts.Keys.UpdateAPIKey(r.Context(), id, body.Paused, policy); err != nil {
 		h.keyMutationError(w, err, "API key could not be updated")
 		return
 	}
-	if body.Paused != nil {
-		result["paused"] = *body.Paused
+	stored, ok := h.storedKey(id)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "key_update_failed", "updated API key could not be read back")
+		return
 	}
-	result["configRevision"] = h.activeConfigRevision()
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, map[string]any{"key": stored, "configRevision": h.activeConfigRevision()})
 }
 
 // keyAccess is the admin-API form of a key's model/Combo allowlist.
@@ -160,4 +159,27 @@ func (h *Handler) activeConfigRevision() uint64 {
 		return 0
 	}
 	return snapshot.ConfigRevision()
+}
+
+// keyJSON is the single admin shape of a key, shared by create and update.
+func keyJSON(entry auth.Entry) map[string]any {
+	return map[string]any{"id": entry.ID, "name": entry.Name, "prefix": entry.Prefix, "enabled": !entry.Disabled, "paused": entry.Paused, "access": accessJSON(entry.Restricted, entry.Allow)}
+}
+
+// storedKey reads a key back from the published snapshot, so a response shows
+// what the store holds (after normalization), not what the request said.
+func (h *Handler) storedKey(id string) (map[string]any, bool) {
+	if h.opts.Runtime == nil {
+		return nil, false
+	}
+	snapshot, err := h.opts.Runtime.Load()
+	if err != nil {
+		return nil, false
+	}
+	for _, entry := range snapshot.APIKeys().Records() {
+		if entry.ID == id {
+			return keyJSON(entry), true
+		}
+	}
+	return nil, false
 }

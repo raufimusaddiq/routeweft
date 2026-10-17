@@ -29,9 +29,10 @@ const errorBodyPeek int64 = 32 << 10
 // applies capability reorder and capacity adapters before Combo-local strategy
 // rotation (SPEC §15.2-15.4). A named Combo overrides the direct model route.
 //
-// access is the caller's key: capacity-adapter pool members are operator-chosen
-// fallbacks, but a restricted key must never reach one outside its allowlist, so
-// they are filtered here before ordering. Combo members themselves are admitted
+// access is the caller's key: a restricted key must never reach a capacity-adapter
+// pool member outside its allowlist, so they are filtered here before ordering.
+// NOTE: PlanCombo has no production caller yet, so this is not enforced in
+// serving; the dispatch wiring must pass the request's key (SPEC §12.1). Combo members themselves are admitted
 // by the Combo's own entry in the allowlist.
 func (h *Handler) PlanCombo(snapshot *runtime.RuntimeSnapshot, access auth.Entry, name string, requirements []routing.CapabilityRequirement) ([]runtime.ComboMember, bool) {
 	combo, ok := snapshot.ComboByName(name)

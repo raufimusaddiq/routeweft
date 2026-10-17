@@ -251,3 +251,54 @@ func TestPlanComboFiltersAdapterPoolByCallerKey(t *testing.T) {
 		t.Fatalf("key with no pool grants must get no adapter tier: %v", none)
 	}
 }
+
+// authorize and dispatch load snapshots separately. If the key is paused,
+// revoked or reloaded away between them, dispatch must deny, not widen.
+func TestKeyMissAfterAuthenticationFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	manager := newManager(t)
+	entry, secret, err := manager.CreateAPIKeyWithAccess(ctx, "scoped", true, []string{"team"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.PutModel(ctx, runtime.Model{ProviderID: "openai", ID: "gpt-a", Name: "gpt-a"}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	req.Header.Set("Authorization", "Bearer "+secret)
+	before, _ := manager.Load()
+	if !callerKey(req, before).Restricted {
+		t.Fatal("live restricted key must stay restricted")
+	}
+	paused := true
+	for name, mutate := range map[string]func() error{
+		"paused":  func() error { return manager.UpdateAPIKey(ctx, entry.ID, &paused, nil) },
+		"revoked": func() error { return manager.DeleteAPIKey(ctx, entry.ID) },
+	} {
+		if err := mutate(); err != nil {
+			t.Fatal(err)
+		}
+		after, _ := manager.Load()
+		got := callerKey(req, after)
+		if !got.Restricted || got.Permits("openai/gpt-a", "team", "anything") {
+			t.Fatalf("%s key mid-request widened to %+v; must deny everything", name, got)
+		}
+		if requestPermitted(got, after, "openai/gpt-a") {
+			t.Fatalf("%s key mid-request reached a model", name)
+		}
+		if name == "paused" {
+			unpaused := false
+			if err := manager.UpdateAPIKey(ctx, entry.ID, &unpaused, nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// Keys not required: unrestricted by design.
+	if _, err := manager.SetSettings(ctx, map[string]string{"requireApiKey": "false"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	open, _ := manager.Load()
+	if callerKey(httptest.NewRequest("POST", "/v1/chat/completions", nil), open).Restricted {
+		t.Fatal("with API keys not required the caller is unrestricted")
+	}
+}

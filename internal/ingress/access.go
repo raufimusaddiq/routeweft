@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -8,19 +9,32 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
+// denyAll is the policy for a key that cannot be resolved: restricted with an
+// empty allowlist, so it permits nothing.
+var denyAll = auth.Entry{Restricted: true}
+
 // callerKey returns the authenticated client key for r. It is the zero Entry
-// (unrestricted) when API keys are not required; authorize has already
-// rejected missing or invalid keys before any handler reaches this.
+// (unrestricted) only when API keys are not required. Every other miss fails
+// closed: authorize and dispatch load snapshots separately, so a key paused,
+// revoked or reloaded between the two must deny, never widen to unrestricted.
 func callerKey(r *http.Request, snapshot *runtime.RuntimeSnapshot) auth.Entry {
 	if snapshot.Settings()["requireApiKey"] == "false" {
 		return auth.Entry{}
 	}
 	presented, ok := clientKey(r)
 	if !ok {
-		return auth.Entry{}
+		return denyAll
 	}
-	entry, _ := snapshot.APIKeys().Lookup(presented)
+	entry, ok := snapshot.APIKeys().Lookup(presented)
+	if !ok {
+		return denyAll
+	}
 	return entry
+}
+
+// modelNotAllowed is the one 403 message for a denied model request.
+func modelNotAllowed(model string) string {
+	return fmt.Sprintf("this API key may not use model %q", model)
 }
 
 // requestPermitted applies the key's allowlist to one requested model name.

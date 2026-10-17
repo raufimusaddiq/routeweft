@@ -403,13 +403,13 @@ func TestAPIKeyAccessPolicySurvivesRestartAndMutations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.SetAPIKeyPaused(ctx, entry.ID, false); err != nil {
+	if err := manager.UpdateAPIKey(ctx, entry.ID, boolPtr(false), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.SetAPIKeyAccess(ctx, "missing", true, nil); !errors.Is(err, ErrAPIKeyNotFound) {
+	if err := manager.UpdateAPIKey(ctx, "missing", nil, &KeyAccess{Restricted: true}); !errors.Is(err, ErrAPIKeyNotFound) {
 		t.Fatalf("missing key err = %v", err)
 	}
-	if err := manager.SetAPIKeyAccess(ctx, entry.ID, true, []string{""}); err == nil {
+	if err := manager.UpdateAPIKey(ctx, entry.ID, nil, &KeyAccess{Restricted: true, Allow: []string{""}}); err == nil {
 		t.Fatal("blank allowlist entry must be rejected")
 	}
 	reloaded, err := NewManager(ctx, store.DB())
@@ -425,3 +425,5 @@ func TestAPIKeyAccessPolicySurvivesRestartAndMutations(t *testing.T) {
 		t.Fatalf("reloaded key = %+v ok=%v, want restricted [fast team]", got, ok)
 	}
 }
+
+func boolPtr(v bool) *bool { return &v }

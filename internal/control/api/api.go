@@ -33,9 +33,7 @@ type SettingsStore interface {
 type KeyManager interface {
 	CreateAPIKey(context.Context, string) (auth.Entry, string, error)
 	CreateAPIKeyWithAccess(context.Context, string, bool, []string) (auth.Entry, string, error)
-	SetAPIKeyAccess(context.Context, string, bool, []string) error
 	UpdateAPIKey(context.Context, string, *bool, *runtime.KeyAccess) error
-	SetAPIKeyPaused(context.Context, string, bool) error
 	DeleteAPIKey(context.Context, string) error
 }
 

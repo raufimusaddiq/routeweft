@@ -463,15 +463,21 @@ Each client key carries `access: {restricted, allow[]}` (stored in `api_keys`
   Ollama chat; a denied request returns `403 model_not_allowed` whether or not
   the model exists (no existence oracle). `count_tokens` applies it when the body
   names a model.
-- Capacity-adapter pool members are checked against the same list (as
-  `provider/model`): `PlanCombo` takes the caller's key and drops pool members it
-  may not use before ordering, so a restricted key never reaches an adapter model
-  outside its allowlist.
+- Capacity-adapter pool members: **not yet enforced in serving.** `PlanCombo`
+  takes the caller's key and drops pool members outside its allowlist, but
+  `PlanCombo`/`PlanComboRequest` have no production caller yet (Combo and adapter
+  planning is not wired into dispatch). Whoever wires them must pass the
+  request's key; until then restricted-key pool enforcement is covered only by
+  unit tests of the planner.
+- An unresolvable key (paused, revoked or reloaded between authentication and
+  dispatch) is treated as restricted with an empty allowlist: it is denied,
+  never widened.
 - Discovery is access-aware: `/v1/models`, `/v1/models/{kind}`, `/v1/models/info`,
   `/v1/models/{provider}/{model}`, `/v1beta/models` and `/api/tags` list or
   return only permitted entries; hidden single lookups return 404.
 - Admin API: `POST /admin/v1/keys` accepts `access`; `PATCH /admin/v1/keys/{id}`
-  accepts `paused` and/or `access`; `GET /admin/v1/keys` returns `access`.
+  accepts `paused` and/or `access` and returns the stored key (same shape as
+  create); `GET /admin/v1/keys` returns `access`.
   Entries are trimmed, de-duplicated, at most 1000 entries of 256 bytes (request
   bodies up to 512 KiB). A missing `restricted` is a 400, never read as false.
   Switching to unrestricted clears the stored list.

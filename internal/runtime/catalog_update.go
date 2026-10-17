@@ -56,37 +56,6 @@ func (m *Manager) CreateAPIKeyWithAccess(ctx context.Context, name string, restr
 	return entry, plaintext, nil
 }
 
-// SetAPIKeyPaused pauses or resumes a key and publishes the new key index.
-func (m *Manager) SetAPIKeyPaused(ctx context.Context, id string, paused bool) error {
-	return m.UpdateCatalog(ctx, func(candidate *Candidate) error {
-		for i := range candidate.APIKeys {
-			if candidate.APIKeys[i].ID == id {
-				candidate.APIKeys[i].Paused = paused
-				return nil
-			}
-		}
-		return ErrAPIKeyNotFound
-	})
-}
-
-// SetAPIKeyAccess replaces a key's access policy and publishes the new index.
-func (m *Manager) SetAPIKeyAccess(ctx context.Context, id string, restricted bool, allow []string) error {
-	allow, err := auth.NormalizeAllow(allow)
-	if err != nil {
-		return err
-	}
-	return m.UpdateCatalog(ctx, func(candidate *Candidate) error {
-		for i := range candidate.APIKeys {
-			if candidate.APIKeys[i].ID == id {
-				candidate.APIKeys[i].Restricted = restricted
-				candidate.APIKeys[i].Allow = allow
-				return nil
-			}
-		}
-		return ErrAPIKeyNotFound
-	})
-}
-
 // UpdateAPIKey applies a pause change and/or an access-policy replacement in one
 // atomic mutation, so a failure never leaves half of the change published.
 func (m *Manager) UpdateAPIKey(ctx context.Context, id string, paused *bool, access *KeyAccess) error {

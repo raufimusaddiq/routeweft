@@ -194,3 +194,29 @@ func TestCorruptStoredAllowlistFailsTheListInsteadOfShowingEmpty(t *testing.T) {
 		t.Fatalf("corrupt allowlist listed as %d %s, want 500 instead of an empty allowlist", rec.Code, rec.Body)
 	}
 }
+
+func TestPatchReturnsStoredKeyInCreateShape(t *testing.T) {
+	mux, cookie, _, done := newAccessAPI(t)
+	defer done()
+	rec := callAdmin(mux, cookie, http.MethodPost, "/admin/v1/keys", `{"name":"shape","access":{"restricted":true,"allow":["b","a"]}}`)
+	var created struct {
+		Key map[string]any `json:"key"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	rec = callAdmin(mux, cookie, http.MethodPatch, "/admin/v1/keys/"+created.Key["id"].(string), `{"access":{"restricted":true,"allow":[" c ","a","a"]}}`)
+	var patched struct {
+		Key map[string]any `json:"key"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &patched); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("patch: %d %s", rec.Code, rec.Body)
+	}
+	for _, field := range []string{"id", "name", "prefix", "enabled", "paused", "access"} {
+		if _, ok := patched.Key[field]; !ok {
+			t.Fatalf("PATCH key lacks %q that POST returns: %v", field, patched.Key)
+		}
+	}
+	allow := patched.Key["access"].(map[string]any)["allow"].([]any)
+	if patched.Key["name"] != "shape" || len(allow) != 2 || allow[0] != "a" || allow[1] != "c" {
+		t.Fatalf("PATCH must echo stored (normalized) state, got %v", patched.Key)
+	}
+}
