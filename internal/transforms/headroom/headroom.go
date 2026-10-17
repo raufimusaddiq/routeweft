@@ -19,6 +19,8 @@ import (
 
 const defaultMaxResponseBytes = 4 << 20
 
+var defaultClient = transport.NewSSRFProtectedClient()
+
 // Client is the small HTTP surface required by Headroom; tests can supply a
 // deterministic fake without replacing global transports.
 type Client interface {
@@ -28,6 +30,7 @@ type Client interface {
 // Transform calls the configured external compression service. Errors are
 // returned to Pipeline, which implements the normative fail-open behavior.
 type Transform struct {
+	AllowPrivate         bool
 	URL                  string
 	Timeout              time.Duration
 	CompressUserMessages bool
@@ -61,6 +64,10 @@ type response struct {
 // Apply sends one bounded compression request. It rejects malformed/non-HTTP(S)
 // URLs, caps time and response size, and never sends content to diagnostics.
 func (t Transform) Apply(request transforms.Request) (transforms.Request, error) {
+	return t.ApplyContext(context.Background(), request)
+}
+
+func (t Transform) ApplyContext(parent context.Context, request transforms.Request) (transforms.Request, error) {
 	if strings.TrimSpace(t.URL) == "" {
 		t.report(Diagnostic{Enabled: true, Error: "headroom URL is required"})
 		return request, errors.New("headroom URL is required")
@@ -70,7 +77,11 @@ func (t Transform) Apply(request transforms.Request) (transforms.Request, error)
 		t.report(Diagnostic{Enabled: true, Error: err.Error()})
 		return request, err
 	}
-	if _, err := transport.ValidatePublicURL(endpoint.String()); err != nil {
+	validate := transport.ValidatePublicURL
+	if t.AllowPrivate {
+		validate = transport.ValidateTrustedLocalURL
+	}
+	if _, err := validate(endpoint.String()); err != nil {
 		t.report(Diagnostic{Enabled: true, Error: err.Error()})
 		return request, err
 	}
@@ -80,9 +91,9 @@ func (t Transform) Apply(request transforms.Request) (transforms.Request, error)
 	}
 	client := t.Client
 	if client == nil {
-		client = &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		client = defaultClient
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	body, err := json.Marshal(payload{System: request.System, Messages: request.Messages, CompressUserMessages: t.CompressUserMessages})
 	if err != nil {
@@ -135,6 +146,18 @@ func (t Transform) Apply(request transforms.Request) (transforms.Request, error)
 		t.report(diagnostic)
 		return request, errors.New(diagnostic.Error)
 	}
+	if err := transforms.ValidateReplacement(request, compressed.System, compressed.Messages); err != nil {
+		diagnostic.Error = err.Error()
+		t.report(diagnostic)
+		return request, err
+	}
+	if !t.CompressUserMessages {
+		for i := range compressed.Messages {
+			if request.Messages[i].Role == "user" && !request.Messages[i].ToolResult {
+				compressed.Messages[i].Content = request.Messages[i].Content
+			}
+		}
+	}
 	updated := request.Clone()
 	updated.System = compressed.System
 	updated.Messages = compressed.Messages
@@ -159,8 +182,10 @@ func (t Transform) Health(ctx context.Context) error {
 	}
 	client := t.Client
 	if client == nil {
-		client = &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		client = defaultClient
 	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
 		return err

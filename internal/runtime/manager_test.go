@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -12,6 +13,51 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/store/migrations"
 	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
 )
+
+func TestCompiledSaversRemainSnapshotLocalDuringPublication(t *testing.T) {
+	ctx := context.Background()
+	manager, store := newTestManager(t)
+	defer store.Close()
+	if _, err := manager.SetSettings(ctx, map[string]string{"cavemanEnabled": "true", "ponytailEnabled": "true"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := manager.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := 0; n < 30; n++ {
+				snapshot, err := manager.Load()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				body, err := snapshot.TransformBody(ctx, "openai-chat", []byte(`{"messages":[{"role":"user","content":"hi"}]}`), false)
+				if err != nil || strings.Contains(string(body), "[routeweft:caveman]") != strings.Contains(string(body), "[routeweft:ponytail]") {
+					t.Errorf("incoherent savers: %s, %v", body, err)
+				}
+			}
+		}()
+	}
+	for n := 0; n < 6; n++ {
+		value := "false"
+		if n%2 == 0 {
+			value = "true"
+		}
+		if _, err := manager.SetSettings(ctx, map[string]string{"cavemanEnabled": value, "ponytailEnabled": value}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wg.Wait()
+	body, err := pinned.TransformBody(ctx, "openai-chat", []byte(`{"messages":[{"role":"user","content":"hi"}]}`), false)
+	if err != nil || !strings.Contains(string(body), "[routeweft:caveman]") || !strings.Contains(string(body), "[routeweft:ponytail]") {
+		t.Fatalf("publication mutated pinned pipeline: %s, %v", body, err)
+	}
+}
 
 func newTestManager(t *testing.T) (*Manager, *sqlite.Store) {
 	t.Helper()
@@ -195,6 +241,7 @@ func TestDefaultsMatchProductContract(t *testing.T) {
 		"ponytailEnabled":              "false",
 		"ponytailLevel":                "full",
 		"pxpipeEnabled":                "false",
+		"pxpipeUrl":                    "",
 		"pxpipeAutoInstall":            "true",
 		"pxpipeMinChars":               "25000",
 		"pxpipeTimeoutMs":              "15000",

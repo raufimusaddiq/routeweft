@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -253,7 +254,7 @@ func TestPatchSettingsRejectsEmptyAndInvalid(t *testing.T) {
 	}
 }
 
-func TestPatchSettingsAppliesSSRFPolicyToGlobalProxyURL(t *testing.T) {
+func TestPatchSettingsAppliesSSRFPolicyToOutboundURLs(t *testing.T) {
 	settings := &fakeSettings{values: map[string]string{}}
 	handler, _, store := newAPI(t, settings)
 	defer store.Close()
@@ -263,20 +264,21 @@ func TestPatchSettingsAppliesSSRFPolicyToGlobalProxyURL(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	handler.Attach(mux)
-	request := httptest.NewRequest(http.MethodPatch, "/admin/v1/settings", strings.NewReader(`{"set":{"outboundProxyUrl":"http://127.0.0.1:3128"}}`))
-	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
-	recorder := httptest.NewRecorder()
-	mux.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusBadRequest || settings.values["outboundProxyUrl"] != "" {
-		t.Fatalf("private proxy status=%d settings=%v", recorder.Code, settings.values)
-	}
-	handler.opts.AllowPrivateUpstreams = true
-	request = httptest.NewRequest(http.MethodPatch, "/admin/v1/settings", strings.NewReader(`{"set":{"outboundProxyUrl":"http://127.0.0.1:3128"}}`))
-	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
-	recorder = httptest.NewRecorder()
-	mux.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK || settings.values["outboundProxyUrl"] != "http://127.0.0.1:3128" {
-		t.Fatalf("trusted-local proxy status=%d settings=%v body=%s", recorder.Code, settings.values, recorder.Body.String())
+	for _, key := range []string{"outboundProxyUrl", "headroomUrl", "pxpipeUrl"} {
+		for _, local := range []bool{false, true} {
+			handler.opts.AllowPrivateUpstreams = local
+			request := httptest.NewRequest(http.MethodPatch, "/admin/v1/settings", strings.NewReader(fmt.Sprintf(`{"set":{%q:"http://127.0.0.1:3128"}}`, key)))
+			request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+			recorder := httptest.NewRecorder()
+			mux.ServeHTTP(recorder, request)
+			want := http.StatusBadRequest
+			if local {
+				want = http.StatusOK
+			}
+			if recorder.Code != want || !local && settings.values[key] != "" || local && settings.values[key] != "http://127.0.0.1:3128" {
+				t.Fatalf("%s local=%v status=%d settings=%v body=%s", key, local, recorder.Code, settings.values, recorder.Body)
+			}
+		}
 	}
 }
 

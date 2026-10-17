@@ -87,9 +87,9 @@ func TestAnchorMalformedAndUnanchorable(t *testing.T) {
 			t.Errorf("accepted %s", b)
 		}
 	}
-	plainSystem := []byte(`{"system":"invalid"}`)
-	if got, err := Anchor(plainSystem, 4); err != nil || !bytes.Equal(got, plainSystem) {
-		t.Fatalf("plain system should remain unchanged: %s err=%v", got, err)
+	plainSystem := []byte(`{"system":"plain"}`)
+	if got, err := Anchor(plainSystem, 4); err != nil || !bytes.Equal(got, []byte(`{"system":[{"cache_control":{"type":"ephemeral"},"text":"plain","type":"text"}]}`)) {
+		t.Fatalf("plain system anchor: %s err=%v", got, err)
 	}
 	b := []byte(`{"future":{"keep":true},"messages":[{"role":"user","content":"plain"}]}`)
 	got, err := Anchor(b, 4)

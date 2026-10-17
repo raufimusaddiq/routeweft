@@ -186,6 +186,9 @@ func (a *App) initialize(ctx context.Context) error {
 		return err
 	}
 	a.ingress = ingress.New(manager, ingress.Options{
+		TransformFinalBody: func(ctx context.Context, snapshot *runtime.RuntimeSnapshot, protocol string, body []byte) ([]byte, error) {
+			return snapshot.TransformBody(ctx, protocol, body, a.cfg.AllowPrivateUpstreams)
+		},
 		TranslateChat:      ingress.TranslateChat,
 		TranslateResponses: ingress.TranslateResponses,
 		Candidates: func(snapshot *runtime.RuntimeSnapshot, model string) ([]routing.Account, bool) {

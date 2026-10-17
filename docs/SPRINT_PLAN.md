@@ -305,6 +305,12 @@ in isolation.
   (BDR-012, PRD-CACHE-001), honoring client bypass and fail-open semantics.
 - Evidence: ordered pipeline tests on a real outbound body and N/N+1 cache
   anchor fixtures through the wired ingress.
+- R03 uses a serving-pipeline boundary first: snapshot-compiled settings,
+  protocol text projection, existing saver HTTP interfaces, per-attempt
+  fallback/retry integration, bypass/fail-open/cancellation and final cache.
+  Pinned Headroom wire compatibility and PXPIPE native image-rendering behavior
+  remain individual-helper parity work, not certified by HTTP echo fixtures.
+  Do not begin that dependent PR before this pipeline head is reviewed.
 
 #### PR 5.4: provider readiness metadata (independent)
 

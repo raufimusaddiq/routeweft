@@ -1,0 +1,27 @@
+[
+  {
+    "Protocol":"openai-chat",
+    "Input":{"model":"m","future":{"x":true},"messages":[{"role":"system","content":"base","future":1},{"role":"tool","tool_call_id":"call","content":"{ \"x\" : 1 }"},{"role":"assistant","content":[{"type":"text","text":"answer","future":true},{"type":"image_url","image_url":{"url":"data:image/png;base64,synthetic"}}]}]},
+    "Expected":{"model":"m","future":{"x":true},"messages":[{"role":"system","content":"[routeweft:caveman] Respond concisely. Prefer short sentences and omit pleasantries.\n\n[routeweft:ponytail] Prefer shorter answers; skip preamble and summary unless asked."},{"role":"system","content":"base","future":1},{"role":"tool","tool_call_id":"call","content":"{\"x\":1}"},{"role":"assistant","content":[{"type":"text","text":"answer","future":true},{"type":"image_url","image_url":{"url":"data:image/png;base64,synthetic"}}]}]}
+  },
+  {
+    "Protocol":"openai-responses",
+    "Input":{"model":"m","instructions":"base","input":[{"type":"function_call_output","call_id":"call","output":"{ \"x\" : 1 }"},{"type":"reasoning","encrypted_content":"opaque"},{"role":"user","content":[{"type":"input_file","file_id":"f"}]}],"future":true},
+    "Expected":{"model":"m","instructions":"[routeweft:caveman] Respond concisely. Prefer short sentences and omit pleasantries.\n\n[routeweft:ponytail] Prefer shorter answers; skip preamble and summary unless asked.\n\nbase","input":[{"type":"function_call_output","call_id":"call","output":"{\"x\":1}"},{"type":"reasoning","encrypted_content":"opaque"},{"role":"user","content":[{"type":"input_file","file_id":"f"}]}],"future":true}
+  },
+  {
+    "Protocol":"anthropic-messages",
+    "Input":{"model":"m","system":[{"type":"text","text":"base","cache_control":{"type":"ephemeral","ttl":"1h"}}],"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"call","content":[{"type":"text","text":"{ \"x\" : 1 }"},{"type":"image","source":{"type":"base64","data":"synthetic"}}]}]},{"role":"assistant","content":[{"type":"thinking","thinking":"opaque","signature":"sig"},{"type":"redacted_thinking","data":"opaque"},{"type":"tool_use","id":"call2","input":{"x":1}}]}],"future":true},
+    "Expected":{"model":"m","system":[{"type":"text","text":"[routeweft:caveman] Respond concisely. Prefer short sentences and omit pleasantries."},{"type":"text","text":"[routeweft:ponytail] Prefer shorter answers; skip preamble and summary unless asked."},{"type":"text","text":"base","cache_control":{"type":"ephemeral","ttl":"1h"}}],"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"call","content":[{"type":"text","text":"{\"x\":1}"},{"type":"image","source":{"type":"base64","data":"synthetic"}}]}]},{"role":"assistant","content":[{"type":"thinking","thinking":"opaque","signature":"sig"},{"type":"redacted_thinking","data":"opaque"},{"type":"tool_use","id":"call2","input":{"x":1}}]}],"future":true}
+  },
+  {
+    "Protocol":"gemini",
+    "Input":{"systemInstruction":{"parts":[{"text":"base"}],"future":true},"contents":[{"role":"user","parts":[{"text":"hi"},{"inlineData":{"mimeType":"image/png","data":"synthetic"}},{"functionResponse":{"name":"f","response":{"x":1}}}]}],"future":true},
+    "Expected":{"systemInstruction":{"parts":[{"text":"[routeweft:caveman] Respond concisely. Prefer short sentences and omit pleasantries.\n\n[routeweft:ponytail] Prefer shorter answers; skip preamble and summary unless asked."},{"text":"base"}],"future":true},"contents":[{"role":"user","parts":[{"text":"hi"},{"inlineData":{"mimeType":"image/png","data":"synthetic"}},{"functionResponse":{"name":"f","response":{"x":1}}}]}],"future":true}
+  },
+  {
+    "Protocol":"ollama",
+    "Input":{"model":"m","messages":[{"role":"user","content":"hi","images":["synthetic"]},{"role":"tool","content":"{ \"x\" : 1 }"}],"options":{"future":true}},
+    "Expected":{"model":"m","messages":[{"role":"system","content":"[routeweft:caveman] Respond concisely. Prefer short sentences and omit pleasantries.\n\n[routeweft:ponytail] Prefer shorter answers; skip preamble and summary unless asked."},{"role":"user","content":"hi","images":["synthetic"]},{"role":"tool","content":"{\"x\":1}"}],"options":{"future":true}}
+  }
+]

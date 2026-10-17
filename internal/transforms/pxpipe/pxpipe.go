@@ -39,6 +39,7 @@ type Client interface {
 // The pipeline owns fail-open behavior, so Apply returns errors rather than
 // silently substituting content.
 type Transform struct {
+	AllowPrivate     bool
 	Enabled          bool
 	URL              string
 	MinChars         int
@@ -95,6 +96,10 @@ type response struct {
 // Apply transforms one request. Context size is estimated from the neutral
 // view; requests below the threshold are skipped without contacting PXPIPE.
 func (t Transform) Apply(request transforms.Request) (transforms.Request, error) {
+	return t.ApplyContext(context.Background(), request)
+}
+
+func (t Transform) ApplyContext(parent context.Context, request transforms.Request) (transforms.Request, error) {
 	if !t.Enabled {
 		return request, nil
 	}
@@ -114,14 +119,18 @@ func (t Transform) Apply(request transforms.Request) (transforms.Request, error)
 	if err != nil {
 		return request, t.fail(Diagnostic{Step: "pxpipe", Attempted: true, InputChars: inputChars, Error: err.Error()})
 	}
-	if _, err := transport.ValidatePublicURL(endpoint.String()); err != nil {
+	validate := transport.ValidatePublicURL
+	if t.AllowPrivate {
+		validate = transport.ValidateTrustedLocalURL
+	}
+	if _, err := validate(endpoint.String()); err != nil {
 		return request, t.fail(Diagnostic{Step: "pxpipe", Attempted: true, InputChars: inputChars, Error: err.Error()})
 	}
 	timeout := t.Timeout
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	body, err := json.Marshal(payload{System: request.System, Messages: request.Messages})
 	if err != nil {
@@ -158,6 +167,9 @@ func (t Transform) Apply(request transforms.Request) (transforms.Request, error)
 	}
 	if transformed.System == nil || transformed.Messages == nil {
 		return request, t.fail(Diagnostic{Step: "pxpipe", Attempted: true, InputChars: inputChars, Duration: time.Since(started), Error: "pxpipe response is missing system or messages"})
+	}
+	if err := transforms.ValidateReplacement(request, transformed.System, transformed.Messages); err != nil {
+		return request, t.fail(Diagnostic{Step: "pxpipe", Attempted: true, InputChars: inputChars, Error: err.Error()})
 	}
 	updated := request.Clone()
 	updated.System = transformed.System

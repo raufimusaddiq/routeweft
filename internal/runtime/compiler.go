@@ -10,6 +10,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/auth"
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
+	transformbody "github.com/raufimusaddiq/routeweft/internal/transforms/body"
 )
 
 type Config struct {
@@ -117,6 +118,7 @@ var defaultSettings = map[string]string{
 	"ponytailEnabled":              "false",
 	"ponytailLevel":                "full",
 	"pxpipeEnabled":                "false",
+	"pxpipeUrl":                    "",
 	"pxpipeAutoInstall":            "true",
 	"pxpipeMinChars":               "25000",
 	"pxpipeTimeoutMs":              "15000",
@@ -172,6 +174,7 @@ func (Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, error)
 		return nil, err
 	}
 	snapshot := &RuntimeSnapshot{
+		savers:         transformbody.Compile(settings),
 		providerConfig: config.Providers.Clone(),
 		providers:      providers,
 		version:        version,

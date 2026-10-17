@@ -8,6 +8,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
 // WritableSettings is the allowlist of settings the control API may mutate.
@@ -46,6 +49,7 @@ var writableSettings = map[string]struct{}{
 	"ponytailEnabled":              {},
 	"ponytailLevel":                {},
 	"pxpipeEnabled":                {},
+	"pxpipeUrl":                    {},
 	"pxpipeAutoInstall":            {},
 	"pxpipeMinChars":               {},
 	"pxpipeTimeoutMs":              {},
@@ -130,6 +134,23 @@ func validateSettingValue(key, value string) error {
 		}
 	case "cavemanLevel", "ponytailLevel":
 		if value != "lite" && value != "full" && value != "ultra" {
+			return invalid()
+		}
+	case "headroomTimeoutMs", "pxpipeTimeoutMs":
+		n, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || n <= 0 || n > int64((1<<63-1)/time.Millisecond) {
+			return invalid()
+		}
+	case "pxpipeMinChars":
+		n, err := strconv.Atoi(value)
+		if err != nil || n <= 0 {
+			return invalid()
+		}
+	case "headroomUrl", "pxpipeUrl":
+		if value == "" && key == "pxpipeUrl" {
+			return nil
+		}
+		if _, err := transport.ValidateTrustedLocalURL(value); err != nil {
 			return invalid()
 		}
 	case "stickyRoundRobinLimit", "comboStickyRoundRobinLimit", "observabilityMaxRecords", "observabilityBatchSize", "observabilityFlushIntervalMs", "observabilityMaxJsonSize":

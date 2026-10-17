@@ -31,64 +31,36 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, source, model
 		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
 		return
 	}
-	if h.opts.ProviderResolver == nil {
-		h.writeError(w, http.StatusServiceUnavailable, "no_provider", "no provider is configured")
-		return
-	}
-	provider, ok := h.opts.ProviderResolver(snapshot, model)
-	if !ok {
-		h.writeError(w, http.StatusNotFound, "model_not_found", fmt.Sprintf("model %q is not configured for inference", model))
-		return
-	}
-	plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: source, TargetProtocol: provider.Protocol, Provider: provider})
-	if err != nil {
-		h.writeError(w, http.StatusBadGateway, "route_unavailable", err.Error())
-		return
-	}
-	endpoint := native.endpoint
-	var headers http.Header
-	var outbound []byte
-	if plan.NativePath() {
-		// Multi-transport providers may serve a different path per native
-		// protocol; the registry owns that mapping (SPEC §11).
+	response, provider, err := h.dispatchAttempts(r, snapshot, model, source, false, func(provider routing.ProviderRef) (ChatTranslation, error) {
+		plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: source, Provider: provider})
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		if !plan.NativePath() {
+			if translated != nil {
+				return translated(plan.TargetProtocol)
+			}
+			return ChatTranslation{}, fmt.Errorf("no %s translator registered for target protocol %q", source, plan.TargetProtocol)
+		}
+		endpoint := native.endpoint
 		if provider.Endpoint != "" {
 			endpoint = provider.Endpoint
 		}
-		outbound, err = native.body(provider.UpstreamModel)
+		body, err := native.body(provider.UpstreamModel)
+		var headers http.Header
 		if native.headers != nil {
 			headers = native.headers(provider)
 		}
-	} else if translated != nil {
-		var full ChatTranslation
-		full, err = translated(plan.TargetProtocol)
-		endpoint, outbound, headers = full.Endpoint, full.Body, full.Headers
-	} else {
-		err = fmt.Errorf("no %s translator registered for target protocol %q", source, plan.TargetProtocol)
-	}
+		return ChatTranslation{Endpoint: endpoint, Body: body, Headers: headers}, err
+	})
 	if err != nil {
-		h.writeError(w, http.StatusBadGateway, "request_translation_failed", err.Error())
-		return
-	}
-	upstreamRequest, err := h.newUpstreamRequest(r, provider, endpoint, outbound, headers)
-	if err != nil {
-		h.writeError(w, http.StatusBadGateway, "upstream_configuration_error", err.Error())
-		return
-	}
-	response, err := h.clientFor(provider).Do(upstreamRequest)
-	if err != nil {
-		if r.Context().Err() != nil {
-			return
-		}
-		h.writeError(w, http.StatusBadGateway, "upstream_request_failed", "upstream request failed")
+		h.dispatchError(w, r, err)
 		return
 	}
 	defer response.Body.Close()
 	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		prefix, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyPeek))
-		h.recordUpstreamFailure(provider, response.StatusCode, response.Header, prefix)
-		_, _ = w.Write(prefix)
 		_, _ = io.Copy(w, response.Body)
 		h.emitOutcome(r, provider, response.StatusCode, stream, promptcache.Usage{}, started)
 		return
@@ -229,107 +201,44 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
-	if h.opts.ProviderResolver == nil {
-		h.writeError(w, http.StatusServiceUnavailable, "no_provider", "no Ollama-compatible provider is configured")
-		return
-	}
 	snapshot, err := h.snapshot.Load()
 	if err != nil {
 		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
 		return
 	}
-	provider, ok := h.opts.ProviderResolver(snapshot, request.Model)
-	if !ok {
-		h.writeError(w, http.StatusNotFound, "model_not_found", "model is not configured")
-		return
-	}
 	started := time.Now()
-	if provider.Protocol != ollamaadapter.Protocol {
-		if h.opts.TranslateChat == nil {
-			h.writeError(w, http.StatusBadGateway, "request_translation_failed", "no Chat-to-provider translator registered")
-			return
-		}
-		translated, err := h.opts.TranslateChat(request, provider.Protocol)
-		if err != nil {
-			h.writeError(w, http.StatusBadGateway, "request_translation_failed", err.Error())
-			return
-		}
-		translatedRequest, err := h.newUpstreamRequest(r, provider, translated.Endpoint, translated.Body, translated.Headers)
-		if err != nil {
-			h.writeError(w, http.StatusBadGateway, "upstream_configuration_error", err.Error())
-			return
-		}
-		response, err := h.clientFor(provider).Do(translatedRequest)
-		if err != nil {
-			if r.Context().Err() == nil {
-				h.writeError(w, http.StatusBadGateway, "upstream_request_failed", "upstream request failed")
+	response, provider, err := h.dispatchAttempts(r, snapshot, request.Model, ollamaadapter.Protocol, false, func(provider routing.ProviderRef) (ChatTranslation, error) {
+		if provider.Protocol != ollamaadapter.Protocol {
+			if h.opts.TranslateChat == nil {
+				return ChatTranslation{}, fmt.Errorf("no Chat-to-provider translator registered")
 			}
-			return
+			return h.opts.TranslateChat(request, provider.Protocol)
 		}
-		defer response.Body.Close()
-		if response.StatusCode < 200 || response.StatusCode >= 300 {
-			prefix, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyPeek))
-			h.recordUpstreamFailure(provider, response.StatusCode, response.Header, prefix)
-			w.Header().Set("Content-Type", "application/x-ndjson")
-			w.WriteHeader(response.StatusCode)
-			_, _ = w.Write(prefix)
-			_, _ = io.Copy(w, response.Body)
-			h.emitOutcome(r, provider, response.StatusCode, false, promptcache.Usage{}, started)
-			return
+		body, err := request.MarshalBody(provider.UpstreamModel)
+		endpoint := "api/chat"
+		if provider.Endpoint != "" {
+			endpoint = provider.Endpoint
 		}
-		if request.Stream {
-			h.copyOllamaStream(w, r, response, request.Model)
-			h.emitOutcome(r, provider, response.StatusCode, true, promptcache.Usage{}, started)
-			return
-		}
-		if h.opts.OnRequestComplete != nil {
-			responseBody, readErr := io.ReadAll(response.Body)
-			usage := promptcache.Usage{}
-			if readErr == nil {
-				if parsed, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
-					usage = parsed
-				}
-			}
-			w.Header().Set("Content-Type", "application/x-ndjson")
-			w.WriteHeader(response.StatusCode)
-			_, _ = w.Write(responseBody)
-			h.emitOutcome(r, provider, response.StatusCode, false, usage, started)
-			return
-		}
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		w.WriteHeader(response.StatusCode)
-		_, _ = io.Copy(w, response.Body)
-		return
-	}
-	requestBody, err := request.MarshalBody(provider.UpstreamModel)
+		return ChatTranslation{Endpoint: endpoint, Body: body, Headers: openAIProviderHeaders(provider)}, err
+	})
 	if err != nil {
-		h.writeError(w, http.StatusBadGateway, "request_translation_failed", err.Error())
-		return
-	}
-	upstreamRequest, err := h.newUpstreamRequest(r, provider, "api/chat", requestBody, nil)
-	if err != nil {
-		h.writeError(w, http.StatusBadGateway, "upstream_configuration_error", err.Error())
-		return
-	}
-	response, err := h.clientFor(provider).Do(upstreamRequest)
-	if err != nil {
-		if r.Context().Err() == nil {
-			h.writeError(w, http.StatusBadGateway, "upstream_request_failed", "upstream request failed")
-		}
+		h.dispatchError(w, r, err)
 		return
 	}
 	defer response.Body.Close()
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.WriteHeader(response.StatusCode)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		prefix, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyPeek))
-		h.recordUpstreamFailure(provider, response.StatusCode, response.Header, prefix)
-		_, _ = w.Write(prefix)
 		_, _ = io.Copy(w, response.Body)
 		h.emitOutcome(r, provider, response.StatusCode, request.Stream, promptcache.Usage{}, started)
 		return
 	}
 	if request.Stream {
+		if provider.Protocol != ollamaadapter.Protocol {
+			h.copyOllamaStream(w, r, response, request.Model)
+			h.emitOutcome(r, provider, response.StatusCode, true, promptcache.Usage{}, started)
+			return
+		}
 		if h.opts.OnRequestComplete != nil {
 			usage := h.copyOllamaNativeStream(w, r, response, provider)
 			h.emitOutcome(r, provider, response.StatusCode, true, usage, started)
@@ -460,6 +369,7 @@ func (h *Handler) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 	native := nativeSpec{
 		endpoint: "",
 		body:     func(upstream string) ([]byte, error) { return request.MarshalBody(upstream) },
+		headers:  openAIProviderHeaders,
 	}
 	h.dispatch(w, r, systemoneadapter.Protocol, request.Model, native, systemoneTranslate(h.opts.TranslateSystemOne, request), false)
 }

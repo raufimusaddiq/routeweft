@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strconv"
 	"unicode/utf16"
+
+	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 )
 
 // handleCountTokens provides Anthropic-compatible count_tokens behavior: a
@@ -19,6 +21,16 @@ func (h *Handler) handleCountTokens(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "request_read_failed", "request body could not be read")
 		return
 	}
+	if !json.Valid(body) {
+		h.writeError(w, http.StatusBadRequest, "invalid_request_error", "request body must be one JSON object")
+		return
+	}
+	snapshot, err := h.snapshot.Load()
+	if err != nil {
+		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
+		return
+	}
+	body = h.finalBody(r, snapshot, anthropic.MessagesProtocol, body)
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid_request_error", "request body must be one JSON object")
@@ -36,7 +48,23 @@ func estimateAnthropicInputTokens(payload any) int {
 	if !ok {
 		return 0
 	}
-	total := countValueChars(chars["system"]) + countValueChars(chars["tools"])
+	toolChars := countValueChars(chars["tools"])
+	if tools, ok := chars["tools"].([]any); ok {
+		for _, tool := range tools {
+			if fields, ok := tool.(map[string]any); ok {
+				if marker, ok := fields["cache_control"]; ok {
+					toolChars -= utf16Length("cache_control") + countValueChars(marker)
+				}
+			}
+		}
+	}
+	total := countValueChars(chars["system"]) + toolChars
+	if blocks, ok := chars["system"].([]any); ok {
+		total = toolChars
+		for _, block := range blocks {
+			total += countContentBlockChars(block)
+		}
+	}
 	if messages, ok := chars["messages"].([]any); ok {
 		for _, message := range messages {
 			total += countMessageChars(message)

@@ -2,14 +2,18 @@
 package runtime
 
 import (
+	"context"
+
 	"github.com/raufimusaddiq/routeweft/internal/auth"
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
+	transformbody "github.com/raufimusaddiq/routeweft/internal/transforms/body"
 )
 
 // RuntimeSnapshot is immutable after publication. Accessors return copies of
 // mutable values so consumers cannot modify the active configuration.
 type RuntimeSnapshot struct {
+	savers              *transformbody.Pipeline
 	providerConfig      credentials.Configuration
 	providers           map[string]servingProvider
 	providerAccounts    map[string][]routing.Account
@@ -30,6 +34,10 @@ type RuntimeSnapshot struct {
 	proxyEnabled        bool
 	proxyURL            string
 	noProxy             []string
+}
+
+func (s *RuntimeSnapshot) TransformBody(ctx context.Context, protocol string, body []byte, allowPrivate bool) ([]byte, error) {
+	return s.savers.Run(ctx, protocol, body, allowPrivate)
 }
 
 func (s *RuntimeSnapshot) OutboundProxy() (bool, string, []string) {
