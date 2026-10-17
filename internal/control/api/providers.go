@@ -678,6 +678,34 @@ func (h *Handler) handlePutModel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"providerId": body.ProviderID, "id": body.ID, "source": "custom"})
 }
 
+func (h *Handler) handleDeleteModel(w http.ResponseWriter, r *http.Request) {
+	if h.opts.ProviderCatalog == nil {
+		writeError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime model catalog is not configured")
+		return
+	}
+	var body struct {
+		ProviderID string `json:"providerId"`
+		ModelID    string `json:"modelId"`
+	}
+	if !decodeJSON(w, r, 8<<10, &body) {
+		return
+	}
+	if body.ProviderID == "" || body.ModelID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_model", "provider id and model id are required")
+		return
+	}
+	err := h.opts.ProviderCatalog.DeleteModel(r.Context(), body.ProviderID, body.ModelID)
+	if errors.Is(err, runtime.ErrModelNotFound) {
+		writeError(w, http.StatusNotFound, "model_not_found", "custom model was not found; only custom models can be deleted")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "model_delete_failed", "custom model could not be deleted")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"providerId": body.ProviderID, "modelId": body.ModelID, "deleted": true})
+}
+
 func (h *Handler) handleDisableModel(w http.ResponseWriter, r *http.Request) {
 	if h.opts.ProviderCatalog == nil {
 		writeError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime model catalog is not configured")

@@ -75,6 +75,35 @@ func (m *Manager) PutModel(ctx context.Context, model Model) error {
 	return m.UpdateCatalog(ctx, func(candidate *Candidate) error { candidate.AddModel(model); return nil })
 }
 
+// ErrModelNotFound reports a delete that names no operator-managed model.
+var ErrModelNotFound = errors.New("custom model not found")
+
+// DeleteModel removes one custom (operator-managed) model plus the aliases and
+// disabled marker that referenced it, so the candidate still compiles.
+// Discovered and seeded models are not deletable; they are refreshed or hidden.
+func (m *Manager) DeleteModel(ctx context.Context, provider, model string) error {
+	return m.UpdateCatalog(ctx, func(candidate *Candidate) error {
+		index := -1
+		for i, existing := range candidate.Models {
+			if existing.ProviderID == provider && existing.ID == model && existing.Source == "custom" {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			return ErrModelNotFound
+		}
+		candidate.Models = append(candidate.Models[:index], candidate.Models[index+1:]...)
+		for alias, target := range candidate.Aliases {
+			if target.ProviderID == provider && target.ModelID == model {
+				delete(candidate.Aliases, alias)
+			}
+		}
+		delete(candidate.DisabledModels, modelKey(provider, model))
+		return nil
+	})
+}
+
 // ReplaceDiscoveredModels atomically swaps one provider's discovered catalog
 // for the supplied IDs while preserving custom (operator-managed) models and
 // any alias/disabled decisions. Discovery failure is advisory, so an empty list

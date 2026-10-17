@@ -220,8 +220,18 @@ FROM provider_nodes n LEFT JOIN provider_connections c ON c.node_id=n.id GROUP B
 	return nil
 }
 
+// providerFilter returns an optional WHERE clause and argument for the
+// ?providerId= query so detail views page one provider's rows, not the table.
+func providerFilter(r *http.Request, column string) (string, []any) {
+	if id := r.URL.Query().Get("providerId"); id != "" {
+		return " WHERE " + column + "=?", []any{id}
+	}
+	return "", nil
+}
+
 func (h *Handler) providerNodes(w http.ResponseWriter, r *http.Request) error {
-	return h.sqlList(w, r, `SELECT id,kind,provider_id,name,COALESCE(prefix,''),COALESCE(base_url,''),COALESCE(transports,'[]'),created_at,updated_at FROM provider_nodes ORDER BY provider_id,name,id`, `SELECT COUNT(*) FROM provider_nodes`, func(rows *sql.Rows) (any, error) {
+	where, args := providerFilter(r, "provider_id")
+	return h.sqlList(w, r, `SELECT id,kind,provider_id,name,COALESCE(prefix,''),COALESCE(base_url,''),COALESCE(transports,'[]'),created_at,updated_at FROM provider_nodes`+where+` ORDER BY provider_id,name,id`, `SELECT COUNT(*) FROM provider_nodes`+where, func(rows *sql.Rows) (any, error) {
 		var item struct {
 			ID         string          `json:"id"`
 			Kind       string          `json:"kind"`
@@ -240,12 +250,13 @@ func (h *Handler) providerNodes(w http.ResponseWriter, r *http.Request) error {
 		item.BaseURL = safeURL(baseURL)
 		item.Transports = json.RawMessage(transports)
 		return item, nil
-	})
+	}, args...)
 }
 
 func (h *Handler) connections(w http.ResponseWriter, r *http.Request) error {
+	where, args := providerFilter(r, "n.provider_id")
 	return h.sqlList(w, r, `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,c.identity,c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.secret_blob IS NOT NULL AND c.secret_blob!='',c.created_at,c.updated_at
-FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id ORDER BY n.provider_id,c.priority,c.name,c.id`, `SELECT COUNT(*) FROM provider_connections`, func(rows *sql.Rows) (any, error) {
+FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where+` ORDER BY n.provider_id,c.priority,c.name,c.id`, `SELECT COUNT(*) FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where, func(rows *sql.Rows) (any, error) {
 		var item struct {
 			ID                   string `json:"id"`
 			NodeID               string `json:"nodeId"`
@@ -267,15 +278,21 @@ FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id ORDER BY n.p
 		item.Enabled = enabled != 0
 		item.CredentialConfigured = credential != 0
 		return item, nil
-	})
+	}, args...)
 }
 
 func (h *Handler) models(w http.ResponseWriter, r *http.Request, systemOne bool) error {
 	query := `SELECT provider_id,model_id,COALESCE(display_name,''),COALESCE(context_window,0),capabilities,
-EXISTS(SELECT 1 FROM disabled_models d WHERE d.provider_id=provider_models.provider_id AND d.model_id=provider_models.model_id),updated_at
+EXISTS(SELECT 1 FROM disabled_models d WHERE d.provider_id=provider_models.provider_id AND d.model_id=provider_models.model_id),
+EXISTS(SELECT 1 FROM custom_models c WHERE c.provider_id=provider_models.provider_id AND c.model_id=provider_models.model_id),updated_at
 FROM provider_models ORDER BY provider_id,model_id`
 	countQuery := "SELECT COUNT(*) FROM provider_models"
 	var args []any
+	if where, filterArgs := providerFilter(r, "provider_id"); where != "" && !systemOne {
+		query = strings.TrimSuffix(query, " ORDER BY provider_id,model_id") + where + " ORDER BY provider_id,model_id"
+		countQuery += where
+		args = filterArgs
+	}
 	if systemOne {
 		var allowed []string
 		for _, spec := range h.opts.Providers {
@@ -309,9 +326,10 @@ FROM provider_models ORDER BY provider_id,model_id`
 			CapsRaw    string   `json:"-"`
 			Caps       []string `json:"capabilities"`
 			Disabled   bool     `json:"disabled"`
+			Custom     bool     `json:"custom"`
 			UpdatedAt  string   `json:"updatedAt"`
 		}
-		if err := rows.Scan(&item.ProviderID, &item.ID, &item.Name, &item.Context, &item.CapsRaw, &item.Disabled, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ProviderID, &item.ID, &item.Name, &item.Context, &item.CapsRaw, &item.Disabled, &item.Custom, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(item.CapsRaw), &item.Caps); err != nil {
@@ -322,7 +340,8 @@ FROM provider_models ORDER BY provider_id,model_id`
 }
 
 func (h *Handler) aliases(w http.ResponseWriter, r *http.Request) error {
-	return h.sqlList(w, r, "SELECT alias,provider_id,model_id,updated_at FROM model_aliases ORDER BY alias", "SELECT COUNT(*) FROM model_aliases", func(rows *sql.Rows) (any, error) {
+	where, args := providerFilter(r, "provider_id")
+	return h.sqlList(w, r, "SELECT alias,provider_id,model_id,updated_at FROM model_aliases"+where+" ORDER BY alias", "SELECT COUNT(*) FROM model_aliases"+where, func(rows *sql.Rows) (any, error) {
 		var item struct {
 			Alias      string `json:"alias"`
 			ProviderID string `json:"providerId"`
@@ -333,11 +352,12 @@ func (h *Handler) aliases(w http.ResponseWriter, r *http.Request) error {
 			return nil, err
 		}
 		return item, nil
-	})
+	}, args...)
 }
 
 func (h *Handler) pricing(w http.ResponseWriter, r *http.Request) error {
-	return h.sqlList(w, r, `SELECT provider_id,model_id,input_per_mtok,output_per_mtok,cache_read_per_mtok,cache_write_per_mtok,updated_at FROM pricing_overrides ORDER BY provider_id,model_id`, "SELECT COUNT(*) FROM pricing_overrides", func(rows *sql.Rows) (any, error) {
+	where, args := providerFilter(r, "provider_id")
+	return h.sqlList(w, r, `SELECT provider_id,model_id,input_per_mtok,output_per_mtok,cache_read_per_mtok,cache_write_per_mtok,updated_at FROM pricing_overrides`+where+` ORDER BY provider_id,model_id`, "SELECT COUNT(*) FROM pricing_overrides"+where, func(rows *sql.Rows) (any, error) {
 		var item struct {
 			ProviderID string   `json:"providerId"`
 			ModelID    string   `json:"modelId"`
@@ -351,7 +371,7 @@ func (h *Handler) pricing(w http.ResponseWriter, r *http.Request) error {
 			return nil, err
 		}
 		return item, nil
-	})
+	}, args...)
 }
 
 func (h *Handler) combos(w http.ResponseWriter, r *http.Request) error {

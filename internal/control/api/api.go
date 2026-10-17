@@ -85,6 +85,7 @@ type ProviderCatalog interface {
 	ReplaceDiscoveredModels(context.Context, string, []runtime.Model) error
 	PutAlias(context.Context, string, runtime.ModelRef) error
 	DeleteAlias(context.Context, string) error
+	DeleteModel(context.Context, string, string) error
 	SetModelDisabled(context.Context, string, string, bool) error
 }
 
@@ -132,6 +133,7 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.Handle("POST /admin/v1/connections/{id}/test-models", h.requireSessionHandler(http.HandlerFunc(h.handleTestModels)))
 	mux.Handle("POST /admin/v1/connections/{id}/discover", h.requireSessionHandler(http.HandlerFunc(h.handleDiscoverModels)))
 	mux.Handle("POST /admin/v1/models", h.requireSessionHandler(http.HandlerFunc(h.handlePutModel)))
+	mux.Handle("DELETE /admin/v1/models", h.requireSessionHandler(http.HandlerFunc(h.handleDeleteModel)))
 	mux.Handle("PATCH /admin/v1/models/disabled", h.requireSessionHandler(http.HandlerFunc(h.handleDisableModel)))
 	mux.Handle("POST /admin/v1/aliases", h.requireSessionHandler(http.HandlerFunc(h.handlePutAlias)))
 	mux.Handle("DELETE /admin/v1/aliases/{alias}", h.requireSessionHandler(http.HandlerFunc(h.handleDeleteAlias)))

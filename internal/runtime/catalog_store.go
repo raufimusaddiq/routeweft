@@ -33,6 +33,10 @@ func persistCatalog(ctx context.Context, tx *sql.Tx, config Config) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM custom_models"); err != nil {
 		return fmt.Errorf("replace custom models: %w", err)
 	}
+	// provider_models mirrors the candidate exactly, so removed models do not linger.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM provider_models"); err != nil {
+		return fmt.Errorf("replace provider models: %w", err)
+	}
 	for _, model := range config.Models {
 		if model.Source == "seed" {
 			continue
