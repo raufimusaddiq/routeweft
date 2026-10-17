@@ -12,7 +12,7 @@ import (
 
 // persistCatalog replaces the compiled model/credential surface inside the
 // caller's configuration transaction so commit order matches SPEC section 7.
-func persistCatalog(ctx context.Context, tx *sql.Tx, config Config) error {
+func persistCatalog(ctx context.Context, tx *sql.Tx, config Config, removed [][2]string) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM api_keys"); err != nil {
 		return fmt.Errorf("replace api keys: %w", err)
 	}
@@ -33,11 +33,13 @@ func persistCatalog(ctx context.Context, tx *sql.Tx, config Config) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM custom_models"); err != nil {
 		return fmt.Errorf("replace custom models: %w", err)
 	}
-	// provider_models mirrors the candidate: rows are upserted below (updated_at
-	// moves only when a value changes) and rows no longer in the candidate go.
-	existing, err := providerModelKeys(ctx, tx)
-	if err != nil {
-		return err
+	// provider_models mirrors the candidate without scanning it: rows are
+	// upserted below (updated_at moves only when a value changes) and exactly the
+	// keys the compiled snapshot had but the candidate lost are deleted.
+	for _, key := range removed {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM provider_models WHERE provider_id=? AND model_id=?", key[0], key[1]); err != nil {
+			return fmt.Errorf("remove provider model %q: %w", modelKey(key[0], key[1]), err)
+		}
 	}
 	for _, model := range config.Models {
 		if model.Source == "seed" {
@@ -66,12 +68,6 @@ WHERE display_name IS NOT excluded.display_name OR context_window IS NOT exclude
 		}
 		if _, err := tx.ExecContext(ctx, upsertModel, model.ProviderID, model.ID, model.Name, contextWindow, string(capabilities)); err != nil {
 			return fmt.Errorf("persist provider model %q: %w", modelKey(model.ProviderID, model.ID), err)
-		}
-		delete(existing, [2]string{model.ProviderID, model.ID})
-	}
-	for key := range existing {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM provider_models WHERE provider_id=? AND model_id=?", key[0], key[1]); err != nil {
-			return fmt.Errorf("remove provider model %q: %w", modelKey(key[0], key[1]), err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM model_aliases"); err != nil {
@@ -199,19 +195,21 @@ func loadCatalog(ctx context.Context, db *sql.DB, config *Config) error {
 	return disabledRows.Err()
 }
 
-func providerModelKeys(ctx context.Context, tx *sql.Tx) (map[[2]string]struct{}, error) {
-	rows, err := tx.QueryContext(ctx, "SELECT provider_id,model_id FROM provider_models")
-	if err != nil {
-		return nil, fmt.Errorf("list provider models: %w", err)
+// removedModels lists persisted (non-seed) models present in the active
+// snapshot but absent from the next config.
+func removedModels(current map[string]Model, next []Model) [][2]string {
+	kept := make(map[string]struct{}, len(next))
+	for _, model := range next {
+		kept[modelKey(model.ProviderID, model.ID)] = struct{}{}
 	}
-	defer rows.Close()
-	keys := make(map[[2]string]struct{})
-	for rows.Next() {
-		var key [2]string
-		if err := rows.Scan(&key[0], &key[1]); err != nil {
-			return nil, err
+	var removed [][2]string
+	for key, model := range current {
+		if model.Source == "seed" {
+			continue
 		}
-		keys[key] = struct{}{}
+		if _, ok := kept[key]; !ok {
+			removed = append(removed, [2]string{model.ProviderID, model.ID})
+		}
 	}
-	return keys, rows.Err()
+	return removed
 }

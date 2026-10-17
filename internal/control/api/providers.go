@@ -695,8 +695,17 @@ func (h *Handler) handleDeleteModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := h.opts.ProviderCatalog.DeleteModel(r.Context(), body.ProviderID, body.ModelID)
+	var inUse *runtime.ModelInUseError
+	if errors.As(err, &inUse) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]any{"code": "model_in_use", "message": "model is used by combos: " + strings.Join(inUse.Combos, ", ") + "; remove it from them first"}, "combos": inUse.Combos})
+		return
+	}
+	if errors.Is(err, runtime.ErrModelNotCustom) {
+		writeError(w, http.StatusConflict, "model_not_custom", "model exists but is not a custom model; discovered and built-in models cannot be deleted (disable it instead)")
+		return
+	}
 	if errors.Is(err, runtime.ErrModelNotFound) {
-		writeError(w, http.StatusNotFound, "model_not_found", "custom model was not found; only custom models can be deleted")
+		writeError(w, http.StatusNotFound, "model_not_found", "model was not found")
 		return
 	}
 	if err != nil {

@@ -128,6 +128,19 @@ func TestDeleteCustomModelRemovesAliasesAndRejectsOthers(t *testing.T) {
 			t.Fatalf("custom flag missing before delete: %s", rec.Body)
 		}
 	}
+	rec := callAdmin(mux, cookie, http.MethodDelete, "/admin/v1/models", `{"providerId":"openai","modelId":"mine"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "model_in_use") || !strings.Contains(rec.Body.String(), "c1") {
+		t.Fatalf("delete while a Combo uses the model: %d %s, want 409 naming c1", rec.Code, rec.Body)
+	}
+	if snapshot, err := manager.Load(); err != nil || len(snapshot.Combos()) != 1 || len(snapshot.Combos()[0].Members) != 1 {
+		t.Fatalf("refused delete must leave the Combo untouched: %v", err)
+	}
+	if rec := callAdmin(mux, cookie, http.MethodGet, "/admin/v1/models?providerId=openai", ""); !strings.Contains(rec.Body.String(), `"total":1`) {
+		t.Fatalf("refused delete removed the model: %s", rec.Body)
+	}
+	if _, err := manager.DeleteCombo(context.Background(), "c1"); err != nil {
+		t.Fatal(err)
+	}
 	if rec := callAdmin(mux, cookie, http.MethodDelete, "/admin/v1/models", `{"providerId":"openai","modelId":"mine"}`); rec.Code != http.StatusOK {
 		t.Fatalf("delete: %d %s", rec.Code, rec.Body)
 	}
@@ -141,15 +154,6 @@ func TestDeleteCustomModelRemovesAliasesAndRejectsOthers(t *testing.T) {
 	}
 	if rec := callAdmin(mux, cookie, http.MethodGet, "/admin/v1/pricing?providerId=openai", ""); !strings.Contains(rec.Body.String(), `"total":0`) {
 		t.Fatalf("pricing row survived model delete: %s", rec.Body)
-	}
-	snapshot, err := manager.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, combo := range snapshot.Combos() {
-		if combo.Name == "c1" && len(combo.Members) != 0 {
-			t.Fatalf("combo still references deleted model: %+v", combo.Members)
-		}
 	}
 	if rec := callAdmin(mux, cookie, http.MethodDelete, "/admin/v1/models", `{"providerId":"openai","modelId":"mine"}`); rec.Code != http.StatusNotFound {
 		t.Fatalf("second delete: %d want 404", rec.Code)
@@ -178,5 +182,31 @@ func TestUnrelatedMutationPreservesModelUpdatedAt(t *testing.T) {
 	}
 	if got != stamp {
 		t.Fatalf("updated_at=%q, want preserved %q", got, stamp)
+	}
+}
+
+func TestDeleteNonCustomModelIsConflictNotNotFound(t *testing.T) {
+	handler, mux, store := newReadAPI(t)
+	defer store.Close()
+	cookie := adminCookie(t, handler)
+	manager := handler.opts.Runtime.(*runtime.Manager)
+	ctx := context.Background()
+	if err := manager.ReplaceDiscoveredModels(ctx, "openai", []runtime.Model{{ID: "found"}, {ID: "stale"}}); err != nil {
+		t.Fatal(err)
+	}
+	rec := callAdmin(mux, cookie, http.MethodDelete, "/admin/v1/models", `{"providerId":"openai","modelId":"found"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "model_not_custom") {
+		t.Fatalf("discovered model delete: %d %s, want 409 model_not_custom", rec.Code, rec.Body)
+	}
+	if rec := callAdmin(mux, cookie, http.MethodDelete, "/admin/v1/models", `{"providerId":"openai","modelId":"absent"}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("missing model delete: %d, want 404", rec.Code)
+	}
+	// A refresh that drops a discovered model removes its row without a table scan.
+	if err := manager.ReplaceDiscoveredModels(ctx, "openai", []runtime.Model{{ID: "found"}}); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := store.DB().QueryRow(`SELECT COUNT(*) FROM provider_models WHERE model_id='stale'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("stale discovered row count=%d err=%v, want 0", n, err)
 	}
 }

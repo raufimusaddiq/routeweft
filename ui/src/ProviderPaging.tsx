@@ -34,9 +34,10 @@ export function usePagedList<T>(resource: string, providerId: string, reload: nu
     try {
       const query = `providerId=${encodeURIComponent(providerId)}&page=${page}&pageSize=${PAGE_SIZE}`
       const response = await fetch(`/admin/v1/${resource}?${query}`, { credentials: 'same-origin', signal })
-      if (response.status === 401) { onUnauthorized(); return }
+      if (response.status === 401) { if (!signal.aborted) onUnauthorized(); return }
       if (!response.ok) throw new Error(`Could not load ${resource}.`)
       const body = await response.json() as Page<T>
+      if (signal.aborted) return
       const last = Math.max(1, Math.ceil(body.total / PAGE_SIZE))
       if (page > last) { setPage(last); return }
       setItems(body.items); setTotal(body.total)

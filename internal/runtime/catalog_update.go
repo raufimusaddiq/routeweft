@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -76,12 +77,24 @@ func (m *Manager) PutModel(ctx context.Context, model Model) error {
 	return m.UpdateCatalog(ctx, func(candidate *Candidate) error { candidate.AddModel(model); return nil })
 }
 
-// ErrModelNotFound reports a delete that names no operator-managed model.
-var ErrModelNotFound = errors.New("custom model not found")
+// ErrModelNotFound reports a delete that names no model at all.
+var ErrModelNotFound = errors.New("model not found")
 
-// DeleteModel removes one custom (operator-managed) model plus the aliases and
-// disabled marker that referenced it, so the candidate still compiles.
-// Discovered and seeded models are not deletable; they are refreshed or hidden.
+// ErrModelNotCustom reports a delete of a model that exists but is discovered
+// or built in; those are refreshed or disabled, never deleted.
+var ErrModelNotCustom = errors.New("model is not a custom model")
+
+// ModelInUseError reports a delete refused because Combos still route to the
+// model. Deleting would silently change those routes (or leave them empty).
+type ModelInUseError struct{ Combos []string }
+
+func (e *ModelInUseError) Error() string {
+	return "model is used by combos: " + strings.Join(e.Combos, ", ")
+}
+
+// DeleteModel removes one custom (operator-managed) model plus the aliases,
+// pricing override and disabled marker that referenced it. It refuses while a
+// Combo references the model, directly or through one of its aliases.
 func (m *Manager) DeleteModel(ctx context.Context, provider, model string) error {
 	_, err := m.update(ctx, func(candidate *Candidate) error {
 		index := -1
@@ -92,28 +105,37 @@ func (m *Manager) DeleteModel(ctx context.Context, provider, model string) error
 			}
 		}
 		if index < 0 {
+			if snapshot, err := m.Load(); err == nil {
+				if _, ok := snapshot.models[modelKey(provider, model)]; ok {
+					return ErrModelNotCustom
+				}
+			}
 			return ErrModelNotFound
 		}
-		candidate.Models = append(candidate.Models[:index], candidate.Models[index+1:]...)
-		deleted := map[string]struct{}{model: {}}
+		names := map[string]struct{}{model: {}}
 		for alias, target := range candidate.Aliases {
 			if target.ProviderID == provider && target.ModelID == model {
-				deleted[alias] = struct{}{}
-				delete(candidate.Aliases, alias)
+				names[alias] = struct{}{}
 			}
 		}
-		// Combo members reference the model directly or through an alias name;
-		// drop both so the candidate still compiles.
-		for i := range candidate.Combos {
-			kept := make([]ComboMember, 0, len(candidate.Combos[i].Members))
-			for _, member := range candidate.Combos[i].Members {
-				_, gone := deleted[member.ModelID]
-				if gone && (member.ProviderID == "" || member.ProviderID == provider) {
-					continue
+		var users []string
+		for _, combo := range candidate.Combos {
+			for _, member := range combo.Members {
+				if _, ok := names[member.ModelID]; ok && (member.ProviderID == "" || member.ProviderID == provider) {
+					users = append(users, combo.Name)
+					break
 				}
-				kept = append(kept, member)
 			}
-			candidate.Combos[i].Members = kept
+		}
+		if len(users) > 0 {
+			sort.Strings(users)
+			return &ModelInUseError{Combos: users}
+		}
+		candidate.Models = append(candidate.Models[:index], candidate.Models[index+1:]...)
+		for alias, target := range candidate.Aliases {
+			if target.ProviderID == provider && target.ModelID == model {
+				delete(candidate.Aliases, alias)
+			}
 		}
 		delete(candidate.DisabledModels, modelKey(provider, model))
 		return nil
