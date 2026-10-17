@@ -372,9 +372,9 @@ Oracle dashboard prefix **V/** = `src/app/(dashboard)/dashboard/`; **W/** = Rout
 | `src/app/dashboard/settings/pricing/page.js` | Providers pricing panel; W/Providers.tsx | PARTIAL | Relocation allowed D01; built-in default pricing/reset/complete model catalog incomplete (U04/R06). |
 | `src/app/login/page.js` | W/SignIn.tsx + main.tsx | PARTIAL | Session login/logout exists; deliberate username/session changes D04, recovery/locale behavior unresolved U10/C03. |
 | `src/app/callback/page.js` | No callback screen | MISSING | OAuth code/state/callback workflow absent (U03/P04). |
-| `src/app/page.js` | W/main.tsx Overview default | PARTIAL | Root-to-dashboard conceptual landing exists in preview; production asset delivery unconfigured (U01). |
+| `src/app/page.js` | W/main.tsx Overview default | PARTIAL | Root-to-dashboard conceptual landing exists in preview; production asset delivery by Go static route (`ROUTEWEFT_UI_DIR`, U01). |
 
-**Delivery/validation gap:** Docker copies Vite output to `/ui`, but `internal/app/app.go:Handler` mounts only API/health/ingress. No static-file handler or supplied production Caddy asset configuration completes that choice. `ui/scripts/smoke.sh` starts Vite preview, so it does not establish production delivery. `ui/package.json` has no unit-test script; CI runs typecheck/build, not browser smoke (U01/U11).
+**Delivery (U01 resolved):** Docker copies Vite output to `/ui` and sets `ROUTEWEFT_UI_DIR=/ui`; `internal/app/static.go` serves it from `Handler` (tested in `static_test.go`). `ui/scripts/smoke.sh` starts Vite preview, so it does not establish production delivery. `ui/package.json` has no unit-test script; CI runs typecheck/build, not browser smoke (U01/U11).
 
 **Cross-page gap:** no `EventSource` subscription in `ui/src`. Backend SSE exists, but manual refresh is not one live channel + refresh fallback (U08, PRD-OBS-003). First-100 fetches in Providers/Quota can hide existing accounts/models/configuration; not an intentional product limit (U04/U06).
 

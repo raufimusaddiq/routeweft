@@ -58,6 +58,9 @@ type Config struct {
 	AdminBootstrapPassword string
 	// AdminSessionTTL overrides the dashboard session lifetime (zero uses default).
 	AdminSessionTTL time.Duration
+	// UIDir is the built Vite UI directory served by the Go binary (BDR-003).
+	// Empty disables static serving so a reverse proxy can own the assets.
+	UIDir string
 }
 
 // loadSnapshot exposes the active snapshot to the proxy binder's binding source.
@@ -388,7 +391,26 @@ func (a *App) Handler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
-	mux.Handle("/", withBodyLimit(a.cfg.MaxBodyBytes, a.trackInference(inferenceMux)))
+	inference := withBodyLimit(a.cfg.MaxBodyBytes, a.trackInference(inferenceMux))
+	ui, err := newStaticUI(a.cfg.UIDir)
+	if err != nil {
+		a.log.Error("static ui disabled", "dir", a.cfg.UIDir, "error", err)
+	}
+	if ui == nil {
+		mux.Handle("/", inference)
+	} else {
+		// Inference routes win; only GET/HEAD requests no inference route claims
+		// reach the static UI, so API paths never receive index.html.
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet || r.Method == http.MethodHead {
+				if _, pattern := inferenceMux.Handler(r); pattern == "" && !reservedPath(r.URL.Path) {
+					ui.ServeHTTP(w, r)
+					return
+				}
+			}
+			inference.ServeHTTP(w, r)
+		})
+	}
 	return withRequestID(a.quiescenceGate(mux))
 }
 
@@ -715,4 +737,15 @@ func (a *App) RefreshQuota(ctx context.Context) error {
 		return nil
 	}
 	return a.quota.RefreshAll(ctx)
+}
+
+// reservedPath marks API namespaces that must 404 as JSON-API paths instead of
+// falling through to the static UI.
+func reservedPath(p string) bool {
+	for _, prefix := range []string{"/admin/", "/v1/", "/v1beta/", "/api/"} {
+		if strings.HasPrefix(p, prefix) {
+			return true
+		}
+	}
+	return false
 }

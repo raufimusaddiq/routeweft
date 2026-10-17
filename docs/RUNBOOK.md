@@ -50,7 +50,15 @@ ROUTEWEFT_LOG_LEVEL=info
 ROUTEWEFT_BOOTSTRAP_ADMIN_PASSWORD='use-a-secret-source'
 ROUTEWEFT_MAX_BODY_BYTES=134217728
 ROUTEWEFT_CORS_ORIGINS='https://console.example'
+ROUTEWEFT_UI_DIR=/ui
 ```
+
+`ROUTEWEFT_UI_DIR` (`--ui-dir`) points at the built Vite output; the Go binary
+then serves the dashboard at `/`. The image sets it to `/ui`. UI routes are
+hash-based, so only `/` returns `index.html`; `/assets/*` is immutable-cached and
+unknown paths (and GET/HEAD under `/admin/`, `/v1/`, `/api/`) return 404. Leave it
+unset to serve API only and let Caddy serve the assets. A directory without
+`index.html` logs an error and disables the UI; the API keeps running.
 
 The default request-body limit is 128 MiB. Cross-origin requests are denied
 unless `ROUTEWEFT_CORS_ORIGINS` has a comma-separated allowlist. Routeweft does
