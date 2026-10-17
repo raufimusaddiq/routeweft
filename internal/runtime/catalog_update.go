@@ -192,7 +192,7 @@ func (m *Manager) DeleteModel(ctx context.Context, provider, model string) error
 				delete(candidate.Aliases, alias)
 			}
 		}
-		delete(candidate.DisabledModels, modelKey(provider, model))
+		candidate.SetModelDisabled(provider, model, false)
 		return nil
 	}, func(tx *sql.Tx) error {
 		// Pricing overrides are stored outside the candidate; drop the dead row.

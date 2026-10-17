@@ -39,6 +39,19 @@ func TestCustomModelWorkflowRestartAndReferences(t *testing.T) {
 	if !ok || got.Source != "custom" || got.Kind != "systemone" || got.Name != "Typed" || got.ContextWindow != 8192 || len(got.Capabilities) != 1 || got.Capabilities[0] != "reasoning" || snapshot.ModelKind(got) != "systemone" {
 		t.Fatalf("metadata lost: %+v", got)
 	}
+	if err := m.PutModel(ctx, Model{ProviderID: "custom", ID: custom.ID, Kind: "llm"}); err != nil {
+		t.Fatal(err)
+	}
+	m, err = NewManager(ctx, store.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := mustLoad(t, m).ResolveModel("custom", custom.ID); got.Kind != "llm" {
+		t.Fatalf("kind update lost: %+v", got)
+	}
+	if err := m.PutModel(ctx, custom); err != nil {
+		t.Fatal(err)
+	}
 	if err := m.PutAlias(ctx, "typed", ModelRef{ProviderID: "custom", ModelID: custom.ID}); err != nil {
 		t.Fatal(err)
 	}

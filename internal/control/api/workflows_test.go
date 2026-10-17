@@ -215,21 +215,35 @@ func TestWorkflowAvailabilityCatalogSyncBatchAndCustomDelete(t *testing.T) {
 			t.Fatalf("invalid metadata accepted: %d", w.Code)
 		}
 	}
-	w = doJSON(t, mux, cookie, "POST", "/admin/v1/models", `{"providerId":"catalog","id":"typed","kind":"systemone","capabilities":["reasoning"]}`)
+	w = doJSON(t, mux, cookie, "POST", "/admin/v1/models", `{"providerId":"catalog","id":"typed","kind":"systemone","capabilities":["reasoning","audio-input"]}`)
 	if w.Code != 200 {
 		t.Fatalf("custom add: %d %s", w.Code, w.Body)
 	}
 	w = doJSON(t, mux, cookie, "GET", "/admin/v1/models", "")
-	if !strings.Contains(w.Body.String(), `"kind":"systemone"`) || !strings.Contains(w.Body.String(), `"reasoning"`) {
+	if !strings.Contains(w.Body.String(), `"kind":"systemone"`) || !strings.Contains(w.Body.String(), `"reasoning"`) || !strings.Contains(w.Body.String(), `"audio-input"`) {
 		t.Fatalf("custom metadata: %s", w.Body)
 	}
 	w = doJSON(t, mux, cookie, "GET", "/admin/v1/systemone", "")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"id":"typed"`) || strings.Contains(w.Body.String(), `"id":"shared"`) {
 		t.Fatalf("typed admin catalog: %d %s", w.Code, w.Body)
 	}
+	if w := doJSON(t, mux, cookie, "PATCH", "/admin/v1/models/disabled", `{"providerId":"catalog","modelId":"typed","disabled":true}`); w.Code != 200 {
+		t.Fatalf("disable model before delete: %d %s", w.Code, w.Body)
+	}
 	w = doJSON(t, mux, cookie, "DELETE", "/admin/v1/models", `{"providerId":"catalog","modelId":"typed"}`)
 	if w.Code != 200 {
 		t.Fatalf("custom delete: %d %s", w.Code, w.Body)
+	}
+	w = doJSON(t, mux, cookie, "POST", "/admin/v1/models", `{"providerId":"catalog","id":"typed"}`)
+	if w.Code != 200 {
+		t.Fatalf("re-add deleted model: %d %s", w.Code, w.Body)
+	}
+	snapshot, _ = h.opts.Runtime.Load()
+	if _, ok := snapshot.ResolveModel("catalog", "typed"); !ok {
+		t.Fatal("re-added custom model revived as disabled")
+	}
+	if w := doJSON(t, mux, cookie, "PATCH", "/admin/v1/models/disabled", `{"providerId":"catalog","modelId":"","disabled":true}`); w.Code != 400 {
+		t.Fatalf("empty disabled model accepted: %d %s", w.Code, w.Body)
 	}
 	w = doJSON(t, mux, cookie, "DELETE", "/admin/v1/models", `{"providerId":"catalog","modelId":"shared"}`)
 	if w.Code != 409 {
@@ -301,8 +315,8 @@ func TestWorkflowCancellationAndSyncSingleflight(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		r := httptest.NewRequest("POST", path, strings.NewReader(`{"mode":"all","modelId":"manual"}`)).WithContext(ctx)
 		r.AddCookie(cookie)
-		done := make(chan struct{})
-		go func() { defer close(done); mux.ServeHTTP(httptest.NewRecorder(), r) }()
+		done := make(chan *httptest.ResponseRecorder)
+		go func() { rec := httptest.NewRecorder(); mux.ServeHTTP(rec, r); done <- rec }()
 		select {
 		case <-started:
 		case <-time.After(3 * time.Second):
@@ -316,10 +330,14 @@ func TestWorkflowCancellationAndSyncSingleflight(t *testing.T) {
 			}
 		}
 		cancel()
+		var rec *httptest.ResponseRecorder
 		select {
-		case <-done:
+		case rec = <-done:
 		case <-time.After(3 * time.Second):
 			t.Fatal("workflow ignored cancellation")
+		}
+		if !strings.HasSuffix(path, "/test") && (rec.Code != http.StatusRequestTimeout || !strings.Contains(rec.Body.String(), "canceled")) {
+			t.Fatalf("canceled %s: %d %s", path, rec.Code, rec.Body)
 		}
 		select {
 		case <-canceled:

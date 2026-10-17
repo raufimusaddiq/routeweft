@@ -244,6 +244,7 @@ func (h *Handler) handleTestBatch(w http.ResponseWriter, r *http.Request) {
 	passed := 0
 	for _, id := range ids {
 		if r.Context().Err() != nil {
+			writeError(w, http.StatusRequestTimeout, "batch_canceled", "batch validation was canceled")
 			return
 		}
 		c, node, err := h.workflowConnection(r.Context(), id)
@@ -253,6 +254,10 @@ func (h *Handler) handleTestBatch(w http.ResponseWriter, r *http.Request) {
 		}
 		result := h.validateConnection(r.Context(), c, node, "", body.ModelID)
 		results = append(results, result)
+		if r.Context().Err() != nil {
+			writeError(w, http.StatusRequestTimeout, "batch_canceled", "batch validation was canceled")
+			return
+		}
 		if result.OK {
 			passed++
 		}
@@ -355,6 +360,7 @@ func (h *Handler) handleCatalogSync(w http.ResponseWriter, r *http.Request) {
 	for _, id := range ids {
 		if r.Context().Err() != nil {
 			failed = true
+			writeError(w, http.StatusRequestTimeout, "sync_canceled", "catalog sync was canceled")
 			return
 		}
 		c, node, err := h.workflowConnection(r.Context(), id)
@@ -366,6 +372,11 @@ func (h *Handler) handleCatalogSync(w http.ResponseWriter, r *http.Request) {
 			var models []string
 			models, err = h.fetchConnectionModels(ctx, c, node)
 			cancel()
+			if r.Context().Err() != nil {
+				failed = true
+				writeError(w, http.StatusRequestTimeout, "sync_canceled", "catalog sync was canceled")
+				return
+			}
 			if err != nil {
 				result.Error = "model discovery failed; known catalog retained"
 			} else {

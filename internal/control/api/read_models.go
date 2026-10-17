@@ -294,9 +294,7 @@ FROM provider_models`
 	where := ""
 	var args []any
 	if systemOne {
-		where = ` WHERE kind='systemone' OR provider_id='typesafe'
-OR (provider_id='cloudflare-ai' AND model_id IN ('@cf/cloudflare/clef','@cf/cloudflare/clef-flash'))
-OR provider_id IN (SELECT provider_id FROM provider_nodes WHERE json_valid(transports) AND json_array_length(transports)=1 AND json_extract(transports,'$[0]')='systemone')`
+		where = " WHERE kind='systemone' OR kind='' AND provider_id IN (SELECT provider_id FROM provider_nodes WHERE kind='builtin' AND json_valid(transports) AND json_array_length(transports)=1 AND json_extract(transports,'$[0]')='systemone')"
 	} else {
 		where, args = providerFilter(r, "provider_id")
 	}

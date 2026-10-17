@@ -731,7 +731,7 @@ func (h *Handler) handlePutModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, capability := range body.Caps {
-		if !slicesContain([]string{"vision", "reasoning", "audioInput", "pdf", "videoInput", "webSearch", "webFetch", "tools"}, capability) {
+		if !slicesContain([]string{"vision", "reasoning", "audio-input", "pdf", "video-input", "webSearch", "webFetch", "tools"}, capability) {
 			writeError(w, 400, "invalid_capability", "unsupported model capability")
 			return
 		}
@@ -793,7 +793,7 @@ func (h *Handler) handleDisableModel(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
-	if body.ProviderID == "" || !validProbeModel(body.ModelID) {
+	if body.ProviderID == "" || body.ModelID == "" || !validProbeModel(body.ModelID) {
 		writeError(w, http.StatusBadRequest, "invalid_model", "provider id and model id are required")
 		return
 	}

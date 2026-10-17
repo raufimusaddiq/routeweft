@@ -224,6 +224,9 @@ func TestModelsReadModelFiltersSystemOne(t *testing.T) {
 		{ID: "typesafe", Transports: []registry.Protocol{registry.TransportSystemOne}, Auth: registry.AuthAPIKey, ModelCatalog: registry.CatalogStatic},
 	}
 	ctx := context.Background()
+	if _, err := store.DB().ExecContext(ctx, "INSERT INTO provider_nodes(id,kind,provider_id,name,transports) VALUES('n1','builtin','typesafe','TypeSafe','[\"systemone\"]')"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.DB().ExecContext(ctx, "INSERT INTO provider_models(provider_id,model_id,display_name,context_window,capabilities) VALUES('openai','gpt-x','GPT X',1000,'[\"vision\"]'),('typesafe','jev-1','Jev',2000,'[]')"); err != nil {
 		t.Fatal(err)
 	}

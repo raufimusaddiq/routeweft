@@ -60,7 +60,7 @@ func persistCatalog(ctx context.Context, tx *sql.Tx, config Config, removed [][2
 			return err
 		}
 		const upsertModel = `INSERT INTO provider_models(provider_id,model_id,display_name,context_window,capabilities,kind) VALUES(?,?,?,?,?,?)
-ON CONFLICT(provider_id,model_id) DO UPDATE SET display_name=excluded.display_name,context_window=excluded.context_window,capabilities=excluded.capabilities,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+ON CONFLICT(provider_id,model_id) DO UPDATE SET display_name=excluded.display_name,context_window=excluded.context_window,capabilities=excluded.capabilities,kind=excluded.kind,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
 WHERE display_name IS NOT excluded.display_name OR context_window IS NOT excluded.context_window OR capabilities IS NOT excluded.capabilities OR kind IS NOT excluded.kind`
 		var contextWindow any
 		if model.ContextWindow > 0 {
