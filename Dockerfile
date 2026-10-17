@@ -15,6 +15,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/routeweft ./cmd/ro
 FROM scratch
 COPY --from=go-build /out/routeweft /routeweft
 COPY --from=ui-build /src/ui/dist /ui
+ENV ROUTEWEFT_UI_DIR=/ui
 EXPOSE 21128
 ENTRYPOINT ["/routeweft"]
 CMD ["serve"]

@@ -31,7 +31,7 @@ browser ----------------> static React UI
                               +--> /admin/v1/events
 ```
 
-The static UI may be served by the Go binary or Caddy; the API contract must not depend on that choice.
+The static UI may be served by the Go binary or Caddy; the API contract must not depend on that choice. The reference image serves it from the Go binary (see §Open decisions, static asset serving).
 
 Default standalone listen address: `:21128`.
 
@@ -953,7 +953,7 @@ State is mounted separately from the immutable image.
 These are constrained, not free-form:
 
 - **SQLite Go driver:** choose in the first store PR using schema compatibility, race/concurrency behavior, static image complexity, performance, and image-size evidence. Pure-Go is preferred if it meets budgets; CGO is allowed if evidence is materially better.
-- **Static asset serving:** embedded vs Caddy is selected in the UI shell PR. Admin API remains identical.
+- **Static asset serving:** decided (U01): the Go binary serves the built Vite output from a filesystem directory (`ROUTEWEFT_UI_DIR` / `--ui-dir`; the image sets `/ui`). Not embedded, so the UI can be rebuilt without recompiling Go. Admin API is unchanged; Caddy-served assets remain valid by leaving the variable unset.
 - **Telemetry queue sizes:** fixed by load test in telemetry PR; durability semantics above are not negotiable.
 - **Exact provider registry contents:** provider modules land in reviewable groups; shared protocol adapters come first.
 
