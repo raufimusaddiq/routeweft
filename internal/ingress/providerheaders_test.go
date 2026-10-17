@@ -57,14 +57,8 @@ func TestNativeDispatchHonorsTransportEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := New(manager, Options{AllowPrivateUpstreams: true,
-		EndpointFor: func(providerID, transport string) (string, bool) {
-			if providerID == "kimi" && transport == "openai-chat" {
-				return "chat/completions", true
-			}
-			return "", false
-		},
 		ProviderResolver: func(_ *runtime.RuntimeSnapshot, model string) (routing.ProviderRef, bool) {
-			return routing.ProviderRef{ProviderID: "kimi", Protocol: "openai-chat", BaseURL: upstream.URL, APIToken: "token"}, true
+			return routing.ProviderRef{ProviderID: "kimi", Protocol: "openai-chat", BaseURL: upstream.URL, Endpoint: "chat/completions", APIToken: "token"}, true
 		},
 	})
 	mux := http.NewServeMux()

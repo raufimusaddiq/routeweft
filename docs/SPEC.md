@@ -443,6 +443,12 @@ Durable cooldown/reset state is persisted asynchronously when restart continuity
 
 Retry-After and known provider reset timestamps take precedence over generic backoff.
 
+Native serving retries a retry-same-account outcome once after a one-second
+default delay, unless a trusted reset/Retry-After supplies the delay. Cancellation
+interrupts that wait. The request has at most ten wire attempts including retries;
+after advancing to another account it never revisits an earlier account. No
+retry occurs after upstream headers have been exposed to the client.
+
 ## 15. Combo
 
 A compiled Combo contains:

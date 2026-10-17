@@ -137,7 +137,7 @@ ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,provider_id=excluded.provider_i
 		c.Nodes = append(c.Nodes, node)
 		return nil
 	}
-	if _, err := s.exec(ctx, change, upsert, node.ID, string(node.Kind), node.ProviderID, node.Name, nullable(node.Prefix), nullable(node.BaseURL), transports); err != nil {
+	if err := s.exec(ctx, change, upsert, node.ID, string(node.Kind), node.ProviderID, node.Name, nullable(node.Prefix), nullable(node.BaseURL), transports); err != nil {
 		return Node{}, fmt.Errorf("persist provider node %q: %w", node.Name, err)
 	}
 	return node, nil
@@ -203,16 +203,9 @@ func (s *Store) DeleteGenericNode(ctx context.Context, id string) error {
 		}
 		return ErrNotFound
 	}
-	result, err := s.exec(ctx, change, "DELETE FROM provider_nodes WHERE id=? AND kind=?", id, string(NodeGeneric))
+	err := s.exec(ctx, change, "DELETE FROM provider_nodes WHERE id=? AND kind=?", id, string(NodeGeneric))
 	if err != nil {
 		return fmt.Errorf("delete generic provider node: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return ErrNotFound
 	}
 	return nil
 }
@@ -260,7 +253,7 @@ ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_k
 		c.Connections = append(c.Connections, metadata)
 		return nil
 	}
-	if _, err := s.exec(ctx, change, upsert, connection.ID, connection.NodeID, connection.Name, string(connection.AuthKind), connection.Identity, blob, enabled, connection.Priority, nullable(connection.ProxyPoolID)); err != nil {
+	if err := s.exec(ctx, change, upsert, connection.ID, connection.NodeID, connection.Name, string(connection.AuthKind), connection.Identity, blob, enabled, connection.Priority, nullable(connection.ProxyPoolID)); err != nil {
 		return Connection{}, fmt.Errorf("persist provider connection %q: %w", connection.Name, err)
 	}
 	return connection, nil
@@ -356,32 +349,18 @@ func (s *Store) SetConnectionEnabled(ctx context.Context, id string, enabled boo
 	if enabled {
 		flag = 1
 	}
-	result, err := s.exec(ctx, editConnection(id, func(c *Connection) { c.Enabled = enabled }), "UPDATE provider_connections SET enabled=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", flag, id)
+	err := s.exec(ctx, editConnection(id, func(c *Connection) { c.Enabled = enabled }), "UPDATE provider_connections SET enabled=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", flag, id)
 	if err != nil {
 		return fmt.Errorf("update provider connection: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return ErrNotFound
 	}
 	return nil
 }
 
 // SetConnectionPriority changes stable account order without loading secrets.
 func (s *Store) SetConnectionPriority(ctx context.Context, id string, priority int) error {
-	result, err := s.exec(ctx, editConnection(id, func(c *Connection) { c.Priority = priority }), "UPDATE provider_connections SET priority=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", priority, id)
+	err := s.exec(ctx, editConnection(id, func(c *Connection) { c.Priority = priority }), "UPDATE provider_connections SET priority=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", priority, id)
 	if err != nil {
 		return fmt.Errorf("update provider connection priority: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return ErrNotFound
 	}
 	return nil
 }
@@ -438,7 +417,7 @@ func (s *Store) MoveConnection(ctx context.Context, id string, direction int) er
 	}
 	return s.update(ctx, change, func(tx *sql.Tx) error {
 		for _, item := range ordered {
-			if _, err := tx.ExecContext(ctx, "UPDATE provider_connections SET priority=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", item.Priority, item.ID); err != nil {
+			if err := requireAffected(tx.ExecContext(ctx, "UPDATE provider_connections SET priority=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", item.Priority, item.ID)); err != nil {
 				return err
 			}
 		}
@@ -449,16 +428,9 @@ func (s *Store) MoveConnection(ctx context.Context, id string, direction int) er
 // SetConnectionProxy changes a connection's proxy-pool binding without
 // exposing its sealed credential.
 func (s *Store) SetConnectionProxy(ctx context.Context, id, poolID string) error {
-	result, err := s.exec(ctx, editConnection(id, func(c *Connection) { c.ProxyPoolID = poolID }), "UPDATE provider_connections SET proxy_pool_id=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", nullable(poolID), id)
+	err := s.exec(ctx, editConnection(id, func(c *Connection) { c.ProxyPoolID = poolID }), "UPDATE provider_connections SET proxy_pool_id=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", nullable(poolID), id)
 	if err != nil {
 		return fmt.Errorf("update provider connection proxy: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return ErrNotFound
 	}
 	return nil
 }
@@ -475,16 +447,9 @@ func (s *Store) DeleteConnection(ctx context.Context, id string) error {
 		}
 		return ErrNotFound
 	}
-	result, err := s.exec(ctx, change, "DELETE FROM provider_connections WHERE id=?", id)
+	err := s.exec(ctx, change, "DELETE FROM provider_connections WHERE id=?", id)
 	if err != nil {
 		return fmt.Errorf("delete provider connection: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return ErrNotFound
 	}
 	return nil
 }

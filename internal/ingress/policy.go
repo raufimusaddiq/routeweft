@@ -20,9 +20,6 @@ type CandidateResolver func(*runtime.RuntimeSnapshot, string) ([]routing.Account
 // provider reference.
 type AccountProvider func(*runtime.RuntimeSnapshot, string, string, string) (routing.ProviderRef, bool)
 
-// DefaultStickyLimit mirrors the compiled stickyRoundRobinLimit default.
-const DefaultStickyLimit uint64 = 3
-
 // errorBodyPeek bounds how much of an upstream error body is buffered for
 // classification before it is relayed to the client unchanged (SPEC §14).
 const errorBodyPeek int64 = 32 << 10

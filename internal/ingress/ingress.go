@@ -66,11 +66,6 @@ type Options struct {
 	// off by default so operator-supplied provider URLs cannot reach loopback,
 	// LAN, or metadata addresses.
 	AllowPrivateUpstreams bool
-	// EndpointFor returns the provider-specific relative dispatch path for a
-	// native transport, so multi-transport providers that serve a different path
-	// per protocol (SPEC §11 base endpoint rules) do not reuse one shared path.
-	// It returns ok=false to keep the caller's shared default endpoint.
-	EndpointFor func(providerID string, transport string) (string, bool)
 	// ClientFor returns the pooled outbound client for one connection's compiled
 	// proxy policy, so a per-connection proxy pool is honored on the request path
 	// without building a transport per request (SPEC §20, PRD-ROUTE-005). It
@@ -252,10 +247,6 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 			translated.Endpoint = "messages"
 			if provider.Endpoint != "" {
 				translated.Endpoint = provider.Endpoint
-			} else if h.opts.EndpointFor != nil {
-				if override, ok := h.opts.EndpointFor(provider.ProviderID, provider.Protocol); ok {
-					translated.Endpoint = override
-				}
 			}
 			translated.Body, err = request.MarshalBody(provider.UpstreamModel)
 			translated.Headers = anthropicHeaders(r, provider)
@@ -287,9 +278,6 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		prefix, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyPeek))
-		h.recordUpstreamFailure(provider, response.StatusCode, response.Header, prefix)
-		_, _ = w.Write(prefix)
 		_, _ = io.Copy(w, response.Body)
 		h.emitOutcome(r, provider, response.StatusCode, request.Stream, promptcache.Usage{}, started)
 		return

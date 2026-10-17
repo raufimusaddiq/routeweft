@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -24,6 +25,102 @@ func providerStore(t *testing.T) (*Manager, *credentials.Store) {
 	}
 	s.SetPublisher(m.UpdateProviders)
 	return m, s
+}
+
+func TestProviderSeedsRemainEphemeralAcrossWritesAndRestart(t *testing.T) {
+	m, s := providerStore(t)
+	ctx := context.Background()
+	if _, err := s.PutNode(ctx, credentials.Node{ID: "n", Kind: credentials.NodeBuiltin, ProviderID: "openai", Name: "OpenAI"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SetSettings(ctx, map[string]string{"providerStrategy": "round-robin"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.RefreshPoolBindings(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var rows int
+	if err := m.db.QueryRowContext(ctx, "SELECT count(*) FROM provider_models").Scan(&rows); err != nil || rows != 0 {
+		t.Fatalf("persisted seeds=%d err=%v", rows, err)
+	}
+	restarted, err := NewManager(ctx, m.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, manager := range []*Manager{m, restarted} {
+		snapshot, _ := manager.Load()
+		if model, ok := snapshot.ServingModel("openai/gpt-4o"); !ok || model.Source != "seed" {
+			t.Fatalf("seed model=%+v ok=%v", model, ok)
+		}
+	}
+	if err := m.PutModel(ctx, Model{ProviderID: "openai", ID: "gpt-4o", Name: "Explicit override"}); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err = NewManager(ctx, m.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ := restarted.Load()
+	if model, ok := snapshot.ServingModel("openai/gpt-4o"); !ok || model.Source != "custom" || model.Name != "Explicit override" {
+		t.Fatalf("custom override=%+v ok=%v", model, ok)
+	}
+}
+
+func TestProviderMissingDurableRowAbortsPublication(t *testing.T) {
+	for _, operation := range []string{"enable", "priority", "proxy", "delete", "move", "node-delete"} {
+		t.Run(operation, func(t *testing.T) {
+			m, s := providerStore(t)
+			ctx := context.Background()
+			if _, err := s.PutNode(ctx, credentials.Node{ID: "n", Kind: credentials.NodeGeneric, ProviderID: "test", Name: "Test", BaseURL: "https://example.com", Transports: []string{"openai-chat"}}); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 2; i++ {
+				if _, err := s.PutConnection(ctx, credentials.Connection{ID: fmt.Sprint(i), NodeID: "n", Name: fmt.Sprint(i), Identity: fmt.Sprint(i), AuthKind: credentials.AuthNone, Enabled: true, Priority: i}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, _ := m.Load()
+			query := "DELETE FROM provider_connections WHERE id='0'"
+			if operation == "node-delete" {
+				query = "DELETE FROM provider_nodes WHERE id='n'"
+			}
+			if _, err := m.db.ExecContext(ctx, query); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			switch operation {
+			case "enable":
+				err = s.SetConnectionEnabled(ctx, "0", false)
+			case "priority":
+				err = s.SetConnectionPriority(ctx, "0", 3)
+			case "proxy":
+				err = s.SetConnectionProxy(ctx, "0", "")
+			case "delete":
+				err = s.DeleteConnection(ctx, "0")
+			case "move":
+				err = s.MoveConnection(ctx, "1", -1)
+			case "node-delete":
+				err = s.DeleteGenericNode(ctx, "n")
+			}
+			if !errors.Is(err, credentials.ErrNotFound) {
+				t.Fatalf("missing durable row: %v", err)
+			}
+			after, _ := m.Load()
+			if after != before {
+				t.Fatal("failed write published snapshot/revision")
+			}
+			var revision uint64
+			if err := m.db.QueryRowContext(ctx, "SELECT value FROM meta WHERE key='config_revision'").Scan(&revision); err != nil || revision != before.ConfigRevision() {
+				t.Fatalf("durable revision=%d err=%v", revision, err)
+			}
+			if operation == "move" {
+				var priority int
+				if err := m.db.QueryRowContext(ctx, "SELECT priority FROM provider_connections WHERE id='1'").Scan(&priority); err != nil || priority != 1 {
+					t.Fatalf("partial reorder not rolled back: priority=%d err=%v", priority, err)
+				}
+			}
+		})
+	}
 }
 
 func TestProviderSnapshotCompileCommitPublish(t *testing.T) {

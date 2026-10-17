@@ -58,6 +58,13 @@ func TestPutConnectionSealsSecretAtRest(t *testing.T) {
 	if loaded.Secret.RefreshToken != "fixture-rotating-credential" || loaded.Secret.AccessToken != "fixture-access" || loaded.AuthKind != AuthOAuth || loaded.Priority != 1 || !loaded.Enabled {
 		t.Fatalf("connection=%+v", loaded)
 	}
+	config, err := LoadConfiguration(ctx, store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Connections) != 1 || config.Connections[0].ProviderID != "codex" || !config.Connections[0].Secret.Empty() {
+		t.Fatalf("metadata provider identity or secret isolation: %+v", config.Connections)
+	}
 }
 
 func TestPutConnectionPreservesStoredSecretOnEdit(t *testing.T) {

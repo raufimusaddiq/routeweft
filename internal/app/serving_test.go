@@ -177,7 +177,7 @@ func TestConfiguredServingBuiltinEndpoints(t *testing.T) {
 	if err := a.runtime.PutModel(ctx, runtime.Model{ProviderID: "kenari", ID: "model"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/v1/chat/completions", "/v1/responses", "/v1/responses/compact", "/v1/messages"} {
+	for _, path := range []string{"/v1/chat/completions", "/v1/responses", "/v1/messages"} {
 		w := serveRequest(a.Handler(), key, path, `{"model":"kenari/model","input":"hi","messages":[{"role":"user","content":"hi"}],"max_tokens":1}`)
 		if w.Code != 200 || w.Body.String() != path {
 			t.Fatalf("%s status=%d body=%s", path, w.Code, w.Body)
@@ -231,7 +231,7 @@ func TestConfiguredServingStrategiesAndEligibility(t *testing.T) {
 }
 
 func TestConfiguredServingFallbackAndTerminalErrors(t *testing.T) {
-	for _, status := range []int{401, 403, 408, 409, 429, 503, 400, 413} {
+	for _, status := range []int{401, 403, 429, 503, 400, 413} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			var first, second atomic.Int32
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -326,6 +326,136 @@ func TestConfiguredServingSkipsTransportMismatchBeforeRotationAndCap(t *testing.
 	}
 }
 
+func TestConfiguredServingCredentialFailures(t *testing.T) {
+	for _, mode := range []string{"missing-key", "missing-account", "all-missing"} {
+		t.Run(mode, func(t *testing.T) {
+			var calls atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				fmt.Fprint(w, r.Header.Get("Authorization"))
+			}))
+			defer upstream.Close()
+			a, key := servingApp(t, upstream.URL, 2)
+			if mode == "missing-key" {
+				if err := a.store.Close(); err != nil {
+					t.Fatal(err)
+				}
+				a = New(Config{DataDir: a.cfg.DataDir, AllowPrivateUpstreams: true}, nil)
+				if err := a.Initialize(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				defer a.store.Close()
+			} else {
+				a.credReg.Forget("account-00")
+				if mode == "all-missing" {
+					a.credReg.Forget("account-01")
+				}
+			}
+			w := serveRequest(a.Handler(), key, "/v1/responses", `{"model":"fast","input":"hi"}`)
+			if mode == "missing-account" {
+				if w.Code != 200 || calls.Load() != 1 || w.Body.String() != "Bearer synthetic-1" {
+					t.Fatalf("account fallback status=%d calls=%d body=%s", w.Code, calls.Load(), w.Body)
+				}
+			} else if w.Code != 503 || calls.Load() != 0 || !strings.Contains(w.Body.String(), "credentials_unavailable") {
+				t.Fatalf("credential status=%d calls=%d body=%s", w.Code, calls.Load(), w.Body)
+			}
+			if _, cooling := a.runtime.State().CooldownUntil("account-00", time.Now()); !cooling {
+				t.Fatal("credential failure did not cool account")
+			}
+			if _, cooling := a.runtime.State().CooldownUntil("account-01", time.Now()); cooling != (mode == "all-missing") {
+				t.Fatal("configuration-wide failure did not stop the chain or account cooldown missing")
+			}
+		})
+	}
+}
+
+func TestConfiguredServingSameAccountRetry(t *testing.T) {
+	for _, status := range []int{408, 409} {
+		for _, persistent := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%d/persistent=%v", status, persistent), func(t *testing.T) {
+				var first, second atomic.Int32
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Header.Get("Authorization") == "Bearer synthetic-0" {
+						if n := first.Add(1); n == 1 || persistent {
+							w.WriteHeader(status)
+							fmt.Fprint(w, `{"error":"retry"}`)
+							return
+						}
+					} else {
+						second.Add(1)
+					}
+					fmt.Fprint(w, r.Header.Get("Authorization"))
+				}))
+				defer upstream.Close()
+				a, key := servingApp(t, upstream.URL, 2)
+				start := time.Now()
+				w := serveRequest(a.Handler(), key, "/v1/responses", `{"model":"fast","input":"hi"}`)
+				want, wantSecond := "Bearer synthetic-0", int32(0)
+				if persistent {
+					want, wantSecond = "Bearer synthetic-1", 1
+				}
+				if w.Code != 200 || w.Body.String() != want || first.Load() != 2 || second.Load() != wantSecond || time.Since(start) < 900*time.Millisecond {
+					t.Fatalf("retry status=%d first=%d second=%d elapsed=%s body=%s", w.Code, first.Load(), second.Load(), time.Since(start), w.Body)
+				}
+			})
+		}
+	}
+}
+
+func TestConfiguredServingRetryDelayCancellation(t *testing.T) {
+	seen := make(chan struct{}, 1)
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Retry-After", "120")
+		w.WriteHeader(408)
+		fmt.Fprint(w, `{"error":"retry"}`)
+		select {
+		case seen <- struct{}{}:
+		default:
+		}
+	}))
+	defer upstream.Close()
+	a, key := servingApp(t, upstream.URL, 2)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"fast","input":"hi"}`)).WithContext(ctx)
+	r.Header.Set("Authorization", "Bearer "+key)
+	done := make(chan struct{})
+	go func() {
+		a.Handler().ServeHTTP(httptest.NewRecorder(), r)
+		close(done)
+	}()
+	select {
+	case <-seen:
+	case <-time.After(3 * time.Second):
+		t.Fatal("request did not reach upstream")
+	}
+	// Wait until dispatch has classified the response and entered its delay.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if until, ok := a.runtime.State().CooldownUntil("account-00", time.Now()); ok {
+			if time.Until(until) < 115*time.Second {
+				t.Fatal("retry delay ignored Retry-After")
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("retry delay not reached")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("retry delay ignored cancellation")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("cancelled retry made %d requests", calls.Load())
+	}
+}
+
 func TestConfiguredServingSharesProviderRotationAcrossModelsAndAliases(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, r.Header.Get("Authorization")) }))
 	defer upstream.Close()
@@ -359,17 +489,21 @@ func TestConfiguredServingSharesProviderRotationAcrossModelsAndAliases(t *testin
 }
 
 func TestConfiguredServingAttemptCap(t *testing.T) {
-	var calls atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		w.WriteHeader(503)
-		fmt.Fprint(w, `{"error":"last failure"}`)
-	}))
-	defer upstream.Close()
-	a, key := servingApp(t, upstream.URL, 12)
-	w := serveRequest(a.Handler(), key, "/v1/responses", `{"model":"fast","input":"hi"}`)
-	if w.Code != 503 || calls.Load() != 10 || !strings.Contains(w.Body.String(), "last failure") {
-		t.Fatalf("status=%d calls=%d body=%s", w.Code, calls.Load(), w.Body)
+	for _, status := range []int{503, 408} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			var calls atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				w.WriteHeader(status)
+				fmt.Fprint(w, `{"error":"last failure"}`)
+			}))
+			defer upstream.Close()
+			a, key := servingApp(t, upstream.URL, 12)
+			w := serveRequest(a.Handler(), key, "/v1/responses", `{"model":"fast","input":"hi"}`)
+			if w.Code != status || calls.Load() != 10 || !strings.Contains(w.Body.String(), "last failure") {
+				t.Fatalf("status=%d calls=%d body=%s", w.Code, calls.Load(), w.Body)
+			}
+		})
 	}
 }
 

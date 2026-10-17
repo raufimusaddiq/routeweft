@@ -91,7 +91,7 @@ func TestCooldownDeadlineHonorsResetAndRetryAfter(t *testing.T) {
 		delay   time.Duration
 	}{
 		{OutcomeAuthRefreshRequired, 2 * time.Minute},
-		{OutcomeRetrySameAccount, time.Minute},
+		{OutcomeRetrySameAccount, time.Second},
 	} {
 		classification := Classification{Outcome: tc.outcome}
 		if !classification.AllowsFallback() || !CooldownDeadline(classification, now, time.Minute).Equal(now.Add(tc.delay)) {

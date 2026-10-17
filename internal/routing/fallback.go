@@ -43,6 +43,9 @@ func CooldownDeadline(classification Classification, now time.Time, defaultBacko
 		// Pinned v1 cools invalid credentials for two minutes.
 		return now.Add(2 * time.Minute)
 	}
+	if classification.Outcome == OutcomeRetrySameAccount {
+		return now.Add(time.Second)
+	}
 	if classification.AllowsFallback() {
 		return now.Add(defaultBackoff)
 	}

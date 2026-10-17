@@ -8,12 +8,13 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
-// Match the pinned v1 default cap; no failed account is repeated in this chain.
+// Bound all wire attempts, including one same-account retry for 408/409.
 const maxAccountAttempts = 10
 
 type dispatchError struct {
@@ -69,14 +70,25 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 		return nil, routing.ProviderRef{}, &dispatchError{503, "no_eligible_accounts", routing.ErrNoEligibleAccounts.Error()}
 	}
 	var lastErr error
+	used := 0
 	for index, provider := range candidates {
+		if used == maxAccountAttempts {
+			break
+		}
 		if err := r.Context().Err(); err != nil {
 			return nil, provider, err
 		}
 		if h.opts.CredentialFor != nil {
 			token, err := h.opts.CredentialFor(r.Context(), provider.ConnectionID)
 			if err != nil {
-				lastErr = err
+				if r.Context().Err() != nil {
+					return nil, provider, r.Context().Err()
+				}
+				h.recordClassification(provider.ConnectionID, routing.Classification{Outcome: routing.OutcomeAuthRefreshRequired}, time.Now())
+				lastErr = &dispatchError{503, "credentials_unavailable", "provider credentials are unavailable"}
+				if errors.Is(err, credentials.ErrKeyRequired) {
+					return nil, provider, lastErr
+				}
 				continue
 			}
 			provider.APIToken = token
@@ -85,38 +97,60 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 		if err != nil {
 			return nil, provider, &dispatchError{502, "request_translation_failed", err.Error()}
 		}
-		request, err := h.newUpstreamRequest(r, provider, outbound.Endpoint, outbound.Body, outbound.Headers)
-		if err != nil {
-			return nil, provider, &dispatchError{502, "upstream_configuration_error", "provider URL or endpoint is not allowed"}
-		}
-		response, err := h.clientFor(provider).Do(request)
-		if err != nil {
+		for retry := 0; retry < 2 && used < maxAccountAttempts; retry++ {
+			if err := r.Context().Err(); err != nil {
+				return nil, provider, err
+			}
+			request, err := h.newUpstreamRequest(r, provider, outbound.Endpoint, outbound.Body, outbound.Headers)
+			if err != nil {
+				return nil, provider, &dispatchError{502, "upstream_configuration_error", "provider URL or endpoint is not allowed"}
+			}
+			used++
+			response, err := h.clientFor(provider).Do(request)
+			if err != nil {
+				if r.Context().Err() != nil {
+					return nil, provider, r.Context().Err()
+				}
+				h.recordClassification(provider.ConnectionID, routing.Classification{Outcome: routing.OutcomeFallbackAccount}, time.Now())
+				lastErr = err
+				break
+			}
+			if response.StatusCode >= 200 && response.StatusCode < 300 {
+				return response, provider, nil
+			}
+			prefix, readErr := io.ReadAll(io.LimitReader(response.Body, errorBodyPeek))
 			if r.Context().Err() != nil {
+				response.Body.Close()
 				return nil, provider, r.Context().Err()
 			}
-			h.recordClassification(provider.ConnectionID, routing.Classification{Outcome: routing.OutcomeFallbackAccount}, time.Now())
-			lastErr = err
-			continue
-		}
-		if response.StatusCode >= 200 && response.StatusCode < 300 {
+			classification := classifyResponse(response.StatusCode, response.Header)
+			info := shared.ParseError(provider.Protocol, response.StatusCode, prefix)
+			if mapped := routing.ClassifyError(info.Kind.String(), response.StatusCode); mapped.Outcome != "" {
+				classification.Outcome = mapped.Outcome
+			}
+			now := time.Now()
+			h.recordClassification(provider.ConnectionID, classification, now)
+			if classification.Outcome == routing.OutcomeRetrySameAccount && retry == 0 && used < maxAccountAttempts && readErr == nil {
+				response.Body.Close()
+				timer := time.NewTimer(time.Until(routing.CooldownDeadline(classification, now, time.Second)))
+				select {
+				case <-r.Context().Done():
+					timer.Stop()
+					return nil, provider, r.Context().Err()
+				case <-timer.C:
+				}
+				continue
+			}
+			if classification.AllowsFallback() && readErr == nil && index+1 < len(candidates) && used < maxAccountAttempts {
+				response.Body.Close()
+				break
+			}
+			response.Body = struct {
+				io.Reader
+				io.Closer
+			}{io.MultiReader(bytes.NewReader(prefix), response.Body), response.Body}
 			return response, provider, nil
 		}
-		prefix, readErr := io.ReadAll(io.LimitReader(response.Body, errorBodyPeek))
-		classification := classifyResponse(response.StatusCode, response.Header)
-		info := shared.ParseError(provider.Protocol, response.StatusCode, prefix)
-		if mapped := routing.ClassifyError(info.Kind.String(), response.StatusCode); mapped.Outcome != "" {
-			classification.Outcome = mapped.Outcome
-		}
-		h.recordClassification(provider.ConnectionID, classification, time.Now())
-		if classification.AllowsFallback() && readErr == nil && index+1 < len(candidates) {
-			response.Body.Close()
-			continue
-		}
-		response.Body = struct {
-			io.Reader
-			io.Closer
-		}{io.MultiReader(bytes.NewReader(prefix), response.Body), response.Body}
-		return response, provider, nil
 	}
 	return nil, routing.ProviderRef{}, lastErr
 }

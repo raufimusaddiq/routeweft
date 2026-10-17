@@ -34,13 +34,17 @@ implementation status. #75 task R01, first review boundary (Sprint 5.1):
   and endpoint overrides are compiled; Generic nodes retain their own URLs.
 - Alias/qualified/unique bare-model lookup, stable priority ordering,
   fill-first/RR/sticky/provider overrides and cooldown/quota eligibility feed a
-  bounded account chain (at most 10 distinct accounts, pinned v1 default).
+  bounded account chain (at most 10 wire attempts, including retries).
   Account/network/quota failures can advance before response headers; client
-  errors stay terminal. Streams are never replayed after output begins.
+  errors stay terminal. Retry-same-account outcomes get one cancellable delayed
+  retry before advancing. Streams are never replayed after output begins.
 - Provider metadata mutations use validate/compile, durable transaction, atomic
   publish. Secrets stay outside snapshots; no schema migration. Global proxy
   settings/no-proxy parsing move to snapshot compilation; pooled transports and
-  SSRF guards remain in use.
+  SSRF guards remain in use. Registry seed models remain ephemeral across config
+  writes/restarts; explicit custom overrides persist. Missing durable rows abort
+  metadata edits before commit/publication. Missing credentials return distinct
+  503 errors; a missing master key stops the chain immediately.
 - Evidence: `internal/app/serving_test.go` starts the real app, seeds durable
   configuration, restarts, then exercises native requests after SQLite closes.
   Separate real control-API tests prove immediate create/edit/disable/delete
@@ -53,6 +57,11 @@ implementation status. #75 task R01, first review boundary (Sprint 5.1):
   provider refresh/wire behavior (#76), cross-protocol translation (R02), saver
   pipeline (R03), telemetry expansion (R10) and differential certification (R11)
   are not delivered by this step. No production-provider readiness claim.
+  Gemini/Ollama/System One handlers still lack actual-app dispatch. Compact
+  tests prove configured URL forwarding only, not provider support: pinned v1
+  `open-sse/handlers/chatCore.js` restricts native compact to Codex Responses.
+  Codex compact gating/headers/body remain R01/R11 + #76 gaps; Kenari compact
+  support is not asserted.
 
 ### Area issues and ownership
 

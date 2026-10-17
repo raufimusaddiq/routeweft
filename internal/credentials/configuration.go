@@ -60,14 +60,24 @@ func (s *Store) update(ctx context.Context, change func(*Configuration) error, p
 	return tx.Commit()
 }
 
-func (s *Store) exec(ctx context.Context, change func(*Configuration) error, query string, args ...any) (sql.Result, error) {
-	var result sql.Result
-	err := s.update(ctx, change, func(tx *sql.Tx) error {
-		var err error
-		result, err = tx.ExecContext(ctx, query, args...)
-		return err
+func (s *Store) exec(ctx context.Context, change func(*Configuration) error, query string, args ...any) error {
+	return s.update(ctx, change, func(tx *sql.Tx) error {
+		return requireAffected(tx.ExecContext(ctx, query, args...))
 	})
-	return result, err
+}
+
+func requireAffected(result sql.Result, err error) error {
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func editConnection(id string, edit func(*Connection)) func(*Configuration) error {
@@ -89,7 +99,7 @@ func LoadConfiguration(ctx context.Context, db *sql.DB) (Configuration, error) {
 	if err != nil {
 		return Configuration{}, err
 	}
-	rows, err := db.QueryContext(ctx, `SELECT id,node_id,name,auth_kind,identity,enabled,priority,COALESCE(proxy_pool_id,'') FROM provider_connections ORDER BY priority,name,id`)
+	rows, err := db.QueryContext(ctx, `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,c.identity,c.enabled,c.priority,COALESCE(c.proxy_pool_id,'') FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id ORDER BY c.priority,c.name,c.id`)
 	if err != nil {
 		return Configuration{}, err
 	}
@@ -97,7 +107,7 @@ func LoadConfiguration(ctx context.Context, db *sql.DB) (Configuration, error) {
 	config := Configuration{Nodes: nodes}
 	for rows.Next() {
 		var c Connection
-		if err := rows.Scan(&c.ID, &c.NodeID, &c.Name, &c.AuthKind, &c.Identity, &c.Enabled, &c.Priority, &c.ProxyPoolID); err != nil {
+		if err := rows.Scan(&c.ID, &c.NodeID, &c.ProviderID, &c.Name, &c.AuthKind, &c.Identity, &c.Enabled, &c.Priority, &c.ProxyPoolID); err != nil {
 			return Configuration{}, err
 		}
 		config.Connections = append(config.Connections, c)

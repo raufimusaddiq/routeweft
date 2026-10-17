@@ -71,10 +71,6 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 		}
 		if provider.Endpoint != "" {
 			endpoint = provider.Endpoint
-		} else if h.opts.EndpointFor != nil {
-			if override, ok := h.opts.EndpointFor(provider.ProviderID, provider.Protocol); ok {
-				endpoint = override
-			}
 		}
 		if compact {
 			endpoint += "/compact"
