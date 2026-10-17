@@ -17,6 +17,11 @@ import (
 // Bound all wire attempts, including one same-account retry for 408/409.
 const maxAccountAttempts = 10
 
+// retryDelayCap bounds how long one request waits in-process before its
+// same-account retry, regardless of a huge upstream Retry-After. The full
+// value still drives the RuntimeState cooldown; the client is not parked.
+const retryDelayCap = 5 * time.Second
+
 type dispatchError struct {
 	status        int
 	code, message string
@@ -132,7 +137,11 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			h.recordClassification(provider.ConnectionID, classification, now)
 			if classification.Outcome == routing.OutcomeRetrySameAccount && retry == 0 && used < maxAccountAttempts && readErr == nil {
 				response.Body.Close()
-				timer := time.NewTimer(time.Until(routing.CooldownDeadline(classification, now, time.Second)))
+				delay := time.Until(routing.CooldownDeadline(classification, now, time.Second))
+				if delay > retryDelayCap {
+					delay = retryDelayCap
+				}
+				timer := time.NewTimer(delay)
 				select {
 				case <-r.Context().Done():
 					timer.Stop()
@@ -151,6 +160,9 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			}{io.MultiReader(bytes.NewReader(prefix), response.Body), response.Body}
 			return response, provider, nil
 		}
+	}
+	if lastErr == nil {
+		return nil, routing.ProviderRef{}, &dispatchError{503, "no_eligible_accounts", routing.ErrNoEligibleAccounts.Error()}
 	}
 	return nil, routing.ProviderRef{}, lastErr
 }

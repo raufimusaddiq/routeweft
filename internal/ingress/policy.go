@@ -255,19 +255,6 @@ func comboAccounts(members []routing.Member) []routing.Account {
 	return accounts
 }
 
-// PlanAttempts builds the ordered candidate list for one request from the
-// immutable snapshot plus RuntimeState cooldown/quota observations
-// (SPEC §13, PRD-ROUTE-002/004).
-func (h *Handler) PlanAttempts(snapshot *runtime.RuntimeSnapshot, model string, now time.Time) ([]routing.Account, bool) {
-	return h.PlanProviderAttempts(snapshot, modelProviderID(model), model, now)
-}
-
-// PlanProviderAttempts selects candidates with an explicit provider identity,
-// required when model names are aliases or unqualified.
-func (h *Handler) PlanProviderAttempts(snapshot *runtime.RuntimeSnapshot, providerID, model string, now time.Time) ([]routing.Account, bool) {
-	return h.planProviderAttempts(snapshot, providerID, model, "", now)
-}
-
 func (h *Handler) planProviderAttempts(snapshot *runtime.RuntimeSnapshot, providerID, model, source string, now time.Time) ([]routing.Account, bool) {
 	if h.opts.Candidates == nil {
 		return nil, false

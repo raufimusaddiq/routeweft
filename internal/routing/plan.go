@@ -58,19 +58,3 @@ func BuildPlan(options PlanOptions) (Plan, error) {
 		Provider:       options.Provider,
 	}, nil
 }
-
-// AttemptBudget bounds retries/fallback for one request (SPEC section 8).
-type AttemptBudget struct {
-	Max int
-}
-
-// DefaultAttemptBudget keeps one native attempt until Sprint 3 adds fallback.
-func DefaultAttemptBudget() AttemptBudget { return AttemptBudget{Max: 1} }
-
-// Allow reports whether another attempt may run.
-func (b AttemptBudget) Allow(used int) bool {
-	if b.Max <= 0 {
-		return false
-	}
-	return used < b.Max
-}

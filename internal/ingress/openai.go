@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
+	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
 )
 
 func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source string, compact bool) {
@@ -48,7 +50,8 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 		h.writeError(w, 503, "snapshot_unavailable", err.Error())
 		return
 	}
-	response, _, err := h.dispatchAttempts(r, snapshot, model, source, func(provider routing.ProviderRef) (ChatTranslation, error) {
+	started := time.Now()
+	response, provider, err := h.dispatchAttempts(r, snapshot, model, source, func(provider routing.ProviderRef) (ChatTranslation, error) {
 		plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: source, Provider: provider})
 		if err != nil {
 			return ChatTranslation{}, err
@@ -92,6 +95,7 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 	w.WriteHeader(response.StatusCode)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		io.Copy(w, response.Body)
+		h.emitOutcome(r, provider, response.StatusCode, stream, promptcache.Usage{}, started)
 		return
 	}
 	if stream {

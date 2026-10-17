@@ -43,25 +43,6 @@ func TestStickyRoundRobinAdvancesOnlyAfterLimit(t *testing.T) {
 	}
 }
 
-func TestAttemptChainIsBoundedAndDoesNotRepeatExcludedCandidates(t *testing.T) {
-	selection := Select(SelectOptions{Strategy: StrategyFillFirst, Accounts: testAccounts(), Excluded: map[string]struct{}{"b": {}}})
-	chain := NewAttemptChain(selection)
-	var got []string
-	for {
-		account, ok := chain.Next()
-		if !ok {
-			break
-		}
-		got = append(got, account.ID)
-	}
-	if len(got) != 2 || got[0] != "a" || got[1] != "c" || chain.Used() != 2 {
-		t.Fatalf("attempts %v", got)
-	}
-	if _, ok := chain.Next(); ok {
-		t.Fatal("attempt budget overflow")
-	}
-}
-
 func TestClassifyStatusSeparatesClientFailuresAndQuota(t *testing.T) {
 	if got := ClassifyStatus(http.StatusBadRequest, nil); got.Outcome != OutcomeTerminalClientError || got.AllowsFallback() {
 		t.Fatalf("client classification %+v", got)

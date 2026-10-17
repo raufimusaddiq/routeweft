@@ -169,8 +169,9 @@ func (s *RuntimeSnapshot) compileServingIndexes() {
 			s.providerStrategies[provider] = strategy
 		}
 	}
-	s.providerStickyLimit, _ = strconv.ParseUint(s.settings["stickyRoundRobinLimit"], 10, 64)
-	s.providerStickyLimit = routing.StickyRotations(s.providerStickyLimit)
+	if value, err := strconv.ParseUint(strings.TrimSpace(s.settings["stickyRoundRobinLimit"]), 10, 64); err == nil {
+		s.providerStickyLimit = routing.StickyRotations(value)
+	}
 }
 
 func (s *RuntimeSnapshot) ProviderStrategy() routing.Strategy { return s.providerStrategy }

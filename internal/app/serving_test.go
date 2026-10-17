@@ -456,6 +456,29 @@ func TestConfiguredServingRetryDelayCancellation(t *testing.T) {
 	}
 }
 
+func TestConfiguredServingRetryDelayCapped(t *testing.T) {
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.Header().Set("Retry-After", "86400")
+			w.WriteHeader(408)
+			fmt.Fprint(w, `{"error":"retry"}`)
+			return
+		}
+		fmt.Fprint(w, r.Header.Get("Authorization"))
+	}))
+	defer upstream.Close()
+	a, key := servingApp(t, upstream.URL, 1)
+	start := time.Now()
+	w := serveRequest(a.Handler(), key, "/v1/responses", `{"model":"fast","input":"hi"}`)
+	if w.Code != 200 || w.Body.String() != "Bearer synthetic-0" || calls.Load() != 2 || time.Since(start) > 15*time.Second {
+		t.Fatalf("capped retry status=%d calls=%d elapsed=%s body=%s", w.Code, calls.Load(), time.Since(start), w.Body)
+	}
+	if _, cooling := a.runtime.State().CooldownUntil("account-00", time.Now()); !cooling {
+		t.Fatal("capped retry did not preserve full Retry-After cooldown")
+	}
+}
+
 func TestConfiguredServingSharesProviderRotationAcrossModelsAndAliases(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, r.Header.Get("Authorization")) }))
 	defer upstream.Close()
