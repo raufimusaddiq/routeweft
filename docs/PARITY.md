@@ -369,7 +369,7 @@ v1 PATCH accepts arbitrary non-password settings, so defaults alone are not the 
 | Per-connection proxy enabled/URL/no-proxy/proxyPoolId/vercelRelayUrl/strictProxy | proxy_pools/members + connection binding | PARTIAL | Global/pool primitives exist; direct/relay/strict proxy semantics and operator CRUD/test incomplete C06/R08. |
 | No-auth providerStrategies proxyPoolId / rotateStrategy | no equivalent object setting | MISSING | v1 virtual free account can rotate all active proxy pools; not represented by map[string]string C04/C06/R01. |
 | Nodes type/name/prefix/apiType/baseUrl; System One typed nodes | builtin/generic node/transports model | PARTIAL | D07 unified compatible nodes; custom typed SO + Cloudflare secondary SO not modeled R04/C06. |
-| Combo name/kind/ordered model IDs; fallback/RR/sticky/judge/fusionTuning | combos/combo_models + fusion boolean/judge | PARTIAL | Kind/tuning/object overrides not mapped. v1 default minPanel=2/grace=8000ms/hard=90000ms vs Go min=1/grace=250ms/hard=30000ms; Go may return ErrFusionQuorum where v1 one-success path returns answer (C06/R01). No approved exception. |
+| Combo name/kind/ordered model IDs; fallback/RR/sticky/judge/fusionTuning | combos/combo_models + fusion boolean/judge | PARTIAL | Kind/tuning/object overrides not mapped. v1 default minPanel=2/grace=8000ms/hard=90000ms vs Go min=1/grace=250ms/hard=30000ms. Both defaults return a sole successful answer; Go with explicit MinPanelQuorum>1 rejects it with ErrFusionQuorum, whereas v1 minPanel only gates the grace window (C06/R01). No approved exception. |
 | capacity pools roundRobin/models, empty pool/deselect, context trim | runtime/combo.go + routing/capability.go | PARTIAL | Unit primitives exist; exact app cases and migration of object shape needed R01/C04. |
 | Model aliases/custom/disabled, kind/caps/context/thinking/upstream IDs/quota family | normalized model tables/compiler | PARTIAL | Core add/disable/alias exists; seed drift/kinds/provider capabilities/manual delete/pricing completeness P03/R06/C06. |
 | Pricing defaults/overrides and cached token prices | pricing_overrides + shared token usage | PARTIAL | Override storage exists; cost production/read model and baseline default pricing incomplete R10/C06. |
@@ -522,16 +522,18 @@ The checklists in #75-#78 are normative follow-up scope for this inventory. Ever
 
 ### Reproducible enumeration check
 
-Run from this worktree, with the read-only oracle available at `/opt/9router`.
+Run from a Routeweft checkout. Set `ORACLE_DIR` to a read-only LiteRouter checkout containing the pinned commit; `/opt/9router` was used for this audit. The provenance worktree path in section 1 is not required.
 This checks omissions/duplicates and pins, not behavior; it is deliberately not a replacement for R11.
 
 ```bash
-node <<'JS'
+ORACLE_DIR=/path/to/literouter node <<'JS'
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const pin = '1c3b9f47837d42ea64992063309064af755a14a3';
-const git = (...args) => execFileSync('git', ['-C', '/opt/9router', ...args], { encoding: 'utf8' });
+const oracle = process.env.ORACLE_DIR;
+assert.ok(oracle, 'Set ORACLE_DIR to a LiteRouter checkout containing the pinned commit');
+const git = (...args) => execFileSync('git', ['-C', oracle, ...args], { encoding: 'utf8' });
 const text = fs.readFileSync('docs/PARITY.md', 'utf8');
 const files = git('ls-tree', '-r', '--name-only', pin).trim().split('\n');
 const expected = files.filter(p => /^src\/app\/api\/.*\/route\.(js|ts)$/.test(p))
