@@ -97,6 +97,12 @@ func TestSetSettingsRejectsMalformedValuesWithoutMutation(t *testing.T) {
 		{"noProxy", `{}`},
 		{"outboundProxyUrl", "file:///etc/passwd"},
 		{"outboundProxyUrl", "http://proxy.example:65536"},
+		{"headroomUrl", "file:///etc/passwd"},
+		{"pxpipeUrl", "https://user:secret@example.com"},
+		{"headroomTimeoutMs", "0"},
+		{"headroomTimeoutMs", "9223372036854775807"},
+		{"pxpipeTimeoutMs", "not-a-number"},
+		{"pxpipeMinChars", "-1"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.key+"/"+tc.value, func(t *testing.T) {

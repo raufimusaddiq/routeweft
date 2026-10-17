@@ -556,6 +556,31 @@ Normative order on the final provider request body:
 
 A client opt-out can disable token savers as defined by the ingress contract.
 
+Saver settings compile with each immutable RuntimeSnapshot. Every wire attempt
+starts from its own protocol/provider-prepared body, including same-account
+retry and account fallback. The shared dispatch boundary runs savers before
+cache anchoring; a retry never reuses another attempt's transformed body.
+Both `x-9router-token-saver: off` and `x-literouter-token-saver: off` bypass
+savers, not cache anchoring. Count-tokens compatibility estimates the transformed
+Messages body without counting cache-control metadata as prompt text.
+
+Native normalization edits known text slots without replacing opaque media,
+tool identities, thinking/signatures or unknown fields. Unchanged bodies retain
+their bytes. Typed System One state/questions have no prompt-policy field and
+remain opaque; routing them through the shared boundary must not invent one.
+Optional helper failures preserve the pre-step content and allow later savers
+to run. Helper work inherits the client context and uses pooled, SSRF-guarded
+clients; no credentials or client headers are forwarded to compression helpers.
+
+Implementation status, not a helper-parity contract change: the initial R03
+wiring uses the existing Routeweft Headroom/PXPIPE HTTP helper
+interfaces, not a claim of pinned helper-wire parity. `headroomUrl` is the full
+Routeweft compression endpoint. `pxpipeUrl` is an optional full helper endpoint,
+empty by default; an enabled but unconfigured PXPIPE fails open. Both URL
+settings use the common outbound policy; local endpoints require the explicit
+trusted-local deployment option. Native Headroom `/v1/compress` compatibility
+and PXPIPE image-rendering integration remain separate R03/R09 follow-ups.
+
 ### 17.1 RTK
 
 Compress supported tool-result/context structures while preserving required semantics.

@@ -197,7 +197,7 @@ func TestMessagesAppliesTransformsBeforeCacheAnchors(t *testing.T) {
 		t.Fatal(err)
 	}
 	var order []string
-	handler := New(manager, Options{AllowPrivateUpstreams: true, TransformFinalBody: func(protocol string, body []byte) ([]byte, error) {
+	handler := New(manager, Options{AllowPrivateUpstreams: true, TransformFinalBody: func(_ context.Context, _ *runtime.RuntimeSnapshot, protocol string, body []byte) ([]byte, error) {
 		if protocol != anthropicadapter.MessagesProtocol {
 			t.Fatalf("protocol %s", protocol)
 		}

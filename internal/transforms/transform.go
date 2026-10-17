@@ -3,6 +3,11 @@
 // (BDR-012, SPEC §17): RTK -> Headroom -> Caveman -> Ponytail -> PXPIPE.
 package transforms
 
+import (
+	"context"
+	"slices"
+)
+
 // Request is a protocol-neutral view of messages plus the system/instruction
 // head. Implementations own mapping to/from their concrete wire body.
 type Request struct {
@@ -24,8 +29,8 @@ type Message struct {
 // the caller's request when it fails.
 func (r Request) Clone() Request {
 	cloned := r
-	cloned.System = append([]string(nil), r.System...)
-	cloned.Messages = append([]Message(nil), r.Messages...)
+	cloned.System = slices.Clone(r.System)
+	cloned.Messages = slices.Clone(r.Messages)
 	return cloned
 }
 
@@ -46,15 +51,30 @@ type Pipeline struct {
 // Run applies each step fail-open: a step error discards that step's output and
 // keeps the request unchanged, then the pipeline continues.
 func (p Pipeline) Run(request Request) Request {
+	return p.RunContext(context.Background(), request)
+}
+
+func (p Pipeline) RunContext(ctx context.Context, request Request) Request {
 	current := request.Clone()
 	if current.Bypass {
 		return current
 	}
 	for _, step := range p.Steps {
+		if ctx.Err() != nil {
+			break
+		}
 		if step == nil {
 			continue
 		}
-		updated, err := step.Apply(current.Clone())
+		var updated Request
+		var err error
+		if contextual, ok := step.(interface {
+			ApplyContext(context.Context, Request) (Request, error)
+		}); ok {
+			updated, err = contextual.ApplyContext(ctx, current.Clone())
+		} else {
+			updated, err = step.Apply(current.Clone())
+		}
 		if err != nil {
 			continue
 		}

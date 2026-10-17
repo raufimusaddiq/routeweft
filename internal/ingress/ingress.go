@@ -59,9 +59,8 @@ type Options struct {
 	// token usage (including cache counts). The telemetry PR wires it to the
 	// bounded Usage queue; it is never called on the client-cancelled path.
 	OnRequestComplete func(RequestOutcome)
-	// TransformFinalBody runs Routeweft token savers on the final outbound body
-	// before cache anchors are applied (BDR-012). Errors leave the body unchanged.
-	TransformFinalBody func(protocol string, body []byte) ([]byte, error)
+	// TransformFinalBody uses the attempt's snapshot; failures keep the original body.
+	TransformFinalBody func(context.Context, *runtime.RuntimeSnapshot, string, []byte) ([]byte, error)
 	// AllowPrivateUpstreams is the explicit trusted-local operator policy. It is
 	// off by default so operator-supplied provider URLs cannot reach loopback,
 	// LAN, or metadata addresses.
@@ -261,16 +260,6 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return ChatTranslation{}, err
 		}
-		if h.opts.TransformFinalBody != nil {
-			if transformed, transformErr := h.opts.TransformFinalBody(provider.Protocol, translated.Body); transformErr == nil {
-				translated.Body = transformed
-			}
-		}
-		if provider.Protocol == anthropicadapter.MessagesProtocol {
-			if anchored, anchorErr := promptcache.Anchor(translated.Body, promptcache.DefaultBudget); anchorErr == nil {
-				translated.Body = anchored
-			}
-		}
 		return translated, nil
 	})
 	if err != nil {
@@ -390,7 +379,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	h.handleOpenAI(w, r, openaiadapter.ChatProtocol, false)
 }
 
-func (h *Handler) newUpstreamRequest(r *http.Request, provider routing.ProviderRef, endpoint string, body []byte, headers http.Header) (*http.Request, error) {
+func (h *Handler) newUpstreamRequest(r *http.Request, snapshot *runtime.RuntimeSnapshot, provider routing.ProviderRef, endpoint string, body []byte, headers http.Header) (*http.Request, error) {
 	validate := transport.ValidatePublicURL
 	if h.opts.AllowPrivateUpstreams {
 		validate = transport.ValidateTrustedLocalURL
@@ -411,6 +400,7 @@ func (h *Handler) newUpstreamRequest(r *http.Request, provider routing.ProviderR
 		base.Path = strings.TrimRight(base.Path, "/") + "/" + endpoint
 	}
 	base.RawPath = ""
+	body = h.finalBody(r, snapshot, provider.Protocol, body)
 	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, base.String(), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -751,7 +741,7 @@ func (h *Handler) handlePreflight(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 	}
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, x-api-key, x-goog-api-key")
+	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, x-api-key, x-goog-api-key, x-9router-token-saver, x-literouter-token-saver")
 	w.Header().Set("Access-Control-Max-Age", "600")
 	w.WriteHeader(http.StatusNoContent)
 }

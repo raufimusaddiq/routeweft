@@ -96,6 +96,44 @@ boundary implements bidirectional Chat Completions / Responses translation:
   Broad provider readiness, saver/cache pipeline wiring (R03) and telemetry
   completeness (R10) remain outside this boundary. No live providers tested.
 
+### R03 implementation progress (serving-pipeline review boundary)
+
+#75 task R03 / Sprint 5.3 now wires the existing saver implementations into
+the actual app. This boundary delivers pipeline integration, not helper parity:
+
+- Saver configuration compiles with immutable snapshots. The single upstream
+  request boundary applies RTK, Headroom, Caveman, Ponytail, PXPIPE, then cache
+  anchors to each prepared body, including account fallback and same-account
+  retry. Fallback starts from the original prepared body, not previous output.
+- Native Chat, Responses/Compact, Messages, Gemini and Ollama paths, plus both
+  implemented Chat/Responses translated directions, use that boundary. Gemini,
+  Ollama and System One now share account-attempt dispatch. System One's typed
+  state/questions remain opaque rather than receiving invented prompt fields.
+  Local count-tokens compatibility uses transformed text, excluding cache metadata.
+- Both saver-bypass headers are recognized and allowed in CORS preflight.
+  Bypass does not disable cache anchors. Native unknown fields, media/tool IDs,
+  thinking/signatures and client cache markers survive text edits; unchanged
+  bodies retain their bytes. String Messages system prompts can be anchored.
+- Each optional saver fails open independently. Malformed helper output or
+  changed text-slot counts/roles cannot corrupt the original wire structure.
+  Headroom/PXPIPE use client cancellation, bounded responses/timeouts and pooled
+  guarded clients. Settings updates validate helper URLs, timeouts and thresholds.
+  `pxpipeUrl` exposes the existing HTTP helper interface, empty by default; no
+  helper is installed, started or contacted unless explicitly enabled/configured.
+- Evidence: actual-app native/translated fallback and retry ordering tests,
+  final-body N/N+1 cache prefix tests, broken-helper/bypass/count-token tests,
+  helper cancellation tests, concurrent snapshot publication tests and fixed
+  native-wire fixtures in `internal/transforms/body/testdata/wire.json`.
+- R03 remains **PARTIAL**. Pinned Headroom calls `/v1/compress` with messages/model
+  and optional config, unlike the current Routeweft neutral HTTP interface.
+  Pinned PXPIPE uses a local `transformAnthropicMessages` image-rendering library;
+  Routeweft's existing HTTP text helper does not implement that image conversion.
+  These individual-helper parity gaps require a dependent reviewed PR, alongside
+  R09 managed lifecycle/extras/diagnostics. No native helper, production provider
+  or pinned differential parity claim is made. Unimplemented R02 translators and
+  actual Combo/Fusion serving (R01) remain their existing prerequisite gaps;
+  their future wire dispatch must reuse this shared boundary.
+
 ### Area issues and ownership
 
 | Area | Backlog | Gap IDs owned |

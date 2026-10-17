@@ -93,3 +93,35 @@ func TestRTKMinifiesJSONAndPreservesNonJSONToolResults(t *testing.T) {
 		t.Fatalf("non-JSON content changed: %q", got.Messages[1].Content)
 	}
 }
+
+func TestPromptPoliciesIndividually(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		step transforms.Transform
+		want string
+	}{
+		{"caveman-lite", caveman.Transform{Enabled: true, Level: "lite"}, caveman.Marker + " Respond concisely. Prefer short sentences and omit pleasantries."},
+		{"caveman-full", caveman.Transform{Enabled: true, Level: "full"}, caveman.Marker + " Respond tersely. No filler, no restating the question, no pleasantries."},
+		{"caveman-ultra", caveman.Transform{Enabled: true, Level: "ultra"}, caveman.Marker + " Respond in minimal telegraphic fragments. Drop all non-essential words."},
+		{"ponytail-lite", ponytail.Transform{Enabled: true, Level: "lite"}, ponytail.Marker + " Prefer shorter answers; skip preamble and summary unless asked."},
+		{"ponytail-full", ponytail.Transform{Enabled: true, Level: "full"}, ponytail.Marker + " Prefer the smallest correct answer. No preamble, no recap, no repetition."},
+		{"ponytail-ultra", ponytail.Transform{Enabled: true, Level: "ultra"}, ponytail.Marker + " Answer with the minimum viable output. Code or facts only when sufficient."},
+		{"caveman-disabled", caveman.Transform{}, ""},
+		{"caveman-unknown", caveman.Transform{Enabled: true, Level: "unknown"}, ""},
+		{"ponytail-disabled", ponytail.Transform{}, ""},
+		{"ponytail-unknown", ponytail.Transform{Enabled: true, Level: "unknown"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := transforms.Request{System: []string{"base"}, Messages: []transforms.Message{{Role: "user", Content: "keep"}}}
+			pipeline := transforms.Pipeline{Steps: []transforms.Transform{tc.step}}
+			got := pipeline.Run(input)
+			want := input.Clone()
+			if tc.want != "" {
+				want.System = []string{tc.want, "base"}
+			}
+			if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(pipeline.Run(got), got) {
+				t.Fatalf("got %+v, want %+v; not idempotent or wrong policy", got, want)
+			}
+		})
+	}
+}

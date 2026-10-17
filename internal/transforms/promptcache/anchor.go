@@ -116,11 +116,21 @@ func anchorSystem(fields map[string]json.RawMessage, remaining *int) (bool, erro
 		return false, nil
 	}
 	raw, ok := fields["system"]
-	if !ok || len(raw) == 0 || raw[0] == '"' {
+	if !ok || len(raw) == 0 {
 		return false, nil
 	}
 	var blocks []json.RawMessage
-	if err := json.Unmarshal(raw, &blocks); err != nil {
+	if raw[0] == '"' {
+		var text string
+		if err := json.Unmarshal(raw, &text); err != nil || text == "" {
+			return false, nil
+		}
+		block, err := json.Marshal(map[string]string{"type": "text", "text": text})
+		if err != nil {
+			return false, err
+		}
+		blocks = []json.RawMessage{block}
+	} else if err := json.Unmarshal(raw, &blocks); err != nil {
 		return false, nil
 	}
 	if len(blocks) == 0 || hasMarker(blocks[len(blocks)-1]) {

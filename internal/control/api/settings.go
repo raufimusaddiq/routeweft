@@ -34,10 +34,12 @@ func (h *Handler) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "empty_patch", "at least one setting must be set or removed")
 		return
 	}
-	if proxyURL, ok := body.Set["outboundProxyUrl"]; ok && proxyURL != "" {
-		if _, err := h.validateOutboundURL(proxyURL); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_setting", "outbound proxy URL is not allowed")
-			return
+	for _, key := range []string{"outboundProxyUrl", "headroomUrl", "pxpipeUrl"} {
+		if raw, ok := body.Set[key]; ok && raw != "" {
+			if _, err := h.validateOutboundURL(raw); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_setting", "outbound URL is not allowed")
+				return
+			}
 		}
 	}
 	revision, err := h.opts.Settings.SetSettings(r.Context(), body.Set, body.Remove)
