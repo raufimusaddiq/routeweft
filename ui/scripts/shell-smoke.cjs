@@ -24,6 +24,10 @@ const assert = require('node:assert/strict');
   let createCalls = 0;
   let deleteCalls = 0;
   let patchKeyCalls = 0;
+  let accessPatchCalls = 0;
+  let keyAccess = { restricted: false, allow: [] };
+  let createAccessBody = null;
+  let lastAccessBody = null;
   let providerPatches = 0;
   let comboCreated = false;
   let comboPayload = null;
@@ -81,16 +85,25 @@ const assert = require('node:assert/strict');
   }
   if (url.pathname === '/admin/v1/keys' && method === 'GET') {
     keyListCalls += 1;
-  const items = deleteCalls > 0 ? [] : [{ id: createdKeyID, name: 'ci-pipeline', prefix: 'rw_smoke', enabled: true, paused: patchKeyCalls % 2 === 1, createdAt: '2026-09-25T20:00:00Z' }];
+  const items = deleteCalls > 0 ? [] : [{ id: createdKeyID, name: 'ci-pipeline', prefix: 'rw_smoke', enabled: true, paused: patchKeyCalls % 2 === 1, createdAt: '2026-09-25T20:00:00Z', access: keyAccess }];
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items, page: 1, pageSize: 50, total: items.length }) });
   }
   if (url.pathname === '/admin/v1/keys' && method === 'POST') {
     createCalls += 1;
-    return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ key: { id: createdKeyID, name: route.request().postDataJSON().name, prefix: 'rw_smoke', enabled: true, paused: false }, secret: createdSecret }) });
+    createAccessBody = route.request().postDataJSON().access;
+    return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ key: { id: createdKeyID, name: route.request().postDataJSON().name, prefix: 'rw_smoke', enabled: true, paused: false, access: keyAccess }, secret: createdSecret }) });
   }
   if (url.pathname.startsWith('/admin/v1/keys/') && method === 'PATCH') {
-    patchKeyCalls += 1;
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: createdKeyID, paused: true, configRevision: 9 }) });
+    const patch = route.request().postDataJSON();
+    if (patch.access) {
+      // Mirror the server: normalize (sort) and clear the list when unrestricted.
+      accessPatchCalls += 1;
+      lastAccessBody = patch.access;
+      keyAccess = patch.access.restricted === true ? { restricted: true, allow: [...patch.access.allow].sort() } : { restricted: false, allow: [] };
+    } else {
+      patchKeyCalls += 1;
+    }
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ key: { id: createdKeyID, name: 'ci-pipeline', prefix: 'rw_smoke', enabled: true, paused: patchKeyCalls % 2 === 1, access: keyAccess }, configRevision: 9 }) });
   }
   if (url.pathname.startsWith('/admin/v1/keys/') && method === 'DELETE') {
     deleteCalls += 1;
@@ -149,6 +162,9 @@ const assert = require('node:assert/strict');
     systemOneProbeCalls += 1;
     systemOneProbeTransport = route.request().postDataJSON().transport;
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ connectionId: 'conn-jev', transport: 'systemone', results: [{ modelId: 'jev', ok: true, status: 200 }] }) });
+  }
+  if (url.pathname === '/admin/v1/models/disabled' && method === 'GET') {
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [], page: 1, pageSize: 100, total: 0 }) });
   }
   if (url.pathname === '/admin/v1/models' && method === 'GET') {
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ providerId: 'openai', id: 'gpt-5', name: 'GPT-5', contextWindow: 128000, capabilities: [], disabled: false }], page: 1, pageSize: 100, total: 1 }) });
@@ -240,9 +256,37 @@ const assert = require('node:assert/strict');
   report.copiedSecret = await page.evaluate(() => navigator.clipboard.readText());
   await page.click('.secret-panel .button-ghost');
   report.secretCleared = await page.locator('.secret-panel').count();
-  await page.click('.key-row .button-secondary');
-  await page.waitForFunction(() => document.querySelector('.key-row .button-secondary').textContent === 'Resume');
-  report.pausedLabel = await page.locator('.key-row .button-secondary').textContent();
+  report.createAccessBody = createAccessBody;
+  report.accessTagBefore = await page.locator('.key-row .access-tag').textContent();
+  // Access editor: explicit restricted mode, reachable picker, stored-state readback.
+  const accessButton = page.locator('.key-row').getByRole('button', { name: 'Access', exact: true });
+  await accessButton.click();
+  await page.waitForSelector('.key-access-editor');
+  report.accessExpanded = await accessButton.getAttribute('aria-expanded');
+  report.accessControls = await accessButton.getAttribute('aria-controls');
+  report.accessEditorId = await page.locator('.key-access-editor').getAttribute('id');
+  report.saveDisabledUnchanged = await page.getByRole('button', { name: 'Save access' }).isDisabled();
+  await page.locator('.key-access-editor').getByRole('radio', { name: /^Restricted/ }).check();
+  await page.waitForSelector('.access-list');
+  report.accessChoices = await page.locator('.access-list code').allTextContents();
+  await page.locator('.access-list label', { hasText: 'openai/gpt-5' }).locator('input').check();
+  // Switching to Unrestricted and back must not lose the selection.
+  await page.locator('.key-access-editor').getByRole('radio', { name: /^Unrestricted/ }).check();
+  await page.locator('.key-access-editor').getByRole('radio', { name: /^Restricted/ }).check();
+  report.selectionKept = await page.locator('.access-list label', { hasText: 'openai/gpt-5' }).locator('input').isChecked();
+  // Mobile: no horizontal overflow and a single-column mode picker.
+  await page.setViewportSize({ width: 390, height: 844 });
+  report.mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  report.mobileModeColumns = await page.evaluate(() => getComputedStyle(document.querySelector('.access-modes')).gridTemplateColumns.split(' ').length);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole('button', { name: 'Save access' }).click();
+  await page.waitForFunction(() => document.querySelector('.key-row .access-tag').textContent.startsWith('Restricted'));
+  report.accessTagAfter = await page.locator('.key-row .access-tag').textContent();
+  report.accessBodySent = lastAccessBody;
+  report.accessEditorClosed = await page.locator('.key-access-editor').count();
+  await page.locator('.key-row').getByRole('button', { name: 'Pause', exact: true }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.key-row button')].some(button => button.textContent === 'Resume'));
+  report.pausedLabel = await page.locator('.key-row').getByRole('button', { name: 'Resume', exact: true }).textContent();
   page.once('dialog', dialog => dialog.accept());
   await page.click('.key-row .button-danger');
   await page.waitForSelector('.empty-keys');
@@ -266,6 +310,7 @@ const assert = require('node:assert/strict');
   report.skipTarget = await page.locator('.skip-link').getAttribute('href');
   report.landmarkFocusable = await page.locator('main#main-content').getAttribute('tabindex');
   await page.click('a[href="#providers"]');
+  await page.waitForFunction(() => document.querySelector('#page-title')?.textContent === 'Providers');
   report.pageAfterNav = await page.locator('#page-title').textContent();
   report.ariaCurrent = await page.locator('a[href="#providers"]').getAttribute('aria-current');
   report.focusAfterDesktopNav = await page.evaluate(() => ({ className: document.activeElement.className, visibility: getComputedStyle(document.activeElement).visibility, display: getComputedStyle(document.activeElement).display }));
@@ -597,6 +642,18 @@ const assert = require('node:assert/strict');
   assert.equal(report.copiedSecret, 'rw_smoke_secret_value');
   assert.equal(report.createCalls, 1);
   assert.equal(report.secretCleared, 0);
+  assert.deepEqual(report.createAccessBody, { restricted: false, allow: [] });
+  assert.equal(report.accessTagBefore, 'Unrestricted');
+  assert.equal(report.accessExpanded, 'true');
+  assert.ok(report.accessEditorId && report.accessControls === report.accessEditorId);
+  assert.equal(report.saveDisabledUnchanged, true);
+  assert.deepEqual(report.accessChoices, ['openai/gpt-5']);
+  assert.equal(report.selectionKept, true);
+  assert.ok(report.mobileOverflow <= 0, 'access editor overflows horizontally on mobile: ' + report.mobileOverflow);
+  assert.equal(report.mobileModeColumns, 1);
+  assert.equal(report.accessTagAfter, 'Restricted · 1');
+  assert.deepEqual(report.accessBodySent, { restricted: true, allow: ['openai/gpt-5'] });
+  assert.equal(report.accessEditorClosed, 0);
   assert.equal(report.pausedLabel, 'Resume');
   assert.match(report.emptyAfterRevoke, /No API keys yet/);
   assert.equal(report.patchKeyCalls, 1);
