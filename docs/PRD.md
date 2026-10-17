@@ -128,6 +128,7 @@ GET  /v1/models/info
 
 ```text
 POST /v1/api/chat
+GET  /api/tags
 GET  /v1beta/models
 POST /v1beta/models/{model}:generateContent
 POST /v1beta/models/{model}:streamGenerateContent
@@ -144,6 +145,11 @@ Retain compatibility behavior equivalent to:
 - historical double-prefix `/v1/v1[/...]` where existing clients depend on it.
 
 Routeweft may implement aliases directly rather than via framework rewrites.
+
+Retained inference/catalog routes also expose `/api/v1` and `/api/v1beta`
+aliases. These are public compatibility paths, not the dashboard control API;
+they use the same inference authentication and CORS policy as canonical paths.
+Standalone media routes remain excluded.
 
 ### PRD-API-004 — authentication forms
 

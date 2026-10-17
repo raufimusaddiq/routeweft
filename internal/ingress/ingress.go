@@ -181,37 +181,39 @@ func (h *Handler) emitOutcome(r *http.Request, provider routing.ProviderRef, sta
 
 // Attach registers the public inference routes on the shared mux.
 func (h *Handler) Attach(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1", h.withCORS(h.handleIndex))
-	mux.HandleFunc("OPTIONS /v1", h.withCORS(h.handlePreflight))
-	mux.HandleFunc("GET /v1/models", h.withCORS(h.handleModels))
-	mux.HandleFunc("GET /v1/models/info", h.withCORS(h.handleModelsInfo))
-	mux.HandleFunc("GET /v1/models/{provider}/{model...}", h.withCORS(h.handleModel))
-	mux.HandleFunc("OPTIONS /v1/{rest...}", h.withCORS(h.handlePreflight))
-	mux.HandleFunc("POST /v1/chat/completions", h.withCORS(h.handleChatCompletions))
-	mux.HandleFunc("POST /v1/responses", h.withCORS(h.handleResponses))
-	mux.HandleFunc("POST /v1/responses/compact", h.withCORS(h.handleResponsesCompact))
+	for _, prefix := range []string{"/v1", "/v1/v1", "/api/v1"} {
+		mux.HandleFunc("GET "+prefix, h.withCORS(h.handleIndex))
+		mux.HandleFunc("OPTIONS "+prefix, h.withCORS(h.handlePreflight))
+		mux.HandleFunc("OPTIONS "+prefix+"/{rest...}", h.withCORS(h.handlePreflight))
+		mux.HandleFunc("GET "+prefix+"/models", h.withCORS(h.handleModels))
+		mux.HandleFunc("GET "+prefix+"/models/info", h.withCORS(h.handleModelsInfo))
+		mux.HandleFunc("GET "+prefix+"/models/{kind}", h.withCORS(h.handleModelKind))
+		mux.HandleFunc("GET "+prefix+"/models/{provider}/{model...}", h.withCORS(h.handleModel))
+		mux.HandleFunc("POST "+prefix+"/chat/completions", h.withCORS(h.handleChatCompletions))
+		mux.HandleFunc("POST "+prefix+"/responses", h.withCORS(h.handleResponses))
+		mux.HandleFunc("POST "+prefix+"/responses/compact", h.withCORS(h.handleResponsesCompact))
+		mux.HandleFunc("POST "+prefix+"/messages", h.withCORS(h.handleMessages))
+		mux.HandleFunc("POST "+prefix+"/messages/count_tokens", h.withCORS(h.handleCountTokens))
+		mux.HandleFunc("POST "+prefix+"/api/chat", h.withCORS(h.handleOllamaChat))
+		mux.HandleFunc("POST "+prefix+"/systemone", h.withCORS(h.handleSystemOne))
+	}
 	mux.HandleFunc("POST /responses", h.withCORS(h.handleResponses))
 	mux.HandleFunc("POST /codex/{path...}", h.withCORS(h.handleResponses))
 	mux.HandleFunc("POST /codex", h.withCORS(h.handleResponses))
-	mux.HandleFunc("POST /v1/v1/responses", h.withCORS(h.handleResponses))
-	mux.HandleFunc("POST /v1/v1/responses/compact", h.withCORS(h.handleResponsesCompact))
 	mux.HandleFunc("OPTIONS /responses", h.withCORS(h.handlePreflight))
 	mux.HandleFunc("OPTIONS /codex/{path...}", h.withCORS(h.handlePreflight))
 	mux.HandleFunc("OPTIONS /codex", h.withCORS(h.handlePreflight))
-	mux.HandleFunc("POST /v1/messages", h.withCORS(h.handleMessages))
-	mux.HandleFunc("POST /v1/messages/count_tokens", h.withCORS(h.handleCountTokens))
 	mux.HandleFunc("POST /messages", h.withCORS(h.handleMessages))
 	mux.HandleFunc("POST /messages/count_tokens", h.withCORS(h.handleCountTokens))
-	mux.HandleFunc("POST /v1/v1/messages", h.withCORS(h.handleMessages))
-	mux.HandleFunc("POST /v1/v1/messages/count_tokens", h.withCORS(h.handleCountTokens))
 	mux.HandleFunc("OPTIONS /messages", h.withCORS(h.handlePreflight))
 	mux.HandleFunc("OPTIONS /messages/count_tokens", h.withCORS(h.handlePreflight))
-	mux.HandleFunc("GET /v1beta/models", h.withCORS(h.handleGeminiModels))
-	mux.HandleFunc("OPTIONS /v1beta/{rest...}", h.withCORS(h.handlePreflight))
-	mux.HandleFunc("POST /v1beta/models/{rest...}", h.withCORS(h.handleGeminiRoute))
-	mux.HandleFunc("POST /v1/api/chat", h.withCORS(h.handleOllamaChat))
-	mux.HandleFunc("POST /v1/systemone", h.withCORS(h.handleSystemOne))
-	mux.HandleFunc("OPTIONS /v1/systemone", h.withCORS(h.handlePreflight))
+	for _, prefix := range []string{"/v1beta", "/api/v1beta"} {
+		mux.HandleFunc("GET "+prefix+"/models", h.withCORS(h.handleGeminiModels))
+		mux.HandleFunc("OPTIONS "+prefix+"/{rest...}", h.withCORS(h.handlePreflight))
+		mux.HandleFunc("POST "+prefix+"/models/{rest...}", h.withCORS(h.handleGeminiRoute))
+	}
+	mux.HandleFunc("GET /api/tags", h.withCORS(h.handleOllamaTags))
+	mux.HandleFunc("OPTIONS /api/tags", h.withCORS(h.handlePreflight))
 }
 
 func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
@@ -708,10 +710,11 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
 		return
 	}
-	data := make([]map[string]any, 0)
-	for _, model := range snapshot.Models() {
-		data = append(data, modelObject(model))
+	kind := r.URL.Query().Get("kind")
+	if kind == "" {
+		kind = "llm"
 	}
+	data := publicModels(snapshot, kind)
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
 }
 
@@ -724,16 +727,22 @@ func (h *Handler) handleModelsInfo(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
 		return
 	}
-	models := snapshot.Models()
-	providers := map[string]int{}
-	for _, model := range models {
-		providers[model.ProviderID]++
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		h.writeError(w, http.StatusBadRequest, "invalid_request_error", "query parameter id is required")
+		return
 	}
-	data := make([]map[string]any, 0, len(models))
-	for _, model := range models {
-		data = append(data, modelObject(model))
+	for _, model := range publicModels(snapshot, r.URL.Query().Get("kind")) {
+		if model["id"] == id {
+			model["endpoint"] = "/v1/chat/completions"
+			if model["kind"] == "systemone" {
+				model["endpoint"] = "/v1/systemone"
+			}
+			writeJSON(w, http.StatusOK, model)
+			return
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"object": "routeweft.models.info", "count": len(models), "providers": providers, "data": data})
+	h.writeError(w, http.StatusNotFound, "model_not_found", "model does not exist or is not accessible")
 }
 
 func (h *Handler) handleModel(w http.ResponseWriter, r *http.Request) {
@@ -747,12 +756,17 @@ func (h *Handler) handleModel(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
 		return
 	}
-	resolved, ok := snapshot.ResolveModel(provider, model)
-	if !ok {
-		h.writeError(w, http.StatusNotFound, "model_not_found", fmt.Sprintf("model %s/%s is not available", provider, model))
+	if r.URL.Query().Get("kind") != "" {
+		writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": publicModels(snapshot, r.URL.Query().Get("kind"))})
 		return
 	}
-	writeJSON(w, http.StatusOK, modelObject(resolved))
+	for _, entry := range publicModels(snapshot, "llm") {
+		if entry["id"] == provider+"/"+model {
+			writeJSON(w, http.StatusOK, entry)
+			return
+		}
+	}
+	h.writeError(w, http.StatusNotFound, "model_not_found", "model does not exist or is not accessible")
 }
 
 func (h *Handler) handlePreflight(w http.ResponseWriter, r *http.Request) {
