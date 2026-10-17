@@ -125,6 +125,9 @@ func (s *RuntimeSnapshot) ModelKind(model Model) string {
 			return string(registry.TransportSystemOne)
 		}
 	}
+	if model.Kind != "" {
+		return model.Kind
+	}
 	return "llm"
 }
 

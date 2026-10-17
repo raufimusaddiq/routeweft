@@ -1127,6 +1127,78 @@ Model validation order:
 3. return an actionable auth/not-found/network result;
 4. never require model discovery in order to save a manual model.
 
+### 33.1 Provider/model control workflows (R06)
+
+All actions use admin sessions; mutations also require the shared same-origin
+policy. Public `/api/v1` aliases, inference auth and CORS are unchanged.
+
+| Operation | Routeweft action |
+| --- | --- |
+| Unsaved Generic endpoint validation | `POST /admin/v1/provider-nodes/validate` with `baseUrl`, one `transports` entry, `secret.accessToken` (or explicit `authKind: none`), optional `modelId` |
+| Saved connection validation | `POST /admin/v1/connections/{id}/test` with optional `modelId`, `transport`; an empty body remains supported |
+| Across-account/provider tests | `POST /admin/v1/providers/test-batch` with `mode`, optional `providerId`, `modelId` |
+| Availability/reset | `GET/POST /admin/v1/models/availability`; POST uses `action: clearCooldown`, `provider`, `model: __all` |
+| Catalog sync/status | `POST/GET /admin/v1/models/catalog-sync` |
+| Suggestions | `GET /admin/v1/providers/suggested-models?url=...&type=...` |
+| Kilo free catalog | `GET /admin/v1/providers/kilo/free-models` |
+| Resolved native node routes | `GET /admin/v1/provider-nodes/{id}/routes` |
+| Custom model deletion | `DELETE /admin/v1/models` with `providerId` and `modelId` JSON |
+
+Validation tries listing first, then probes the supplied manual ID, first listed
+ID or first enabled known ID. Discovery alone never certifies inference. Listing
+401/403 stops validation without an inference attempt. If listing is unavailable
+and no model is known/supplied, the response asks for a manual ID. Saved
+connection failures retain HTTP 502 so existing UI callers cannot report false
+success; unsaved validation and aggregate batch results expose `ok/status/error`.
+Each validation has a 20-second deadline inherited from its caller. Probes use
+the existing native request encoders, never user prompts or provider response
+bodies in results. First-token/slow-model classification remains R07.
+
+Batch modes are `all`, `provider`, `oauth`, `free` (no-auth connections),
+`apikey` (excluding typed nodes), `systemone`, and `compatible` (Generic nodes).
+Disabled connections are excluded. Selection occurs before credential reads;
+one unreadable credential produces a failed result without stopping other
+accounts. At most 200 selected connections run sequentially, each with its own
+deadline; cancellation stops subsequent work and cancels the active fetch.
+
+Availability reads paginate with the normal `page/pageSize` bounds. Batch
+validation and catalog sync are single-flight and share a two-minute aggregate
+deadline across their bounded per-connection probes. Current
+routing cooldowns are account-wide, represented by model `__all`. Availability
+includes disabled accounts so operators can inspect retained cooldowns; batch
+validation and catalog sync exclude disabled accounts. Reset clears
+only that provider's account cooldowns in RuntimeState, not quotas, disabled
+models, credentials or other providers. It does not claim per-model locks or
+durable health history. Catalog sync is a single-flight, explicit operator
+action over at most 200 enabled accounts, unioning provider catalogs through
+compile/commit/publish. It never removes known, disabled or manual entries on
+partial/empty/failing discovery. GET exposes running/last-attempt/error state;
+that operational state is process-local, the catalog is durable.
+
+Suggestions retain pinned `kenari`, `openrouter-free`, `opencode-free`,
+`mimo-free`, and `airforce-free` filters. Suggestion fetch failures yield an
+empty list, not a model deletion. Kilo keeps only `isFree: true`, caches for one
+hour and serves stale data with a warning on refresh failure (502 when no cache
+exists). Concurrent cold/expired Kilo requests share one refresh; waiting clients
+can cancel independently. URL fetches share SSRF policy, reject redirects, inherit cancellation,
+have a 10-second deadline and a 4 MiB response limit. No stored credentials are
+sent to suggestion URLs.
+
+Custom model POST accepts `kind` (`llm` or `systemone`, omitted keeps existing
+provider-derived defaults), capabilities and context metadata. The legacy
+`imageToText` capability is stored as `vision`, so the image-to-text view and
+capability adapters share one vocabulary. Schema v7 adds
+`provider_models.kind`, empty by default for existing rows. Explicit kind and
+capabilities survive discovery and restart; intrinsic typed-provider rules
+remain authoritative. The admin System One catalog applies the same per-model
+classification as runtime, including mixed builtin and typed Generic nodes,
+before pagination. Standalone media kinds remain excluded. Deletion removes
+only custom entries; referenced models fail candidate compilation rather than
+silently deleting aliases/Combos. A removed seed override exposes the built-in
+seed again. Deleted catalog entries cannot revive from orphaned durable rows.
+Main's v6 API-key access policies remain unchanged. Older binaries reject schema
+v7; rollback requires the pre-upgrade backup.
+
 ## 34. Public compatibility details
 
 Routeweft ingress must account for:
@@ -1176,8 +1248,9 @@ The query spellings `imageToText`, `webSearch`, `webFetch` are also recognized.
 These views keep kind `llm` and the Chat endpoint. They neither create separate
 OCR/search/fetch products nor infer capabilities from model names. Typed models
 use kind `systemone` and `/v1/systemone`. Standalone image/video/TTS/STT/embedding
-catalog routes remain absent under PRD 4.2 / BDR-016. Persisting explicit custom
-service-kind metadata remains R06/C06; provider capability breadth remains P03.
+catalog routes remain absent under PRD 4.2 / BDR-016. R06 persists explicit
+custom service-kind metadata; broader metadata/default-pricing completeness
+remains C06/P03.
 
 `GET /api/tags` uses the enabled LLM catalog, aliases and Combos with the same
 inference auth/CORS policy. Each Ollama manifest entry has identical `name` and

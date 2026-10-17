@@ -322,6 +322,30 @@ func TestModelAliasDiscoveryAndPricingMutations(t *testing.T) {
 	}
 }
 
+func TestDiscoveryUsesAnthropicAuthForDualTransportAPIKey(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-api-key") != "synthetic" || r.Header.Get("Authorization") != "" {
+			t.Errorf("discovery headers x-api-key=%q authorization=%q", r.Header.Get("x-api-key"), r.Header.Get("Authorization"))
+		}
+		_, _ = io.WriteString(w, `{"data":[{"id":"dual-model"}]}`)
+	}))
+	defer upstream.Close()
+	_, mux, store, creds, cookie := newProvidersAPI(t, true, &discovery.Client{HTTP: upstream.Client()})
+	defer store.Close()
+	node, err := creds.PutNode(context.Background(), credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "openai", Name: "dual", BaseURL: upstream.URL, Transports: []string{"openai-chat", "anthropic-messages"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := creds.PutConnection(context.Background(), credentials.Connection{NodeID: node.ID, Name: "dual", Identity: "dual", AuthKind: credentials.AuthAPIKey, Enabled: true, Secret: credentials.Secret{AccessToken: "synthetic"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+connection.ID+"/discover", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "dual-model") {
+		t.Fatalf("discovery status=%d body=%s", w.Code, w.Body)
+	}
+}
+
 func TestConnectionDeleteIsIdempotentAndRefreshesBindings(t *testing.T) {
 	_, mux, store, _, cookie := newProvidersAPI(t, false, nil)
 	defer store.Close()

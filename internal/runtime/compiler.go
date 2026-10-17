@@ -232,6 +232,9 @@ func validateCatalog(config Config) error {
 		if strings.TrimSpace(model.ProviderID) == "" || strings.TrimSpace(model.ID) == "" {
 			return fmt.Errorf("model provider and id are required")
 		}
+		if model.Kind != "" && model.Kind != "llm" && model.Kind != "systemone" || model.ContextWindow < 0 {
+			return fmt.Errorf("invalid model kind or context window")
+		}
 		key := modelKey(model.ProviderID, model.ID)
 		if _, exists := models[key]; exists {
 			return fmt.Errorf("duplicate model %q", key)

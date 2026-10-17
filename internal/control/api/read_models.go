@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
+	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/telemetry"
 )
 
@@ -287,6 +288,7 @@ FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where+` ORD
 
 func (h *Handler) models(w http.ResponseWriter, r *http.Request, systemOne bool) error {
 	const selectModels = `SELECT provider_id,model_id,COALESCE(display_name,''),COALESCE(context_window,0),capabilities,
+ kind,
 EXISTS(SELECT 1 FROM disabled_models d WHERE d.provider_id=provider_models.provider_id AND d.model_id=provider_models.model_id),
 EXISTS(SELECT 1 FROM custom_models c WHERE c.provider_id=provider_models.provider_id AND c.model_id=provider_models.model_id),updated_at
 FROM provider_models`
@@ -294,25 +296,42 @@ FROM provider_models`
 	where := ""
 	var args []any
 	if systemOne {
-		var allowed []string
-		for _, spec := range h.opts.Providers {
-			for _, transport := range spec.Transports {
-				if transport == registry.TransportSystemOne {
-					allowed = append(allowed, spec.ID)
-					break
-				}
+		if h.opts.Runtime == nil || h.opts.DB == nil {
+			writeError(w, http.StatusServiceUnavailable, "read_models_unavailable", "runtime model catalog is unavailable")
+			return nil
+		}
+		snapshot, err := h.opts.Runtime.Load()
+		if err != nil {
+			return err
+		}
+		rows, err := h.opts.DB.QueryContext(r.Context(), "SELECT provider_id,model_id,kind FROM provider_models")
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		// Classify before pagination; transport-only filters misclassify mixed nodes.
+		pairs := [][2]string{}
+		for rows.Next() {
+			var model runtime.Model
+			if err := rows.Scan(&model.ProviderID, &model.ID, &model.Kind); err != nil {
+				return err
+			}
+			if snapshot.ModelKind(model) == string(registry.TransportSystemOne) {
+				pairs = append(pairs, [2]string{model.ProviderID, model.ID})
 			}
 		}
-		if len(allowed) == 0 {
-			where = " WHERE 1=0"
-		} else {
-			placeholders := make([]string, len(allowed))
-			for i, id := range allowed {
-				placeholders[i] = "?"
-				args = append(args, id)
-			}
-			where = " WHERE provider_id IN (" + strings.Join(placeholders, ",") + ")"
+		if err := rows.Err(); err != nil {
+			return err
 		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		encoded, err := json.Marshal(pairs)
+		if err != nil {
+			return err
+		}
+		where = " WHERE (provider_id,model_id) IN (SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]') FROM json_each(?))"
+		args = []any{string(encoded)}
 	} else {
 		where, args = providerFilter(r, "provider_id")
 	}
@@ -326,15 +345,19 @@ FROM provider_models`
 			Context    int      `json:"contextWindow,omitempty"`
 			CapsRaw    string   `json:"-"`
 			Caps       []string `json:"capabilities"`
+			Kind       string   `json:"kind,omitempty"`
 			Disabled   bool     `json:"disabled"`
 			Custom     bool     `json:"custom"`
 			UpdatedAt  string   `json:"updatedAt"`
 		}
-		if err := rows.Scan(&item.ProviderID, &item.ID, &item.Name, &item.Context, &item.CapsRaw, &item.Disabled, &item.Custom, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ProviderID, &item.ID, &item.Name, &item.Context, &item.CapsRaw, &item.Kind, &item.Disabled, &item.Custom, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(item.CapsRaw), &item.Caps); err != nil {
 			return nil, err
+		}
+		if systemOne {
+			item.Kind = string(registry.TransportSystemOne)
 		}
 		return item, nil
 	}, args...)

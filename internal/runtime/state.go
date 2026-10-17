@@ -67,6 +67,12 @@ func (s *RuntimeState) Cooldown(account string, until time.Time) {
 	}
 }
 
+func (s *RuntimeState) ClearCooldown(account string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.cooldowns, account)
+}
+
 // ObserveQuota replaces one account's latest quota observation.
 func (s *RuntimeState) ObserveQuota(account string, observation QuotaObservation) {
 	if account == "" {

@@ -4,12 +4,46 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 )
 
 type fakeClient struct {
 	do func(*http.Request) (*http.Response, error)
+}
+
+func TestModelEntriesPreserveMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want []Model
+	}{
+		{`{"data":[{"id":"chat","name":"Chat","context_window":8192,"capabilities":["vision"]},{"id":"chat","name":"Duplicate"}]}`, []Model{{ID: "chat", Name: "Chat", ContextWindow: 8192, Capabilities: []string{"vision"}}}},
+		{`{"data":[{"id":"claude","display_name":"Claude","max_input_tokens":200000}]}`, []Model{{ID: "claude", Name: "Claude", ContextWindow: 200000}}},
+		{`{"models":[{"name":"models/gemini","displayName":"Gemini","inputTokenLimit":1048576}]}`, []Model{{ID: "gemini", Name: "Gemini", ContextWindow: 1048576}}},
+		{`{"data":[{"id":"router","context_length":32768,"capabilities":{"vision":true}}]}`, []Model{{ID: "router", ContextWindow: 32768}}},
+		{`["b","a"]`, []Model{{ID: "a"}, {ID: "b"}}},
+	} {
+		models, err := ParseModelEntries([]byte(tc.body))
+		if err != nil || !reflect.DeepEqual(models, tc.want) {
+			t.Errorf("metadata %s: %+v, %v; want %+v", tc.body, models, err, tc.want)
+		}
+	}
+}
+
+func TestDiscoveryCollectionBaseDoesNotDuplicateModels(t *testing.T) {
+	for _, base := range []string{"https://gen.example.com/v1beta", "https://gen.example.com/v1beta/models", "https://gen.example.com/v1beta/models/"} {
+		client := &Client{HTTP: fakeClient{do: func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != "/v1beta/models" {
+				t.Errorf("base %s: %s", base, r.URL.Path)
+			}
+			return response(200, `{"models":[{"name":"models/gemini"}]}`), nil
+		}}}
+		models, err := client.Models(context.Background(), Request{ProviderID: "gemini", BaseURL: base, AuthStyle: AuthGoogleAPIKey, Credential: "synthetic"})
+		if err != nil || len(models) != 1 || models[0] != "gemini" {
+			t.Fatalf("collection discovery: %v %v", models, err)
+		}
+	}
 }
 
 func (f fakeClient) Do(request *http.Request) (*http.Response, error) { return f.do(request) }

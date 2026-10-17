@@ -51,6 +51,39 @@ func TestFreshMigrationAndRestart(t *testing.T) {
 	}
 }
 
+func TestV7ModelKindUpgrade(t *testing.T) {
+	ctx := context.Background()
+	s, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "routeweft.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := NewRunner(s.DB(), v1, v2, v3, v4, v5, v6).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `INSERT INTO provider_models(provider_id,model_id,capabilities) VALUES('provider','model','["vision"]')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `INSERT INTO api_keys(id,name,key_hash,key_prefix,access_restricted,access_allow) VALUES('k1','restricted','synthetic-hash','rw_test',1,'["provider/model"]')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewRunner(s.DB()).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var kind, caps string
+	if err := s.DB().QueryRowContext(ctx, "SELECT kind,capabilities FROM provider_models").Scan(&kind, &caps); err != nil || kind != "" || caps != `["vision"]` {
+		t.Fatalf("upgrade metadata: %q %q %v", kind, caps, err)
+	}
+	if _, err := s.DB().ExecContext(ctx, "UPDATE provider_models SET kind='image'"); err == nil {
+		t.Fatal("excluded media kind accepted")
+	}
+	var restricted bool
+	var allow string
+	if err := s.DB().QueryRowContext(ctx, "SELECT access_restricted,access_allow FROM api_keys WHERE id='k1'").Scan(&restricted, &allow); err != nil || !restricted || allow != `["provider/model"]` {
+		t.Fatalf("v7 changed v6 key policy: %v %q %v", restricted, allow, err)
+	}
+}
+
 func TestV1DatabaseUpgradesWithoutLosingCatalogRecords(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "routeweft.sqlite"))
