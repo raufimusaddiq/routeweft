@@ -63,6 +63,39 @@ implementation status. #75 task R01, first review boundary (Sprint 5.1):
   Codex compact gating/headers/body remain R01/R11 + #76 gaps; Kenari compact
   support is not asserted.
 
+### R02 implementation progress (after the inventory baseline)
+
+#75 task R02 is split for review per Sprint 5.2 / AGENTS section 9. The first
+boundary implements bidirectional Chat Completions / Responses translation:
+
+- Actual app wiring selects a source-matching native transport first, then
+  an implemented translation. Configured endpoint overrides, upstream-model
+  remapping, memory-first credentials and the shared account fallback budget
+  apply to translated attempts too. SQLite is not read on the serving path.
+- Request/response adapters cover instructions, conversation order, parallel
+  calls/results, custom-tool input wrappers, reasoning/encrypted continuity,
+  image/file/audio request blocks, refusal, usage/cache/reasoning token details.
+  Native unknown fields and native streaming bypass the new converters.
+- Incremental SSE emits source-protocol events, preserves independent tool
+  indices, includes final output and usage, and distinguishes failed/incomplete
+  streams. Client disconnect cancels upstream work without replay. Translated
+  response input is capped at 32 MiB with 4 MiB event/line bounds (SPEC 9.3).
+- Evidence: synthetic `internal/protocol/openai/testdata/chat-responses.json`
+  and paired SSE transcripts; adapter tests and actual-app restart/closed-DB,
+  native-first/fallback and cancellation regressions in
+  `internal/app/translation_test.go`. Fixed expected SSE transcripts pin the
+  complete translated wire output. Compact eligibility, stream failure
+  cooldown and non-stream exact/over-limit regressions are included. These are
+  deterministic Routeweft wire fixtures informed by pinned v1, not the R11
+  differential certification suite.
+- R02 remains **PARTIAL**. Messages in both directions, count-tokens parity,
+  Gemini/Ollama/System One hooks and provider-specific compact semantics are
+  separate dependent work, not implemented or certified by this first PR.
+  Opaque server-side Responses state (`previous_response_id`/item references)
+  is not resolved by these stateless adapters; native Responses retains it.
+  Broad provider readiness, saver/cache pipeline wiring (R03) and telemetry
+  completeness (R10) remain outside this boundary. No live providers tested.
+
 ### Area issues and ownership
 
 | Area | Backlog | Gap IDs owned |

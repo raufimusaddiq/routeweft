@@ -8,6 +8,7 @@ import (
 	"time"
 
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
+	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
 )
@@ -51,22 +52,48 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 		return
 	}
 	started := time.Now()
-	response, provider, err := h.dispatchAttempts(r, snapshot, model, source, func(provider routing.ProviderRef) (ChatTranslation, error) {
+	var translation ChatTranslation
+	response, provider, err := h.dispatchAttempts(r, snapshot, model, source, compact, func(provider routing.ProviderRef) (ChatTranslation, error) {
+		translation = ChatTranslation{}
 		plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: source, Provider: provider})
 		if err != nil {
 			return ChatTranslation{}, err
 		}
 		if !plan.NativePath() {
+			var translated ChatTranslation
+			var err error
+			upstreamModel := provider.UpstreamModel
+			if upstreamModel == "" {
+				upstreamModel = model
+			}
 			if chat != nil && h.opts.TranslateChat != nil {
-				return h.opts.TranslateChat(chat, plan.TargetProtocol)
+				request := *chat
+				request.Model = upstreamModel
+				translated, err = h.opts.TranslateChat(&request, plan.TargetProtocol)
+			} else if responses != nil && compact && h.opts.TranslateResponsesCompact != nil {
+				request := *responses
+				request.Model = upstreamModel
+				translated, err = h.opts.TranslateResponsesCompact(&request, plan.TargetProtocol)
+			} else if responses != nil && !compact && h.opts.TranslateResponses != nil {
+				request := *responses
+				request.Model = upstreamModel
+				translated, err = h.opts.TranslateResponses(&request, plan.TargetProtocol)
+			} else {
+				return ChatTranslation{}, fmt.Errorf("no translator registered for target protocol %q", plan.TargetProtocol)
 			}
-			if responses != nil && compact && h.opts.TranslateResponsesCompact != nil {
-				return h.opts.TranslateResponsesCompact(responses, plan.TargetProtocol)
+			if plan.TargetProtocol == openaiadapter.ChatProtocol || plan.TargetProtocol == openaiadapter.ResponsesProtocol {
+				if translated.Headers == nil {
+					translated.Headers = http.Header{}
+				}
+				for name, values := range openAIProviderHeaders(provider) {
+					translated.Headers[name] = values
+				}
 			}
-			if responses != nil && !compact && h.opts.TranslateResponses != nil {
-				return h.opts.TranslateResponses(responses, plan.TargetProtocol)
+			if provider.Endpoint != "" {
+				translated.Endpoint = provider.Endpoint
 			}
-			return ChatTranslation{}, fmt.Errorf("no translator registered for target protocol %q", plan.TargetProtocol)
+			translation = translated
+			return translated, err
 		}
 		endpoint := "responses"
 		if chat != nil {
@@ -91,6 +118,10 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 		return
 	}
 	defer response.Body.Close()
+	if response.StatusCode >= 200 && response.StatusCode < 300 && translation.Response != nil {
+		h.writeOpenAITranslation(w, r, response, provider, translation, stream, started)
+		return
+	}
 	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -107,4 +138,53 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 		return
 	}
 	io.Copy(w, response.Body)
+}
+
+func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request, response *http.Response, provider routing.ProviderRef, translation ChatTranslation, stream bool, started time.Time) {
+	if stream {
+		if translation.Stream == nil {
+			h.writeError(w, 502, "upstream_response_invalid", "no stream translator is configured")
+			return
+		}
+		copyResponseHeaders(w.Header(), response.Header)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(response.StatusCode)
+		scanner := &usageScanner{family: provider.Protocol}
+		err := translation.Stream(r.Context(), io.TeeReader(response.Body, scanner), w)
+		usage, _ := scanner.usage()
+		status := response.StatusCode
+		if err != nil || !scanner.reportsUsage(r.Context().Err() == nil) {
+			usage = promptcache.Usage{}
+		}
+		if err != nil {
+			status = http.StatusBadGateway
+			if r.Context().Err() == nil {
+				h.recordClassification(provider.ConnectionID, classifyResponse(status, nil), time.Now())
+			}
+		}
+		h.emitOutcome(r, provider, status, true, usage, started)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, openaiadapter.MaxTranslatedResponseBytes+1))
+	if r.Context().Err() != nil {
+		return
+	}
+	if err != nil || len(body) > openaiadapter.MaxTranslatedResponseBytes {
+		h.writeError(w, 502, "upstream_response_invalid", "upstream response could not be translated")
+		return
+	}
+	translated, err := translation.Response(body)
+	if err != nil {
+		h.writeError(w, 502, "upstream_response_invalid", "upstream response could not be translated")
+		return
+	}
+	if r.Context().Err() != nil {
+		return
+	}
+	copyResponseHeaders(w.Header(), response.Header)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, _ = w.Write(translated)
+	usage, _ := shared.ParseUsage(provider.Protocol, body)
+	h.emitOutcome(r, provider, response.StatusCode, false, usage, started)
 }

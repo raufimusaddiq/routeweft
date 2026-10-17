@@ -291,6 +291,12 @@ in isolation.
   (SPEC §9.3, §10).
 - Evidence: per-protocol translation fixtures covering messages/system/tools/
   reasoning/terminal semantics and a translated dispatch test per pair.
+- R02 (#75) uses reviewed dependency boundaries: bidirectional Chat/Responses
+  request, response and streaming adapters first; Messages plus count-tokens
+  compatibility next; remaining Gemini/Ollama/System One hooks and
+  provider-specific compact behavior remain tracked follow-ups. Do not begin
+  the next dependent PR before the current head is reviewed. Each step must
+  retain native-first dispatch and demonstrate actual-app wiring.
 
 #### PR 5.3: transforms and prompt-cache pipeline wiring (depends on 5.1)
 

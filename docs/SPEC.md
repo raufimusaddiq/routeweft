@@ -326,6 +326,17 @@ Translation must explicitly cover:
 - terminal event semantics;
 - token Usage where available.
 
+The Chat/Responses adapter maps both request and success-response directions,
+including incremental SSE, parallel tool-call identity, custom-tool wrappers,
+reasoning continuity, refusal and upstream usage details. Non-2xx upstream
+responses retain their status/body and normal fallback classification.
+Native paths bypass these converters. Translated responses are bounded to
+32 MiB (body or total SSE input) with a 4 MiB SSE event/line bound. A truncated,
+malformed or oversized translated stream emits a failure terminal rather than
+claiming successful completion; client cancellation emits no synthetic terminal.
+Failed translated streams penalize the selected account through normal runtime
+cooldown classification; client cancellation does not penalize the account.
+
 ## 10. Protocol adapters
 
 A protocol adapter owns wire behavior, not provider identity.
@@ -423,7 +434,16 @@ RR/sticky cursors are in RuntimeState and must not synchronously persist per req
 Provider RR/sticky cursors are provider-local, shared across its models and
 aliases, matching pinned v1 `src/sse/services/auth.js` (`selectionState` is keyed
 by provider ID). Transport eligibility is applied before account rotation and
-the attempt cap; unsupported native transports do not consume an attempt.
+the attempt cap. Matching native accounts form the first tier; accounts with an
+implemented translation form the fallback tier. RR/sticky ordering applies
+within each tier using the same provider-local cursor. Unsupported pairs do not
+consume an attempt; both tiers share the same request wire budget.
+Eligibility includes the request mode and wired translator: a compact request
+cannot select a Chat account without a compact translator. Such accounts are
+skipped before dispatch, preserving `503 no_eligible_accounts` when none remain
+and preserving the final real upstream error when failover is exhausted.
+Protocol-pair support belongs to the translator layer; snapshot resolution uses
+the caller's policy. Each account reference is resolved once per request.
 
 ## 14. Cooldown and error classification
 

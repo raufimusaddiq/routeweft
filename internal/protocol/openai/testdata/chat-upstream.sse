@@ -1,0 +1,16 @@
+data: {"id":"chat_fixture","created":1735689602,"model":"vendor/model","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"Thought"},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"content":"An"},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"content":"swer"},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"city\":"}},{"index":1,"id":"call_2","type":"function","function":{"name":"exec","arguments":"{\"input\":"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"\"echo hello\"}"}},{"index":0,"function":{"arguments":"\"Oslo\"}"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: {"choices":[],"usage":{"prompt_tokens":31,"completion_tokens":18,"total_tokens":49,"prompt_tokens_details":{"cached_tokens":8},"completion_tokens_details":{"reasoning_tokens":4}}}
+
+data: [DONE]
+

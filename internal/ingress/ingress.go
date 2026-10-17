@@ -94,14 +94,17 @@ type RequestOutcome struct {
 type ProviderResolver func(*runtime.RuntimeSnapshot, string) (routing.ProviderRef, bool)
 
 // ChatTranslation describes one translated request relative to the provider
-// base URL. Target adapters own endpoint and protocol-specific headers.
+// base URL and its success-response converters. Native paths leave converters
+// nil; non-2xx responses always retain the upstream error body.
 type ChatTranslation struct {
 	Endpoint string
 	Body     []byte
 	Headers  http.Header
+	Response func([]byte) ([]byte, error)
+	Stream   func(context.Context, io.Reader, io.Writer) error
 }
 
-// ChatTranslator is the later-adapter hook for a different target protocol.
+// ChatTranslator selects the adapter for a different target protocol.
 type ChatTranslator func(*openaiadapter.ChatRequest, string) (ChatTranslation, error)
 type ResponsesTranslator func(*openaiadapter.ResponsesRequest, string) (ChatTranslation, error)
 type ResponsesCompactTranslator func(*openaiadapter.ResponsesRequest, string) (ChatTranslation, error)
@@ -237,7 +240,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
 		return
 	}
-	response, provider, err := h.dispatchAttempts(r, snapshot, request.Model, anthropicadapter.MessagesProtocol, func(provider routing.ProviderRef) (ChatTranslation, error) {
+	response, provider, err := h.dispatchAttempts(r, snapshot, request.Model, anthropicadapter.MessagesProtocol, false, func(provider routing.ProviderRef) (ChatTranslation, error) {
 		plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: anthropicadapter.MessagesProtocol, Provider: provider})
 		if err != nil {
 			return ChatTranslation{}, err
