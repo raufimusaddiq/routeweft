@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -395,17 +394,25 @@ func (h *Handler) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	result := h.validateConnection(r.Context(), connection, node, body.Transport, body.ModelID)
 	if !result.OK {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": map[string]any{"code": "connection_test_failed", "message": result.Error, "upstreamStatus": result.Status}})
+		status := http.StatusBadGateway
+		if result.Classification == "slow" || result.Classification == "canceled" {
+			status = result.Status
+		}
+		writeJSON(w, status, map[string]any{"error": map[string]any{"code": "connection_test_failed", "message": result.Error, "upstreamStatus": result.Status}, "result": result})
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
 }
 
 type modelTestResult struct {
-	ModelID string `json:"modelId"`
-	OK      bool   `json:"ok"`
-	Status  int    `json:"status,omitempty"`
-	Error   string `json:"error,omitempty"`
+	ModelID         string `json:"modelId"`
+	UpstreamModelID string `json:"upstreamModelId,omitempty"`
+	ServedModelID   string `json:"servedModelId,omitempty"`
+	Classification  string `json:"classification,omitempty"`
+	LatencyMS       int64  `json:"latencyMs"`
+	OK              bool   `json:"ok"`
+	Status          int    `json:"status,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
 
 func (h *Handler) handleTestModels(w http.ResponseWriter, r *http.Request) {
@@ -464,47 +471,70 @@ func (h *Handler) handleTestModels(w http.ResponseWriter, r *http.Request) {
 	if baseURL == "" {
 		baseURL = spec.DefaultBaseURL
 	}
-	// Fixed policy, not an operator knob: a model probe must never hold an
-	// admin request open indefinitely or fan out an unbounded upstream load.
-	timeout := 20 * time.Second
-	ctx, cancel := context.WithTimeout(r.Context(), timeout)
-	defer cancel()
 	results := make([]modelTestResult, 0, len(body.ModelIDs))
 	for _, modelID := range body.ModelIDs {
-		result := h.testProviderModel(ctx, connection, node, spec, baseURL, transportName, modelID, timeout)
+		if r.Context().Err() != nil {
+			writeError(w, http.StatusRequestTimeout, "probe_canceled", "model testing was canceled")
+			return
+		}
+		result := h.testProviderModel(r.Context(), connection, node, spec, baseURL, transportName, modelID, modelProbeTimeout)
 		results = append(results, result)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"connectionId": connection.ID, "transport": transportName, "results": results})
 }
 
-func (h *Handler) testProviderModel(ctx context.Context, connection credentials.Connection, node credentials.Node, spec registry.Spec, baseURL, transportName, modelID string, timeout time.Duration) modelTestResult {
-	result := modelTestResult{ModelID: modelID}
+func (h *Handler) testProviderModel(ctx context.Context, connection credentials.Connection, node credentials.Node, spec registry.Spec, baseURL, transportName, modelID string, timeout time.Duration) (result modelTestResult) {
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	result = modelTestResult{ModelID: modelID, Classification: "failed"}
+	defer func() { result.LatencyMS = time.Since(start).Milliseconds() }()
+	if h.opts.Runtime != nil {
+		if snapshot, err := h.opts.Runtime.Load(); err == nil {
+			model, ok := snapshot.ResolveModel("", modelID)
+			if !ok {
+				if provider, id, qualified := strings.Cut(modelID, "/"); qualified {
+					model, ok = snapshot.ResolveModel(provider, id)
+				}
+			}
+			if ok {
+				if model.ProviderID != node.ProviderID {
+					result.Error = "model resolves to a different provider"
+					return result
+				}
+				modelID = model.ID
+			}
+		}
+	}
+	if !validProbeModel(modelID) || modelID == "" {
+		result.Error = "model ID is invalid"
+		return result
+	}
+	result.UpstreamModelID = modelID
 	var endpoint string
 	var body any
 	switch transportName {
 	case string(registry.TransportOpenAIChat):
 		endpoint = "chat/completions"
-		body = map[string]any{"model": modelID, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}, "max_tokens": 1, "stream": false}
+		body = map[string]any{"model": modelID, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}, "max_tokens": 1024, "stream": true}
 	case string(registry.TransportOpenAIResponses):
 		endpoint = "responses"
-		body = map[string]any{"model": modelID, "input": "Reply with OK.", "max_output_tokens": 1, "stream": false}
+		body = map[string]any{"model": modelID, "input": "Reply with OK.", "max_output_tokens": 1024, "stream": true}
 	case string(registry.TransportAnthropic):
 		endpoint = "messages"
-		body = map[string]any{"model": modelID, "max_tokens": 1, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}}
+		body = map[string]any{"model": modelID, "max_tokens": 1024, "stream": true, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}}
 	case string(registry.TransportGemini):
-		endpoint = "models/" + strings.TrimPrefix(modelID, "models/") + ":generateContent"
-		body = map[string]any{"contents": []any{map[string]any{"parts": []any{map[string]string{"text": "Reply with OK."}}}}, "generationConfig": map[string]any{"maxOutputTokens": 1}}
+		endpoint = "models/" + strings.TrimPrefix(modelID, "models/") + ":streamGenerateContent"
+		body = map[string]any{"contents": []any{map[string]any{"parts": []any{map[string]string{"text": "Reply with OK."}}}}, "generationConfig": map[string]any{"maxOutputTokens": 1024}}
 	case string(registry.TransportOllama):
 		endpoint = "api/chat"
-		body = map[string]any{"model": modelID, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}, "stream": false, "options": map[string]int{"num_predict": 1}}
+		body = map[string]any{"model": modelID, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}, "stream": true, "options": map[string]int{"num_predict": 1024}}
 	case string(registry.TransportSystemOne):
-		// The System One/Jev provider configures the full typed endpoint as its
-		// base URL, so the probe posts verbatim (PRD §6 typesafe). The envelope
-		// matches the recorded compatibility oracle: a non-empty state object and
-		// a questions object keyed by question name.
+		// System One uses the typed endpoint and state/questions envelope (PRD section 6).
 		body = map[string]any{
-			"model": modelID,
-			"state": map[string]any{"message": "Routeweft System One probe."},
+			"model":  modelID,
+			"stream": true,
+			"state":  map[string]any{"message": "Routeweft System One probe."},
 			"questions": map[string]any{
 				"probe": map[string]string{"type": "noul", "instructions": "Reply with OK."},
 			},
@@ -554,6 +584,11 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 		parsed.Path = strings.TrimRight(parsed.Path, "/") + "/" + strings.TrimLeft(endpoint, "/")
 		parsed.RawPath = ""
 	}
+	if transportName == string(registry.TransportGemini) {
+		query := parsed.Query()
+		query.Set("alt", "sse")
+		parsed.RawQuery = query.Encode()
+	}
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		result.Error = "model probe request could not be encoded"
@@ -565,7 +600,7 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 		return result
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Accept", "text/event-stream, application/x-ndjson, application/json")
 	secret, err := h.probeSecret(ctx, connection)
 	if err != nil {
 		result.Error = "provider credentials are unavailable"
@@ -599,22 +634,27 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 		}
 		client = *protected
 		client.Timeout = timeout
+		client.Transport.(*http.Transport).ResponseHeaderTimeout = timeout
+		defer client.CloseIdleConnections()
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		if ctx.Err() != nil {
-			result.Error = "model test timed out or was canceled"
-		} else {
-			result.Error = "model test request failed"
-		}
+		result.probeFailure(ctx, err)
 		return result
 	}
 	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 	result.Status = response.StatusCode
-	result.OK = response.StatusCode >= 200 && response.StatusCode < 300
-	if !result.OK {
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		result.Error = "upstream rejected the model test"
+		return result
+	}
+	result.OK, err = readProbe(response, transportName, &result.ServedModelID)
+	if err != nil {
+		result.probeFailure(ctx, err)
+	} else if result.OK {
+		result.Classification = "reachable"
+	} else {
+		result.Error = "provider returned no usable output for this model"
 	}
 	return result
 }

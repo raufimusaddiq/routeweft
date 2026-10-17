@@ -33,6 +33,10 @@ type validationResult struct {
 	Method          string `json:"method"`
 	ModelsAvailable int    `json:"modelsAvailable"`
 	ModelID         string `json:"modelId,omitempty"`
+	UpstreamModelID string `json:"upstreamModelId,omitempty"`
+	ServedModelID   string `json:"servedModelId,omitempty"`
+	Classification  string `json:"classification,omitempty"`
+	LatencyMS       int64  `json:"latencyMs,omitempty"`
 	Status          int    `json:"status,omitempty"`
 	Error           string `json:"error,omitempty"`
 }
@@ -76,9 +80,9 @@ func (h *Handler) validateConnection(ctx context.Context, c credentials.Connecti
 		result.Error = "enable the connection before validation"
 		return result
 	}
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-	models, err := h.fetchConnectionModels(ctx, c, node)
+	discoveryCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	models, err := h.fetchConnectionModels(discoveryCtx, c, node)
+	cancel()
 	result.ModelsAvailable = len(models)
 	var status *discovery.StatusError
 	if errors.As(err, &status) && (status.Status == 401 || status.Status == 403) {
@@ -120,8 +124,10 @@ func (h *Handler) validateConnection(ctx context.Context, c credentials.Connecti
 	if base == "" {
 		base = spec.DefaultBaseURL
 	}
-	probe := h.testProviderModel(ctx, c, node, spec, base, protocol, model, probeTimeout)
+	probe := h.testProviderModel(ctx, c, node, spec, base, protocol, model, modelProbeTimeout)
 	result.OK, result.Status, result.Error, result.ModelID = probe.OK, probe.Status, probe.Error, model
+	result.UpstreamModelID, result.ServedModelID = probe.UpstreamModelID, probe.ServedModelID
+	result.Classification, result.LatencyMS = probe.Classification, probe.LatencyMS
 	return result
 }
 
@@ -235,8 +241,7 @@ func (h *Handler) handleTestBatch(w http.ResponseWriter, r *http.Request) {
 		h.batchBusy = false
 		h.workflowMu.Unlock()
 	}()
-	ctx, cancel := context.WithTimeout(r.Context(), workflowTimeout)
-	defer cancel()
+	ctx := r.Context()
 	config, err := credentials.LoadConfiguration(ctx, h.opts.DB)
 	if err != nil {
 		writeError(w, 503, "batch_unavailable", "enabled connections could not be loaded (maximum 200)")

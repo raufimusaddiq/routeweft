@@ -51,7 +51,7 @@ func TestWorkflowValidationFallbackAuthAndDiscoveryOnly(t *testing.T) {
 			w.WriteHeader(404)
 			return
 		}
-		if string(body) != `{"max_tokens":1,"messages":[{"content":"Reply with OK.","role":"user"}],"model":"manual:7b","stream":false}` {
+		if string(body) != `{"max_tokens":1024,"messages":[{"content":"Reply with OK.","role":"user"}],"model":"manual:7b","stream":true}` {
 			t.Errorf("probe wire changed: %s", body)
 		}
 		probes.Add(1)
@@ -144,7 +144,7 @@ func TestWorkflowAvailabilityCatalogSyncBatchAndCustomDelete(t *testing.T) {
 		if r.Header.Get("Authorization") == "Bearer b" {
 			w.WriteHeader(401)
 		}
-		io.WriteString(w, `{}`)
+		io.WriteString(w, `{"choices":[{"message":{"content":"OK"}}]}`)
 	}))
 	defer upstream.Close()
 	h, mux, store, creds, cookie := newProvidersAPI(t, true, nil)

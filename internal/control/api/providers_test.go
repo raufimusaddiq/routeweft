@@ -29,7 +29,7 @@ func TestCustomTypedNodeAndCloudflareAccountWorkflow(t *testing.T) {
 			t.Error("provider credential missing")
 		}
 		io.Copy(io.Discard, r.Body)
-		io.WriteString(w, `{"answers":{"probe":true}}`)
+		io.WriteString(w, `{"answers":{"probe":true},"choices":[{"message":{"content":"OK"}}]}`)
 	}))
 	defer upstream.Close()
 	h, mux, store, creds, cookie := newProvidersAPI(t, true, nil)
@@ -267,6 +267,10 @@ func TestModelAliasDiscoveryAndPricingMutations(t *testing.T) {
 			t.Errorf("discovery credential header=%q", r.Header.Get("Authorization"))
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"OK"}}]}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"data":[{"id":"gpt-5"},{"id":"gpt-5-mini"}]}`))
 	}))
 	defer upstream.Close()
@@ -455,7 +459,7 @@ func TestNativeModelProbeIsBoundedAndRedacted(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode probe request: %v", err)
 		}
-		if body.Model != "gpt-test" || body.MaxTokens != 1 {
+		if body.Model != "gpt-test" || body.MaxTokens != 1024 {
 			t.Errorf("probe body=%+v", body)
 		}
 		w.WriteHeader(http.StatusOK)
@@ -493,7 +497,7 @@ func TestNativeModelProbeIsBoundedAndRedacted(t *testing.T) {
 // The System One/Jev provider configures the full typed endpoint as its base
 // URL, so the typed request workflow posts verbatim with state/questions.
 func TestSystemOneModelProbePostsVerbatim(t *testing.T) {
-	const wantBody = `{"model":"jev","questions":{"probe":{"instructions":"Reply with OK.","type":"noul"}},"state":{"message":"Routeweft System One probe."}}`
+	const wantBody = `{"model":"jev","questions":{"probe":{"instructions":"Reply with OK.","type":"noul"}},"state":{"message":"Routeweft System One probe."},"stream":true}`
 	var gotBody []byte
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/systemone" {
@@ -504,7 +508,7 @@ func TestSystemOneModelProbePostsVerbatim(t *testing.T) {
 		}
 		gotBody, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ok":true}`))
+		_, _ = w.Write([]byte(`{"answers":{"probe":true}}`))
 	}))
 	defer upstream.Close()
 	_, mux, store, credStore, cookie := newProvidersAPI(t, true, &discovery.Client{HTTP: upstream.Client()})

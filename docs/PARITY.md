@@ -209,6 +209,33 @@ The audit-baseline inventory/counts below remain unchanged.
   remains R11. No live providers or production state were used. R03's native
   Headroom/PXPIPE deferral stays **R09**; System One transport/usage is unchanged.
 
+### R07 implementation progress (first-token model probes)
+
+#75 task R07 replaces the control-plane non-streaming/shared-deadline probes.
+The original inventory remains the audit baseline.
+
+- Native Chat, Responses, Messages, Gemini, Ollama and System One probes request
+  streaming, stop at first content/reasoning/tool/typed output and cancel the
+  remaining generation. JSON-only providers retain native bounded fallback.
+- Each model gets a 200-second first-token budget. Discovery keeps its own
+  20-second limit; catalog sync retains its two-minute aggregate limit. Batch
+  inference no longer spends later models' allowance on earlier models.
+- Own timeout is `slow`/504; hard failure is `failed`/502; caller cancellation is
+  `canceled`/408. Upstream HTTP errors retain their status with `failed` rather
+  than being relabeled as own timeouts. Empty/malformed/error streams cannot
+  certify inference, and discovery success alone still cannot pass validation.
+- Results separate tested `modelId`, resolved outbound `upstreamModelId` and
+  optional provider-reported `servedModelId`; aliases/qualified catalog IDs
+  resolve through RuntimeSnapshot. A different provider target is rejected.
+- Evidence: `internal/control/api/probes_test.go` covers fixed protocol payloads,
+  framing, empty/error/oversized responses, slow versus failed classification,
+  per-transport first-token cancellation, real client disconnect propagation
+  and alias attribution through saved tests, model lists and batch workflows.
+- Non-goals: specialized-provider auth/envelopes remain P02; request-log model
+  correlation remains R10/C07. Environment timeout overrides and the pinned
+  differential CI suite remain R11; the model-probe default now matches v1.
+  No inference routing, saver/cache, catalog mutation or Kilo-cache change.
+
 ### R06 implementation progress (provider/model control workflows)
 
 #75 task R06 adds the workflow boundary described in SPEC 33.1. The original

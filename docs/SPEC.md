@@ -1150,9 +1150,29 @@ ID or first enabled known ID. Discovery alone never certifies inference. Listing
 and no model is known/supplied, the response asks for a manual ID. Saved
 connection failures retain HTTP 502 so existing UI callers cannot report false
 success; unsaved validation and aggregate batch results expose `ok/status/error`.
-Each validation has a 20-second deadline inherited from its caller. Probes use
-the existing native request encoders, never user prompts or provider response
-bodies in results. First-token/slow-model classification remains R07.
+Discovery has its own 20-second deadline. Each inference probe gets a fresh
+200-second first-token budget, bounded by caller cancellation/deadlines. Native
+Chat, Responses, Messages, Gemini, Ollama and System One requests stream; probes
+stop at the first content, reasoning, tool-call or typed-answer event, then
+close/cancel upstream work. Empty/error streams fail. A length-limited reasoning
+response certifies reachability. Providers ignoring streaming may return native
+JSON, subject to the same deadline and a 1 MiB response limit. Probes never use
+user prompts or expose provider response bodies/secrets in results.
+
+Probe `classification` is `reachable`, `slow`, `failed` or `canceled`.
+Own deadline/network timeouts have status 504 (`slow`); connection/read/invalid
+response failures have status 502 (`failed`); caller cancellation has status 408
+(`canceled`). An upstream HTTP 504 remains `failed`, not an own timeout. Saved
+connection tests return HTTP 504/408 for own timeout/cancellation, preserving the
+HTTP 502 failure envelope otherwise. That envelope also includes the probe
+`result`. Aggregate endpoints retain HTTP 200 with per-model verdicts.
+
+`modelId` always records the tested ID, including its alias/qualified spelling.
+`upstreamModelId` records the resolved model sent in the native request.
+`servedModelId` records the model reported by the provider, only when present;
+it is not inferred from the alias. Aliases resolving to another provider are
+rejected before sending credentials. `latencyMs` measures the inference probe,
+excluding discovery. This is control-result attribution, not R10 request logs.
 
 Batch modes are `all`, `provider`, `oauth`, `free` (no-auth connections),
 `apikey` (excluding typed nodes), `systemone`, and `compatible` (Generic nodes).
@@ -1162,8 +1182,10 @@ accounts. At most 200 selected connections run sequentially, each with its own
 deadline; cancellation stops subsequent work and cancels the active fetch.
 
 Availability reads paginate with the normal `page/pageSize` bounds. Batch
-validation and catalog sync are single-flight and share a two-minute aggregate
-deadline across their bounded per-connection probes. Current
+validation and catalog sync are single-flight. Catalog sync retains a two-minute
+aggregate deadline; inference batches use independent per-model budgets, not a
+shared deadline that can exhaust later models' first-token allowance. Both stop
+on caller cancellation. Current
 routing cooldowns are account-wide, represented by model `__all`. Availability
 includes disabled accounts so operators can inspect retained cooldowns; batch
 validation and catalog sync exclude disabled accounts. Reset clears
