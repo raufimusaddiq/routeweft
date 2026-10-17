@@ -85,11 +85,11 @@ type TelemetryReader interface {
 // ProviderCatalog applies model and alias changes through RuntimeSnapshot.
 type ProviderCatalog interface {
 	PutModel(context.Context, runtime.Model) error
-	DeleteCustomModel(context.Context, string, string) error
 	ReplaceDiscoveredModels(context.Context, string, []runtime.Model) error
 	MergeDiscoveredModels(context.Context, string, []runtime.Model) error
 	PutAlias(context.Context, string, runtime.ModelRef) error
 	DeleteAlias(context.Context, string) error
+	DeleteModel(context.Context, string, string) error
 	SetModelDisabled(context.Context, string, string, bool) error
 }
 
@@ -150,7 +150,7 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.Handle("POST /admin/v1/connections/{id}/test-models", h.requireSessionHandler(http.HandlerFunc(h.handleTestModels)))
 	mux.Handle("POST /admin/v1/connections/{id}/discover", h.requireSessionHandler(http.HandlerFunc(h.handleDiscoverModels)))
 	mux.Handle("POST /admin/v1/models", h.requireSessionHandler(http.HandlerFunc(h.handlePutModel)))
-	mux.HandleFunc("DELETE /admin/v1/models", h.requireSession(h.handleDeleteCustomModel))
+	mux.Handle("DELETE /admin/v1/models", h.requireSessionHandler(http.HandlerFunc(h.handleDeleteModel)))
 	mux.HandleFunc("POST /admin/v1/provider-nodes/validate", h.requireSession(h.handleValidateNode))
 	mux.HandleFunc("POST /admin/v1/providers/test-batch", h.requireSession(h.handleTestBatch))
 	mux.HandleFunc("GET /admin/v1/models/availability", h.requireSession(h.handleAvailability))
@@ -175,6 +175,7 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	for _, path := range []string{"overview", "providers", "provider-nodes", "connections", "models", "aliases", "pricing", "combos", "proxy-pools", "keys", "usage", "requests", "quota", "token-saver", "systemone"} {
 		mux.Handle("GET /admin/v1/"+path, h.requireSessionHandler(h.readModel(path)))
 	}
+	mux.Handle("GET /admin/v1/models/disabled", h.requireSessionHandler(h.readModel("models/disabled")))
 	mux.HandleFunc("GET /admin/v1/usage/summary", h.requireSession(h.handleUsageSummary))
 	mux.HandleFunc("POST /admin/v1/quota/refresh", h.requireSession(h.handleQuotaRefresh))
 	mux.Handle("GET /admin/v1/events", h.requireSessionHandler(http.HandlerFunc(h.handleEvents)))

@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"sync"
 	"testing"
@@ -43,17 +42,20 @@ func TestCustomModelWorkflowRestartAndReferences(t *testing.T) {
 	if err := m.PutAlias(ctx, "typed", ModelRef{ProviderID: "custom", ModelID: custom.ID}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := m.PutCombo(ctx, Combo{Name: "typed-combo", Members: []ComboMember{{ProviderID: "custom", ModelID: custom.ID, Selected: true}}}); err != nil {
+		t.Fatal(err)
+	}
 	revision := mustLoad(t, m).ConfigRevision()
-	if err := m.DeleteCustomModel(ctx, "custom", custom.ID); err == nil {
-		t.Fatal("deleted a referenced model")
+	if err := m.DeleteModel(ctx, "custom", custom.ID); err == nil {
+		t.Fatal("deleted a Combo-referenced model")
 	}
 	if mustLoad(t, m).ConfigRevision() != revision {
 		t.Fatal("failed deletion changed revision")
 	}
-	if err := m.DeleteAlias(ctx, "typed"); err != nil {
+	if _, err := m.DeleteCombo(ctx, "typed-combo"); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.DeleteCustomModel(ctx, "custom", custom.ID); err != nil {
+	if err := m.DeleteModel(ctx, "custom", custom.ID); err != nil {
 		t.Fatal(err)
 	}
 	m, err = NewManager(ctx, store.DB())
@@ -69,7 +71,7 @@ func TestCustomModelWorkflowRestartAndReferences(t *testing.T) {
 	if _, ok := mustLoad(t, m).ResolveModel("custom", "discovered"); !ok {
 		t.Fatal("sync erased a disabled model")
 	}
-	if err := m.DeleteCustomModel(ctx, "custom", "discovered"); !errors.Is(err, sql.ErrNoRows) {
+	if err := m.DeleteModel(ctx, "custom", "discovered"); !errors.Is(err, ErrModelNotCustom) {
 		t.Fatalf("non-custom deletion: %v", err)
 	}
 	if err := m.PutModel(ctx, Model{ProviderID: "custom", ID: "image", Kind: "image"}); err == nil {
@@ -115,10 +117,10 @@ func TestCustomSeedOverrideDelete(t *testing.T) {
 	if err := m.PutModel(ctx, Model{ProviderID: "openai", ID: "gpt-4o", Name: "Override", Kind: "llm"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.PutAlias(ctx, "seed", ModelRef{ProviderID: "openai", ModelID: "gpt-4o"}); err != nil {
+	if err := m.PutAlias(ctx, "override-alias", ModelRef{ProviderID: "openai", ModelID: "gpt-4o"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.DeleteCustomModel(ctx, "openai", "gpt-4o"); err != nil {
+	if err := m.DeleteModel(ctx, "openai", "gpt-4o"); err != nil {
 		t.Fatal(err)
 	}
 	restarted, err := NewManager(ctx, m.db)
@@ -126,7 +128,7 @@ func TestCustomSeedOverrideDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, manager := range []*Manager{m, restarted} {
-		model, ok := mustLoad(t, manager).ResolveModel("openai", "seed")
+		model, ok := mustLoad(t, manager).ServingModel("openai/gpt-4o")
 		if !ok || model.Source != "seed" || model.Name == "Override" {
 			t.Fatalf("seed not restored: %+v", model)
 		}

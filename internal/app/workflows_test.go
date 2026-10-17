@@ -71,7 +71,7 @@ func TestConfiguredWorkflowAppWiring(t *testing.T) {
 	if err := a.runtime.PutModel(context.Background(), runtime.Model{ProviderID: "test", ID: "manual:7b", Capabilities: []string{"vision"}}); err != nil {
 		t.Fatal(err)
 	}
-	w = request("DELETE", "/admin/v1/models?providerId=test&id=manual:7b", "")
+	w = request("DELETE", "/admin/v1/models", `{"providerId":"test","modelId":"manual:7b"}`)
 	if w.Code != 200 {
 		t.Fatalf("delete: %d %s", w.Code, w.Body)
 	}

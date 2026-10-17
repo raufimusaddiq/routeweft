@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -76,18 +78,6 @@ func (m *Manager) PutModel(ctx context.Context, model Model) error {
 	return m.UpdateCatalog(ctx, func(candidate *Candidate) error { candidate.AddModel(model); return nil })
 }
 
-func (m *Manager) DeleteCustomModel(ctx context.Context, provider, id string) error {
-	return m.UpdateCatalog(ctx, func(candidate *Candidate) error {
-		for i, model := range candidate.Models {
-			if model.ProviderID == provider && model.ID == id && model.Source == "custom" {
-				candidate.Models = append(candidate.Models[:i], candidate.Models[i+1:]...)
-				return nil
-			}
-		}
-		return sql.ErrNoRows
-	})
-}
-
 // MergeDiscoveredModels unions account catalogs without erasing known or disabled IDs.
 func (m *Manager) MergeDiscoveredModels(ctx context.Context, provider string, models []Model) error {
 	return m.UpdateCatalog(ctx, func(candidate *Candidate) error {
@@ -107,6 +97,109 @@ func (m *Manager) MergeDiscoveredModels(ctx context.Context, provider string, mo
 		}
 		return nil
 	})
+}
+
+// ErrModelNotFound reports a delete that names no model at all.
+var ErrModelNotFound = errors.New("model not found")
+
+// ErrModelNotCustom reports a delete of a model that exists but is discovered
+// or built in; those are refreshed or disabled, never deleted.
+var ErrModelNotCustom = errors.New("model is not a custom model")
+
+// ModelInUseError reports a delete refused because Combos still route to the
+// model. Deleting would silently change those routes (or leave them empty).
+type ModelInUseError struct {
+	Combos   []string
+	Adapters []string // capacity adapter settings whose pool lists the model
+}
+
+func (e *ModelInUseError) Error() string {
+	var parts []string
+	if len(e.Combos) > 0 {
+		parts = append(parts, "combos: "+strings.Join(e.Combos, ", "))
+	}
+	if len(e.Adapters) > 0 {
+		parts = append(parts, "capacity adapters: "+strings.Join(e.Adapters, ", "))
+	}
+	return "model is used by " + strings.Join(parts, "; ")
+}
+
+// DeleteModel removes one custom (operator-managed) model plus the aliases,
+// pricing override and disabled marker that referenced it. It refuses while a
+// Combo or capacity adapter pool references the model, directly or through one
+// of its aliases.
+func (m *Manager) DeleteModel(ctx context.Context, provider, model string) error {
+	_, err := m.update(ctx, func(candidate *Candidate) error {
+		index := -1
+		for i, existing := range candidate.Models {
+			if existing.ProviderID == provider && existing.ID == model && existing.Source == "custom" {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			if snapshot, err := m.Load(); err == nil {
+				if _, ok := snapshot.models[modelKey(provider, model)]; ok {
+					return ErrModelNotCustom
+				}
+			}
+			return ErrModelNotFound
+		}
+		names := map[string]struct{}{model: {}}
+		for alias, target := range candidate.Aliases {
+			if target.ProviderID == provider && target.ModelID == model {
+				names[alias] = struct{}{}
+			}
+		}
+		var users []string
+		for _, combo := range candidate.Combos {
+			for _, member := range combo.Members {
+				if _, ok := names[member.ModelID]; ok && (member.ProviderID == "" || member.ProviderID == provider) {
+					users = append(users, combo.Name)
+					break
+				}
+			}
+		}
+		var adapters []string
+		for key, value := range candidate.Settings {
+			if !strings.HasPrefix(key, "capacityAdapter") {
+				continue
+			}
+			var adapter struct {
+				Pool []struct {
+					ProviderID string `json:"providerId"`
+					ModelID    string `json:"modelId"`
+				} `json:"pool"`
+			}
+			if json.Unmarshal([]byte(value), &adapter) != nil {
+				continue
+			}
+			for _, entry := range adapter.Pool {
+				if _, ok := names[entry.ModelID]; ok && (entry.ProviderID == "" || entry.ProviderID == provider) {
+					adapters = append(adapters, key)
+					break
+				}
+			}
+		}
+		if len(users) > 0 || len(adapters) > 0 {
+			sort.Strings(users)
+			sort.Strings(adapters)
+			return &ModelInUseError{Combos: users, Adapters: adapters}
+		}
+		candidate.Models = append(candidate.Models[:index], candidate.Models[index+1:]...)
+		for alias, target := range candidate.Aliases {
+			if target.ProviderID == provider && target.ModelID == model {
+				delete(candidate.Aliases, alias)
+			}
+		}
+		delete(candidate.DisabledModels, modelKey(provider, model))
+		return nil
+	}, func(tx *sql.Tx) error {
+		// Pricing overrides are stored outside the candidate; drop the dead row.
+		_, err := tx.ExecContext(ctx, "DELETE FROM pricing_overrides WHERE provider_id=? AND model_id=?", provider, model)
+		return err
+	})
+	return err
 }
 
 // ReplaceDiscoveredModels atomically swaps one provider's discovered catalog

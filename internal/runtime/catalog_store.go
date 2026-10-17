@@ -12,7 +12,7 @@ import (
 
 // persistCatalog replaces the compiled model/credential surface inside the
 // caller's configuration transaction so commit order matches SPEC section 7.
-func persistCatalog(ctx context.Context, tx *sql.Tx, config Config) error {
+func persistCatalog(ctx context.Context, tx *sql.Tx, config Config, removed [][2]string) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM api_keys"); err != nil {
 		return fmt.Errorf("replace api keys: %w", err)
 	}
@@ -33,34 +33,12 @@ func persistCatalog(ctx context.Context, tx *sql.Tx, config Config) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM custom_models"); err != nil {
 		return fmt.Errorf("replace custom models: %w", err)
 	}
-	// Remove absent entries too, so deleted custom/discovered models cannot revive on restart.
-	rows, err := tx.QueryContext(ctx, "SELECT provider_id,model_id FROM provider_models")
-	if err != nil {
-		return err
-	}
-	kept := make(map[string]bool, len(config.Models))
-	for _, model := range config.Models {
-		kept[modelKey(model.ProviderID, model.ID)] = true
-	}
-	var removed []ModelRef
-	for rows.Next() {
-		var ref ModelRef
-		if err := rows.Scan(&ref.ProviderID, &ref.ModelID); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if !kept[modelKey(ref.ProviderID, ref.ModelID)] {
-			removed = append(removed, ref)
-		}
-	}
-	err = rows.Err()
-	_ = rows.Close()
-	if err != nil {
-		return err
-	}
-	for _, ref := range removed {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM provider_models WHERE provider_id=? AND model_id=?", ref.ProviderID, ref.ModelID); err != nil {
-			return err
+	// provider_models mirrors the candidate without scanning it: rows are
+	// upserted below (updated_at moves only when a value changes) and exactly the
+	// keys the compiled snapshot had but the candidate lost are deleted.
+	for _, key := range removed {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM provider_models WHERE provider_id=? AND model_id=?", key[0], key[1]); err != nil {
+			return fmt.Errorf("remove provider model %q: %w", modelKey(key[0], key[1]), err)
 		}
 	}
 	for _, model := range config.Models {
@@ -82,7 +60,8 @@ func persistCatalog(ctx context.Context, tx *sql.Tx, config Config) error {
 			return err
 		}
 		const upsertModel = `INSERT INTO provider_models(provider_id,model_id,display_name,context_window,capabilities,kind) VALUES(?,?,?,?,?,?)
-ON CONFLICT(provider_id,model_id) DO UPDATE SET display_name=excluded.display_name,context_window=excluded.context_window,capabilities=excluded.capabilities,kind=excluded.kind,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+ON CONFLICT(provider_id,model_id) DO UPDATE SET display_name=excluded.display_name,context_window=excluded.context_window,capabilities=excluded.capabilities,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+WHERE display_name IS NOT excluded.display_name OR context_window IS NOT excluded.context_window OR capabilities IS NOT excluded.capabilities OR kind IS NOT excluded.kind`
 		var contextWindow any
 		if model.ContextWindow > 0 {
 			contextWindow = model.ContextWindow
@@ -215,4 +194,23 @@ func loadCatalog(ctx context.Context, db *sql.DB, config *Config) error {
 		config.DisabledModels[modelKey(provider, model)] = struct{}{}
 	}
 	return disabledRows.Err()
+}
+
+// removedModels lists persisted (non-seed) models present in the active
+// snapshot but absent from the next config.
+func removedModels(current map[string]Model, next []Model) [][2]string {
+	kept := make(map[string]struct{}, len(next))
+	for _, model := range next {
+		kept[modelKey(model.ProviderID, model.ID)] = struct{}{}
+	}
+	var removed [][2]string
+	for key, model := range current {
+		if model.Source == "seed" {
+			continue
+		}
+		if _, ok := kept[key]; !ok {
+			removed = append(removed, [2]string{model.ProviderID, model.ID})
+		}
+	}
+	return removed
 }

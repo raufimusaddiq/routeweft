@@ -227,12 +227,12 @@ func TestWorkflowAvailabilityCatalogSyncBatchAndCustomDelete(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"id":"typed"`) || strings.Contains(w.Body.String(), `"id":"shared"`) {
 		t.Fatalf("typed admin catalog: %d %s", w.Code, w.Body)
 	}
-	w = doJSON(t, mux, cookie, "DELETE", "/admin/v1/models?providerId=catalog&id=typed", "")
+	w = doJSON(t, mux, cookie, "DELETE", "/admin/v1/models", `{"providerId":"catalog","modelId":"typed"}`)
 	if w.Code != 200 {
 		t.Fatalf("custom delete: %d %s", w.Code, w.Body)
 	}
-	w = doJSON(t, mux, cookie, "DELETE", "/admin/v1/models?providerId=catalog&id=shared", "")
-	if w.Code != 404 {
+	w = doJSON(t, mux, cookie, "DELETE", "/admin/v1/models", `{"providerId":"catalog","modelId":"shared"}`)
+	if w.Code != 409 {
 		t.Fatalf("deleted discovery entry: %d", w.Code)
 	}
 	w = doJSON(t, mux, cookie, "GET", "/admin/v1/provider-nodes/catalog/routes", "")

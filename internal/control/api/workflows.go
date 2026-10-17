@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"net/http"
 	"strings"
@@ -388,28 +387,6 @@ func (h *Handler) handleCatalogSync(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, map[string]any{"success": !failed, "results": results, "activeConfigRevision": h.activeRevision()})
-}
-
-func (h *Handler) handleDeleteCustomModel(w http.ResponseWriter, r *http.Request) {
-	provider, id := r.URL.Query().Get("providerId"), r.URL.Query().Get("id")
-	if provider == "" || id == "" {
-		writeError(w, 400, "invalid_model", "providerId and id are required")
-		return
-	}
-	if h.opts.ProviderCatalog == nil {
-		writeError(w, 503, "catalog_unavailable", "model catalog unavailable")
-		return
-	}
-	err := h.opts.ProviderCatalog.DeleteCustomModel(r.Context(), provider, id)
-	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, 404, "model_not_found", "custom model not found")
-		return
-	}
-	if err != nil {
-		writeError(w, 409, "model_delete_failed", "remove references to the custom model before deleting it")
-		return
-	}
-	writeJSON(w, 200, map[string]any{"deleted": true, "providerId": provider, "id": id, "activeConfigRevision": h.activeRevision()})
 }
 
 func (h *Handler) handleNodeRoutes(w http.ResponseWriter, r *http.Request) {

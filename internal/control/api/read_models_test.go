@@ -34,15 +34,16 @@ func newReadAPI(t *testing.T) (*Handler, *http.ServeMux, *sqlite.Store) {
 	}
 	specs := []registry.Spec{{ID: "openai", Transports: []registry.Protocol{registry.TransportOpenAIChat, registry.TransportOpenAIResponses}, Auth: registry.AuthAPIKey, ModelCatalog: registry.CatalogStatic}}
 	handler := New(Options{
-		Accounts:  adminauth.NewStore(store.DB()),
-		Sessions:  adminauth.NewSessionManager(time.Hour),
-		Settings:  manager,
-		Keys:      manager,
-		DB:        store.DB(),
-		Runtime:   manager,
-		Providers: specs,
-		Ready:     func() bool { return true },
-		Build:     buildinfo.Info{Version: "test", Commit: "deadbeef"},
+		Accounts:        adminauth.NewStore(store.DB()),
+		Sessions:        adminauth.NewSessionManager(time.Hour),
+		Settings:        manager,
+		Keys:            manager,
+		DB:              store.DB(),
+		Runtime:         manager,
+		ProviderCatalog: manager,
+		Providers:       specs,
+		Ready:           func() bool { return true },
+		Build:           buildinfo.Info{Version: "test", Commit: "deadbeef"},
 	})
 	mux := http.NewServeMux()
 	handler.Attach(mux)

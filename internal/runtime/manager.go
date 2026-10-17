@@ -94,7 +94,7 @@ func (m *Manager) update(ctx context.Context, mutate func(*Candidate) error, per
 			return nil, fmt.Errorf("persist setting %q: %w", key, err)
 		}
 	}
-	if err := persistCatalog(ctx, tx, config); err != nil {
+	if err := persistCatalog(ctx, tx, config, removedModels(current.models, config.Models)); err != nil {
 		return nil, err
 	}
 	if err := persistCombos(ctx, tx, config.Combos); err != nil {

@@ -1103,7 +1103,7 @@ policy. Public `/api/v1` aliases, inference auth and CORS are unchanged.
 | Suggestions | `GET /admin/v1/providers/suggested-models?url=...&type=...` |
 | Kilo free catalog | `GET /admin/v1/providers/kilo/free-models` |
 | Resolved native node routes | `GET /admin/v1/provider-nodes/{id}/routes` |
-| Custom model deletion | `DELETE /admin/v1/models?providerId=...&id=...` |
+| Custom model deletion | `DELETE /admin/v1/models` with `providerId` and `modelId` JSON |
 
 Validation tries listing first, then probes the supplied manual ID, first listed
 ID or first enabled known ID. Discovery alone never certifies inference. Listing
