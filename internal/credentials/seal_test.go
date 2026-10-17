@@ -52,7 +52,12 @@ func TestSealRejectsTamperAndBadEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tampered := sealed[:len(sealed)-2] + "AA"
+	// Random envelopes can already end in "AA"; always change the tail.
+	tail := "AA"
+	if strings.HasSuffix(sealed, tail) {
+		tail = "BB"
+	}
+	tampered := sealed[:len(sealed)-2] + tail
 	if _, err := sealer.Open(tampered); err == nil {
 		t.Fatal("tampered blob authenticated")
 	}
