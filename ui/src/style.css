@@ -249,6 +249,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .provider-inline-form { display: flex; flex-wrap: wrap; gap: 7px; margin: 12px 0; }
 .provider-inline-form input, .provider-inline-form select { flex: 1 1 130px; }
 .provider-inline-form button { min-height: 36px; }
+.subsection-title { margin: 18px 0 4px; color: var(--text-muted); font-size: 11px; font-weight: 600; }
 .model-row { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; border-top: 1px solid var(--border-subtle); padding: 9px 0; font-size: 11px; }
 .model-row code { min-width: min(100%, 140px); color: var(--text-main); }
 .model-row > span:not(.state-tag), .model-row > small { color: var(--text-muted); }
