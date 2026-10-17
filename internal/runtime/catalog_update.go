@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -82,7 +83,7 @@ var ErrModelNotFound = errors.New("custom model not found")
 // disabled marker that referenced it, so the candidate still compiles.
 // Discovered and seeded models are not deletable; they are refreshed or hidden.
 func (m *Manager) DeleteModel(ctx context.Context, provider, model string) error {
-	return m.UpdateCatalog(ctx, func(candidate *Candidate) error {
+	_, err := m.update(ctx, func(candidate *Candidate) error {
 		index := -1
 		for i, existing := range candidate.Models {
 			if existing.ProviderID == provider && existing.ID == model && existing.Source == "custom" {
@@ -94,14 +95,34 @@ func (m *Manager) DeleteModel(ctx context.Context, provider, model string) error
 			return ErrModelNotFound
 		}
 		candidate.Models = append(candidate.Models[:index], candidate.Models[index+1:]...)
+		deleted := map[string]struct{}{model: {}}
 		for alias, target := range candidate.Aliases {
 			if target.ProviderID == provider && target.ModelID == model {
+				deleted[alias] = struct{}{}
 				delete(candidate.Aliases, alias)
 			}
 		}
+		// Combo members reference the model directly or through an alias name;
+		// drop both so the candidate still compiles.
+		for i := range candidate.Combos {
+			kept := make([]ComboMember, 0, len(candidate.Combos[i].Members))
+			for _, member := range candidate.Combos[i].Members {
+				_, gone := deleted[member.ModelID]
+				if gone && (member.ProviderID == "" || member.ProviderID == provider) {
+					continue
+				}
+				kept = append(kept, member)
+			}
+			candidate.Combos[i].Members = kept
+		}
 		delete(candidate.DisabledModels, modelKey(provider, model))
 		return nil
+	}, func(tx *sql.Tx) error {
+		// Pricing overrides are stored outside the candidate; drop the dead row.
+		_, err := tx.ExecContext(ctx, "DELETE FROM pricing_overrides WHERE provider_id=? AND model_id=?", provider, model)
+		return err
 	})
+	return err
 }
 
 // ReplaceDiscoveredModels atomically swaps one provider's discovered catalog

@@ -33,9 +33,11 @@ func persistCatalog(ctx context.Context, tx *sql.Tx, config Config) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM custom_models"); err != nil {
 		return fmt.Errorf("replace custom models: %w", err)
 	}
-	// provider_models mirrors the candidate exactly, so removed models do not linger.
-	if _, err := tx.ExecContext(ctx, "DELETE FROM provider_models"); err != nil {
-		return fmt.Errorf("replace provider models: %w", err)
+	// provider_models mirrors the candidate: rows are upserted below (updated_at
+	// moves only when a value changes) and rows no longer in the candidate go.
+	existing, err := providerModelKeys(ctx, tx)
+	if err != nil {
+		return err
 	}
 	for _, model := range config.Models {
 		if model.Source == "seed" {
@@ -56,13 +58,20 @@ func persistCatalog(ctx context.Context, tx *sql.Tx, config Config) error {
 			return err
 		}
 		const upsertModel = `INSERT INTO provider_models(provider_id,model_id,display_name,context_window,capabilities) VALUES(?,?,?,?,?)
-ON CONFLICT(provider_id,model_id) DO UPDATE SET display_name=excluded.display_name,context_window=excluded.context_window,capabilities=excluded.capabilities,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+ON CONFLICT(provider_id,model_id) DO UPDATE SET display_name=excluded.display_name,context_window=excluded.context_window,capabilities=excluded.capabilities,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+WHERE display_name IS NOT excluded.display_name OR context_window IS NOT excluded.context_window OR capabilities IS NOT excluded.capabilities`
 		var contextWindow any
 		if model.ContextWindow > 0 {
 			contextWindow = model.ContextWindow
 		}
 		if _, err := tx.ExecContext(ctx, upsertModel, model.ProviderID, model.ID, model.Name, contextWindow, string(capabilities)); err != nil {
 			return fmt.Errorf("persist provider model %q: %w", modelKey(model.ProviderID, model.ID), err)
+		}
+		delete(existing, [2]string{model.ProviderID, model.ID})
+	}
+	for key := range existing {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM provider_models WHERE provider_id=? AND model_id=?", key[0], key[1]); err != nil {
+			return fmt.Errorf("remove provider model %q: %w", modelKey(key[0], key[1]), err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM model_aliases"); err != nil {
@@ -188,4 +197,21 @@ func loadCatalog(ctx context.Context, db *sql.DB, config *Config) error {
 		config.DisabledModels[modelKey(provider, model)] = struct{}{}
 	}
 	return disabledRows.Err()
+}
+
+func providerModelKeys(ctx context.Context, tx *sql.Tx) (map[[2]string]struct{}, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT provider_id,model_id FROM provider_models")
+	if err != nil {
+		return nil, fmt.Errorf("list provider models: %w", err)
+	}
+	defer rows.Close()
+	keys := make(map[[2]string]struct{})
+	for rows.Next() {
+		var key [2]string
+		if err := rows.Scan(&key[0], &key[1]); err != nil {
+			return nil, err
+		}
+		keys[key] = struct{}{}
+	}
+	return keys, rows.Err()
 }

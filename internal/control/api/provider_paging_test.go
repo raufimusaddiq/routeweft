@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/raufimusaddiq/routeweft/internal/adminauth"
+	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
 func adminCookie(t *testing.T, h *Handler) *http.Cookie {
@@ -106,9 +107,15 @@ func TestDeleteCustomModelRemovesAliasesAndRejectsOthers(t *testing.T) {
 	handler, mux, store := newReadAPI(t)
 	defer store.Close()
 	cookie := adminCookie(t, handler)
-	handler.opts.ProviderCatalog = handler.opts.Runtime.(ProviderCatalog)
 	if rec := callAdmin(mux, cookie, http.MethodPost, "/admin/v1/models", `{"providerId":"openai","id":"mine","name":"Mine"}`); rec.Code != http.StatusOK {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	manager := handler.opts.Runtime.(*runtime.Manager)
+	if _, err := manager.PutCombo(context.Background(), runtime.Combo{Name: "c1", Members: []runtime.ComboMember{{ProviderID: "openai", ModelID: "mine", Selected: true}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DB().Exec(`INSERT INTO pricing_overrides(provider_id,model_id,input_per_mtok) VALUES('openai','mine',2)`); err != nil {
+		t.Fatal(err)
 	}
 	if rec := callAdmin(mux, cookie, http.MethodPost, "/admin/v1/aliases", `{"alias":"mine-alias","providerId":"openai","modelId":"mine"}`); rec.Code != http.StatusOK {
 		t.Fatalf("alias: %d %s", rec.Code, rec.Body)
@@ -132,7 +139,44 @@ func TestDeleteCustomModelRemovesAliasesAndRejectsOthers(t *testing.T) {
 			t.Fatalf("%s still has %d rows after model delete", resource, got.Total)
 		}
 	}
+	if rec := callAdmin(mux, cookie, http.MethodGet, "/admin/v1/pricing?providerId=openai", ""); !strings.Contains(rec.Body.String(), `"total":0`) {
+		t.Fatalf("pricing row survived model delete: %s", rec.Body)
+	}
+	snapshot, err := manager.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, combo := range snapshot.Combos() {
+		if combo.Name == "c1" && len(combo.Members) != 0 {
+			t.Fatalf("combo still references deleted model: %+v", combo.Members)
+		}
+	}
 	if rec := callAdmin(mux, cookie, http.MethodDelete, "/admin/v1/models", `{"providerId":"openai","modelId":"mine"}`); rec.Code != http.StatusNotFound {
 		t.Fatalf("second delete: %d want 404", rec.Code)
+	}
+}
+
+// An unrelated catalog mutation must not move provider_models.updated_at.
+func TestUnrelatedMutationPreservesModelUpdatedAt(t *testing.T) {
+	handler, _, store := newReadAPI(t)
+	defer store.Close()
+	manager := handler.opts.Runtime.(*runtime.Manager)
+	ctx := context.Background()
+	if err := manager.PutModel(ctx, runtime.Model{ProviderID: "openai", ID: "stable"}); err != nil {
+		t.Fatal(err)
+	}
+	const stamp = "2001-02-03T04:05:06.000Z"
+	if _, err := store.DB().Exec(`UPDATE provider_models SET updated_at=? WHERE model_id='stable'`, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := manager.CreateAPIKey(ctx, "unrelated"); err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	if err := store.DB().QueryRow(`SELECT updated_at FROM provider_models WHERE model_id='stable'`).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != stamp {
+		t.Fatalf("updated_at=%q, want preserved %q", got, stamp)
 	}
 }
