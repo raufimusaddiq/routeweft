@@ -209,6 +209,43 @@ The audit-baseline inventory/counts below remain unchanged.
   remains R11. No live providers or production state were used. R03's native
   Headroom/PXPIPE deferral stays **R09**; System One transport/usage is unchanged.
 
+### R06 implementation progress (provider/model control workflows)
+
+#75 task R06 adds the workflow boundary described in SPEC 33.1. The original
+inventory rows/counts below remain the audit baseline, not a certification.
+
+- Saved connection tests now perform minimal native inference, including manual
+  ID fallback when listing is absent; listing success alone cannot pass a test.
+  Unsaved Generic validation uses the same SSRF/auth/native probe path without
+  storing credentials or configuration. Listing auth rejection stops fallback.
+- Admin availability lists actual account-wide RuntimeState cooldowns as
+  `__all`, with paginated reads and provider-scoped reset. Quotas and disabled
+  models are not reset. Routeweft does not invent per-model lock state.
+- Catalog sync/status covers enabled connections, unions account catalogs,
+  preserves known/disabled/manual models on partial failure and rejects
+  overlapping syncs. Batch validation selects enabled connections by the pinned
+  logical groups before credential reads, reports individual failures and
+  aggregate totals, bounds work to 200 connections and propagates cancellation.
+- Suggested-model filters match pinned Kenari, OpenRouter, OpenCode, Mimo and
+  Airforce rules. Kilo free filtering uses a one-hour in-memory cache with stale
+  fallback/warnings. Arbitrary suggestion URLs gain Routeweft's SSRF guard;
+  redirects, credential forwarding and unbounded responses are not retained.
+- Custom kind/capabilities persist through discovery and restart. Custom delete
+  uses candidate compile/commit/publish, rejects referenced entries and removes
+  orphaned durable model rows. Schema v6 is additive; old binaries require a
+  pre-upgrade backup for rollback. Node route templates have an admin read model.
+- Evidence: `internal/control/api/workflows_test.go`, `suggestions_test.go`,
+  `internal/runtime/workflows_test.go`, `internal/providers/discovery/auth_test.go`,
+  migration upgrade tests and `internal/app/workflows_test.go` cover wire
+  fixtures, auth/SSRF/redirects, cancellation, cache/reset races, restart metadata,
+  actual-app publication and continued legacy-alias serving with SQLite closed.
+- Non-goals: first-token/slow-model probes remain R07; specialized provider auth
+  validators and seed/default-pricing breadth remain P02/P03/C06; dashboard
+  controls remain U03/U04. No claim of per-model cooldown granularity, scheduler
+  parity, or R11 differential certification. R03 savers/cache, R04 typed
+  transports/usage and R05 aliases/Ollama/info remain unchanged. Native
+  Headroom/PXPIPE helper parity remains R09.
+
 ### Area issues and ownership
 
 | Area | Backlog | Gap IDs owned |

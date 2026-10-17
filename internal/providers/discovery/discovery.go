@@ -22,6 +22,12 @@ import (
 
 const maxModelsResponseBytes = 4 << 20
 
+type StatusError struct{ Status int }
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("model discovery returned HTTP %d", e.Status)
+}
+
 // HTTPClient is the minimal client contract used for discovery.
 type HTTPClient interface {
 	Do(*http.Request) (*http.Response, error)
@@ -50,7 +56,9 @@ const (
 	// AuthBearer sends "Authorization: Bearer <key>".
 	AuthBearer AuthStyle = ""
 	// AuthXApiKey sends "x-api-key: <key>" (Anthropic-compatible gateways).
-	AuthXApiKey AuthStyle = "x-api-key"
+	AuthXApiKey      AuthStyle = "x-api-key"
+	AuthGoogleAPIKey AuthStyle = "x-goog-api-key"
+	AuthCookie       AuthStyle = "cookie"
 	// AuthNone sends no credential (no-auth/free providers).
 	AuthNone AuthStyle = "none"
 )
@@ -106,7 +114,12 @@ func (c *Client) Models(ctx context.Context, request Request) ([]string, error) 
 	case AuthXApiKey:
 		if request.Credential != "" {
 			httpRequest.Header.Set("x-api-key", request.Credential)
+			httpRequest.Header.Set("anthropic-version", "2023-06-01")
 		}
+	case AuthGoogleAPIKey:
+		httpRequest.Header.Set("x-goog-api-key", request.Credential)
+	case AuthCookie:
+		httpRequest.Header.Set("Cookie", request.Credential)
 	default:
 		if request.Credential != "" {
 			httpRequest.Header.Set("Authorization", "Bearer "+request.Credential)
@@ -137,7 +150,7 @@ func (c *Client) Models(ctx context.Context, request Request) ([]string, error) 
 		return nil, errors.New("model discovery response exceeds size limit")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("model discovery returned HTTP %d", response.StatusCode)
+		return nil, &StatusError{Status: response.StatusCode}
 	}
 	return ParseModels(body)
 }

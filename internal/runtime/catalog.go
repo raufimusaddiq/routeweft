@@ -10,6 +10,7 @@ type Model struct {
 	ContextWindow int      `json:"contextWindow,omitempty"`
 	Capabilities  []string `json:"capabilities,omitempty"`
 	Source        string   `json:"source,omitempty"`
+	Kind          string   `json:"kind,omitempty"`
 }
 
 type ModelRef struct {

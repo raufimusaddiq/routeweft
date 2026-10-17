@@ -33,6 +33,36 @@ func persistCatalog(ctx context.Context, tx *sql.Tx, config Config) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM custom_models"); err != nil {
 		return fmt.Errorf("replace custom models: %w", err)
 	}
+	// Remove absent entries too, so deleted custom/discovered models cannot revive on restart.
+	rows, err := tx.QueryContext(ctx, "SELECT provider_id,model_id FROM provider_models")
+	if err != nil {
+		return err
+	}
+	kept := make(map[string]bool, len(config.Models))
+	for _, model := range config.Models {
+		kept[modelKey(model.ProviderID, model.ID)] = true
+	}
+	var removed []ModelRef
+	for rows.Next() {
+		var ref ModelRef
+		if err := rows.Scan(&ref.ProviderID, &ref.ModelID); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if !kept[modelKey(ref.ProviderID, ref.ModelID)] {
+			removed = append(removed, ref)
+		}
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, ref := range removed {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM provider_models WHERE provider_id=? AND model_id=?", ref.ProviderID, ref.ModelID); err != nil {
+			return err
+		}
+	}
 	for _, model := range config.Models {
 		if model.Source == "seed" {
 			continue
@@ -51,13 +81,13 @@ func persistCatalog(ctx context.Context, tx *sql.Tx, config Config) error {
 		if err != nil {
 			return err
 		}
-		const upsertModel = `INSERT INTO provider_models(provider_id,model_id,display_name,context_window,capabilities) VALUES(?,?,?,?,?)
-ON CONFLICT(provider_id,model_id) DO UPDATE SET display_name=excluded.display_name,context_window=excluded.context_window,capabilities=excluded.capabilities,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+		const upsertModel = `INSERT INTO provider_models(provider_id,model_id,display_name,context_window,capabilities,kind) VALUES(?,?,?,?,?,?)
+ON CONFLICT(provider_id,model_id) DO UPDATE SET display_name=excluded.display_name,context_window=excluded.context_window,capabilities=excluded.capabilities,kind=excluded.kind,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 		var contextWindow any
 		if model.ContextWindow > 0 {
 			contextWindow = model.ContextWindow
 		}
-		if _, err := tx.ExecContext(ctx, upsertModel, model.ProviderID, model.ID, model.Name, contextWindow, string(capabilities)); err != nil {
+		if _, err := tx.ExecContext(ctx, upsertModel, model.ProviderID, model.ID, model.Name, contextWindow, string(capabilities), model.Kind); err != nil {
 			return fmt.Errorf("persist provider model %q: %w", modelKey(model.ProviderID, model.ID), err)
 		}
 	}
@@ -104,7 +134,7 @@ func loadCatalog(ctx context.Context, db *sql.DB, config *Config) error {
 	if err := keyRows.Err(); err != nil {
 		return err
 	}
-	modelRows, err := db.QueryContext(ctx, "SELECT provider_id,model_id,COALESCE(display_name,''),COALESCE(context_window,0),capabilities FROM provider_models ORDER BY provider_id,model_id")
+	modelRows, err := db.QueryContext(ctx, "SELECT provider_id,model_id,COALESCE(display_name,''),COALESCE(context_window,0),capabilities,kind FROM provider_models ORDER BY provider_id,model_id")
 	if err != nil {
 		return fmt.Errorf("load provider models: %w", err)
 	}
@@ -113,7 +143,7 @@ func loadCatalog(ctx context.Context, db *sql.DB, config *Config) error {
 	for modelRows.Next() {
 		var model Model
 		var capabilities string
-		if err := modelRows.Scan(&model.ProviderID, &model.ID, &model.Name, &model.ContextWindow, &capabilities); err != nil {
+		if err := modelRows.Scan(&model.ProviderID, &model.ID, &model.Name, &model.ContextWindow, &capabilities, &model.Kind); err != nil {
 			return err
 		}
 		if err := json.Unmarshal([]byte(capabilities), &model.Capabilities); err != nil {
@@ -146,6 +176,7 @@ func loadCatalog(ctx context.Context, db *sql.DB, config *Config) error {
 				model.ContextWindow = config.Models[index].ContextWindow
 			}
 			model.Capabilities = append([]string(nil), config.Models[index].Capabilities...)
+			model.Kind = config.Models[index].Kind
 			config.Models[index] = model
 		} else {
 			modelIndexes[key] = len(config.Models)

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -75,6 +76,39 @@ func (m *Manager) PutModel(ctx context.Context, model Model) error {
 	return m.UpdateCatalog(ctx, func(candidate *Candidate) error { candidate.AddModel(model); return nil })
 }
 
+func (m *Manager) DeleteCustomModel(ctx context.Context, provider, id string) error {
+	return m.UpdateCatalog(ctx, func(candidate *Candidate) error {
+		for i, model := range candidate.Models {
+			if model.ProviderID == provider && model.ID == id && model.Source == "custom" {
+				candidate.Models = append(candidate.Models[:i], candidate.Models[i+1:]...)
+				return nil
+			}
+		}
+		return sql.ErrNoRows
+	})
+}
+
+// MergeDiscoveredModels unions account catalogs without erasing known or disabled IDs.
+func (m *Manager) MergeDiscoveredModels(ctx context.Context, provider string, models []Model) error {
+	return m.UpdateCatalog(ctx, func(candidate *Candidate) error {
+		known := map[string]bool{}
+		for _, model := range candidate.Models {
+			if model.ProviderID == provider {
+				known[model.ID] = true
+			}
+		}
+		for _, model := range models {
+			if known[model.ID] {
+				continue
+			}
+			model.ProviderID, model.Source = provider, "discovered"
+			candidate.AddModel(model)
+			known[model.ID] = true
+		}
+		return nil
+	})
+}
+
 // ReplaceDiscoveredModels atomically swaps one provider's discovered catalog
 // for the supplied IDs while preserving custom (operator-managed) models and
 // any alias/disabled decisions. Discovery failure is advisory, so an empty list
@@ -115,8 +149,16 @@ func (m *Manager) ReplaceDiscoveredModels(ctx context.Context, providerID string
 			kept = append(kept, model)
 		}
 		candidate.Models = kept
+		protected := make(map[string]bool)
+		for _, model := range kept {
+			if model.ProviderID == providerID {
+				protected[model.ID] = true
+			}
+		}
 		for _, model := range usable {
-			candidate.AddModel(model)
+			if !protected[model.ID] {
+				candidate.AddModel(model)
+			}
 		}
 		return nil
 	})

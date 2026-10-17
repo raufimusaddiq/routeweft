@@ -272,34 +272,17 @@ FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id ORDER BY n.p
 }
 
 func (h *Handler) models(w http.ResponseWriter, r *http.Request, systemOne bool) error {
-	query := `SELECT provider_id,model_id,COALESCE(display_name,''),COALESCE(context_window,0),capabilities,
+	query := `SELECT provider_id,model_id,COALESCE(display_name,''),COALESCE(context_window,0),capabilities,kind,
 EXISTS(SELECT 1 FROM disabled_models d WHERE d.provider_id=provider_models.provider_id AND d.model_id=provider_models.model_id),updated_at
 FROM provider_models ORDER BY provider_id,model_id`
 	countQuery := "SELECT COUNT(*) FROM provider_models"
 	var args []any
 	if systemOne {
-		var allowed []string
-		for _, spec := range h.opts.Providers {
-			for _, transport := range spec.Transports {
-				if transport == registry.TransportSystemOne {
-					allowed = append(allowed, spec.ID)
-					break
-				}
-			}
-		}
-		if len(allowed) == 0 {
-			query = strings.TrimSuffix(query, " ORDER BY provider_id,model_id") + " WHERE 1=0 ORDER BY provider_id,model_id"
-			countQuery = "SELECT 0"
-		} else {
-			placeholders := make([]string, len(allowed))
-			for i, id := range allowed {
-				placeholders[i] = "?"
-				args = append(args, id)
-			}
-			where := " WHERE provider_id IN (" + strings.Join(placeholders, ",") + ")"
-			query = strings.TrimSuffix(query, " ORDER BY provider_id,model_id") + where + " ORDER BY provider_id,model_id"
-			countQuery += where
-		}
+		where := ` WHERE kind='systemone' OR provider_id='typesafe'
+OR (provider_id='cloudflare-ai' AND model_id IN ('@cf/cloudflare/clef','@cf/cloudflare/clef-flash'))
+OR provider_id IN (SELECT provider_id FROM provider_nodes WHERE json_valid(transports) AND json_array_length(transports)=1 AND json_extract(transports,'$[0]')='systemone')`
+		query = strings.TrimSuffix(query, " ORDER BY provider_id,model_id") + where + " ORDER BY provider_id,model_id"
+		countQuery += where
 	}
 	return h.sqlList(w, r, query, countQuery, func(rows *sql.Rows) (any, error) {
 		var item struct {
@@ -309,10 +292,11 @@ FROM provider_models ORDER BY provider_id,model_id`
 			Context    int      `json:"contextWindow,omitempty"`
 			CapsRaw    string   `json:"-"`
 			Caps       []string `json:"capabilities"`
+			Kind       string   `json:"kind,omitempty"`
 			Disabled   bool     `json:"disabled"`
 			UpdatedAt  string   `json:"updatedAt"`
 		}
-		if err := rows.Scan(&item.ProviderID, &item.ID, &item.Name, &item.Context, &item.CapsRaw, &item.Disabled, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ProviderID, &item.ID, &item.Name, &item.Context, &item.CapsRaw, &item.Kind, &item.Disabled, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(item.CapsRaw), &item.Caps); err != nil {

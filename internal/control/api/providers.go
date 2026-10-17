@@ -48,6 +48,7 @@ type modelRequest struct {
 	Name       string   `json:"name"`
 	Context    int      `json:"contextWindow"`
 	Caps       []string `json:"capabilities"`
+	Kind       string   `json:"kind"`
 }
 
 func (h *Handler) handlePutProviderNode(w http.ResponseWriter, r *http.Request) {
@@ -376,12 +377,28 @@ func (h *Handler) handleDeleteConnection(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Handler) handleTestConnection(w http.ResponseWriter, r *http.Request) {
-	models, err := h.fetchModels(r.Context(), r.PathValue("id"))
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "connection_test_failed", err.Error())
+	var body struct {
+		ModelID   string `json:"modelId"`
+		Transport string `json:"transport"`
+	}
+	if r.Body != nil && r.ContentLength != 0 && !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "modelsAvailable": len(models)})
+	connection, node, err := h.workflowConnection(r.Context(), r.PathValue("id"))
+	if err != nil {
+		providerNotFound(w, err)
+		return
+	}
+	if !validProbeModel(body.ModelID) || body.Transport != "" && !slicesContain(node.Transports, body.Transport) {
+		writeError(w, http.StatusBadRequest, "invalid_probe", "model ID or transport is invalid")
+		return
+	}
+	result := h.validateConnection(r.Context(), connection, node, body.Transport, body.ModelID)
+	if !result.OK {
+		writeError(w, http.StatusBadGateway, "connection_test_failed", result.Error)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 type modelTestResult struct {
@@ -406,7 +423,7 @@ func (h *Handler) handleTestModels(w http.ResponseWriter, r *http.Request) {
 	seen := make(map[string]struct{}, len(body.ModelIDs))
 	for i := range body.ModelIDs {
 		body.ModelIDs[i] = strings.TrimSpace(body.ModelIDs[i])
-		if body.ModelIDs[i] == "" || len(body.ModelIDs[i]) > 512 {
+		if body.ModelIDs[i] == "" || !validProbeModel(body.ModelIDs[i]) {
 			writeError(w, http.StatusBadRequest, "invalid_models", "model ids must be non-empty and at most 512 bytes")
 			return
 		}
@@ -548,11 +565,10 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
-	secret := connection.Secret
-	if h.opts.CredentialRegistry != nil {
-		if current, secretErr := h.opts.CredentialRegistry.Secret(ctx, connection.ID); secretErr == nil {
-			secret = current
-		}
+	secret, err := h.probeSecret(ctx, connection)
+	if err != nil {
+		result.Error = "provider credentials are unavailable"
+		return result
 	}
 	switch connection.AuthKind {
 	case credentials.AuthNone:
@@ -571,7 +587,7 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 		result.Error = "provider authentication mode is not supported for model probes"
 		return result
 	}
-	client := http.Client{Timeout: timeout}
+	client := http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	if h.opts.DiscoveryClient != nil && h.opts.DiscoveryClient.HTTP != nil {
 		client.Transport = roundTripperFromClient(h.opts.DiscoveryClient.HTTP)
 	}
@@ -634,10 +650,12 @@ func (h *Handler) handleDiscoverModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "model_discovery_save_failed", "discovered models could not be saved")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"providerId": providerID, "models": models, "count": len(models)})
+	writeJSON(w, http.StatusOK, map[string]any{"providerId": providerID, "models": models, "count": len(models), "activeConfigRevision": h.activeRevision()})
 }
 
 func (h *Handler) fetchModels(ctx context.Context, connectionID string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
 	if h.opts.Credentials == nil {
 		return nil, errors.New("provider credential storage is not configured")
 	}
@@ -652,6 +670,10 @@ func (h *Handler) fetchModels(ctx context.Context, connectionID string) ([]strin
 	if err != nil {
 		return nil, errors.New("provider node was not found")
 	}
+	return h.fetchConnectionModels(ctx, connection, node)
+}
+
+func (h *Handler) fetchConnectionModels(ctx context.Context, connection credentials.Connection, node credentials.Node) ([]string, error) {
 	baseURL := node.BaseURL
 	path := "models"
 	if node.Kind == credentials.NodeBuiltin {
@@ -664,18 +686,34 @@ func (h *Handler) fetchModels(ctx context.Context, connectionID string) ([]strin
 		}
 		path = spec.DiscoveryPath
 	}
-	style := discovery.AuthBearer
-	if connection.AuthKind == credentials.AuthNone {
-		style = discovery.AuthNone
+	if slicesContain(node.Transports, string(registry.TransportOllama)) {
+		path = "api/tags"
 	}
-	if slicesContain(node.Transports, string(registry.TransportAnthropic)) {
-		style = discovery.AuthXApiKey
+	style := discovery.AuthBearer
+	if len(node.Transports) > 0 {
+		switch registry.Protocol(node.Transports[0]) {
+		case registry.TransportAnthropic:
+			style = discovery.AuthXApiKey
+		case registry.TransportGemini:
+			style = discovery.AuthGoogleAPIKey
+		}
 	}
 	client := discovery.Client{AllowPrivateUpstreams: h.opts.AllowPrivateUpstreams}
 	if h.opts.DiscoveryClient != nil {
 		client.HTTP = h.opts.DiscoveryClient.HTTP
 	}
-	return client.Models(ctx, discovery.Request{ProviderID: node.ProviderID, BaseURL: baseURL, Path: path, Credential: connection.Secret.AccessToken, AuthStyle: style})
+	secret, err := h.probeSecret(ctx, connection)
+	if err != nil {
+		return nil, errors.New("provider credentials are unavailable")
+	}
+	credential := secret.AccessToken
+	switch connection.AuthKind {
+	case credentials.AuthNone:
+		style = discovery.AuthNone
+	case credentials.AuthCookie:
+		style, credential = discovery.AuthCookie, secret.Cookie
+	}
+	return client.Models(ctx, discovery.Request{ProviderID: node.ProviderID, BaseURL: baseURL, Path: path, Credential: credential, AuthStyle: style})
 }
 
 func (h *Handler) handlePutModel(w http.ResponseWriter, r *http.Request) {
@@ -688,15 +726,21 @@ func (h *Handler) handlePutModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.ProviderID, body.ID = strings.TrimSpace(body.ProviderID), strings.TrimSpace(body.ID)
-	if body.ProviderID == "" || body.ID == "" || body.Context < 0 {
+	if body.ProviderID == "" || body.ID == "" || !validProbeModel(body.ID) || body.Context < 0 || body.Kind != "" && body.Kind != "llm" && body.Kind != "systemone" {
 		writeError(w, http.StatusBadRequest, "invalid_model", "provider id and model id are required; context window cannot be negative")
 		return
 	}
-	if err := h.opts.ProviderCatalog.PutModel(r.Context(), runtime.Model{ProviderID: body.ProviderID, ID: body.ID, Name: strings.TrimSpace(body.Name), ContextWindow: body.Context, Capabilities: body.Caps, Source: "custom"}); err != nil {
+	for _, capability := range body.Caps {
+		if !slicesContain([]string{"vision", "reasoning", "audioInput", "pdf", "videoInput", "webSearch", "webFetch", "tools"}, capability) {
+			writeError(w, 400, "invalid_capability", "unsupported model capability")
+			return
+		}
+	}
+	if err := h.opts.ProviderCatalog.PutModel(r.Context(), runtime.Model{ProviderID: body.ProviderID, ID: body.ID, Name: strings.TrimSpace(body.Name), ContextWindow: body.Context, Capabilities: body.Caps, Kind: body.Kind, Source: "custom"}); err != nil {
 		writeError(w, http.StatusBadRequest, "model_save_failed", "custom model could not be saved")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"providerId": body.ProviderID, "id": body.ID, "source": "custom"})
+	writeJSON(w, http.StatusOK, map[string]any{"providerId": body.ProviderID, "id": body.ID, "source": "custom", "kind": body.Kind, "activeConfigRevision": h.activeRevision()})
 }
 
 func (h *Handler) handleDisableModel(w http.ResponseWriter, r *http.Request) {
@@ -712,7 +756,7 @@ func (h *Handler) handleDisableModel(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
-	if body.ProviderID == "" || body.ModelID == "" {
+	if body.ProviderID == "" || !validProbeModel(body.ModelID) {
 		writeError(w, http.StatusBadRequest, "invalid_model", "provider id and model id are required")
 		return
 	}
