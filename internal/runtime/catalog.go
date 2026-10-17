@@ -47,6 +47,9 @@ func cloneDisabled(disabled map[string]struct{}) map[string]struct{} {
 func cloneModelsForConfig(models map[string]Model) []Model {
 	result := make([]Model, 0, len(models))
 	for _, model := range models {
+		if model.Source == "seed" {
+			continue
+		}
 		model.Capabilities = append([]string(nil), model.Capabilities...)
 		result = append(result, model)
 	}

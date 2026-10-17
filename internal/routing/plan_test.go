@@ -33,13 +33,3 @@ func TestBuildPlanRejectsIncompleteProvider(t *testing.T) {
 		}
 	}
 }
-
-func TestAttemptBudgetBoundsRetries(t *testing.T) {
-	budget := DefaultAttemptBudget()
-	if !budget.Allow(0) || budget.Allow(1) {
-		t.Fatalf("default budget wrong: %+v", budget)
-	}
-	if (AttemptBudget{}).Allow(0) {
-		t.Fatal("zero budget must not allow attempts")
-	}
-}

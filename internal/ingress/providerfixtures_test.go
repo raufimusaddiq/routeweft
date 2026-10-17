@@ -16,9 +16,9 @@ import (
 )
 
 // providerResolver returns a fixed provider identity for one provider id.
-func providerResolver(providerID, protocol, baseURL string) ProviderResolver {
+func providerResolver(providerID, protocol, baseURL, endpoint string) ProviderResolver {
 	return func(*runtime.RuntimeSnapshot, string) (routing.ProviderRef, bool) {
-		return routing.ProviderRef{ProviderID: providerID, Protocol: protocol, BaseURL: baseURL, APIToken: "provider-credential"}, true
+		return routing.ProviderRef{ProviderID: providerID, Protocol: protocol, BaseURL: baseURL, Endpoint: endpoint, APIToken: "provider-credential"}, true
 	}
 }
 
@@ -59,7 +59,7 @@ func providerFixtureServerFor(t *testing.T, protocol fixtures.Protocol, ids ...s
 func TestProviderKimiChatNativeReplaysFixture(t *testing.T) {
 	exchange := compatFixture(t, fixtures.OpenAIChat, "provider-kimi-chat-nonstreaming")
 	server := providerFixtureServerFor(t, fixtures.OpenAIChat, "provider-kimi-chat-nonstreaming")
-	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, ProviderResolver: providerResolver("kimi", openaiadapter.ChatProtocol, server.URL())})
+	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, ProviderResolver: providerResolver("kimi", openaiadapter.ChatProtocol, server.URL(), "")})
 	recorder := httptest.NewRecorder()
 	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(exchange.Request.Body)))
 	if recorder.Code != http.StatusOK || recorder.Body.String() != exchange.Response.Body {
@@ -77,13 +77,7 @@ func TestProviderXiaomiMimoMessagesNativeUsesProviderPath(t *testing.T) {
 	exchange := compatFixture(t, fixtures.Anthropic, "provider-xiaomi-mimo-messages-nonstreaming")
 	server := providerFixtureServer(t, fixtures.Anthropic)
 	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true,
-		EndpointFor: func(providerID, transport string) (string, bool) {
-			if providerID == "xiaomi-mimo" && transport == "anthropic-messages" {
-				return "anthropic/v1/messages", true
-			}
-			return "", false
-		},
-		ProviderResolver: providerResolver("xiaomi-mimo", anthropicadapter.MessagesProtocol, server.URL()),
+		ProviderResolver: providerResolver("xiaomi-mimo", anthropicadapter.MessagesProtocol, server.URL(), "anthropic/v1/messages"),
 	})
 	recorder := httptest.NewRecorder()
 	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(exchange.Request.Body)))
@@ -101,7 +95,7 @@ func TestProviderXiaomiMimoMessagesNativeUsesProviderPath(t *testing.T) {
 func TestGitHubCopilotChatSendsFingerprint(t *testing.T) {
 	exchange := compatFixture(t, fixtures.OpenAIChat, "provider-github-copilot-chat-nonstreaming")
 	server := providerFixtureServerFor(t, fixtures.OpenAIChat, "provider-github-copilot-chat-nonstreaming")
-	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, ProviderResolver: providerResolver("github", openaiadapter.ChatProtocol, server.URL())})
+	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, ProviderResolver: providerResolver("github", openaiadapter.ChatProtocol, server.URL(), "")})
 	recorder := httptest.NewRecorder()
 	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(exchange.Request.Body)))
 	if recorder.Code != http.StatusOK {
@@ -129,13 +123,7 @@ func TestClineEnvelopeFixtureReachesUpstream(t *testing.T) {
 	exchange := compatFixture(t, fixtures.OpenAIChat, "provider-cline-envelope-nonstreaming")
 	server := providerFixtureServerFor(t, fixtures.OpenAIChat, "provider-cline-envelope-nonstreaming")
 	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true,
-		EndpointFor: func(providerID, transport string) (string, bool) {
-			if providerID == "cline" && transport == "openai-chat" {
-				return "api/v1/chat/completions", true
-			}
-			return "", false
-		},
-		ProviderResolver: providerResolver("cline", openaiadapter.ChatProtocol, server.URL()),
+		ProviderResolver: providerResolver("cline", openaiadapter.ChatProtocol, server.URL(), "api/v1/chat/completions"),
 	})
 	recorder := httptest.NewRecorder()
 	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(exchange.Request.Body)))
@@ -158,7 +146,7 @@ func TestClineEnvelopeFixtureReachesUpstream(t *testing.T) {
 func TestOpenRouterPassthroughStreamRelaysBytes(t *testing.T) {
 	exchange := compatFixture(t, fixtures.OpenAIChat, "provider-openrouter-passthrough-streaming")
 	server := providerFixtureServerFor(t, fixtures.OpenAIChat, "provider-openrouter-passthrough-streaming")
-	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, ProviderResolver: providerResolver("openrouter", openaiadapter.ChatProtocol, server.URL())})
+	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, ProviderResolver: providerResolver("openrouter", openaiadapter.ChatProtocol, server.URL(), "")})
 	recorder := httptest.NewRecorder()
 	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(exchange.Request.Body)))
 	if recorder.Code != http.StatusOK {
@@ -182,13 +170,7 @@ func TestCodeBuddyCNUsageFixtureReplays(t *testing.T) {
 	exchange := compatFixture(t, fixtures.OpenAIChat, "provider-codebuddy-cn-usage-nonstreaming")
 	server := providerFixtureServerFor(t, fixtures.OpenAIChat, "provider-codebuddy-cn-usage-nonstreaming")
 	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true,
-		EndpointFor: func(providerID, transport string) (string, bool) {
-			if providerID == "codebuddy-cn" && transport == "openai-chat" {
-				return "v2/chat/completions", true
-			}
-			return "", false
-		},
-		ProviderResolver: providerResolver("codebuddy-cn", openaiadapter.ChatProtocol, server.URL()),
+		ProviderResolver: providerResolver("codebuddy-cn", openaiadapter.ChatProtocol, server.URL(), "v2/chat/completions"),
 	})
 	recorder := httptest.NewRecorder()
 	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(exchange.Request.Body)))

@@ -2,13 +2,18 @@ package runtime
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/auth"
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 )
 
 type Config struct {
+	Providers      credentials.Configuration
 	Revision       uint64
 	Settings       map[string]string
 	APIKeys        []auth.Entry
@@ -32,6 +37,7 @@ type ProxyPool struct {
 
 // Candidate is mutable only while a serialized configuration update is built.
 type Candidate struct {
+	Providers      credentials.Configuration
 	Settings       map[string]string
 	APIKeys        []auth.Entry
 	Models         []Model
@@ -121,12 +127,39 @@ func defaultSettingsCopy() map[string]string { return cloneSettings(defaultSetti
 type Compiler struct{}
 
 func (Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, error) {
+	// Built-in catalog seeds are selectable without requiring discovery first.
+	config.Models = append([]Model(nil), config.Models...)
+	known := make(map[string]bool)
+	for _, model := range config.Models {
+		known[modelKey(model.ProviderID, model.ID)] = true
+	}
+	configured := make(map[string]bool)
+	for _, node := range config.Providers.Nodes {
+		if node.Kind == credentials.NodeBuiltin {
+			configured[node.ProviderID] = true
+		}
+	}
+	for _, spec := range registry.Builtins() {
+		if !configured[spec.ID] {
+			continue
+		}
+		for _, id := range spec.StaticModels {
+			if !known[modelKey(spec.ID, id)] {
+				config.Models = append(config.Models, Model{ProviderID: spec.ID, ID: id, Name: id, Source: "seed"})
+				known[modelKey(spec.ID, id)] = true
+			}
+		}
+	}
 	for key := range config.Settings {
 		if strings.TrimSpace(key) == "" {
 			return nil, fmt.Errorf("setting key must not be empty")
 		}
 	}
 	if err := validateCatalog(config); err != nil {
+		return nil, err
+	}
+	providers, err := compileProviders(config.Providers)
+	if err != nil {
 		return nil, err
 	}
 	settings := defaultSettingsCopy()
@@ -138,7 +171,9 @@ func (Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, error)
 	if err != nil {
 		return nil, err
 	}
-	return &RuntimeSnapshot{
+	snapshot := &RuntimeSnapshot{
+		providerConfig: config.Providers.Clone(),
+		providers:      providers,
 		version:        version,
 		configRevision: config.Revision,
 		settings:       settings,
@@ -149,7 +184,14 @@ func (Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, error)
 		combos:         combos,
 		poolBindings:   cloneStringMap(config.PoolBindings),
 		poolPools:      compileProxyPools(config.ProxyPools),
-	}, nil
+	}
+	snapshot.proxyEnabled, _ = strconv.ParseBool(strings.TrimSpace(settings["outboundProxyEnabled"]))
+	snapshot.proxyURL = strings.TrimSpace(settings["outboundProxyUrl"])
+	if err := json.Unmarshal([]byte(settings["noProxy"]), &snapshot.noProxy); err != nil {
+		snapshot.noProxy = nil
+	}
+	snapshot.compileServingIndexes()
+	return snapshot, nil
 }
 
 func compileProxyPools(pools []ProxyPool) map[string]proxyPoolEntry {

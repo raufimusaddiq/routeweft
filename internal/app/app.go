@@ -29,6 +29,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/proxy"
 	quota "github.com/raufimusaddiq/routeweft/internal/quota"
+	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/store/migrations"
 	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
@@ -177,7 +178,23 @@ func (a *App) initialize(ctx context.Context) error {
 	a.events = controlevents.New()
 	binder := proxy.NewBinder(loadSnapshot(manager))
 	binder.AllowLocal = a.cfg.AllowPrivateUpstreams
+	if err := a.initializeQuota(ctx, store, manager); err != nil {
+		_ = store.Close()
+		return err
+	}
 	a.ingress = ingress.New(manager, ingress.Options{
+		Candidates: func(snapshot *runtime.RuntimeSnapshot, model string) ([]routing.Account, bool) {
+			return snapshot.ProviderCandidates(model)
+		},
+		AccountProvider: func(snapshot *runtime.RuntimeSnapshot, model, account, source string) (routing.ProviderRef, bool) {
+			return snapshot.AccountProvider(model, account, source)
+		},
+		CredentialFor: func(ctx context.Context, account string) (string, error) {
+			if a.credReg == nil {
+				return "", credentials.ErrKeyRequired
+			}
+			return a.credReg.Credential(ctx, account)
+		},
 		MaxBodyBytes:          a.cfg.MaxBodyBytes,
 		CORSOrigins:           a.cfg.CORSOrigins,
 		State:                 manager.State(),
@@ -209,10 +226,6 @@ func (a *App) initialize(ctx context.Context) error {
 			})
 		},
 	})
-	if err := a.initializeQuota(ctx, store, manager); err != nil {
-		_ = store.Close()
-		return err
-	}
 	if err := a.initializeAdmin(ctx, store, manager); err != nil {
 		_ = store.Close()
 		return err
@@ -297,11 +310,21 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 	// The control plane shares this store/registry so provider CRUD publishes
 	// credentials to the same memory-first state inference reads (SPEC §19).
 	a.creds, a.credReg = credentialStore, registry
+	credentialStore.SetPublisher(manager.UpdateProviders)
 	// Seed the memory-first credential registry so quota reads do not fail with
 	// ErrNotFound before the first refresh.
-	for _, providerID := range []string{"codex", "claude"} {
-		if _, err := registry.Load(ctx, providerID); err != nil {
-			return fmt.Errorf("seed %s credentials: %w", providerID, err)
+	nodes, err := credentialStore.ListNodes(ctx)
+	if err != nil {
+		return err
+	}
+	seeded := make(map[string]bool)
+	for _, node := range nodes {
+		if seeded[node.ProviderID] {
+			continue
+		}
+		seeded[node.ProviderID] = true
+		if _, err := registry.Load(ctx, node.ProviderID); err != nil {
+			a.log.Warn("provider credentials unavailable; skipping startup seed", "provider", node.ProviderID, "error", err)
 		}
 	}
 	observer := quota.Observer{

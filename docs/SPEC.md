@@ -420,6 +420,11 @@ Supported base strategies:
 
 RR/sticky cursors are in RuntimeState and must not synchronously persist per request.
 
+Provider RR/sticky cursors are provider-local, shared across its models and
+aliases, matching pinned v1 `src/sse/services/auth.js` (`selectionState` is keyed
+by provider ID). Transport eligibility is applied before account rotation and
+the attempt cap; unsupported native transports do not consume an attempt.
+
 ## 14. Cooldown and error classification
 
 Provider adapters classify responses into categories such as:
@@ -437,6 +442,12 @@ Cooldown is visible immediately in RuntimeState.
 Durable cooldown/reset state is persisted asynchronously when restart continuity matters.
 
 Retry-After and known provider reset timestamps take precedence over generic backoff.
+
+Native serving retries a retry-same-account outcome once after a one-second
+default delay, unless a trusted reset/Retry-After supplies the delay. Cancellation
+interrupts that wait. The request has at most ten wire attempts including retries;
+after advancing to another account it never revisits an earlier account. No
+retry occurs after upstream headers have been exposed to the client.
 
 ## 15. Combo
 

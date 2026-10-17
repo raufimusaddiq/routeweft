@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/raufimusaddiq/routeweft/internal/auth"
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
 )
 
 var ErrUninitialized = errors.New("runtime snapshot is not initialized")
@@ -50,6 +51,10 @@ func (m *Manager) State() *RuntimeState { return m.state }
 
 // Update compiles before commit and publishes only after durable commit succeeds.
 func (m *Manager) Update(ctx context.Context, mutate func(*Candidate) error) (*RuntimeSnapshot, error) {
+	return m.update(ctx, mutate, nil)
+}
+
+func (m *Manager) update(ctx context.Context, mutate func(*Candidate) error, persist func(*sql.Tx) error) (*RuntimeSnapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -58,10 +63,12 @@ func (m *Manager) Update(ctx context.Context, mutate func(*Candidate) error) (*R
 		return nil, err
 	}
 	candidate := &Candidate{Settings: current.Settings(), APIKeys: current.APIKeys().Records(), Models: cloneModelsForConfig(current.models), Aliases: cloneAliases(current.aliases), DisabledModels: cloneDisabled(current.disabledModels), Combos: current.Combos(), PoolBindings: cloneStringMap(current.poolBindings), ProxyPools: current.ProxyPools()}
+	candidate.Providers = current.providerConfig.Clone()
 	if err := mutate(candidate); err != nil {
 		return nil, err
 	}
 	config := Config{Revision: current.ConfigRevision() + 1, Settings: cloneSettings(candidate.Settings), APIKeys: append([]auth.Entry(nil), candidate.APIKeys...), Models: append([]Model(nil), candidate.Models...), Aliases: cloneAliases(candidate.Aliases), DisabledModels: cloneDisabled(candidate.DisabledModels), Combos: append([]Combo(nil), candidate.Combos...), PoolBindings: cloneStringMap(candidate.PoolBindings), ProxyPools: append([]ProxyPool(nil), candidate.ProxyPools...)}
+	config.Providers = candidate.Providers.Clone()
 	nextVersion := m.version.Load() + 1
 	compiled, err := (Compiler{}).Compile(config, nextVersion)
 	if err != nil {
@@ -72,6 +79,11 @@ func (m *Manager) Update(ctx context.Context, mutate func(*Candidate) error) (*R
 		return nil, fmt.Errorf("begin config transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if persist != nil {
+		if err := persist(tx); err != nil {
+			return nil, err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM settings"); err != nil {
 		return nil, fmt.Errorf("replace settings: %w", err)
 	}
@@ -151,5 +163,9 @@ func loadConfig(ctx context.Context, db *sql.DB) (Config, error) {
 		return Config{}, err
 	}
 	config.Combos = combos
+	config.Providers, err = credentials.LoadConfiguration(ctx, db)
+	if err != nil {
+		return Config{}, err
+	}
 	return config, nil
 }

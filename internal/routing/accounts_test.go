@@ -43,25 +43,6 @@ func TestStickyRoundRobinAdvancesOnlyAfterLimit(t *testing.T) {
 	}
 }
 
-func TestAttemptChainIsBoundedAndDoesNotRepeatExcludedCandidates(t *testing.T) {
-	selection := Select(SelectOptions{Strategy: StrategyFillFirst, Accounts: testAccounts(), Excluded: map[string]struct{}{"b": {}}})
-	chain := NewAttemptChain(selection)
-	var got []string
-	for {
-		account, ok := chain.Next()
-		if !ok {
-			break
-		}
-		got = append(got, account.ID)
-	}
-	if len(got) != 2 || got[0] != "a" || got[1] != "c" || chain.Used() != 2 {
-		t.Fatalf("attempts %v", got)
-	}
-	if _, ok := chain.Next(); ok {
-		t.Fatal("attempt budget overflow")
-	}
-}
-
 func TestClassifyStatusSeparatesClientFailuresAndQuota(t *testing.T) {
 	if got := ClassifyStatus(http.StatusBadRequest, nil); got.Outcome != OutcomeTerminalClientError || got.AllowsFallback() {
 		t.Fatalf("client classification %+v", got)
@@ -85,6 +66,22 @@ func TestCooldownDeadlineHonorsResetAndRetryAfter(t *testing.T) {
 	got = CooldownDeadline(Classification{Outcome: OutcomeQuotaLock, RetryAfterSeconds: 20}, now, time.Minute)
 	if !got.Equal(now.Add(20 * time.Second)) {
 		t.Fatalf("retry deadline %s", got)
+	}
+	for _, tc := range []struct {
+		outcome Outcome
+		delay   time.Duration
+	}{
+		{OutcomeAuthRefreshRequired, 2 * time.Minute},
+		{OutcomeRetrySameAccount, time.Second},
+	} {
+		classification := Classification{Outcome: tc.outcome}
+		if !classification.AllowsFallback() || !CooldownDeadline(classification, now, time.Minute).Equal(now.Add(tc.delay)) {
+			t.Fatalf("missing cooldown for %s", tc.outcome)
+		}
+		classification.RetryAfterSeconds = 15
+		if !CooldownDeadline(classification, now, time.Minute).Equal(now.Add(15 * time.Second)) {
+			t.Fatalf("Retry-After lost for %s", tc.outcome)
+		}
 	}
 }
 

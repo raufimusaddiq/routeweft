@@ -23,6 +23,46 @@ Parent: #73. Audit date: 2026-10-17.
 
 No active provider is certified PRESENT: the actual app constructs ingress without provider/account resolution, translators or saver/cache pipeline hooks. Existing tests inject those dependencies. SPRINT_PLAN Sprint 5 completion PRs 5.1-5.5 explicitly acknowledge this. Green existing CI is not the green differential parity suite required by #73.
 
+### R01 implementation progress (after the inventory baseline)
+
+The inventory tables describe the pinned audit baseline above, not subsequent
+implementation status. #75 task R01, first review boundary (Sprint 5.1):
+
+- `internal/app` now wires configured provider/account metadata from immutable
+  snapshots and credentials from the memory-first registry into native Chat,
+  Responses, Responses Compact and Messages serving. Builtin transport defaults
+  and endpoint overrides are compiled; Generic nodes retain their own URLs.
+- Alias/qualified/unique bare-model lookup, stable priority ordering,
+  fill-first/RR/sticky/provider overrides and cooldown/quota eligibility feed a
+  bounded account chain (at most 10 wire attempts, including retries).
+  Account/network/quota failures can advance before response headers; client
+  errors stay terminal. Retry-same-account outcomes get one cancellable delayed
+  retry before advancing. Streams are never replayed after output begins.
+- Provider metadata mutations use validate/compile, durable transaction, atomic
+  publish. Secrets stay outside snapshots; no schema migration. Global proxy
+  settings/no-proxy parsing move to snapshot compilation; pooled transports and
+  SSRF guards remain in use. Registry seed models remain ephemeral across config
+  writes/restarts; explicit custom overrides persist. Missing durable rows abort
+  metadata edits before commit/publication. Missing credentials return distinct
+  503 errors; a missing master key stops the chain immediately.
+- Evidence: `internal/app/serving_test.go` starts the real app, seeds durable
+  configuration, restarts, then exercises native requests after SQLite closes.
+  Separate real control-API tests prove immediate create/edit/disable/delete
+  publication; tests also cover endpoint overrides, retry limits, terminal
+  errors, network fallback, concurrent rotation, stream completion/cancellation.
+  `internal/runtime/providers_test.go` covers rollback, compile rejection,
+  defensive copies and concurrent snapshot readers during metadata updates.
+- R01 remains **PARTIAL**: actual Combo/Fusion/capacity dispatch and pinned Fusion
+  defaults/one-success semantics require a dependent reviewed PR. Specialized
+  provider refresh/wire behavior (#76), cross-protocol translation (R02), saver
+  pipeline (R03), telemetry expansion (R10) and differential certification (R11)
+  are not delivered by this step. No production-provider readiness claim.
+  Gemini/Ollama/System One handlers still lack actual-app dispatch. Compact
+  tests prove configured URL forwarding only, not provider support: pinned v1
+  `open-sse/handlers/chatCore.js` restricts native compact to Codex Responses.
+  Codex compact gating/headers/body remain R01/R11 + #76 gaps; Kenari compact
+  support is not asserted.
+
 ### Area issues and ownership
 
 | Area | Backlog | Gap IDs owned |

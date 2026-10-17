@@ -22,12 +22,18 @@ func TestRecordUpstreamFailureMapsProviderErrToCooldown(t *testing.T) {
 }
 
 func TestRecordUpstreamFailureAuthKindClassifies(t *testing.T) {
-	// auth maps to auth-refresh-required, which does not open a generic
-	// fallback cooldown; the point of the test is that the body is parsed at all.
+	// Keep the refresh classification while preventing repeated dead credentials.
 	if got := classifyResponse(http.StatusUnauthorized, nil); got.Outcome != routing.OutcomeAuthRefreshRequired {
 		t.Fatalf("status classification %+v", got)
 	}
 	if got := routing.ClassifyError("auth", http.StatusForbidden); got.Outcome != routing.OutcomeAuthRefreshRequired {
 		t.Fatalf("kind classification %+v", got)
+	}
+	state := runtime.NewState()
+	handler := New(nil, Options{State: state})
+	handler.recordUpstreamFailure(routing.ProviderRef{ConnectionID: "auth", Protocol: "openai-chat"}, http.StatusUnauthorized, nil, nil)
+	until, ok := state.CooldownUntil("auth", time.Now())
+	if !ok || time.Until(until) < 119*time.Second {
+		t.Fatal("auth failure has no pinned-v1 cooldown")
 	}
 }

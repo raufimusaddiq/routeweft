@@ -15,8 +15,8 @@ import (
 type NodeFallback func(providerID string) (protocol, baseURL string, ok bool)
 
 // Resolver turns a provider/account selection into a dispatchable ProviderRef
-// with a currently valid credential. It is the request-path bridge between the
-// durable credential store and ingress (SPEC §8, PRD-AUTH-003).
+// with a currently valid credential for control-plane operations. Serving uses
+// compiled snapshot metadata and the memory-first Registry, not this SQL reader.
 type Resolver struct {
 	Store    *Store
 	Registry *Registry

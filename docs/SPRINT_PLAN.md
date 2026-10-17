@@ -271,14 +271,18 @@ in isolation.
 
 #### PR 5.1: Generic/OpenAI-compatible provider runtime wiring (independent)
 
-- Deliver app-side `ingress.ProviderResolver`/`Candidates`/`AccountProvider`
-  adapters over `credentials.Resolver` with a compiled provider-identity
-  fallback (base URL, transports, per-transport endpoints).
+- Deliver app-side `ingress.Candidates`/`AccountProvider` adapters over compiled
+  snapshot metadata plus the memory-first credential registry (base URL,
+  transports, per-transport endpoints). The SQL-backed `credentials.Resolver`
+  remains a control-plane helper, never a serving-path dependency.
 - Wire the resolver into `internal/app` for native `openai-chat` and
   `openai-responses` providers, plus Generic Provider nodes.
 - Evidence: an end-to-end test that a configured connection and catalog model
   reach a mock upstream (native path), plus account-strategy/cooldown selection
   tests. No cross-protocol translation in this PR.
+- R01 (#75) is split at this review boundary: native configured account
+  resolution/fallback first; actual Combo/Fusion/capacity dispatch and pinned
+  Fusion semantics in a dependent PR only after the first PR is reviewed.
 
 #### PR 5.2: cross-protocol translators (depends on 5.1)
 

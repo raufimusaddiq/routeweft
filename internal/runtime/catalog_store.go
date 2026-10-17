@@ -34,6 +34,9 @@ func persistCatalog(ctx context.Context, tx *sql.Tx, config Config) error {
 		return fmt.Errorf("replace custom models: %w", err)
 	}
 	for _, model := range config.Models {
+		if model.Source == "seed" {
+			continue
+		}
 		if model.Source == "custom" {
 			const insert = "INSERT INTO custom_models (id,provider_id,model_id,display_name,context_window) VALUES (?,?,?,?,?)"
 			var contextWindow any

@@ -2,9 +2,7 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -121,24 +119,11 @@ func (b *Binder) global(snapshot *runtime.RuntimeSnapshot) GlobalConfig {
 		}
 		return GlobalConfig{}
 	}
-	settings := snapshot.Settings()
-	enabled, _ := strconv.ParseBool(strings.TrimSpace(settings["outboundProxyEnabled"]))
+	enabled, proxyURL, noProxy := snapshot.OutboundProxy()
 	return GlobalConfig{
 		Enabled:    enabled,
-		ProxyURL:   strings.TrimSpace(settings["outboundProxyUrl"]),
-		NoProxy:    parseNoProxy(settings["noProxy"]),
+		ProxyURL:   proxyURL,
+		NoProxy:    noProxy,
 		AllowLocal: b.AllowLocal,
 	}
-}
-
-func parseNoProxy(raw string) []string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return nil
-	}
-	var entries []string
-	if err := json.Unmarshal([]byte(trimmed), &entries); err != nil {
-		return nil
-	}
-	return entries
 }

@@ -139,6 +139,11 @@ func TestNonStreamingCancellationSoak(t *testing.T) {
 			t.Fatalf("iteration %d did not return after client cancellation", i)
 		}
 	}
+	// The matcher signals before the mock appends its request log.
+	deadline := time.Now().Add(2 * time.Second)
+	for len(server.Requests()) < iterations && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
 	if got := len(server.Requests()); got != iterations {
 		t.Fatalf("upstream saw %d requests, want %d", got, iterations)
 	}

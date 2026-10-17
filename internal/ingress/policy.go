@@ -1,10 +1,8 @@
 package ingress
 
 import (
-	"encoding/json"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -20,10 +18,7 @@ type CandidateResolver func(*runtime.RuntimeSnapshot, string) ([]routing.Account
 
 // AccountProvider resolves one selected account into a concrete upstream
 // provider reference.
-type AccountProvider func(*runtime.RuntimeSnapshot, string, string) (routing.ProviderRef, bool)
-
-// DefaultStickyLimit mirrors the compiled stickyRoundRobinLimit default.
-const DefaultStickyLimit uint64 = 3
+type AccountProvider func(*runtime.RuntimeSnapshot, string, string, string) (routing.ProviderRef, bool)
 
 // errorBodyPeek bounds how much of an upstream error body is buffered for
 // classification before it is relayed to the client unchanged (SPEC §14).
@@ -260,16 +255,7 @@ func comboAccounts(members []routing.Member) []routing.Account {
 	return accounts
 }
 
-// PlanAttempts builds the ordered candidate list for one request from the
-// immutable snapshot plus RuntimeState cooldown/quota observations
-// (SPEC §13, PRD-ROUTE-002/004).
-func (h *Handler) PlanAttempts(snapshot *runtime.RuntimeSnapshot, model string, now time.Time) ([]routing.Account, bool) {
-	return h.PlanProviderAttempts(snapshot, modelProviderID(model), model, now)
-}
-
-// PlanProviderAttempts selects candidates with an explicit provider identity,
-// required when model names are aliases or unqualified.
-func (h *Handler) PlanProviderAttempts(snapshot *runtime.RuntimeSnapshot, providerID, model string, now time.Time) ([]routing.Account, bool) {
+func (h *Handler) planProviderAttempts(snapshot *runtime.RuntimeSnapshot, providerID, model, source string, now time.Time) ([]routing.Account, bool) {
 	if h.opts.Candidates == nil {
 		return nil, false
 	}
@@ -282,7 +268,7 @@ func (h *Handler) PlanProviderAttempts(snapshot *runtime.RuntimeSnapshot, provid
 	cursor := uint64(0)
 	strategy := h.StrategyFor(snapshot, providerID)
 	if state != nil && strategy != routing.StrategyFillFirst {
-		cursor = state.NextCursor(providerID + "|" + model)
+		cursor = state.NextCursor("provider|" + providerID)
 	}
 	selection := routing.Select(routing.SelectOptions{
 		Strategy:    strategy,
@@ -290,6 +276,11 @@ func (h *Handler) PlanProviderAttempts(snapshot *runtime.RuntimeSnapshot, provid
 		Cursor:      cursor,
 		StickyLimit: limit,
 		Eligible: func(account routing.Account) bool {
+			if source != "" && h.opts.AccountProvider != nil {
+				if _, ok := h.opts.AccountProvider(snapshot, model, account.ID, source); !ok {
+					return false
+				}
+			}
 			if state == nil {
 				return true
 			}
@@ -316,25 +307,16 @@ func modelProviderID(model string) string {
 // and per-provider overrides. Invalid configuration falls back to fill-first
 // rather than failing the request.
 func (h *Handler) Strategy(snapshot *runtime.RuntimeSnapshot) routing.Strategy {
-	settings := snapshot.Settings()
 	if h.opts.Strategy != "" {
 		return h.opts.Strategy
 	}
-	strategy, err := routing.ParseStrategy(settings["providerStrategy"])
-	if err != nil {
-		return routing.StrategyFillFirst
-	}
-	return strategy
+	return snapshot.ProviderStrategy()
 }
 
 // StrategyFor applies providerStrategies for one provider over the base policy.
 func (h *Handler) StrategyFor(snapshot *runtime.RuntimeSnapshot, provider string) routing.Strategy {
-	if overrides := providerStrategies(snapshot.Settings()["providerStrategies"]); overrides != nil {
-		if raw, ok := overrides[provider]; ok {
-			if parsed, err := routing.ParseStrategy(raw); err == nil {
-				return parsed
-			}
-		}
+	if strategy, ok := snapshot.ProviderStrategyOverride(provider); ok {
+		return strategy
 	}
 	return h.Strategy(snapshot)
 }
@@ -345,23 +327,7 @@ func (h *Handler) StickyLimit(snapshot *runtime.RuntimeSnapshot) uint64 {
 	if h.opts.StickyLimit != 0 {
 		return routing.StickyRotations(h.opts.StickyLimit)
 	}
-	if raw := snapshot.Settings()["stickyRoundRobinLimit"]; raw != "" {
-		if parsed, err := strconv.ParseUint(raw, 10, 64); err == nil {
-			return routing.StickyRotations(parsed)
-		}
-	}
-	return routing.StickyRotations(DefaultStickyLimit)
-}
-
-func providerStrategies(raw string) map[string]string {
-	if raw == "" {
-		return nil
-	}
-	var parsed map[string]string
-	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
-		return nil
-	}
-	return parsed
+	return snapshot.ProviderStickyLimit()
 }
 
 // recordClassification updates RuntimeState cooldown visibility from an
