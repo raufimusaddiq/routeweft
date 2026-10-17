@@ -27,6 +27,12 @@ func TestCustomModelWorkflowRestartAndReferences(t *testing.T) {
 	if err := m.MergeDiscoveredModels(ctx, "custom", []Model{{ID: custom.ID}, {ID: "new"}, {ID: "new"}}); err != nil {
 		t.Fatal(err)
 	}
+	if err := m.MergeDiscoveredModels(ctx, "custom", []Model{{ID: "new", Name: "New", ContextWindow: 4096, Capabilities: []string{"vision"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if model, ok := mustLoad(t, m).ResolveModel("custom", "new"); !ok || model.Name != "New" || model.ContextWindow != 4096 || len(model.Capabilities) != 1 {
+		t.Fatalf("catalog refresh metadata lost: %+v", model)
+	}
 	if _, ok := mustLoad(t, m).ResolveModel("custom", "discovered"); ok {
 		t.Fatal("sync enabled a disabled model")
 	}

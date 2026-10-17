@@ -689,14 +689,18 @@ func (h *Handler) fetchConnectionModels(ctx context.Context, connection credenti
 	if slicesContain(node.Transports, string(registry.TransportOllama)) {
 		path = "api/tags"
 	}
-	style := discovery.AuthBearer
-	if len(node.Transports) > 0 {
-		switch registry.Protocol(node.Transports[0]) {
-		case registry.TransportAnthropic:
-			style = discovery.AuthXApiKey
-		case registry.TransportGemini:
-			style = discovery.AuthGoogleAPIKey
+	if node.Kind == credentials.NodeBuiltin && !slicesContain(node.Transports, string(registry.TransportOpenAIChat)) {
+		if spec, ok := h.providerSpec(node.ProviderID); ok && slicesContain(node.Transports, string(registry.TransportAnthropic)) {
+			if endpoint, ok := spec.EndpointFor(registry.TransportAnthropic); ok {
+				path = strings.TrimSuffix(strings.TrimSuffix(endpoint, "/messages"), "/v1/messages") + "/models"
+			}
 		}
+	}
+	style := discovery.AuthBearer
+	if slicesContain(node.Transports, string(registry.TransportGemini)) {
+		style = discovery.AuthGoogleAPIKey
+	} else if slicesContain(node.Transports, string(registry.TransportAnthropic)) {
+		style = discovery.AuthXApiKey
 	}
 	client := discovery.Client{AllowPrivateUpstreams: h.opts.AllowPrivateUpstreams}
 	if h.opts.DiscoveryClient != nil {
@@ -730,8 +734,13 @@ func (h *Handler) handlePutModel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_model", "provider id and model id are required; context window cannot be negative")
 		return
 	}
-	for _, capability := range body.Caps {
-		if !slicesContain([]string{"vision", "reasoning", "audio-input", "pdf", "video-input", "webSearch", "webFetch", "tools"}, capability) {
+	for i, capability := range body.Caps {
+		if capability == "imageToText" {
+			capability = "vision"
+			body.Caps[i] = capability
+		}
+		_, adapter := capacityAdapterSetting(capability)
+		if !adapter && !slicesContain([]string{"reasoning", "webSearch", "webFetch", "imageToText", "tools"}, capability) {
 			writeError(w, 400, "invalid_capability", "unsupported model capability")
 			return
 		}

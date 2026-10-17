@@ -1122,7 +1122,9 @@ one unreadable credential produces a failed result without stopping other
 accounts. At most 200 selected connections run sequentially, each with its own
 deadline; cancellation stops subsequent work and cancels the active fetch.
 
-Availability reads paginate with the normal `page/pageSize` bounds. Current
+Availability reads paginate with the normal `page/pageSize` bounds. Batch
+validation and catalog sync are single-flight and share a two-minute aggregate
+deadline across their bounded per-connection probes. Current
 routing cooldowns are account-wide, represented by model `__all`; reset clears
 only that provider's account cooldowns in RuntimeState, not quotas, disabled
 models, credentials or other providers. It does not claim per-model locks or
@@ -1141,7 +1143,9 @@ have a 10-second deadline and a 4 MiB response limit. No stored credentials are
 sent to suggestion URLs.
 
 Custom model POST accepts `kind` (`llm` or `systemone`, omitted keeps existing
-provider-derived defaults), capabilities and context metadata. Schema v6 adds
+provider-derived defaults), capabilities and context metadata. The legacy
+`imageToText` capability is stored as `vision`, so the image-to-text view and
+capability adapters share one vocabulary. Schema v6 adds
 `provider_models.kind`, empty by default for existing rows. Explicit kind and
 capabilities survive discovery and restart; intrinsic typed-provider rules
 remain authoritative. Standalone media kinds remain excluded. Deletion removes

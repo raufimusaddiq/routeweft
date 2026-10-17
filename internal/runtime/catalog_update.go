@@ -89,6 +89,19 @@ func (m *Manager) MergeDiscoveredModels(ctx context.Context, provider string, mo
 		}
 		for _, model := range models {
 			if known[model.ID] {
+				for i := range candidate.Models {
+					if existing := &candidate.Models[i]; existing.ProviderID == provider && existing.ID == model.ID && existing.Source == "discovered" {
+						if model.Name != "" {
+							existing.Name = model.Name
+						}
+						if model.ContextWindow > 0 {
+							existing.ContextWindow = model.ContextWindow
+						}
+						if len(model.Capabilities) > 0 {
+							existing.Capabilities = append([]string(nil), model.Capabilities...)
+						}
+					}
+				}
 				continue
 			}
 			model.ProviderID, model.Source = provider, "discovered"

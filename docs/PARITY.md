@@ -222,10 +222,12 @@ inventory rows/counts below remain the audit baseline, not a certification.
   `__all`, with paginated reads and provider-scoped reset. Quotas and disabled
   models are not reset. Routeweft does not invent per-model lock state.
 - Catalog sync/status covers enabled connections, unions account catalogs,
-  preserves known/disabled/manual models on partial failure and rejects
-  overlapping syncs. Batch validation selects enabled connections by the pinned
-  logical groups before credential reads, reports individual failures and
-  aggregate totals, bounds work to 200 connections and propagates cancellation.
+  refreshes discovered metadata, preserves known/disabled/manual models on
+  partial failure and rejects overlapping syncs. Batch validation selects
+  enabled connections by the pinned logical groups before credential reads,
+  reports individual failures and aggregate totals, bounds work to 200
+  connections, rejects overlapping runs, applies a two-minute aggregate deadline
+  and propagates cancellation.
 - Suggested-model filters match pinned Kenari, OpenRouter, OpenCode, Mimo and
   Airforce rules. Kilo free filtering uses a one-hour in-memory cache with stale
   fallback/warnings. Arbitrary suggestion URLs gain Routeweft's SSRF guard;

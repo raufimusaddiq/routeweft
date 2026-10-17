@@ -227,7 +227,10 @@ func TestModelsReadModelFiltersSystemOne(t *testing.T) {
 	if _, err := store.DB().ExecContext(ctx, "INSERT INTO provider_nodes(id,kind,provider_id,name,transports) VALUES('n1','builtin','typesafe','TypeSafe','[\"systemone\"]')"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.DB().ExecContext(ctx, "INSERT INTO provider_models(provider_id,model_id,display_name,context_window,capabilities) VALUES('openai','gpt-x','GPT X',1000,'[\"vision\"]'),('typesafe','jev-1','Jev',2000,'[]')"); err != nil {
+	if _, err := store.DB().ExecContext(ctx, "INSERT INTO provider_nodes(id,kind,provider_id,name,transports) VALUES('n2','builtin','cloudflare-ai','Cloudflare','[\"openai-chat\",\"systemone\"]')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DB().ExecContext(ctx, "INSERT INTO provider_models(provider_id,model_id,display_name,context_window,capabilities) VALUES('openai','gpt-x','GPT X',1000,'[\"vision\"]'),('typesafe','jev-1','Jev',2000,'[]'),('cloudflare-ai','@cf/cloudflare/clef','Clef',2000,'[]')"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := handler.opts.Accounts.Bootstrap(ctx, "a1", "operator", "s3cret"); err != nil {
@@ -252,7 +255,7 @@ func TestModelsReadModelFiltersSystemOne(t *testing.T) {
 		t.Fatalf("models status=%d body=%s", code, body)
 	}
 	code, body = read("/admin/v1/systemone")
-	if code != http.StatusOK || !contains(body, "jev-1") || contains(body, "gpt-x") {
+	if code != http.StatusOK || !contains(body, "jev-1") || !contains(body, "clef") || contains(body, "gpt-x") {
 		t.Fatalf("systemone status=%d body=%s", code, body)
 	}
 }

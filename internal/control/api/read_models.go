@@ -294,7 +294,7 @@ FROM provider_models`
 	where := ""
 	var args []any
 	if systemOne {
-		where = " WHERE kind='systemone' OR kind='' AND provider_id IN (SELECT provider_id FROM provider_nodes WHERE kind='builtin' AND json_valid(transports) AND json_array_length(transports)=1 AND json_extract(transports,'$[0]')='systemone')"
+		where = " WHERE kind='systemone' OR kind='' AND provider_id IN (SELECT provider_id FROM provider_nodes WHERE kind='builtin' AND json_valid(transports) AND EXISTS (SELECT 1 FROM json_each(transports) WHERE value='systemone'))"
 	} else {
 		where, args = providerFilter(r, "provider_id")
 	}

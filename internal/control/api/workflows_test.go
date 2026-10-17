@@ -215,6 +215,16 @@ func TestWorkflowAvailabilityCatalogSyncBatchAndCustomDelete(t *testing.T) {
 			t.Fatalf("invalid metadata accepted: %d", w.Code)
 		}
 	}
+	if w := doJSON(t, mux, cookie, "POST", "/admin/v1/models", `{"providerId":"catalog","id":"ocr","capabilities":["imageToText"]}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"kind":""`) {
+		t.Fatalf("catalog capability rejected: %d %s", w.Code, w.Body)
+	}
+	snapshot, _ = h.opts.Runtime.Load()
+	if model, ok := snapshot.ResolveModel("catalog", "ocr"); !ok || len(model.Capabilities) != 1 || model.Capabilities[0] != "vision" {
+		t.Fatalf("imageToText capability not canonicalized: %+v", model)
+	}
+	if w := doJSON(t, mux, cookie, "DELETE", "/admin/v1/models", `{"providerId":"catalog","modelId":"ocr"}`); w.Code != 200 {
+		t.Fatalf("catalog capability cleanup: %d %s", w.Code, w.Body)
+	}
 	w = doJSON(t, mux, cookie, "POST", "/admin/v1/models", `{"providerId":"catalog","id":"typed","kind":"systemone","capabilities":["reasoning","audio-input"]}`)
 	if w.Code != 200 {
 		t.Fatalf("custom add: %d %s", w.Code, w.Body)
@@ -368,5 +378,20 @@ func TestBatchModes(t *testing.T) {
 		if got := batchMatch(tc.mode, "provider", credentials.Connection{ProviderID: "provider", AuthKind: tc.auth}, credentials.Node{Kind: tc.kind, Transports: []string{tc.transport}}); got != tc.want {
 			t.Errorf("%s=%v", tc.mode, got)
 		}
+	}
+}
+
+func TestBatchSingleflight(t *testing.T) {
+	h, mux, store, _, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	h.workflowMu.Lock()
+	h.batchBusy = true
+	h.workflowMu.Unlock()
+	r := httptest.NewRequest("POST", "/admin/v1/providers/test-batch", strings.NewReader(`{"mode":"all"}`))
+	r.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("overlapping batch: %d %s", w.Code, w.Body)
 	}
 }

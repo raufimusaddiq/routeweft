@@ -17,11 +17,10 @@ func TestConfiguredWorkflowAppWiring(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/models", "/suggestions":
-			wantAuth := "Bearer synthetic-0"
-			if r.URL.Path == "/suggestions" {
-				wantAuth = ""
+			if r.URL.Path == "/models" && (r.Header.Get("x-api-key") != "synthetic-0" || r.Header.Get("Authorization") != "") {
+				t.Error("wrong catalog credential")
 			}
-			if r.Header.Get("Authorization") != wantAuth {
+			if r.URL.Path == "/suggestions" && (r.Header.Get("x-api-key") != "" || r.Header.Get("Authorization") != "") {
 				t.Error("wrong catalog credential")
 			}
 			io.WriteString(w, `{"data":[{"id":"vendor/model","endpoints":["chat"]},{"id":"new/model"}]}`)

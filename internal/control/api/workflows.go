@@ -14,6 +14,7 @@ import (
 )
 
 const probeTimeout = 20 * time.Second
+const workflowTimeout = 2 * time.Minute
 
 func (h *Handler) probeSecret(ctx context.Context, c credentials.Connection) (credentials.Secret, error) {
 	if h.opts.CredentialRegistry != nil && c.ID != "" {
@@ -221,7 +222,22 @@ func (h *Handler) handleTestBatch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "batch_unavailable", "connection storage unavailable")
 		return
 	}
-	config, err := credentials.LoadConfiguration(r.Context(), h.opts.DB)
+	h.workflowMu.Lock()
+	if h.batchBusy {
+		h.workflowMu.Unlock()
+		writeError(w, 409, "batch_in_progress", "batch validation is already running")
+		return
+	}
+	h.batchBusy = true
+	h.workflowMu.Unlock()
+	defer func() {
+		h.workflowMu.Lock()
+		h.batchBusy = false
+		h.workflowMu.Unlock()
+	}()
+	ctx, cancel := context.WithTimeout(r.Context(), workflowTimeout)
+	defer cancel()
+	config, err := credentials.LoadConfiguration(ctx, h.opts.DB)
 	if err != nil {
 		writeError(w, 503, "batch_unavailable", "enabled connections could not be loaded (maximum 200)")
 		return
@@ -243,18 +259,18 @@ func (h *Handler) handleTestBatch(w http.ResponseWriter, r *http.Request) {
 	results := []validationResult{}
 	passed := 0
 	for _, id := range ids {
-		if r.Context().Err() != nil {
+		if ctx.Err() != nil {
 			writeError(w, http.StatusRequestTimeout, "batch_canceled", "batch validation was canceled")
 			return
 		}
-		c, node, err := h.workflowConnection(r.Context(), id)
+		c, node, err := h.workflowConnection(ctx, id)
 		if err != nil {
 			results = append(results, validationResult{ConnectionID: id, Error: "connection credentials unavailable"})
 			continue
 		}
-		result := h.validateConnection(r.Context(), c, node, "", body.ModelID)
+		result := h.validateConnection(ctx, c, node, "", body.ModelID)
 		results = append(results, result)
-		if r.Context().Err() != nil {
+		if ctx.Err() != nil {
 			writeError(w, http.StatusRequestTimeout, "batch_canceled", "batch validation was canceled")
 			return
 		}
@@ -318,6 +334,8 @@ type catalogSyncState struct {
 }
 
 func (h *Handler) handleCatalogSync(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), workflowTimeout)
+	defer cancel()
 	h.workflowMu.Lock()
 	if r.Method == http.MethodGet {
 		state := h.syncState
@@ -349,7 +367,7 @@ func (h *Handler) handleCatalogSync(w http.ResponseWriter, r *http.Request) {
 			h.syncState.LastError = "one or more catalogs could not be synced; known models retained"
 		}
 	}()
-	ids, err := h.workflowIDs(r.Context())
+	ids, err := h.workflowIDs(ctx)
 	if err != nil || h.opts.ProviderCatalog == nil {
 		failed = true
 		writeError(w, 503, "catalog_unavailable", "catalog sync requires credential and model storage (maximum 200 connections)")
@@ -358,21 +376,21 @@ func (h *Handler) handleCatalogSync(w http.ResponseWriter, r *http.Request) {
 	merged := map[string][]runtime.Model{}
 	results := []validationResult{}
 	for _, id := range ids {
-		if r.Context().Err() != nil {
+		if ctx.Err() != nil {
 			failed = true
 			writeError(w, http.StatusRequestTimeout, "sync_canceled", "catalog sync was canceled")
 			return
 		}
-		c, node, err := h.workflowConnection(r.Context(), id)
+		c, node, err := h.workflowConnection(ctx, id)
 		result := validationResult{ConnectionID: id, ProviderID: node.ProviderID, Method: "models"}
 		if err != nil {
 			result.Error = "connection credentials unavailable"
 		} else {
-			ctx, cancel := context.WithTimeout(r.Context(), probeTimeout)
+			probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 			var models []string
-			models, err = h.fetchConnectionModels(ctx, c, node)
+			models, err = h.fetchConnectionModels(probeCtx, c, node)
 			cancel()
-			if r.Context().Err() != nil {
+			if ctx.Err() != nil {
 				failed = true
 				writeError(w, http.StatusRequestTimeout, "sync_canceled", "catalog sync was canceled")
 				return
@@ -392,7 +410,7 @@ func (h *Handler) handleCatalogSync(w http.ResponseWriter, r *http.Request) {
 		results = append(results, result)
 	}
 	for provider, models := range merged {
-		if err := h.opts.ProviderCatalog.MergeDiscoveredModels(r.Context(), provider, models); err != nil {
+		if err := h.opts.ProviderCatalog.MergeDiscoveredModels(ctx, provider, models); err != nil {
 			failed = true
 			results = append(results, validationResult{ProviderID: provider, Method: "publish", Error: "catalog could not be committed; active configuration retained"})
 		}

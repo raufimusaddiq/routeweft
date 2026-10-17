@@ -112,6 +112,7 @@ type Handler struct {
 	opts       Options
 	throttler  *throttler
 	workflowMu sync.Mutex
+	batchBusy  bool
 	syncState  catalogSyncState
 	kiloCache  []suggestedModel
 	kiloAt     time.Time

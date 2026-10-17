@@ -51,7 +51,7 @@ func TestFreshMigrationAndRestart(t *testing.T) {
 	}
 }
 
-func TestV5ModelKindUpgrade(t *testing.T) {
+func TestV6ModelKindUpgrade(t *testing.T) {
 	ctx := context.Background()
 	s, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "routeweft.sqlite"))
 	if err != nil {
