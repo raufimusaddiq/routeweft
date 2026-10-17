@@ -18,7 +18,7 @@ func (h *Handler) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		Name   string     `json:"name"`
 		Access *keyAccess `json:"access"`
 	}
-	if !decodeJSON(w, r, 64<<10, &body) {
+	if !decodeJSON(w, r, maxKeyBody, &body) {
 		return
 	}
 	name := strings.TrimSpace(body.Name)
@@ -32,7 +32,7 @@ func (h *Handler) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		if allow, ok = h.checkAccess(w, body.Access); !ok {
 			return
 		}
-		restricted = body.Access.Restricted
+		restricted = *body.Access.Restricted
 	}
 	entry, secret, err := h.opts.Keys.CreateAPIKeyWithAccess(r.Context(), name, restricted, allow)
 	if err != nil {
@@ -54,7 +54,7 @@ func (h *Handler) handlePatchKey(w http.ResponseWriter, r *http.Request) {
 		Paused *bool      `json:"paused"`
 		Access *keyAccess `json:"access"`
 	}
-	if !decodeJSON(w, r, 64<<10, &body) {
+	if !decodeJSON(w, r, maxKeyBody, &body) {
 		return
 	}
 	if body.Paused == nil && body.Access == nil {
@@ -63,22 +63,21 @@ func (h *Handler) handlePatchKey(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	result := map[string]any{"id": id}
+	var policy *runtime.KeyAccess
 	if body.Access != nil {
 		allow, ok := h.checkAccess(w, body.Access)
 		if !ok {
 			return
 		}
-		if err := h.opts.Keys.SetAPIKeyAccess(r.Context(), id, body.Access.Restricted, allow); err != nil {
-			h.keyMutationError(w, err, "API key access could not be updated")
-			return
-		}
-		result["access"] = accessJSON(body.Access.Restricted, allow)
+		policy = &runtime.KeyAccess{Restricted: *body.Access.Restricted, Allow: allow}
+		result["access"] = accessJSON(policy.Restricted, allow)
+	}
+	// Pause and access change together or not at all.
+	if err := h.opts.Keys.UpdateAPIKey(r.Context(), id, body.Paused, policy); err != nil {
+		h.keyMutationError(w, err, "API key could not be updated")
+		return
 	}
 	if body.Paused != nil {
-		if err := h.opts.Keys.SetAPIKeyPaused(r.Context(), id, *body.Paused); err != nil {
-			h.keyMutationError(w, err, "API key state could not be updated")
-			return
-		}
 		result["paused"] = *body.Paused
 	}
 	result["configRevision"] = h.activeConfigRevision()
@@ -86,10 +85,17 @@ func (h *Handler) handlePatchKey(w http.ResponseWriter, r *http.Request) {
 }
 
 // keyAccess is the admin-API form of a key's model/Combo allowlist.
+//
+// Restricted is a pointer so an omitted field is rejected: treating "missing"
+// as false would let an allowlist edit silently turn a key unrestricted.
 type keyAccess struct {
-	Restricted bool     `json:"restricted"`
+	Restricted *bool    `json:"restricted"`
 	Allow      []string `json:"allow"`
 }
+
+// maxKeyBody fits the largest legal allowlist (MaxAllowEntries x MaxAllowLength
+// plus JSON quoting) with headroom.
+const maxKeyBody = 512 << 10
 
 func accessJSON(restricted bool, allow []string) map[string]any {
 	if allow == nil {
@@ -98,11 +104,19 @@ func accessJSON(restricted bool, allow []string) map[string]any {
 	return map[string]any{"restricted": restricted, "allow": allow}
 }
 
-// checkAccess normalizes an allowlist; an unrestricted key keeps no list so a
-// stale list cannot silently re-apply when restriction is switched back on.
+// checkAccess validates an access object and normalizes its allowlist. An
+// unrestricted key keeps no list, and sending one alongside restricted:false is
+// rejected as ambiguous rather than guessed at.
 func (h *Handler) checkAccess(w http.ResponseWriter, access *keyAccess) ([]string, bool) {
-	if !access.Restricted {
-		access.Allow = nil
+	if access.Restricted == nil {
+		writeError(w, http.StatusBadRequest, "invalid_access", "access.restricted is required")
+		return nil, false
+	}
+	if !*access.Restricted {
+		if len(access.Allow) > 0 {
+			writeError(w, http.StatusBadRequest, "invalid_access", "allow must be empty when restricted is false")
+			return nil, false
+		}
 		return nil, true
 	}
 	allow, err := auth.NormalizeAllow(access.Allow)

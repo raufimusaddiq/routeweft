@@ -1,11 +1,14 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/raufimusaddiq/routeweft/internal/auth"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
@@ -81,7 +84,7 @@ func TestKeyAccessPolicyLifecycleThroughAdminAPI(t *testing.T) {
 		t.Fatalf("pause dropped the policy: %v", items[0])
 	}
 	// Switching to unrestricted clears the stored list.
-	if rec := callAdmin(mux, cookie, http.MethodPatch, "/admin/v1/keys/"+created.Key.ID, `{"access":{"restricted":false,"allow":["stale"]}}`); rec.Code != http.StatusOK {
+	if rec := callAdmin(mux, cookie, http.MethodPatch, "/admin/v1/keys/"+created.Key.ID, `{"access":{"restricted":false}}`); rec.Code != http.StatusOK {
 		t.Fatalf("unrestrict: %d %s", rec.Code, rec.Body)
 	}
 	access = keyList(t, mux, cookie)[0]["access"].(map[string]any)
@@ -106,5 +109,88 @@ func TestKeyAccessValidationAndNotFound(t *testing.T) {
 	}
 	if rec := callAdmin(mux, cookie, http.MethodPatch, "/admin/v1/keys/missing", `{}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("empty patch: %d, want 400", rec.Code)
+	}
+}
+
+// Editing the list without restating `restricted` must never widen a key: a
+// missing field is rejected instead of being read as false.
+func TestKeyAccessRequiresExplicitRestrictedFlag(t *testing.T) {
+	mux, cookie, manager, done := newAccessAPI(t)
+	defer done()
+	rec := callAdmin(mux, cookie, http.MethodPost, "/admin/v1/keys", `{"name":"scoped","access":{"restricted":true,"allow":["team"]}}`)
+	var created struct {
+		Key struct {
+			ID string `json:"id"`
+		} `json:"key"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	for _, body := range []string{
+		`{"access":{"allow":["openai/gpt-4o"]}}`,
+		`{"access":{}}`,
+		`{"access":{"restricted":false,"allow":["openai/gpt-4o"]}}`,
+	} {
+		if rec := callAdmin(mux, cookie, http.MethodPatch, "/admin/v1/keys/"+created.Key.ID, body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("PATCH %s: %d, want 400", body, rec.Code)
+		}
+	}
+	if rec := callAdmin(mux, cookie, http.MethodPost, "/admin/v1/keys", `{"name":"x","access":{"allow":["a"]}}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST without restricted: %d, want 400", rec.Code)
+	}
+	snapshot, err := manager.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range snapshot.APIKeys().Records() {
+		if entry.ID == created.Key.ID && (!entry.Restricted || len(entry.Allow) != 1 || entry.Allow[0] != "team") {
+			t.Fatalf("rejected edits changed the key: %+v", entry)
+		}
+	}
+}
+
+func TestKeyAccessAcceptsMaximumLegalAllowlist(t *testing.T) {
+	mux, cookie, _, done := newAccessAPI(t)
+	defer done()
+	entries := make([]string, auth.MaxAllowEntries)
+	for i := range entries {
+		entries[i] = fmt.Sprintf("p%04d/%s", i, strings.Repeat("m", auth.MaxAllowLength-6))
+	}
+	encoded, _ := json.Marshal(map[string]any{"name": "big", "access": map[string]any{"restricted": true, "allow": entries}})
+	if rec := callAdmin(mux, cookie, http.MethodPost, "/admin/v1/keys", string(encoded)); rec.Code != http.StatusCreated {
+		t.Fatalf("max legal allowlist (%d bytes): %d %.120s", len(encoded), rec.Code, rec.Body)
+	}
+}
+
+func TestKeyPausedAndAccessChangeTogetherOrNotAtAll(t *testing.T) {
+	mux, cookie, manager, done := newAccessAPI(t)
+	defer done()
+	ctx := context.Background()
+	entry, _, err := manager.CreateAPIKeyWithAccess(ctx, "k", true, []string{"a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := callAdmin(mux, cookie, http.MethodPatch, "/admin/v1/keys/"+entry.ID, `{"paused":true,"access":{"restricted":true,"allow":["b"]}}`); rec.Code != http.StatusOK {
+		t.Fatalf("combined patch: %d %s", rec.Code, rec.Body)
+	}
+	snapshot, _ := manager.Load()
+	for _, e := range snapshot.APIKeys().Records() {
+		if e.ID == entry.ID && (!e.Paused || len(e.Allow) != 1 || e.Allow[0] != "b") {
+			t.Fatalf("combined patch not applied together: %+v", e)
+		}
+	}
+	// An unknown key fails the whole request; nothing is half-applied.
+	if rec := callAdmin(mux, cookie, http.MethodPatch, "/admin/v1/keys/missing", `{"paused":true,"access":{"restricted":true,"allow":["b"]}}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("missing key combined patch: %d", rec.Code)
+	}
+}
+
+func TestCorruptStoredAllowlistFailsTheListInsteadOfShowingEmpty(t *testing.T) {
+	handler, mux, store := newReadAPI(t)
+	defer store.Close()
+	cookie := adminCookie(t, handler)
+	if _, err := store.DB().Exec(`INSERT INTO api_keys(id,name,key_hash,key_prefix,access_restricted,access_allow) VALUES('k','bad','h','rw_',1,'{not json')`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := callAdmin(mux, cookie, http.MethodGet, "/admin/v1/keys", ""); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("corrupt allowlist listed as %d %s, want 500 instead of an empty allowlist", rec.Code, rec.Body)
 	}
 }

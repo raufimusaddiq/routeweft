@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
@@ -513,7 +514,7 @@ func (h *Handler) keys(w http.ResponseWriter, r *http.Request) error {
 		item.Enabled, item.Paused = enabled != 0, paused != 0
 		var allow []string
 		if err := json.Unmarshal([]byte(allowRaw), &allow); err != nil {
-			allow = nil
+			return nil, fmt.Errorf("decode access allowlist for API key %q: %w", item.ID, err)
 		}
 		result := map[string]any{"id": item.ID, "name": item.Name, "prefix": item.Prefix, "enabled": item.Enabled, "paused": item.Paused, "createdAt": item.CreatedAt, "access": accessJSON(restricted != 0, allow)}
 		if item.LastUsed.Valid {

@@ -37,6 +37,9 @@ type Entry struct {
 	// A restricted key with an empty Allow list can request nothing.
 	Restricted bool
 	Allow      []string
+	// allowSet is built by NewKeyIndex so Permits is O(1) per identity; it is
+	// always rebuilt from Allow, never trusted from a copied Entry.
+	allowSet map[string]struct{}
 }
 
 // Limits on a stored allowlist keep the compiled key index small and bounded.
@@ -76,11 +79,19 @@ func (e Entry) Permits(identities ...string) bool {
 	if !e.Restricted {
 		return true
 	}
-	for _, identity := range identities {
-		for _, allowed := range e.Allow {
-			if allowed == identity {
-				return true
+	if e.allowSet == nil {
+		for _, identity := range identities {
+			for _, allowed := range e.Allow {
+				if allowed == identity {
+					return true
+				}
 			}
+		}
+		return false
+	}
+	for _, identity := range identities {
+		if _, ok := e.allowSet[identity]; ok {
+			return true
 		}
 	}
 	return false
@@ -92,6 +103,10 @@ func NewKeyIndex(entries []Entry) *KeyIndex {
 	index := &KeyIndex{byHash: byHash}
 	for _, entry := range entries {
 		if entry.Hash != "" {
+			entry.allowSet = make(map[string]struct{}, len(entry.Allow))
+			for _, allowed := range entry.Allow {
+				entry.allowSet[allowed] = struct{}{}
+			}
 			byHash[entry.Hash] = entry
 		}
 	}

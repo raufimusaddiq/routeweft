@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/raufimusaddiq/routeweft/internal/auth"
+	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
@@ -193,5 +195,59 @@ func TestAllowedTargetAdmitsItsAlias(t *testing.T) {
 	ids := listedIDs(t, f.do("GET", "/v1/models", f.scoped, ""))
 	if !ids["fast"] || !ids["openai/gpt-a"] || ids["openai/gpt-b"] {
 		t.Fatalf("listing = %v", ids)
+	}
+}
+
+// A restricted key must not reach a capacity-adapter pool member outside its
+// allowlist, while a pool member it is allowed keeps working.
+func TestPlanComboFiltersAdapterPoolByCallerKey(t *testing.T) {
+	ctx := context.Background()
+	manager := newManager(t)
+	for _, m := range []runtime.Model{
+		{ProviderID: "openai", ID: "text", Name: "text"},
+		{ProviderID: "pool", ID: "vision-ok", Name: "v1", Capabilities: []string{"vision"}},
+		{ProviderID: "pool", ID: "vision-secret", Name: "v2", Capabilities: []string{"vision"}},
+	} {
+		if err := manager.PutModel(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := manager.PutCombo(ctx, runtime.Combo{Name: "auto", Members: []runtime.ComboMember{{ProviderID: "openai", ModelID: "text", Selected: true}}}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := manager.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(manager, Options{})
+	requirements := []routing.CapabilityRequirement{{Name: "vision", AdapterEnabled: true, AdapterPool: []routing.Member{
+		{ProviderID: "pool", ModelID: "vision-ok", Capabilities: []string{"vision"}},
+		{ProviderID: "pool", ModelID: "vision-secret", Capabilities: []string{"vision"}},
+	}}}
+	used := func(access auth.Entry) map[string]bool {
+		ordered, ok := h.PlanCombo(snapshot, access, "auto", requirements)
+		if !ok {
+			t.Fatal("combo not planned")
+		}
+		out := map[string]bool{}
+		for _, member := range ordered {
+			out[member.ProviderID+"/"+member.ModelID] = true
+		}
+		return out
+	}
+	if got := used(auth.Entry{}); !got["pool/vision-ok"] || !got["pool/vision-secret"] {
+		t.Fatalf("unrestricted key must see the whole pool: %v", got)
+	}
+	scoped := auth.Entry{Restricted: true, Allow: []string{"auto", "pool/vision-ok"}}
+	got := used(scoped)
+	if got["pool/vision-secret"] {
+		t.Fatalf("restricted key reached pool member outside its list: %v", got)
+	}
+	if !got["pool/vision-ok"] || !got["openai/text"] {
+		t.Fatalf("allowed pool member and Combo member must remain: %v", got)
+	}
+	none := used(auth.Entry{Restricted: true, Allow: []string{"auto"}})
+	if none["pool/vision-ok"] || none["pool/vision-secret"] {
+		t.Fatalf("key with no pool grants must get no adapter tier: %v", none)
 	}
 }

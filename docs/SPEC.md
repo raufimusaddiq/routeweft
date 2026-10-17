@@ -463,12 +463,17 @@ Each client key carries `access: {restricted, allow[]}` (stored in `api_keys`
   Ollama chat; a denied request returns `403 model_not_allowed` whether or not
   the model exists (no existence oracle). `count_tokens` applies it when the body
   names a model.
+- Capacity-adapter pool members are checked against the same list (as
+  `provider/model`): `PlanCombo` takes the caller's key and drops pool members it
+  may not use before ordering, so a restricted key never reaches an adapter model
+  outside its allowlist.
 - Discovery is access-aware: `/v1/models`, `/v1/models/{kind}`, `/v1/models/info`,
   `/v1/models/{provider}/{model}`, `/v1beta/models` and `/api/tags` list or
   return only permitted entries; hidden single lookups return 404.
 - Admin API: `POST /admin/v1/keys` accepts `access`; `PATCH /admin/v1/keys/{id}`
   accepts `paused` and/or `access`; `GET /admin/v1/keys` returns `access`.
-  Entries are trimmed, de-duplicated, at most 1000 entries of 256 bytes.
+  Entries are trimmed, de-duplicated, at most 1000 entries of 256 bytes (request
+  bodies up to 512 KiB). A missing `restricted` is a 400, never read as false.
   Switching to unrestricted clears the stored list.
 
 ## 13. Account selection
@@ -814,8 +819,10 @@ Client API key management:
 
 ```text
 GET    /admin/v1/keys            bounded list; digest and plaintext never returned
-POST   /admin/v1/keys            create {name}; returns the plaintext secret exactly once
-PATCH  /admin/v1/keys/{id}       {paused: bool} pause/resume without deleting
+POST   /admin/v1/keys            create {name, access?}; returns the plaintext secret exactly once
+PATCH  /admin/v1/keys/{id}       {paused?: bool, access?: {restricted: bool, allow: []}} applied atomically;
+                                 access.restricted is required whenever access is sent
+                                 (see §12.1); restricted:false takes an empty allow
 DELETE /admin/v1/keys/{id}       revoke; the compiled key index drops it immediately
 ```
 

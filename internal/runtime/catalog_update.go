@@ -87,6 +87,40 @@ func (m *Manager) SetAPIKeyAccess(ctx context.Context, id string, restricted boo
 	})
 }
 
+// UpdateAPIKey applies a pause change and/or an access-policy replacement in one
+// atomic mutation, so a failure never leaves half of the change published.
+func (m *Manager) UpdateAPIKey(ctx context.Context, id string, paused *bool, access *KeyAccess) error {
+	var allow []string
+	if access != nil {
+		var err error
+		if allow, err = auth.NormalizeAllow(access.Allow); err != nil {
+			return err
+		}
+	}
+	return m.UpdateCatalog(ctx, func(candidate *Candidate) error {
+		for i := range candidate.APIKeys {
+			if candidate.APIKeys[i].ID != id {
+				continue
+			}
+			if paused != nil {
+				candidate.APIKeys[i].Paused = *paused
+			}
+			if access != nil {
+				candidate.APIKeys[i].Restricted = access.Restricted
+				candidate.APIKeys[i].Allow = allow
+			}
+			return nil
+		}
+		return ErrAPIKeyNotFound
+	})
+}
+
+// KeyAccess is a key's model/Combo allowlist policy.
+type KeyAccess struct {
+	Restricted bool
+	Allow      []string
+}
+
 // DeleteAPIKey revokes a key immediately on snapshot publication.
 func (m *Manager) DeleteAPIKey(ctx context.Context, id string) error {
 	return m.UpdateCatalog(ctx, func(candidate *Candidate) error {

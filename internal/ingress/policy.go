@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/raufimusaddiq/routeweft/internal/auth"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
@@ -27,7 +28,12 @@ const errorBodyPeek int64 = 32 << 10
 // PlanCombo orders the selected members of one Combo candidate list. It
 // applies capability reorder and capacity adapters before Combo-local strategy
 // rotation (SPEC §15.2-15.4). A named Combo overrides the direct model route.
-func (h *Handler) PlanCombo(snapshot *runtime.RuntimeSnapshot, name string, requirements []routing.CapabilityRequirement) ([]runtime.ComboMember, bool) {
+//
+// access is the caller's key: capacity-adapter pool members are operator-chosen
+// fallbacks, but a restricted key must never reach one outside its allowlist, so
+// they are filtered here before ordering. Combo members themselves are admitted
+// by the Combo's own entry in the allowlist.
+func (h *Handler) PlanCombo(snapshot *runtime.RuntimeSnapshot, access auth.Entry, name string, requirements []routing.CapabilityRequirement) ([]runtime.ComboMember, bool) {
 	combo, ok := snapshot.ComboByName(name)
 	if !ok {
 		return nil, false
@@ -48,7 +54,7 @@ func (h *Handler) PlanCombo(snapshot *runtime.RuntimeSnapshot, name string, requ
 			adapterRequirements = append(adapterRequirements, requirement)
 		}
 	}
-	adapterTier := eligibleAdapters(adapterRequirements, routed)
+	adapterTier := eligibleAdapters(access, adapterRequirements, routed)
 	if len(adapterTier) > 0 {
 		adapterTier = orderAdapterTier(adapterTier, adapterRequirements, name, snapshot, h)
 	}
@@ -115,7 +121,7 @@ func anyMemberHas(members []routing.Member, capability string) bool {
 
 // eligibleAdapters keeps only enabled, non-empty pools and drops candidates
 // already present in the Combo fallback list so a member never appears twice.
-func eligibleAdapters(requirements []routing.CapabilityRequirement, routed []routing.Member) []routing.Member {
+func eligibleAdapters(access auth.Entry, requirements []routing.CapabilityRequirement, routed []routing.Member) []routing.Member {
 	members := routing.AdapterCandidates(requirements, nil)
 	present := make(map[string]struct{}, len(routed))
 	for _, member := range routed {
@@ -124,6 +130,9 @@ func eligibleAdapters(requirements []routing.CapabilityRequirement, routed []rou
 	kept := members[:0]
 	for _, member := range members {
 		if _, exists := present[member.ProviderID+"\x00"+member.ModelID]; exists {
+			continue
+		}
+		if !access.Permits(member.ProviderID + "/" + member.ModelID) {
 			continue
 		}
 		kept = append(kept, member)
@@ -176,8 +185,8 @@ func orderAdapterTier(members []routing.Member, requirements []routing.Capabilit
 
 // PlanComboRequest selects a Combo route and applies smaller-context trimming
 // to opaque message units before the caller dispatches the selected member.
-func (h *Handler) PlanComboRequest(snapshot *runtime.RuntimeSnapshot, name string, requirements []routing.CapabilityRequirement, messages []string, budget routing.ContextBudget) ([]runtime.ComboMember, []string, bool) {
-	ordered, ok := h.PlanCombo(snapshot, name, requirements)
+func (h *Handler) PlanComboRequest(snapshot *runtime.RuntimeSnapshot, access auth.Entry, name string, requirements []routing.CapabilityRequirement, messages []string, budget routing.ContextBudget) ([]runtime.ComboMember, []string, bool) {
+	ordered, ok := h.PlanCombo(snapshot, access, name, requirements)
 	if !ok || len(ordered) == 0 {
 		return ordered, append([]string(nil), messages...), ok
 	}
