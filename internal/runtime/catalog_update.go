@@ -20,6 +20,16 @@ var ErrAPIKeyNotFound = errors.New("API key not found")
 // CreateAPIKey persists and publishes a newly created client key, returning its
 // one-time plaintext value.
 func (m *Manager) CreateAPIKey(ctx context.Context, name string) (auth.Entry, string, error) {
+	return m.CreateAPIKeyWithAccess(ctx, name, false, nil)
+}
+
+// CreateAPIKeyWithAccess creates a key and its access policy in one atomic
+// mutation, so a restricted key is never briefly unrestricted.
+func (m *Manager) CreateAPIKeyWithAccess(ctx context.Context, name string, restricted bool, allow []string) (auth.Entry, string, error) {
+	allow, err := auth.NormalizeAllow(allow)
+	if err != nil {
+		return auth.Entry{}, "", err
+	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return auth.Entry{}, "", errors.New("API key name is required")
@@ -29,8 +39,8 @@ func (m *Manager) CreateAPIKey(ctx context.Context, name string) (auth.Entry, st
 		return auth.Entry{}, "", fmt.Errorf("generate API key: %w", err)
 	}
 	plaintext := "rw_" + base64.RawURLEncoding.EncodeToString(secret[:])
-	entry := auth.Entry{ID: uuid.NewString(), Name: name, Prefix: displayPrefix(plaintext), Hash: auth.Hash(plaintext)}
-	_, err := m.Update(ctx, func(candidate *Candidate) error {
+	entry := auth.Entry{ID: uuid.NewString(), Name: name, Prefix: displayPrefix(plaintext), Hash: auth.Hash(plaintext), Restricted: restricted, Allow: allow}
+	_, err = m.Update(ctx, func(candidate *Candidate) error {
 		for _, existing := range candidate.APIKeys {
 			if existing.Hash == entry.Hash {
 				return errors.New("API key already exists")
@@ -52,6 +62,24 @@ func (m *Manager) SetAPIKeyPaused(ctx context.Context, id string, paused bool) e
 		for i := range candidate.APIKeys {
 			if candidate.APIKeys[i].ID == id {
 				candidate.APIKeys[i].Paused = paused
+				return nil
+			}
+		}
+		return ErrAPIKeyNotFound
+	})
+}
+
+// SetAPIKeyAccess replaces a key's access policy and publishes the new index.
+func (m *Manager) SetAPIKeyAccess(ctx context.Context, id string, restricted bool, allow []string) error {
+	allow, err := auth.NormalizeAllow(allow)
+	if err != nil {
+		return err
+	}
+	return m.UpdateCatalog(ctx, func(candidate *Candidate) error {
+		for i := range candidate.APIKeys {
+			if candidate.APIKeys[i].ID == id {
+				candidate.APIKeys[i].Restricted = restricted
+				candidate.APIKeys[i].Allow = allow
 				return nil
 			}
 		}

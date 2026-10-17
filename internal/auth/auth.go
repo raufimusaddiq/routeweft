@@ -4,6 +4,8 @@ package auth
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"sort"
 	"strings"
 )
 
@@ -29,6 +31,59 @@ type Entry struct {
 	Hash     string
 	Paused   bool
 	Disabled bool
+	// Restricted limits the key to Allow. Allow lists the exact names a client
+	// may request: a Combo name, a model alias, or "provider/model". A request
+	// is also permitted when it resolves to an allowed "provider/model".
+	// A restricted key with an empty Allow list can request nothing.
+	Restricted bool
+	Allow      []string
+}
+
+// Limits on a stored allowlist keep the compiled key index small and bounded.
+const (
+	MaxAllowEntries = 1000
+	MaxAllowLength  = 256
+)
+
+// NormalizeAllow trims, de-duplicates and validates an allowlist.
+func NormalizeAllow(allow []string) ([]string, error) {
+	out := make([]string, 0, len(allow))
+	seen := make(map[string]struct{}, len(allow))
+	for _, name := range allow {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return nil, errors.New("allowlist entries must not be empty")
+		}
+		if len(name) > MaxAllowLength {
+			return nil, errors.New("allowlist entry is too long")
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	if len(out) > MaxAllowEntries {
+		return nil, errors.New("allowlist has too many entries")
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// Permits reports whether the key may use a request that names any of the
+// given identities (the requested name plus its resolved "provider/model").
+func (e Entry) Permits(identities ...string) bool {
+	if !e.Restricted {
+		return true
+	}
+	for _, identity := range identities {
+		for _, allowed := range e.Allow {
+			if allowed == identity {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // NewKeyIndex builds the immutable index.

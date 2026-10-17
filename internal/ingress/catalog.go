@@ -23,7 +23,7 @@ func matchesModelKind(model runtime.Model, kind, requested string) bool {
 	}
 }
 
-func publicModels(snapshot *runtime.RuntimeSnapshot, requestedKind string) []map[string]any {
+func publicModels(snapshot *runtime.RuntimeSnapshot, requestedKind string, allowed func(string) bool) []map[string]any {
 	data := make([]map[string]any, 0)
 	for _, model := range snapshot.Models() {
 		kind := snapshot.ModelKind(model)
@@ -33,6 +33,9 @@ func publicModels(snapshot *runtime.RuntimeSnapshot, requestedKind string) []map
 		entry := modelObject(model)
 		if model.Source != "alias" {
 			entry["id"] = model.ProviderID + "/" + model.ID
+		}
+		if !allowed(entry["id"].(string)) {
+			continue
 		}
 		entry["kind"] = kind
 		if model.Name == "" {
@@ -46,6 +49,9 @@ func publicModels(snapshot *runtime.RuntimeSnapshot, requestedKind string) []map
 	}
 	if requestedKind == "" || requestedKind == "llm" {
 		for _, combo := range snapshot.Combos() {
+			if !allowed(combo.Name) {
+				continue
+			}
 			data = append(data, map[string]any{"id": combo.Name, "name": combo.Name, "object": "model", "owned_by": "combo", "kind": "llm"})
 		}
 	}
@@ -77,7 +83,7 @@ func (h *Handler) handleOllamaTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	models := make([]map[string]any, 0)
-	for _, model := range publicModels(snapshot, "llm") {
+	for _, model := range publicModels(snapshot, "llm", accessFilter(r, snapshot)) {
 		models = append(models, map[string]any{"name": model["id"], "model": model["id"], "modified_at": "1970-01-01T00:00:00Z", "size": 0, "digest": "", "details": map[string]any{}})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"models": models})

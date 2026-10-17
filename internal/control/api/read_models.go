@@ -495,7 +495,7 @@ func (h *Handler) proxyMembers(ctx context.Context, poolID string) ([]any, error
 }
 
 func (h *Handler) keys(w http.ResponseWriter, r *http.Request) error {
-	return h.sqlList(w, r, "SELECT id,name,key_prefix,enabled,paused,created_at,last_used_at FROM api_keys ORDER BY created_at DESC,id", "SELECT COUNT(*) FROM api_keys", func(rows *sql.Rows) (any, error) {
+	return h.sqlList(w, r, "SELECT id,name,key_prefix,enabled,paused,created_at,last_used_at,access_restricted,access_allow FROM api_keys ORDER BY created_at DESC,id", "SELECT COUNT(*) FROM api_keys", func(rows *sql.Rows) (any, error) {
 		var item struct {
 			ID        string `json:"id"`
 			Name      string `json:"name"`
@@ -505,12 +505,17 @@ func (h *Handler) keys(w http.ResponseWriter, r *http.Request) error {
 			CreatedAt string `json:"createdAt"`
 			LastUsed  sql.NullString
 		}
-		var enabled, paused int
-		if err := rows.Scan(&item.ID, &item.Name, &item.Prefix, &enabled, &paused, &item.CreatedAt, &item.LastUsed); err != nil {
+		var enabled, paused, restricted int
+		var allowRaw string
+		if err := rows.Scan(&item.ID, &item.Name, &item.Prefix, &enabled, &paused, &item.CreatedAt, &item.LastUsed, &restricted, &allowRaw); err != nil {
 			return nil, err
 		}
 		item.Enabled, item.Paused = enabled != 0, paused != 0
-		result := map[string]any{"id": item.ID, "name": item.Name, "prefix": item.Prefix, "enabled": item.Enabled, "paused": item.Paused, "createdAt": item.CreatedAt}
+		var allow []string
+		if err := json.Unmarshal([]byte(allowRaw), &allow); err != nil {
+			allow = nil
+		}
+		result := map[string]any{"id": item.ID, "name": item.Name, "prefix": item.Prefix, "enabled": item.Enabled, "paused": item.Paused, "createdAt": item.CreatedAt, "access": accessJSON(restricted != 0, allow)}
 		if item.LastUsed.Valid {
 			result["lastUsedAt"] = item.LastUsed.String
 		}

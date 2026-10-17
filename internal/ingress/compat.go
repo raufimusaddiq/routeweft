@@ -146,7 +146,15 @@ func (h *Handler) handleGeminiModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	models := make([]map[string]any, 0)
+	allowed := accessFilter(r, snapshot)
 	for _, model := range snapshot.Models() {
+		id := model.ProviderID + "/" + model.ID
+		if model.Source == "alias" {
+			id = model.ID
+		}
+		if !allowed(id) {
+			continue
+		}
 		models = append(models, map[string]any{
 			"name":                       "models/" + model.ID,
 			"displayName":                model.Name,

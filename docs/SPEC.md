@@ -445,6 +445,32 @@ The request path:
 
 Dashboard sessions are a separate auth domain from inference API keys.
 
+### 12.1 Key access policy
+
+Each client key carries `access: {restricted, allow[]}` (stored in `api_keys`
+`access_restricted`/`access_allow`, compiled into the key index in the
+`RuntimeSnapshot`). Existing keys migrate as unrestricted.
+
+- Unrestricted keys behave as before.
+- A restricted key may request only names in `allow`: a Combo name, a model
+  alias, or `provider/model`. A request also passes when the name resolves to an
+  allowed `provider/model` (so allowing a model admits its aliases). Allowing an
+  alias does not admit its canonical `provider/model`, and allowing a Combo does
+  not admit its members directly. A restricted key with an empty list can use
+  nothing.
+- Enforcement is a single check at the top of dispatch, before model
+  resolution, for Chat, Responses, Compact, Messages, System One, Gemini and
+  Ollama chat; a denied request returns `403 model_not_allowed` whether or not
+  the model exists (no existence oracle). `count_tokens` applies it when the body
+  names a model.
+- Discovery is access-aware: `/v1/models`, `/v1/models/{kind}`, `/v1/models/info`,
+  `/v1/models/{provider}/{model}`, `/v1beta/models` and `/api/tags` list or
+  return only permitted entries; hidden single lookups return 404.
+- Admin API: `POST /admin/v1/keys` accepts `access`; `PATCH /admin/v1/keys/{id}`
+  accepts `paused` and/or `access`; `GET /admin/v1/keys` returns `access`.
+  Entries are trimmed, de-duplicated, at most 1000 entries of 256 bytes.
+  Switching to unrestricted clears the stored list.
+
 ## 13. Account selection
 
 Inputs:
