@@ -167,6 +167,48 @@ audit-baseline table counts:
   Native Headroom `/v1/compress` and PXPIPE image-rendering parity are separate
   **R09** work, not System One behavior; neither is folded into R04.
 
+### R05 implementation progress (public model catalog boundary)
+
+#75 task R05 adds historical route coverage and model discovery semantics.
+The audit-baseline inventory/counts below remain unchanged.
+
+- Every retained `/v1` route registers under `/v1/v1` and `/api/v1`; Gemini
+  listing/generation also register under `/api/v1beta`. Existing short aliases
+  remain. These aliases share handlers, inference-key validation, configured
+  CORS, native transports and the R03 saver/final-body cache boundary.
+- Explicit legacy decision: retain `/api/v1` and `/api/v1beta` public URLs.
+  Pinned `next.config.mjs` exposes these destinations directly; dropping them
+  would break clients without simplifying the shared Go handler. They do not
+  expose dashboard control operations or excluded media products. This follows
+  PRD-API-001-004 / SPEC 34 / BDR-008/014, not a Next module-layout dependency.
+- Public model IDs are provider-qualified; aliases and Combo names remain bare.
+  Info requires `id`, returns one model's kind/owner/endpoint/context/capabilities,
+  rejects disabled/unknown/kind-mismatched IDs, and never resolves an ambiguous
+  bare upstream name. Default listing is LLM-only; System One and typed aliases
+  have their own filter and endpoint. Qualified nested IDs and Ollama `:tags`
+  remain intact.
+- Explicit non-media decision: retain image-to-text and web as capability views
+  over LLM models (`vision`, `webSearch`, `webFetch`), not standalone products.
+  Unclassified names do not imply a capability. Standalone media-kind routes
+  remain excluded by PRD 4.2 / BDR-016. This decision and query precedence are
+  normative in SPEC 34.1.
+- `/api/tags` now lists real enabled LLM catalog IDs, aliases and Combos with
+  inference auth/CORS. Intentional divergence from pinned route 73: no two fake
+  downloaded-model manifests, sizes or hashes; unavailable artifact metadata
+  uses zero/empty/epoch sentinels. This is a routing gateway, not an Ollama model
+  file store (PRD 1/4/9, BDR-001). Readiness is not inferred from discovery.
+- Evidence: `internal/ingress/catalog_test.go` checks historical route/method/
+  auth/CORS coverage, kind views, negative/info/disabled/paused-key behavior and
+  fixed `testdata/model-info.json` / `testdata/ollama-tags.json` responses.
+  `internal/app/catalog_test.go` restarts configured native accounts, closes
+  SQLite, then exercises retained inference and discovery aliases.
+- Remaining separate gaps: restricted-key visibility/serving grants remain
+  **#78/C02**, not certified by active-key checks; explicit custom kind persistence
+  remains R06/C06; provider aliases/seeds/live capability breadth remain P03;
+  actual Combo/Fusion dispatch remains R01; pinned differential certification
+  remains R11. No live providers or production state were used. R03's native
+  Headroom/PXPIPE deferral stays **R09**; System One transport/usage is unchanged.
+
 ### Area issues and ownership
 
 | Area | Backlog | Gap IDs owned |

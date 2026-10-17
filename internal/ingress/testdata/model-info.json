@@ -1,0 +1,1 @@
+{"id":"alpha/gizmo:7b","object":"model","created":0,"owned_by":"alpha","provider":"alpha","name":"Gizmo","context_window":8192,"contextWindow":8192,"context_length":8192,"capabilities":["vision","webSearch"],"kind":"llm","endpoint":"/v1/chat/completions"}

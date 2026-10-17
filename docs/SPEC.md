@@ -1102,6 +1102,57 @@ Routeweft ingress must account for:
 
 The Go server can implement these directly and should not mimic Next rewrite architecture.
 
+### 34.1 Model discovery and historical aliases (R05)
+
+Every retained `/v1` route also registers under `/v1/v1` and `/api/v1`,
+including index, model discovery/detail/info, Chat, Responses/Compact, Messages,
+count-tokens, Ollama chat and System One. Gemini model listing/generation also
+register under `/api/v1beta`. Existing `/responses`, `/codex/:path*`,
+`/messages` and `/messages/count_tokens` aliases remain. There is no invented
+Gemini root endpoint, arbitrary rewrite or standalone-media alias. Direct
+registration preserves method dispatch, cancellation and the shared saver/cache
+boundary. This retains URLs clients could address directly in pinned v1 without
+preserving its Next implementation (PRD-API-003, BDR-008/014).
+
+Public catalog IDs are provider-qualified (`provider/model`, retaining embedded
+slashes and tags); configured model aliases and Combo names stay unqualified.
+These are identifiers, not separate copies of upstream models. Model-info
+requires `?id=...` (400 when absent); an unknown, disabled or kind-mismatched ID
+returns 404. A bare ambiguous upstream ID is not an info lookup. Info returns
+the selected ID, display name, `kind`, owner, endpoint and known context/capability
+metadata. Alias metadata comes from its enabled target. No request fetches an
+upstream catalog or reads SQLite. Paused/revoked/invalid keys cannot read these
+routes; `requireApiKey=false` explicitly permits unauthenticated reads.
+
+`GET /v1/models` defaults to kind `llm`; `?kind=systemone` lists typed models.
+TypeSafe, Cloudflare Clef/Clef Flash and sole-System-One custom nodes remain
+typed, including their aliases. `GET /v1/models/{provider}/{model...}?kind=...`
+returns the requested filtered list, matching pinned v1's query precedence.
+Unknown/excluded kind queries return an empty list; unsupported single-segment
+kind routes return 404. Info without a kind may resolve either retained family.
+
+Non-media decision: `/v1/models/image-to-text` is a vision-capable LLM view;
+`/v1/models/web` selects LLM entries with `webSearch` or `webFetch` capabilities.
+The query spellings `imageToText`, `webSearch`, `webFetch` are also recognized.
+These views keep kind `llm` and the Chat endpoint. They neither create separate
+OCR/search/fetch products nor infer capabilities from model names. Typed models
+use kind `systemone` and `/v1/systemone`. Standalone image/video/TTS/STT/embedding
+catalog routes remain absent under PRD 4.2 / BDR-016. Persisting explicit custom
+service-kind metadata remains R06/C06; provider capability breadth remains P03.
+
+`GET /api/tags` uses the enabled LLM catalog, aliases and Combos with the same
+inference auth/CORS policy. Each Ollama manifest entry has identical `name` and
+`model` IDs; tag suffixes are preserved, not silently given `:latest`. Unknown
+artifact metadata uses size 0, empty digest/details and epoch modified time.
+Routeweft does not claim local model files or return pinned v1's two dummy
+manifests. Discovery alone does not certify an account or Combo as dispatch-ready.
+
+Access limitation: model visibility currently enforces active client keys and
+disabled model/alias state. Restricted-key provider/model/Combo grants do not
+exist yet; persistence, compilation and uniform inference/discovery enforcement
+remain #78/C02. R05 does not claim that independent access-policy gap is closed
+or introduce a discovery-only grant mechanism.
+
 ## 35. Provider import/action capability
 
 Provider-specific connection helpers are exposed as Routeweft admin actions, not necessarily copied route-for-route.
