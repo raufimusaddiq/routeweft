@@ -387,8 +387,8 @@ func (h *Handler) handleCatalogSync(w http.ResponseWriter, r *http.Request) {
 			result.Error = "connection credentials unavailable"
 		} else {
 			probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
-			var models []string
-			models, err = h.fetchConnectionModels(probeCtx, c, node)
+			var models []discovery.Model
+			models, err = h.fetchConnectionModelEntries(probeCtx, c, node)
 			cancel()
 			if ctx.Err() != nil {
 				failed = true
@@ -399,8 +399,8 @@ func (h *Handler) handleCatalogSync(w http.ResponseWriter, r *http.Request) {
 				result.Error = "model discovery failed; known catalog retained"
 			} else {
 				result.OK, result.ModelsAvailable = true, len(models)
-				for _, id := range models {
-					merged[node.ProviderID] = append(merged[node.ProviderID], runtime.Model{ID: id})
+				for _, model := range models {
+					merged[node.ProviderID] = append(merged[node.ProviderID], runtime.Model{ID: model.ID, Name: model.Name, ContextWindow: model.ContextWindow, Capabilities: model.Capabilities})
 				}
 			}
 		}
@@ -455,8 +455,15 @@ func (h *Handler) handleNodeRoutes(w http.ResponseWriter, r *http.Request) {
 		}
 		routes[protocol] = strings.TrimRight(base, "/")
 		if path != "" {
-			routes[protocol] += "/" + path
+			routes[protocol] += "/" + nativeEndpointPath(base, protocol, path)
 		}
 	}
 	writeJSON(w, 200, map[string]any{"id": node.ID, "routes": routes})
+}
+
+func nativeEndpointPath(base, protocol, endpoint string) string {
+	if protocol == string(registry.TransportGemini) && strings.HasSuffix(strings.TrimRight(base, "/"), "/models") {
+		return strings.TrimPrefix(endpoint, "models/")
+	}
+	return endpoint
 }

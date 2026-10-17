@@ -105,6 +105,9 @@ func (m *Manager) MergeDiscoveredModels(ctx context.Context, provider string, mo
 				continue
 			}
 			model.ProviderID, model.Source = provider, "discovered"
+			if model.Name == "" {
+				model.Name = model.ID
+			}
 			candidate.AddModel(model)
 			known[model.ID] = true
 		}

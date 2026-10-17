@@ -75,6 +75,19 @@ type Client struct {
 // Models fetches the live catalog. Errors are advisory: callers must keep the
 // last known durable catalog on failure.
 func (c *Client) Models(ctx context.Context, request Request) ([]string, error) {
+	models, err := c.ModelEntries(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(models))
+	for _, model := range models {
+		ids = append(ids, model.ID)
+	}
+	return ids, nil
+}
+
+// ModelEntries fetches the live catalog with display metadata preserved.
+func (c *Client) ModelEntries(ctx context.Context, request Request) ([]Model, error) {
 	if strings.TrimSpace(request.ProviderID) == "" {
 		return nil, errors.New("provider id is required")
 	}
@@ -95,7 +108,10 @@ func (c *Client) Models(ctx context.Context, request Request) ([]string, error) 
 			return nil, errors.New("discovery path must not traverse paths")
 		}
 	}
-	base.Path = strings.TrimRight(base.Path, "/") + "/" + path
+	base.Path = strings.TrimRight(base.Path, "/")
+	if path != "models" || !strings.HasSuffix(base.Path, "/models") {
+		base.Path += "/" + path
+	}
 	base.RawPath = ""
 	base.RawQuery = ""
 	base.Fragment = ""
@@ -152,18 +168,38 @@ func (c *Client) Models(ctx context.Context, request Request) ([]string, error) 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, &StatusError{Status: response.StatusCode}
 	}
-	return ParseModels(body)
+	return ParseModelEntries(body)
 }
 
 // ParseModels extracts model IDs from the supported catalog shapes:
 // OpenAI "data":[{"id"}], Gemini "models":[{"name"}], and a bare array of IDs.
 func ParseModels(body []byte) ([]string, error) {
+	models, err := ParseModelEntries(body)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(models))
+	for _, model := range models {
+		ids = append(ids, model.ID)
+	}
+	return ids, nil
+}
+
+func ParseModelEntries(body []byte) ([]Model, error) {
 	var envelope struct {
 		Data []struct {
-			ID string `json:"id"`
+			ID             string          `json:"id"`
+			Name           string          `json:"name"`
+			DisplayName    string          `json:"display_name"`
+			ContextWindow  int             `json:"context_window"`
+			ContextLength  int             `json:"context_length"`
+			MaxInputTokens int             `json:"max_input_tokens"`
+			Capabilities   json.RawMessage `json:"capabilities"`
 		} `json:"data"`
 		Models []struct {
-			Name string `json:"name"`
+			Name            string `json:"name"`
+			DisplayName     string `json:"displayName"`
+			InputTokenLimit int    `json:"inputTokenLimit"`
 		} `json:"models"`
 	}
 	envelopeErr := json.Unmarshal(body, &envelope)
@@ -175,25 +211,45 @@ func ParseModels(body []byte) ([]string, error) {
 		if json.Unmarshal(body, &bare) != nil {
 			return nil, errors.New("model discovery returned invalid JSON")
 		}
-		return normalizeAndSort(bare), nil
+		bare = normalizeAndSort(bare)
+		models := make([]Model, 0, len(bare))
+		for _, id := range bare {
+			models = append(models, Model{ID: id})
+		}
+		return models, nil
 	}
 	seen := make(map[string]bool)
-	models := make([]string, 0, len(envelope.Data)+len(envelope.Models))
-	add := func(id string) {
-		id = strings.TrimSpace(id)
-		id = strings.TrimPrefix(id, "models/")
-		if id != "" && !seen[id] {
-			seen[id] = true
-			models = append(models, id)
+	models := make([]Model, 0, len(envelope.Data)+len(envelope.Models))
+	add := func(model Model) {
+		model.ID = strings.TrimPrefix(strings.TrimSpace(model.ID), "models/")
+		model.Name = strings.TrimSpace(model.Name)
+		if model.ID != "" && !seen[model.ID] {
+			seen[model.ID] = true
+			models = append(models, model)
 		}
 	}
 	for _, entry := range envelope.Data {
-		add(entry.ID)
+		model := Model{ID: entry.ID, Name: entry.Name, ContextWindow: entry.ContextWindow}
+		if model.Name == "" {
+			model.Name = entry.DisplayName
+		}
+		if model.ContextWindow == 0 {
+			model.ContextWindow = entry.ContextLength
+		}
+		if model.ContextWindow == 0 {
+			model.ContextWindow = entry.MaxInputTokens
+		}
+		// Provider-specific capability objects are not the runtime's string vocabulary.
+		var capabilities []string
+		if json.Unmarshal(entry.Capabilities, &capabilities) == nil {
+			model.Capabilities = capabilities
+		}
+		add(model)
 	}
 	for _, entry := range envelope.Models {
-		add(entry.Name)
+		add(Model{ID: entry.Name, Name: entry.DisplayName, ContextWindow: entry.InputTokenLimit})
 	}
-	sort.Strings(models)
+	sort.Slice(models, func(i, j int) bool { return models[i].ID < models[j].ID })
 	return models, nil
 }
 

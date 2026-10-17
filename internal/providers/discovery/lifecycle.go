@@ -11,8 +11,10 @@ import (
 // Model is one catalog entry produced by discovery, reduced to the fields the
 // runtime catalog stores.
 type Model struct {
-	ID   string
-	Name string
+	ID            string
+	Name          string
+	ContextWindow int
+	Capabilities  []string
 }
 
 // Store persists a provider's discovered catalog. It is implemented by the
@@ -75,13 +77,9 @@ func SyncSpec(ctx context.Context, client *Client, store Store, catalog *registr
 		Credential: credential,
 		AuthStyle:  authStyleFor(spec.Auth),
 	}
-	ids, err := callClient.Models(ctx, request)
+	models, err := callClient.ModelEntries(ctx, request)
 	if err != nil {
 		return 0, err
-	}
-	models := make([]Model, 0, len(ids))
-	for _, id := range ids {
-		models = append(models, Model{ID: id})
 	}
 	if err := store.ReplaceDiscoveredModels(ctx, providerID, models); err != nil {
 		return 0, err

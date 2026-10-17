@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
 func workflowAccount(t *testing.T, creds *credentials.Store, provider, base, identity string) credentials.Connection {
@@ -66,7 +67,13 @@ func TestWorkflowValidationFallbackAuthAndDiscoveryOnly(t *testing.T) {
 		t.Helper()
 		w := doJSON(t, mux, cookie, "POST", path, body)
 		if !wantOK {
-			if w.Code != 502 || !strings.Contains(w.Body.String(), "connection_test_failed") {
+			var failure struct {
+				Error struct {
+					Code   string `json:"code"`
+					Status int    `json:"upstreamStatus"`
+				} `json:"error"`
+			}
+			if w.Code != 502 || json.Unmarshal(w.Body.Bytes(), &failure) != nil || failure.Error.Code != "connection_test_failed" || failure.Error.Status != wantStatus {
 				t.Fatalf("failed validation: %d %s", w.Code, w.Body)
 			}
 			return
@@ -115,6 +122,7 @@ func TestWorkflowValidationFallbackAuthAndDiscoveryOnly(t *testing.T) {
 
 func TestWorkflowAvailabilityCatalogSyncBatchAndCustomDelete(t *testing.T) {
 	var fail atomic.Bool
+	var refreshed atomic.Bool
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/models") {
 			if fail.Load() {
@@ -124,7 +132,11 @@ func TestWorkflowAvailabilityCatalogSyncBatchAndCustomDelete(t *testing.T) {
 			if r.Header.Get("Authorization") == "Bearer b" {
 				io.WriteString(w, `{"data":[{"id":"b-only"},{"id":"shared"}]}`)
 			} else {
-				io.WriteString(w, `{"data":[{"id":"a-only"},{"id":"shared"}]}`)
+				name, context := "Original", 4096
+				if refreshed.Load() {
+					name, context = "Refreshed", 8192
+				}
+				fmt.Fprintf(w, `{"data":[{"id":"a-only","name":%q,"context_window":%d,"capabilities":["vision"]},{"id":"shared"}]}`, name, context)
 			}
 			return
 		}
@@ -173,6 +185,25 @@ func TestWorkflowAvailabilityCatalogSyncBatchAndCustomDelete(t *testing.T) {
 		if _, ok := snapshot.ResolveModel("catalog", id); !ok {
 			t.Fatalf("account catalog %s lost", id)
 		}
+	}
+	if model, _ := snapshot.ResolveModel("catalog", "a-only"); model.Name != "Original" || model.ContextWindow != 4096 || len(model.Capabilities) != 1 || model.Capabilities[0] != "vision" {
+		t.Fatalf("discovery dropped metadata: %+v", model)
+	}
+	if model, _ := snapshot.ResolveModel("catalog", "shared"); model.Name != "shared" {
+		t.Fatalf("missing display fallback: %+v", model)
+	}
+	refreshed.Store(true)
+	w = doJSON(t, mux, cookie, "POST", "/admin/v1/models/catalog-sync", `{}`)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"success":true`) {
+		t.Fatalf("metadata refresh: %d %s", w.Code, w.Body)
+	}
+	restarted, err := runtime.NewManager(context.Background(), store.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ = restarted.Load()
+	if model, _ := snapshot.ResolveModel("catalog", "a-only"); model.Name != "Refreshed" || model.ContextWindow != 8192 || len(model.Capabilities) != 1 || model.Capabilities[0] != "vision" {
+		t.Fatalf("metadata refresh not durable: %+v", model)
 	}
 	before := snapshot.ConfigRevision()
 	fail.Store(true)

@@ -395,7 +395,7 @@ func (h *Handler) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	result := h.validateConnection(r.Context(), connection, node, body.Transport, body.ModelID)
 	if !result.OK {
-		writeError(w, http.StatusBadGateway, "connection_test_failed", result.Error)
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": map[string]any{"code": "connection_test_failed", "message": result.Error, "upstreamStatus": result.Status}})
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -542,6 +542,7 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 		result.Error = "provider base URL is not allowed by outbound network policy"
 		return result
 	}
+	endpoint = nativeEndpointPath(parsed.Path, transportName, endpoint)
 	if transportName == string(registry.TransportSystemOne) {
 		// Base URL already points at the typed endpoint; only a spec-declared
 		// override appends a path, matching ingress dispatch.
@@ -674,6 +675,18 @@ func (h *Handler) fetchModels(ctx context.Context, connectionID string) ([]strin
 }
 
 func (h *Handler) fetchConnectionModels(ctx context.Context, connection credentials.Connection, node credentials.Node) ([]string, error) {
+	models, err := h.fetchConnectionModelEntries(ctx, connection, node)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(models))
+	for _, model := range models {
+		ids = append(ids, model.ID)
+	}
+	return ids, nil
+}
+
+func (h *Handler) fetchConnectionModelEntries(ctx context.Context, connection credentials.Connection, node credentials.Node) ([]discovery.Model, error) {
 	baseURL := node.BaseURL
 	path := "models"
 	if node.Kind == credentials.NodeBuiltin {
@@ -688,13 +701,6 @@ func (h *Handler) fetchConnectionModels(ctx context.Context, connection credenti
 	}
 	if slicesContain(node.Transports, string(registry.TransportOllama)) {
 		path = "api/tags"
-	}
-	if node.Kind == credentials.NodeBuiltin && !slicesContain(node.Transports, string(registry.TransportOpenAIChat)) {
-		if spec, ok := h.providerSpec(node.ProviderID); ok && slicesContain(node.Transports, string(registry.TransportAnthropic)) {
-			if endpoint, ok := spec.EndpointFor(registry.TransportAnthropic); ok {
-				path = strings.TrimSuffix(strings.TrimSuffix(endpoint, "/messages"), "/v1/messages") + "/models"
-			}
-		}
 	}
 	style := discovery.AuthBearer
 	if slicesContain(node.Transports, string(registry.TransportGemini)) {
@@ -717,7 +723,7 @@ func (h *Handler) fetchConnectionModels(ctx context.Context, connection credenti
 	case credentials.AuthCookie:
 		style, credential = discovery.AuthCookie, secret.Cookie
 	}
-	return client.Models(ctx, discovery.Request{ProviderID: node.ProviderID, BaseURL: baseURL, Path: path, Credential: credential, AuthStyle: style})
+	return client.ModelEntries(ctx, discovery.Request{ProviderID: node.ProviderID, BaseURL: baseURL, Path: path, Credential: credential, AuthStyle: style})
 }
 
 func (h *Handler) handlePutModel(w http.ResponseWriter, r *http.Request) {
@@ -733,6 +739,17 @@ func (h *Handler) handlePutModel(w http.ResponseWriter, r *http.Request) {
 	if body.ProviderID == "" || body.ID == "" || !validProbeModel(body.ID) || body.Context < 0 || body.Kind != "" && body.Kind != "llm" && body.Kind != "systemone" {
 		writeError(w, http.StatusBadRequest, "invalid_model", "provider id and model id are required; context window cannot be negative")
 		return
+	}
+	if h.opts.Runtime != nil && body.Kind != "" {
+		snapshot, err := h.opts.Runtime.Load()
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime model catalog is unavailable")
+			return
+		}
+		if snapshot.ModelKind(runtime.Model{ProviderID: body.ProviderID, ID: body.ID, Kind: body.Kind}) != body.Kind {
+			writeError(w, http.StatusBadRequest, "intrinsic_model_kind", "model kind is fixed by its provider transport")
+			return
+		}
 	}
 	for i, capability := range body.Caps {
 		if capability == "imageToText" {
@@ -764,7 +781,7 @@ func (h *Handler) handleDeleteModel(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
-	if body.ProviderID == "" || body.ModelID == "" {
+	if body.ProviderID == "" || body.ModelID == "" || !validProbeModel(body.ModelID) {
 		writeError(w, http.StatusBadRequest, "invalid_model", "provider id and model id are required")
 		return
 	}
