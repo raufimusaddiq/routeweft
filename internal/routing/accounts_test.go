@@ -86,6 +86,22 @@ func TestCooldownDeadlineHonorsResetAndRetryAfter(t *testing.T) {
 	if !got.Equal(now.Add(20 * time.Second)) {
 		t.Fatalf("retry deadline %s", got)
 	}
+	for _, tc := range []struct {
+		outcome Outcome
+		delay   time.Duration
+	}{
+		{OutcomeAuthRefreshRequired, 2 * time.Minute},
+		{OutcomeRetrySameAccount, time.Minute},
+	} {
+		classification := Classification{Outcome: tc.outcome}
+		if !classification.AllowsFallback() || !CooldownDeadline(classification, now, time.Minute).Equal(now.Add(tc.delay)) {
+			t.Fatalf("missing cooldown for %s", tc.outcome)
+		}
+		classification.RetryAfterSeconds = 15
+		if !CooldownDeadline(classification, now, time.Minute).Equal(now.Add(15 * time.Second)) {
+			t.Fatalf("Retry-After lost for %s", tc.outcome)
+		}
+	}
 }
 
 func TestClassifyErrorRefinesNormalizedKinds(t *testing.T) {

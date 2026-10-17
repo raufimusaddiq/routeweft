@@ -44,7 +44,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 		if resolved, ok := snapshot.ServingModel(model); ok {
 			providerID = resolved.ProviderID
 		}
-		accounts, known := h.PlanProviderAttempts(snapshot, providerID, model, time.Now())
+		accounts, known := h.planProviderAttempts(snapshot, providerID, model, source, time.Now())
 		if !known {
 			return nil, routing.ProviderRef{}, &dispatchError{404, "model_not_found", fmt.Sprintf("model %q is not configured for inference", model)}
 		}
@@ -108,8 +108,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			classification.Outcome = mapped.Outcome
 		}
 		h.recordClassification(provider.ConnectionID, classification, time.Now())
-		fallback := classification.AllowsFallback() || classification.Outcome == routing.OutcomeQuotaLock || classification.Outcome == routing.OutcomeAuthRefreshRequired || classification.Outcome == routing.OutcomeRetrySameAccount
-		if fallback && readErr == nil && index+1 < len(candidates) {
+		if classification.AllowsFallback() && readErr == nil && index+1 < len(candidates) {
 			response.Body.Close()
 			continue
 		}

@@ -231,7 +231,7 @@ func TestConfiguredServingStrategiesAndEligibility(t *testing.T) {
 }
 
 func TestConfiguredServingFallbackAndTerminalErrors(t *testing.T) {
-	for _, status := range []int{401, 429, 503, 400, 413} {
+	for _, status := range []int{401, 403, 408, 409, 429, 503, 400, 413} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			var first, second atomic.Int32
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -257,15 +257,101 @@ func TestConfiguredServingFallbackAndTerminalErrors(t *testing.T) {
 				if w.Code != 200 || second.Load() != 1 || w.Header().Get("X-Failed-Only") != "" {
 					t.Fatalf("fallback %d: %d %s calls=%d", status, w.Code, w.Body, second.Load())
 				}
-				if status == 429 {
-					until, ok := a.runtime.State().CooldownUntil("account-00", time.Now())
-					if !ok || time.Until(until) < 115*time.Second {
-						t.Fatal("Retry-After not honored")
-					}
-					serveRequest(a.Handler(), key, "/v1/chat/completions", `{"model":"fast","messages":[{"role":"user","content":"hi"}]}`)
-					if first.Load() != 1 {
-						t.Fatal("cooldown account retried")
-					}
+				until, ok := a.runtime.State().CooldownUntil("account-00", time.Now())
+				if !ok || time.Until(until) < 115*time.Second {
+					t.Fatal("Retry-After not honored")
+				}
+				serveRequest(a.Handler(), key, "/v1/chat/completions", `{"model":"fast","messages":[{"role":"user","content":"hi"}]}`)
+				if first.Load() != 1 {
+					t.Fatal("cooldown account retried")
+				}
+			}
+		})
+	}
+}
+
+func TestConfiguredServingSkipsTransportMismatchBeforeRotationAndCap(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if token == "" {
+			token = r.Header.Get("X-Api-Key")
+		}
+		fmt.Fprint(w, token)
+	}))
+	defer upstream.Close()
+	a, key := servingApp(t, upstream.URL, 12)
+	ctx := context.Background()
+	node, err := a.creds.GetNode(ctx, "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.Transports = []string{"openai-chat"}
+	if _, err := a.creds.PutNode(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	node.ID, node.Prefix, node.Transports = "native", "", []string{"openai-responses", "anthropic-messages"}
+	if _, err := a.creds.PutNode(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"account-10", "account-11"} {
+		connection, err := a.creds.GetConnection(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		connection.NodeID = node.ID
+		if _, err := a.creds.PutConnection(ctx, connection); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := a.runtime.SetSettings(ctx, map[string]string{"providerStrategy": "round-robin"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/v1/responses", "/v1/messages"} {
+		for _, want := range []string{"10", "11", "10", "11"} {
+			w := serveRequest(a.Handler(), key, path, `{"model":"fast","input":"hi","messages":[{"role":"user","content":"hi"}],"max_tokens":1}`)
+			if w.Code != 200 || w.Body.String() != "synthetic-"+want {
+				t.Fatalf("%s status=%d body=%s want=%s", path, w.Code, w.Body, want)
+			}
+		}
+	}
+	if err := a.creds.SetConnectionEnabled(ctx, "account-10", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.creds.SetConnectionEnabled(ctx, "account-11", false); err != nil {
+		t.Fatal(err)
+	}
+	w := serveRequest(a.Handler(), key, "/v1/responses", `{"model":"fast","input":"hi"}`)
+	if w.Code != 503 || !strings.Contains(w.Body.String(), "no_eligible_accounts") {
+		t.Fatalf("unsupported transports status=%d body=%s", w.Code, w.Body)
+	}
+}
+
+func TestConfiguredServingSharesProviderRotationAcrossModelsAndAliases(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, r.Header.Get("Authorization")) }))
+	defer upstream.Close()
+	for _, tc := range []struct {
+		strategy string
+		want     []string
+	}{
+		{"round-robin", []string{"0", "1", "0", "1"}},
+		{"sticky-round-robin", []string{"0", "0", "1", "1"}},
+	} {
+		t.Run(tc.strategy, func(t *testing.T) {
+			a, key := servingApp(t, upstream.URL, 2)
+			ctx := context.Background()
+			if err := a.runtime.PutModel(ctx, runtime.Model{ProviderID: "test", ID: "other"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.runtime.PutAlias(ctx, "other-alias", runtime.ModelRef{ProviderID: "test", ModelID: "other"}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := a.runtime.SetSettings(ctx, map[string]string{"providerStrategy": tc.strategy, "stickyRoundRobinLimit": "2"}, nil); err != nil {
+				t.Fatal(err)
+			}
+			for i, model := range []string{"fast", "test/other", "test/vendor/model", "other-alias"} {
+				w := serveRequest(a.Handler(), key, "/v1/chat/completions", fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hi"}]}`, model))
+				if w.Code != 200 || w.Body.String() != "Bearer synthetic-"+tc.want[i] {
+					t.Fatalf("model=%s status=%d body=%s want=%s", model, w.Code, w.Body, tc.want[i])
 				}
 			}
 		})

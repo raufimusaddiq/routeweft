@@ -39,7 +39,11 @@ func CooldownDeadline(classification Classification, now time.Time, defaultBacko
 	if classification.RetryAfterSeconds > 0 {
 		return now.Add(time.Duration(classification.RetryAfterSeconds) * time.Second)
 	}
-	if classification.AllowsFallback() || classification.Outcome == OutcomeQuotaLock {
+	if classification.Outcome == OutcomeAuthRefreshRequired {
+		// Pinned v1 cools invalid credentials for two minutes.
+		return now.Add(2 * time.Minute)
+	}
+	if classification.AllowsFallback() {
 		return now.Add(defaultBackoff)
 	}
 	return time.Time{}

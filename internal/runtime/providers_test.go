@@ -43,6 +43,9 @@ func TestProviderSnapshotCompileCommitPublish(t *testing.T) {
 	if !before.providerConfig.Connections[0].Secret.Empty() {
 		t.Fatal("snapshot retained credential material")
 	}
+	if _, ok := before.AccountProvider("openai/gpt-4o", "c", "anthropic-messages"); ok {
+		t.Fatal("unsupported native transport is eligible")
+	}
 	if _, err := m.db.ExecContext(ctx, `CREATE TRIGGER fail_connection BEFORE UPDATE ON provider_connections BEGIN SELECT RAISE(ABORT,'synthetic failure'); END`); err != nil {
 		t.Fatal(err)
 	}
@@ -108,6 +111,18 @@ func TestProviderMetadataUpdatesAndConcurrentSnapshots(t *testing.T) {
 	accounts, _ = snapshot.ProviderCandidates("test/model")
 	if !accounts[0].Enabled {
 		t.Fatal("caller mutated snapshot accounts")
+	}
+	for _, move := range []struct {
+		id        string
+		direction int
+	}{{"1", -1}, {"0", 1}} {
+		if err := s.MoveConnection(ctx, move.id, move.direction); err != nil {
+			t.Fatal(err)
+		}
+		after, _ := m.Load()
+		if after != snapshot {
+			t.Fatal("boundary move published a new snapshot/revision")
+		}
 	}
 	var group sync.WaitGroup
 	for i := 0; i < 4; i++ {

@@ -268,6 +268,10 @@ func (h *Handler) PlanAttempts(snapshot *runtime.RuntimeSnapshot, model string, 
 // PlanProviderAttempts selects candidates with an explicit provider identity,
 // required when model names are aliases or unqualified.
 func (h *Handler) PlanProviderAttempts(snapshot *runtime.RuntimeSnapshot, providerID, model string, now time.Time) ([]routing.Account, bool) {
+	return h.planProviderAttempts(snapshot, providerID, model, "", now)
+}
+
+func (h *Handler) planProviderAttempts(snapshot *runtime.RuntimeSnapshot, providerID, model, source string, now time.Time) ([]routing.Account, bool) {
 	if h.opts.Candidates == nil {
 		return nil, false
 	}
@@ -288,6 +292,11 @@ func (h *Handler) PlanProviderAttempts(snapshot *runtime.RuntimeSnapshot, provid
 		Cursor:      cursor,
 		StickyLimit: limit,
 		Eligible: func(account routing.Account) bool {
+			if source != "" && h.opts.AccountProvider != nil {
+				if _, ok := h.opts.AccountProvider(snapshot, model, account.ID, source); !ok {
+					return false
+				}
+			}
 			if state == nil {
 				return true
 			}

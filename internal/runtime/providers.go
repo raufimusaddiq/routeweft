@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -117,11 +118,12 @@ func (s *RuntimeSnapshot) AccountProvider(requested, account, source string) (ro
 		return routing.ProviderRef{}, false
 	}
 	protocol := config.node.Transports[0]
-	for _, transport := range config.node.Transports {
-		if transport == source {
-			protocol = source
-			break
+	if source != "" {
+		// shortcut: native-only app candidates; R02 adds translator-aware eligibility.
+		if !slices.Contains(config.node.Transports, source) {
+			return routing.ProviderRef{}, false
 		}
+		protocol = source
 	}
 	return routing.ProviderRef{ProviderID: model.ProviderID, ConnectionID: account, BaseURL: config.node.BaseURL, Protocol: protocol, UpstreamModel: model.ID, Endpoint: config.endpoints[registry.Protocol(protocol)]}, true
 }

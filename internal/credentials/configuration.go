@@ -3,6 +3,7 @@ package credentials
 import (
 	"context"
 	"database/sql"
+	"errors"
 )
 
 // Configuration contains routing metadata only, never credential material.
@@ -26,17 +27,26 @@ func (c Configuration) Clone() Configuration {
 // Install it before serving; standalone stores retain their transaction behavior.
 type Publisher func(context.Context, func(*Configuration) error, func(*sql.Tx) error) error
 
+var errNoChange = errors.New("provider configuration unchanged")
+
 func (s *Store) SetPublisher(publish Publisher) { s.publish = publish }
 
 func (s *Store) update(ctx context.Context, change func(*Configuration) error, persist func(*sql.Tx) error) error {
 	if s.publish != nil {
-		return s.publish(ctx, change, persist)
+		err := s.publish(ctx, change, persist)
+		if errors.Is(err, errNoChange) {
+			return nil
+		}
+		return err
 	}
 	config, err := LoadConfiguration(ctx, s.db)
 	if err != nil {
 		return err
 	}
 	if err := change(&config); err != nil {
+		if errors.Is(err, errNoChange) {
+			return nil
+		}
 		return err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

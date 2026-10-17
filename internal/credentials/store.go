@@ -422,8 +422,7 @@ func (s *Store) MoveConnection(ctx context.Context, id string, direction int) er
 			if ordered[i].ID == id {
 				next := i + direction
 				if next < 0 || next >= len(ordered) {
-					ordered = nil
-					return nil
+					return errNoChange
 				}
 				ordered[i], ordered[next] = ordered[next], ordered[i]
 				break

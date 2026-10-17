@@ -420,6 +420,11 @@ Supported base strategies:
 
 RR/sticky cursors are in RuntimeState and must not synchronously persist per request.
 
+Provider RR/sticky cursors are provider-local, shared across its models and
+aliases, matching pinned v1 `src/sse/services/auth.js` (`selectionState` is keyed
+by provider ID). Transport eligibility is applied before account rotation and
+the attempt cap; unsupported native transports do not consume an attempt.
+
 ## 14. Cooldown and error classification
 
 Provider adapters classify responses into categories such as:

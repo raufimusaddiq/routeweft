@@ -34,7 +34,7 @@ func ClassifyStatus(status int, header http.Header) Classification {
 	case status >= 200 && status < 300:
 		return Classification{Outcome: OutcomeSuccess}
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
-		return Classification{Outcome: OutcomeAuthRefreshRequired}
+		return Classification{Outcome: OutcomeAuthRefreshRequired, RetryAfterSeconds: retryAfter}
 	case status == http.StatusTooManyRequests:
 		return Classification{Outcome: OutcomeQuotaLock, RetryAfterSeconds: retryAfter}
 	case status == http.StatusRequestTimeout || status == http.StatusConflict:
@@ -78,7 +78,7 @@ func ClassifyError(kind string, status int) Classification {
 // AllowsFallback reports whether another candidate may be attempted.
 func (c Classification) AllowsFallback() bool {
 	switch c.Outcome {
-	case OutcomeFallbackAccount, OutcomeFallbackProvider:
+	case OutcomeFallbackAccount, OutcomeFallbackProvider, OutcomeQuotaLock, OutcomeAuthRefreshRequired, OutcomeRetrySameAccount:
 		return true
 	default:
 		return false
