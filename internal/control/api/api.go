@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/adminauth"
 	"github.com/raufimusaddiq/routeweft/internal/auth"
@@ -20,6 +22,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/providers/discovery"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
+	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
 // SettingsStore reads and mutates durable settings through the runtime manager's
@@ -84,6 +87,7 @@ type TelemetryReader interface {
 type ProviderCatalog interface {
 	PutModel(context.Context, runtime.Model) error
 	ReplaceDiscoveredModels(context.Context, string, []runtime.Model) error
+	MergeDiscoveredModels(context.Context, string, []runtime.Model) error
 	PutAlias(context.Context, string, runtime.ModelRef) error
 	DeleteAlias(context.Context, string) error
 	DeleteModel(context.Context, string, string) error
@@ -106,12 +110,27 @@ const sessionCookieName = "routeweft_admin_session"
 
 // Handler serves the authenticated control API.
 type Handler struct {
-	opts      Options
-	throttler *throttler
+	opts       Options
+	throttler  *throttler
+	workflowMu sync.Mutex
+	batchBusy  bool
+	syncState  catalogSyncState
+	kiloCache  []suggestedModel
+	kiloAt     time.Time
+	kiloFlight chan struct{}
 }
 
 // New builds the control API handler.
-func New(opts Options) *Handler { return &Handler{opts: opts, throttler: newThrottler()} }
+func New(opts Options) *Handler {
+	if opts.DiscoveryClient == nil || opts.DiscoveryClient.HTTP == nil {
+		client := transport.NewSSRFProtectedClient()
+		if opts.AllowPrivateUpstreams {
+			client = transport.NewTrustedLocalSSRFProtectedClient()
+		}
+		opts.DiscoveryClient = &discovery.Client{HTTP: client}
+	}
+	return &Handler{opts: opts, throttler: newThrottler()}
+}
 
 // Attach registers the admin routes on the shared mux.
 func (h *Handler) Attach(mux *http.ServeMux) {
@@ -135,6 +154,15 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.Handle("POST /admin/v1/connections/{id}/discover", h.requireSessionHandler(http.HandlerFunc(h.handleDiscoverModels)))
 	mux.Handle("POST /admin/v1/models", h.requireSessionHandler(http.HandlerFunc(h.handlePutModel)))
 	mux.Handle("DELETE /admin/v1/models", h.requireSessionHandler(http.HandlerFunc(h.handleDeleteModel)))
+	mux.HandleFunc("POST /admin/v1/provider-nodes/validate", h.requireSession(h.handleValidateNode))
+	mux.HandleFunc("POST /admin/v1/providers/test-batch", h.requireSession(h.handleTestBatch))
+	mux.HandleFunc("GET /admin/v1/models/availability", h.requireSession(h.handleAvailability))
+	mux.HandleFunc("POST /admin/v1/models/availability", h.requireSession(h.handleAvailability))
+	mux.HandleFunc("GET /admin/v1/models/catalog-sync", h.requireSession(h.handleCatalogSync))
+	mux.HandleFunc("POST /admin/v1/models/catalog-sync", h.requireSession(h.handleCatalogSync))
+	mux.HandleFunc("GET /admin/v1/providers/suggested-models", h.requireSession(h.handleSuggestedModels))
+	mux.HandleFunc("GET /admin/v1/providers/kilo/free-models", h.requireSession(h.handleKiloFreeModels))
+	mux.HandleFunc("GET /admin/v1/provider-nodes/{id}/routes", h.requireSession(h.handleNodeRoutes))
 	mux.Handle("PATCH /admin/v1/models/disabled", h.requireSessionHandler(http.HandlerFunc(h.handleDisableModel)))
 	mux.Handle("POST /admin/v1/aliases", h.requireSessionHandler(http.HandlerFunc(h.handlePutAlias)))
 	mux.Handle("DELETE /admin/v1/aliases/{alias}", h.requireSessionHandler(http.HandlerFunc(h.handleDeleteAlias)))

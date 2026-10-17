@@ -224,9 +224,25 @@ func TestModelsReadModelFiltersSystemOne(t *testing.T) {
 		{ID: "typesafe", Transports: []registry.Protocol{registry.TransportSystemOne}, Auth: registry.AuthAPIKey, ModelCatalog: registry.CatalogStatic},
 	}
 	ctx := context.Background()
-	if _, err := store.DB().ExecContext(ctx, "INSERT INTO provider_models(provider_id,model_id,display_name,context_window,capabilities) VALUES('openai','gpt-x','GPT X',1000,'[\"vision\"]'),('typesafe','jev-1','Jev',2000,'[]')"); err != nil {
+	if _, err := store.DB().ExecContext(ctx, "INSERT INTO provider_nodes(id,kind,provider_id,name,transports) VALUES('n1','builtin','typesafe','TypeSafe','[\"systemone\"]')"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.DB().ExecContext(ctx, "INSERT INTO provider_nodes(id,kind,provider_id,name,transports) VALUES('n2','builtin','cloudflare-ai','Cloudflare','[\"openai-chat\",\"systemone\"]')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DB().ExecContext(ctx, "INSERT INTO provider_models(provider_id,model_id,display_name,context_window,capabilities) VALUES('openai','gpt-x','GPT X',1000,'[\"vision\"]'),('typesafe','jev-1','Jev',2000,'[]'),('cloudflare-ai','@cf/cloudflare/clef','Clef',2000,'[]')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DB().ExecContext(ctx, `INSERT INTO provider_nodes(id,kind,provider_id,name,prefix,base_url,transports) VALUES('n3','generic','typed-custom','Typed','typed','https://typed.example.com/systemone','["systemone"]');
+INSERT INTO provider_models(provider_id,model_id,capabilities) VALUES('cloudflare-ai','@cf/meta/llama-3-8b-instruct','[]'),('typed-custom','generic-typed','[]');
+INSERT INTO disabled_models(provider_id,model_id) VALUES('typed-custom','generic-typed');`); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := runtime.NewManager(ctx, store.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.opts.Runtime = manager
 	if _, err := handler.opts.Accounts.Bootstrap(ctx, "a1", "operator", "s3cret"); err != nil {
 		t.Fatal(err)
 	}
@@ -249,8 +265,12 @@ func TestModelsReadModelFiltersSystemOne(t *testing.T) {
 		t.Fatalf("models status=%d body=%s", code, body)
 	}
 	code, body = read("/admin/v1/systemone")
-	if code != http.StatusOK || !contains(body, "jev-1") || contains(body, "gpt-x") {
+	if code != http.StatusOK || !contains(body, "jev-1") || !contains(body, "clef") || !contains(body, "generic-typed") || contains(body, "gpt-x") || contains(body, "llama-3") || !contains(body, `"total":3`) {
 		t.Fatalf("systemone status=%d body=%s", code, body)
+	}
+	code, body = read("/admin/v1/systemone?pageSize=1&page=2")
+	if code != 200 || !contains(body, `"total":3`) || !contains(body, "generic-typed") || !contains(body, `"disabled":true`) || !contains(body, `"kind":"systemone"`) {
+		t.Fatalf("typed pagination/disabled metadata: %d %s", code, body)
 	}
 }
 

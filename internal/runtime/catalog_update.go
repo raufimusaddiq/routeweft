@@ -109,6 +109,43 @@ func (m *Manager) PutModel(ctx context.Context, model Model) error {
 	return m.UpdateCatalog(ctx, func(candidate *Candidate) error { candidate.AddModel(model); return nil })
 }
 
+// MergeDiscoveredModels unions account catalogs without erasing known or disabled IDs.
+func (m *Manager) MergeDiscoveredModels(ctx context.Context, provider string, models []Model) error {
+	return m.UpdateCatalog(ctx, func(candidate *Candidate) error {
+		known := map[string]bool{}
+		for _, model := range candidate.Models {
+			if model.ProviderID == provider {
+				known[model.ID] = true
+			}
+		}
+		for _, model := range models {
+			if known[model.ID] {
+				for i := range candidate.Models {
+					if existing := &candidate.Models[i]; existing.ProviderID == provider && existing.ID == model.ID && existing.Source == "discovered" {
+						if model.Name != "" {
+							existing.Name = model.Name
+						}
+						if model.ContextWindow > 0 {
+							existing.ContextWindow = model.ContextWindow
+						}
+						if len(model.Capabilities) > 0 {
+							existing.Capabilities = append([]string(nil), model.Capabilities...)
+						}
+					}
+				}
+				continue
+			}
+			model.ProviderID, model.Source = provider, "discovered"
+			if model.Name == "" {
+				model.Name = model.ID
+			}
+			candidate.AddModel(model)
+			known[model.ID] = true
+		}
+		return nil
+	})
+}
+
 // ErrModelNotFound reports a delete that names no model at all.
 var ErrModelNotFound = errors.New("model not found")
 
@@ -202,7 +239,7 @@ func (m *Manager) DeleteModel(ctx context.Context, provider, model string) error
 				delete(candidate.Aliases, alias)
 			}
 		}
-		delete(candidate.DisabledModels, modelKey(provider, model))
+		candidate.SetModelDisabled(provider, model, false)
 		return nil
 	}, func(tx *sql.Tx) error {
 		// Pricing overrides are stored outside the candidate; drop the dead row.
@@ -252,8 +289,16 @@ func (m *Manager) ReplaceDiscoveredModels(ctx context.Context, providerID string
 			kept = append(kept, model)
 		}
 		candidate.Models = kept
+		protected := make(map[string]bool)
+		for _, model := range kept {
+			if model.ProviderID == providerID {
+				protected[model.ID] = true
+			}
+		}
 		for _, model := range usable {
-			candidate.AddModel(model)
+			if !protected[model.ID] {
+				candidate.AddModel(model)
+			}
 		}
 		return nil
 	})
