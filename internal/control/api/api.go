@@ -149,6 +149,7 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	for _, path := range []string{"overview", "providers", "provider-nodes", "connections", "models", "aliases", "pricing", "combos", "proxy-pools", "keys", "usage", "requests", "quota", "token-saver", "systemone"} {
 		mux.Handle("GET /admin/v1/"+path, h.requireSessionHandler(h.readModel(path)))
 	}
+	mux.Handle("GET /admin/v1/models/disabled", h.requireSessionHandler(h.readModel("models/disabled")))
 	mux.HandleFunc("GET /admin/v1/usage/summary", h.requireSession(h.handleUsageSummary))
 	mux.HandleFunc("POST /admin/v1/quota/refresh", h.requireSession(h.handleQuotaRefresh))
 	mux.Handle("GET /admin/v1/events", h.requireSessionHandler(http.HandlerFunc(h.handleEvents)))

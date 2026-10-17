@@ -72,6 +72,8 @@ func (h *Handler) readModel(name string) http.Handler {
 			err = h.connections(w, r)
 		case "models":
 			err = h.models(w, r, false)
+		case "models/disabled":
+			err = h.disabledModels(w, r)
 		case "aliases":
 			err = h.aliases(w, r)
 		case "pricing":
@@ -283,17 +285,13 @@ FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where+` ORD
 }
 
 func (h *Handler) models(w http.ResponseWriter, r *http.Request, systemOne bool) error {
-	query := `SELECT provider_id,model_id,COALESCE(display_name,''),COALESCE(context_window,0),capabilities,
+	const selectModels = `SELECT provider_id,model_id,COALESCE(display_name,''),COALESCE(context_window,0),capabilities,
 EXISTS(SELECT 1 FROM disabled_models d WHERE d.provider_id=provider_models.provider_id AND d.model_id=provider_models.model_id),
 EXISTS(SELECT 1 FROM custom_models c WHERE c.provider_id=provider_models.provider_id AND c.model_id=provider_models.model_id),updated_at
-FROM provider_models ORDER BY provider_id,model_id`
-	countQuery := "SELECT COUNT(*) FROM provider_models"
+FROM provider_models`
+	const orderModels = " ORDER BY provider_id,model_id"
+	where := ""
 	var args []any
-	if where, filterArgs := providerFilter(r, "provider_id"); where != "" && !systemOne {
-		query = strings.TrimSuffix(query, " ORDER BY provider_id,model_id") + where + " ORDER BY provider_id,model_id"
-		countQuery += where
-		args = filterArgs
-	}
 	if systemOne {
 		var allowed []string
 		for _, spec := range h.opts.Providers {
@@ -305,19 +303,20 @@ FROM provider_models ORDER BY provider_id,model_id`
 			}
 		}
 		if len(allowed) == 0 {
-			query = strings.TrimSuffix(query, " ORDER BY provider_id,model_id") + " WHERE 1=0 ORDER BY provider_id,model_id"
-			countQuery = "SELECT 0"
+			where = " WHERE 1=0"
 		} else {
 			placeholders := make([]string, len(allowed))
 			for i, id := range allowed {
 				placeholders[i] = "?"
 				args = append(args, id)
 			}
-			where := " WHERE provider_id IN (" + strings.Join(placeholders, ",") + ")"
-			query = strings.TrimSuffix(query, " ORDER BY provider_id,model_id") + where + " ORDER BY provider_id,model_id"
-			countQuery += where
+			where = " WHERE provider_id IN (" + strings.Join(placeholders, ",") + ")"
 		}
+	} else {
+		where, args = providerFilter(r, "provider_id")
 	}
+	query := selectModels + where + orderModels
+	countQuery := "SELECT COUNT(*) FROM provider_models" + where
 	return h.sqlList(w, r, query, countQuery, func(rows *sql.Rows) (any, error) {
 		var item struct {
 			ProviderID string   `json:"providerId"`
@@ -334,6 +333,23 @@ FROM provider_models ORDER BY provider_id,model_id`
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(item.CapsRaw), &item.Caps); err != nil {
+			return nil, err
+		}
+		return item, nil
+	}, args...)
+}
+
+// disabledModels lists disabled provider/model pairs. Built-in (seed) models
+// have no provider_models row, so this is the only read path that reports their
+// disabled state.
+func (h *Handler) disabledModels(w http.ResponseWriter, r *http.Request) error {
+	where, args := providerFilter(r, "provider_id")
+	return h.sqlList(w, r, "SELECT provider_id,model_id FROM disabled_models"+where+" ORDER BY provider_id,model_id", "SELECT COUNT(*) FROM disabled_models"+where, func(rows *sql.Rows) (any, error) {
+		var item struct {
+			ProviderID string `json:"providerId"`
+			ModelID    string `json:"modelId"`
+		}
+		if err := rows.Scan(&item.ProviderID, &item.ModelID); err != nil {
 			return nil, err
 		}
 		return item, nil

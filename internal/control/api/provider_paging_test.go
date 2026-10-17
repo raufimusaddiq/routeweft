@@ -210,3 +210,45 @@ func TestDeleteNonCustomModelIsConflictNotNotFound(t *testing.T) {
 		t.Fatalf("stale discovered row count=%d err=%v, want 0", n, err)
 	}
 }
+
+func TestDeleteModelRefusedWhileCapacityAdapterPoolUsesIt(t *testing.T) {
+	handler, mux, store := newReadAPI(t)
+	defer store.Close()
+	cookie := adminCookie(t, handler)
+	if rec := callAdmin(mux, cookie, http.MethodPost, "/admin/v1/models", `{"providerId":"openai","id":"vis"}`); rec.Code != http.StatusOK {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	if rec := callAdmin(mux, cookie, http.MethodPut, "/admin/v1/capability-adapters/vision", `{"enabled":true,"pool":[{"providerId":"openai","modelId":"vis"}]}`); rec.Code != http.StatusOK {
+		t.Fatalf("adapter: %d %s", rec.Code, rec.Body)
+	}
+	rec := callAdmin(mux, cookie, http.MethodDelete, "/admin/v1/models", `{"providerId":"openai","modelId":"vis"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "model_in_use") || !strings.Contains(rec.Body.String(), "capacityAdapterVision") {
+		t.Fatalf("delete with adapter pool member: %d %s, want 409 naming capacityAdapterVision", rec.Code, rec.Body)
+	}
+	if rec := callAdmin(mux, cookie, http.MethodPut, "/admin/v1/capability-adapters/vision", `{"enabled":false,"pool":[]}`); rec.Code != http.StatusOK {
+		t.Fatalf("clear adapter: %d %s", rec.Code, rec.Body)
+	}
+	if rec := callAdmin(mux, cookie, http.MethodDelete, "/admin/v1/models", `{"providerId":"openai","modelId":"vis"}`); rec.Code != http.StatusOK {
+		t.Fatalf("delete after clearing pool: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// Built-in models have no provider_models row; their disabled state must still
+// be readable (and settable) so the dashboard can show Disable/Enable for them.
+func TestDisabledModelsListCoversModelsWithoutCatalogRows(t *testing.T) {
+	handler, mux, store := newReadAPI(t)
+	defer store.Close()
+	cookie := adminCookie(t, handler)
+	if rec := callAdmin(mux, cookie, http.MethodPatch, "/admin/v1/models/disabled", `{"providerId":"openai","modelId":"builtin-only","disabled":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("disable: %d %s", rec.Code, rec.Body)
+	}
+	rec := callAdmin(mux, cookie, http.MethodGet, "/admin/v1/models/disabled?providerId=openai", "")
+	var got listPage
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if rec.Code != http.StatusOK || got.Total != 1 || got.Items[0]["modelId"] != "builtin-only" {
+		t.Fatalf("disabled list: %d %s", rec.Code, rec.Body)
+	}
+	if rec := callAdmin(mux, cookie, http.MethodGet, "/admin/v1/models/disabled?providerId=other", ""); !strings.Contains(rec.Body.String(), `"total":0`) {
+		t.Fatalf("providerId filter not applied: %s", rec.Body)
+	}
+}

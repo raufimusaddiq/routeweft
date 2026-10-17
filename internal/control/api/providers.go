@@ -718,7 +718,7 @@ func (h *Handler) handleDeleteModel(w http.ResponseWriter, r *http.Request) {
 	err := h.opts.ProviderCatalog.DeleteModel(r.Context(), body.ProviderID, body.ModelID)
 	var inUse *runtime.ModelInUseError
 	if errors.As(err, &inUse) {
-		writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]any{"code": "model_in_use", "message": "model is used by combos: " + strings.Join(inUse.Combos, ", ") + "; remove it from them first"}, "combos": inUse.Combos})
+		writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]any{"code": "model_in_use", "message": inUse.Error() + "; remove it from them first"}, "combos": inUse.Combos, "adapters": inUse.Adapters})
 		return
 	}
 	if errors.Is(err, runtime.ErrModelNotCustom) {

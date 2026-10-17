@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -86,15 +87,26 @@ var ErrModelNotCustom = errors.New("model is not a custom model")
 
 // ModelInUseError reports a delete refused because Combos still route to the
 // model. Deleting would silently change those routes (or leave them empty).
-type ModelInUseError struct{ Combos []string }
+type ModelInUseError struct {
+	Combos   []string
+	Adapters []string // capacity adapter settings whose pool lists the model
+}
 
 func (e *ModelInUseError) Error() string {
-	return "model is used by combos: " + strings.Join(e.Combos, ", ")
+	var parts []string
+	if len(e.Combos) > 0 {
+		parts = append(parts, "combos: "+strings.Join(e.Combos, ", "))
+	}
+	if len(e.Adapters) > 0 {
+		parts = append(parts, "capacity adapters: "+strings.Join(e.Adapters, ", "))
+	}
+	return "model is used by " + strings.Join(parts, "; ")
 }
 
 // DeleteModel removes one custom (operator-managed) model plus the aliases,
 // pricing override and disabled marker that referenced it. It refuses while a
-// Combo references the model, directly or through one of its aliases.
+// Combo or capacity adapter pool references the model, directly or through one
+// of its aliases.
 func (m *Manager) DeleteModel(ctx context.Context, provider, model string) error {
 	_, err := m.update(ctx, func(candidate *Candidate) error {
 		index := -1
@@ -127,9 +139,31 @@ func (m *Manager) DeleteModel(ctx context.Context, provider, model string) error
 				}
 			}
 		}
-		if len(users) > 0 {
+		var adapters []string
+		for key, value := range candidate.Settings {
+			if !strings.HasPrefix(key, "capacityAdapter") {
+				continue
+			}
+			var adapter struct {
+				Pool []struct {
+					ProviderID string `json:"providerId"`
+					ModelID    string `json:"modelId"`
+				} `json:"pool"`
+			}
+			if json.Unmarshal([]byte(value), &adapter) != nil {
+				continue
+			}
+			for _, entry := range adapter.Pool {
+				if _, ok := names[entry.ModelID]; ok && (entry.ProviderID == "" || entry.ProviderID == provider) {
+					adapters = append(adapters, key)
+					break
+				}
+			}
+		}
+		if len(users) > 0 || len(adapters) > 0 {
 			sort.Strings(users)
-			return &ModelInUseError{Combos: users}
+			sort.Strings(adapters)
+			return &ModelInUseError{Combos: users, Adapters: adapters}
 		}
 		candidate.Models = append(candidate.Models[:index], candidate.Models[index+1:]...)
 		for alias, target := range candidate.Aliases {

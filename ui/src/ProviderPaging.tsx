@@ -5,10 +5,10 @@ export const PAGE_SIZE = 25
 type Page<T> = { items: T[]; page: number; total: number }
 
 /** Fetches every page of a bounded admin list (provider catalog, nodes, pools). */
-export async function fetchAll<T>(resource: string, onUnauthorized: () => void): Promise<T[] | null> {
+export async function fetchAll<T>(resource: string, onUnauthorized: () => void, query = ''): Promise<T[] | null> {
   const items: T[] = []
   for (let page = 1; page <= 1000; page += 1) {
-    const response = await fetch(`/admin/v1/${resource}?page=${page}&pageSize=100`, { credentials: 'same-origin' })
+    const response = await fetch(`/admin/v1/${resource}?${query ? `${query}&` : ''}page=${page}&pageSize=100`, { credentials: 'same-origin' })
     if (response.status === 401) { onUnauthorized(); return null }
     if (!response.ok) throw new Error(`Could not load ${resource}.`)
     const body = await response.json() as Page<T>
@@ -20,13 +20,15 @@ export async function fetchAll<T>(resource: string, onUnauthorized: () => void):
 
 /** One provider-scoped, server-paged list. `reload` changes force a refetch. */
 export function usePagedList<T>(resource: string, providerId: string, reload: number, onUnauthorized: () => void) {
-  const [page, setPage] = useState(1)
+  // The page is keyed by provider so a provider switch fetches page 1 in the
+  // same render instead of reusing the previous provider's page number.
+  const [pageState, setPageState] = useState({ providerId, page: 1 })
+  const page = pageState.providerId === providerId ? pageState.page : 1
+  const setPage = useCallback((next: number) => setPageState({ providerId, page: next }), [providerId])
   const [items, setItems] = useState<T[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-
-  useEffect(() => { setPage(1) }, [providerId])
 
   const fetchPage = useCallback(async (signal: AbortSignal) => {
     if (!providerId) { setItems([]); setTotal(0); return }
@@ -44,7 +46,7 @@ export function usePagedList<T>(resource: string, providerId: string, reload: nu
     } catch (cause) {
       if (!signal.aborted) setError(cause instanceof Error ? cause.message : `Could not load ${resource}.`)
     } finally { if (!signal.aborted) setLoading(false) }
-  }, [resource, providerId, page, onUnauthorized])
+  }, [resource, providerId, page, setPage, onUnauthorized])
 
   useEffect(() => {
     const controller = new AbortController()
