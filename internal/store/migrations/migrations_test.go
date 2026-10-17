@@ -51,17 +51,20 @@ func TestFreshMigrationAndRestart(t *testing.T) {
 	}
 }
 
-func TestV6ModelKindUpgrade(t *testing.T) {
+func TestV7ModelKindUpgrade(t *testing.T) {
 	ctx := context.Background()
 	s, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "routeweft.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if err := NewRunner(s.DB(), v1, v2, v3, v4, v5).Apply(ctx); err != nil {
+	if err := NewRunner(s.DB(), v1, v2, v3, v4, v5, v6).Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.DB().ExecContext(ctx, `INSERT INTO provider_models(provider_id,model_id,capabilities) VALUES('provider','model','["vision"]')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `INSERT INTO api_keys(id,name,key_hash,key_prefix,access_restricted,access_allow) VALUES('k1','restricted','synthetic-hash','rw_test',1,'["provider/model"]')`); err != nil {
 		t.Fatal(err)
 	}
 	if err := NewRunner(s.DB()).Apply(ctx); err != nil {
@@ -73,6 +76,11 @@ func TestV6ModelKindUpgrade(t *testing.T) {
 	}
 	if _, err := s.DB().ExecContext(ctx, "UPDATE provider_models SET kind='image'"); err == nil {
 		t.Fatal("excluded media kind accepted")
+	}
+	var restricted bool
+	var allow string
+	if err := s.DB().QueryRowContext(ctx, "SELECT access_restricted,access_allow FROM api_keys WHERE id='k1'").Scan(&restricted, &allow); err != nil || !restricted || allow != `["provider/model"]` {
+		t.Fatalf("v7 changed v6 key policy: %v %q %v", restricted, allow, err)
 	}
 }
 
@@ -198,5 +206,31 @@ func TestVersionTableCheckDoesNotCreateTable(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatal("read-only version check created the migration table")
+	}
+}
+
+func TestV6KeyAccessUpgradeKeepsExistingKeysUnrestricted(t *testing.T) {
+	ctx := context.Background()
+	s, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "routeweft.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := NewRunner(s.DB(), v1, v2, v3, v4, v5).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `INSERT INTO api_keys(id,name,key_hash,key_prefix) VALUES('k1','existing','h','rw_x')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewRunner(s.DB()).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var restricted int
+	var allow string
+	if err := s.DB().QueryRowContext(ctx, `SELECT access_restricted,access_allow FROM api_keys WHERE id='k1'`).Scan(&restricted, &allow); err != nil {
+		t.Fatal(err)
+	}
+	if restricted != 0 || allow != "[]" {
+		t.Fatalf("existing key became restricted=%d allow=%s; upgrade must not narrow access", restricted, allow)
 	}
 }

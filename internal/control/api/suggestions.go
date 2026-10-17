@@ -145,12 +145,41 @@ func (h *Handler) handleSuggestedModels(w http.ResponseWriter, r *http.Request) 
 
 func (h *Handler) handleKiloFreeModels(w http.ResponseWriter, r *http.Request) {
 	h.workflowMu.Lock()
+	waited := false
+	if done := h.kiloFlight; done != nil {
+		h.workflowMu.Unlock()
+		select {
+		case <-done:
+		case <-r.Context().Done():
+			writeError(w, http.StatusRequestTimeout, "catalog_canceled", "catalog refresh was canceled")
+			return
+		}
+		h.workflowMu.Lock()
+		waited = true
+	}
 	models, at := h.kiloCache, h.kiloAt
-	h.workflowMu.Unlock()
-	if models != nil && time.Since(at) < time.Hour {
-		writeJSON(w, 200, map[string]any{"models": models, "cached": true})
+	if waited || models != nil && time.Since(at) < time.Hour {
+		h.workflowMu.Unlock()
+		if models == nil {
+			writeJSON(w, 502, map[string]any{"models": []suggestedModel{}, "error": "Kilo catalog fetch failed"})
+			return
+		}
+		result := map[string]any{"models": models, "cached": true}
+		if time.Since(at) >= time.Hour {
+			result["warning"] = "catalog fetch failed; last known models retained"
+		}
+		writeJSON(w, 200, result)
 		return
 	}
+	done := make(chan struct{})
+	h.kiloFlight = done
+	h.workflowMu.Unlock()
+	defer func() {
+		h.workflowMu.Lock()
+		h.kiloFlight = nil
+		close(done)
+		h.workflowMu.Unlock()
+	}()
 	models, err := h.fetchSuggestions(r.Context(), "https://api.kilo.ai/api/gateway/models", "kilo-free")
 	if err != nil {
 		h.workflowMu.Lock()

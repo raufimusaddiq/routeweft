@@ -191,7 +191,8 @@ func TestCatalogInfoKindsAndOllamaTags(t *testing.T) {
 			t.Fatalf("invalid key: %s: %d", path, w.Code)
 		}
 	}
-	if err := manager.SetAPIKeyPaused(ctx, entry.ID, true); err != nil {
+	paused := true
+	if err := manager.UpdateAPIKey(ctx, entry.ID, &paused, nil); err != nil {
 		t.Fatal(err)
 	}
 	if w := get("/api/tags", key); w.Code != 401 {

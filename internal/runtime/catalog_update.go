@@ -20,6 +20,16 @@ var ErrAPIKeyNotFound = errors.New("API key not found")
 // CreateAPIKey persists and publishes a newly created client key, returning its
 // one-time plaintext value.
 func (m *Manager) CreateAPIKey(ctx context.Context, name string) (auth.Entry, string, error) {
+	return m.CreateAPIKeyWithAccess(ctx, name, false, nil)
+}
+
+// CreateAPIKeyWithAccess creates a key and its access policy in one atomic
+// mutation, so a restricted key is never briefly unrestricted.
+func (m *Manager) CreateAPIKeyWithAccess(ctx context.Context, name string, restricted bool, allow []string) (auth.Entry, string, error) {
+	allow, err := auth.NormalizeAllow(allow)
+	if err != nil {
+		return auth.Entry{}, "", err
+	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return auth.Entry{}, "", errors.New("API key name is required")
@@ -29,8 +39,8 @@ func (m *Manager) CreateAPIKey(ctx context.Context, name string) (auth.Entry, st
 		return auth.Entry{}, "", fmt.Errorf("generate API key: %w", err)
 	}
 	plaintext := "rw_" + base64.RawURLEncoding.EncodeToString(secret[:])
-	entry := auth.Entry{ID: uuid.NewString(), Name: name, Prefix: displayPrefix(plaintext), Hash: auth.Hash(plaintext)}
-	_, err := m.Update(ctx, func(candidate *Candidate) error {
+	entry := auth.Entry{ID: uuid.NewString(), Name: name, Prefix: displayPrefix(plaintext), Hash: auth.Hash(plaintext), Restricted: restricted, Allow: allow}
+	_, err = m.Update(ctx, func(candidate *Candidate) error {
 		for _, existing := range candidate.APIKeys {
 			if existing.Hash == entry.Hash {
 				return errors.New("API key already exists")
@@ -46,17 +56,38 @@ func (m *Manager) CreateAPIKey(ctx context.Context, name string) (auth.Entry, st
 	return entry, plaintext, nil
 }
 
-// SetAPIKeyPaused pauses or resumes a key and publishes the new key index.
-func (m *Manager) SetAPIKeyPaused(ctx context.Context, id string, paused bool) error {
+// UpdateAPIKey applies a pause change and/or an access-policy replacement in one
+// atomic mutation, so a failure never leaves half of the change published.
+func (m *Manager) UpdateAPIKey(ctx context.Context, id string, paused *bool, access *KeyAccess) error {
+	var allow []string
+	if access != nil {
+		var err error
+		if allow, err = auth.NormalizeAllow(access.Allow); err != nil {
+			return err
+		}
+	}
 	return m.UpdateCatalog(ctx, func(candidate *Candidate) error {
 		for i := range candidate.APIKeys {
-			if candidate.APIKeys[i].ID == id {
-				candidate.APIKeys[i].Paused = paused
-				return nil
+			if candidate.APIKeys[i].ID != id {
+				continue
 			}
+			if paused != nil {
+				candidate.APIKeys[i].Paused = *paused
+			}
+			if access != nil {
+				candidate.APIKeys[i].Restricted = access.Restricted
+				candidate.APIKeys[i].Allow = allow
+			}
+			return nil
 		}
 		return ErrAPIKeyNotFound
 	})
+}
+
+// KeyAccess is a key's model/Combo allowlist policy.
+type KeyAccess struct {
+	Restricted bool
+	Allow      []string
 }
 
 // DeleteAPIKey revokes a key immediately on snapshot publication.

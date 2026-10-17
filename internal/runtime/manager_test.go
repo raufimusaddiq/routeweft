@@ -394,3 +394,36 @@ func TestCatalogConcurrentReadsAndUpdatesRaceSafe(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestAPIKeyAccessPolicySurvivesRestartAndMutations(t *testing.T) {
+	ctx := context.Background()
+	manager, store := newTestManager(t)
+	defer store.Close()
+	entry, secret, err := manager.CreateAPIKeyWithAccess(ctx, "scoped", true, []string{"team", "fast"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.UpdateAPIKey(ctx, entry.ID, boolPtr(false), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.UpdateAPIKey(ctx, "missing", nil, &KeyAccess{Restricted: true}); !errors.Is(err, ErrAPIKeyNotFound) {
+		t.Fatalf("missing key err = %v", err)
+	}
+	if err := manager.UpdateAPIKey(ctx, entry.ID, nil, &KeyAccess{Restricted: true, Allow: []string{""}}); err == nil {
+		t.Fatal("blank allowlist entry must be rejected")
+	}
+	reloaded, err := NewManager(ctx, store.DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := reloaded.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := snapshot.APIKeys().Lookup(secret)
+	if !ok || !got.Restricted || len(got.Allow) != 2 || got.Allow[0] != "fast" || got.Allow[1] != "team" {
+		t.Fatalf("reloaded key = %+v ok=%v, want restricted [fast team]", got, ok)
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }

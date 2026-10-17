@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"context"
+	"github.com/raufimusaddiq/routeweft/internal/auth"
 	"testing"
 
 	"github.com/raufimusaddiq/routeweft/internal/routing"
@@ -39,7 +40,7 @@ func comboSnapshot(t *testing.T) *runtime.RuntimeSnapshot {
 func TestPlanComboReorderAndDeselect(t *testing.T) {
 	snapshot := comboSnapshot(t)
 	handler := New(nil, Options{State: runtime.NewState()})
-	ordered, ok := handler.PlanCombo(snapshot, "auto", []routing.CapabilityRequirement{{Name: "vision"}})
+	ordered, ok := handler.PlanCombo(snapshot, auth.Entry{}, "auto", []routing.CapabilityRequirement{{Name: "vision"}})
 	if !ok || len(ordered) != 3 {
 		t.Fatalf("ordered=%+v ok=%v", ordered, ok)
 	}
@@ -51,14 +52,14 @@ func TestPlanComboReorderAndDeselect(t *testing.T) {
 func TestPlanComboAdapterPrependWhenNoCandidateCapable(t *testing.T) {
 	snapshot := comboSnapshot(t)
 	handler := New(nil, Options{State: runtime.NewState()})
-	ordered, ok := handler.PlanCombo(snapshot, "auto", []routing.CapabilityRequirement{{Name: "audio-input", AdapterEnabled: true, AdapterPool: []routing.Member{{ProviderID: "adapter", ModelID: "audio", Capabilities: []string{"audio-input"}}}}})
+	ordered, ok := handler.PlanCombo(snapshot, auth.Entry{}, "auto", []routing.CapabilityRequirement{{Name: "audio-input", AdapterEnabled: true, AdapterPool: []routing.Member{{ProviderID: "adapter", ModelID: "audio", Capabilities: []string{"audio-input"}}}}})
 	if !ok || len(ordered) != 4 {
 		t.Fatalf("ordered=%+v", ordered)
 	}
 	if ordered[0].ModelID != "audio" {
 		t.Fatalf("adapter not prepended: %+v", ordered)
 	}
-	empty, ok := handler.PlanCombo(snapshot, "auto", []routing.CapabilityRequirement{{Name: "audio-input", AdapterEnabled: true}})
+	empty, ok := handler.PlanCombo(snapshot, auth.Entry{}, "auto", []routing.CapabilityRequirement{{Name: "audio-input", AdapterEnabled: true}})
 	if !ok || len(empty) != 3 {
 		t.Fatalf("empty pool must be no-op: %+v", empty)
 	}
@@ -67,13 +68,13 @@ func TestPlanComboAdapterPrependWhenNoCandidateCapable(t *testing.T) {
 func TestPlanComboStickyRoundRobinRotates(t *testing.T) {
 	snapshot := comboSnapshot(t)
 	handler := New(nil, Options{State: runtime.NewState()})
-	first, _ := handler.PlanCombo(snapshot, "auto", nil)
-	second, _ := handler.PlanCombo(snapshot, "auto", nil)
-	third, _ := handler.PlanCombo(snapshot, "auto", nil)
+	first, _ := handler.PlanCombo(snapshot, auth.Entry{}, "auto", nil)
+	second, _ := handler.PlanCombo(snapshot, auth.Entry{}, "auto", nil)
+	third, _ := handler.PlanCombo(snapshot, auth.Entry{}, "auto", nil)
 	if first[0].ModelID != "text" || second[0].ModelID != "text" || third[0].ModelID != "claude" {
 		t.Fatalf("sticky rotation wrong first=%+v second=%+v third=%+v", first, second, third)
 	}
-	if _, ok := handler.PlanCombo(snapshot, "missing", nil); ok {
+	if _, ok := handler.PlanCombo(snapshot, auth.Entry{}, "missing", nil); ok {
 		t.Fatal("unknown combo resolved")
 	}
 }
@@ -111,14 +112,14 @@ func TestPlanComboAdaptersStayAheadAndRotateIndependently(t *testing.T) {
 	// Adapters lack the capability so the pool stays a no-op until members carry it.
 	requirement.AdapterPool[0].Capabilities = []string{"audio-input"}
 	requirement.AdapterPool[1].Capabilities = []string{"audio-input"}
-	first, ok := handler.PlanCombo(snapshot, "adapter", []routing.CapabilityRequirement{requirement})
+	first, ok := handler.PlanCombo(snapshot, auth.Entry{}, "adapter", []routing.CapabilityRequirement{requirement})
 	if !ok || len(first) != 4 {
 		t.Fatalf("first=%+v", first)
 	}
 	if first[0].ModelID != "vision-audio" || first[1].ModelID != "text-audio" {
 		t.Fatalf("adapter tier not first or misordered: %+v", first)
 	}
-	second, _ := handler.PlanCombo(snapshot, "adapter", []routing.CapabilityRequirement{requirement})
+	second, _ := handler.PlanCombo(snapshot, auth.Entry{}, "adapter", []routing.CapabilityRequirement{requirement})
 	if second[0].ModelID != "text-audio" || second[1].ModelID != "vision-audio" {
 		t.Fatalf("adapter rotation wrong: %+v", second)
 	}
@@ -152,7 +153,7 @@ func TestPlanComboRequestTrimsHistoryForSmallerAdapter(t *testing.T) {
 		AdapterContextWindow: 3,
 		AdapterPool:          []routing.Member{{ProviderID: "adapter", ModelID: "audio", Capabilities: []string{"audio-input"}}},
 	}
-	ordered, trimmed, ok := handler.PlanComboRequest(snapshot, "auto", []routing.CapabilityRequirement{requirement}, messages, routing.ContextBudget{Head: 1, Tail: 1})
+	ordered, trimmed, ok := handler.PlanComboRequest(snapshot, auth.Entry{}, "auto", []routing.CapabilityRequirement{requirement}, messages, routing.ContextBudget{Head: 1, Tail: 1})
 	if !ok || len(ordered) != 4 {
 		t.Fatalf("ordered=%+v ok=%v", ordered, ok)
 	}
@@ -160,7 +161,7 @@ func TestPlanComboRequestTrimsHistoryForSmallerAdapter(t *testing.T) {
 		t.Fatalf("trimmed=%v", trimmed)
 	}
 	// Without an adapter requirement the original history is preserved.
-	_, untouched, _ := handler.PlanComboRequest(snapshot, "auto", nil, messages, routing.ContextBudget{Head: 1, Tail: 1})
+	_, untouched, _ := handler.PlanComboRequest(snapshot, auth.Entry{}, "auto", nil, messages, routing.ContextBudget{Head: 1, Tail: 1})
 	if len(untouched) != len(messages) {
 		t.Fatalf("untouched=%v", untouched)
 	}
@@ -191,7 +192,7 @@ func TestPlanComboDedupesAdapterAndSelectsPerCapability(t *testing.T) {
 	handler := New(nil, Options{State: runtime.NewState()})
 	// vision is already a capable Combo member, so no adapter is needed for it;
 	// audio-input is unmet and pulls exactly one adapter candidate.
-	ordered, ok := handler.PlanCombo(snapshot, "multi", []routing.CapabilityRequirement{
+	ordered, ok := handler.PlanCombo(snapshot, auth.Entry{}, "multi", []routing.CapabilityRequirement{
 		{Name: "vision"},
 		{Name: "audio-input", AdapterEnabled: true, AdapterPool: []routing.Member{{ProviderID: "adapter", ModelID: "audio", Capabilities: []string{"audio-input"}}}},
 	})
@@ -238,7 +239,7 @@ func TestPlanComboRRNeverPutsNonCapableFallbackFirst(t *testing.T) {
 	state := runtime.NewState()
 	state.NextCursor("combo|rr") // start from the non-capable member before capability reorder.
 	handler := New(nil, Options{State: state})
-	ordered, ok := handler.PlanCombo(snapshot, "rr", []routing.CapabilityRequirement{{Name: "vision"}})
+	ordered, ok := handler.PlanCombo(snapshot, auth.Entry{}, "rr", []routing.CapabilityRequirement{{Name: "vision"}})
 	if !ok || ordered[0].ModelID != "v2" || ordered[1].ModelID != "v1" || ordered[2].ModelID != "text" {
 		t.Fatalf("RR capability order=%+v", ordered)
 	}

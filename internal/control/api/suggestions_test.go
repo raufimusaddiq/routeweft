@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -39,6 +40,116 @@ func TestSuggestionFiltersPinnedFixtures(t *testing.T) {
 type workflowHTTPFunc func(*http.Request) (*http.Response, error)
 
 func (f workflowHTTPFunc) Do(r *http.Request) (*http.Response, error) { return f(r) }
+
+type catalogWaitContext struct {
+	context.Context
+	entered chan struct{}
+}
+
+func (c catalogWaitContext) Done() <-chan struct{} {
+	select {
+	case c.entered <- struct{}{}:
+	default:
+	}
+	return c.Context.Done()
+}
+
+func TestKiloRefreshCoalescesWaitersAndAllowsCancellation(t *testing.T) {
+	var calls atomic.Int32
+	var fail atomic.Bool
+	var release chan struct{}
+	started := make(chan struct{}, 1)
+	client := workflowHTTPFunc(func(r *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+		if fail.Load() {
+			return nil, errors.New("synthetic failure")
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"data":[{"id":"free","isFree":true}]}`))}, nil
+	})
+	h, mux, store, _, cookie := newProvidersAPI(t, false, &discovery.Client{HTTP: client})
+	defer store.Close()
+	for _, tc := range []struct {
+		name       string
+		warm, fail bool
+	}{
+		{"cold", false, false}, {"expired", true, false}, {"expired failure", true, true}, {"cold failure", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			release = make(chan struct{})
+			t.Cleanup(func() {
+				select {
+				case <-release:
+				default:
+					close(release)
+				}
+			})
+			fail.Store(tc.fail)
+			h.workflowMu.Lock()
+			h.kiloCache = nil
+			if tc.warm {
+				h.kiloCache = []suggestedModel{{ID: "free"}}
+			}
+			h.kiloAt = time.Now().Add(-2 * time.Hour)
+			h.workflowMu.Unlock()
+			before := calls.Load()
+			codes := make(chan int, 9)
+			path := "/admin/v1/providers/kilo/free-models"
+			go func() { codes <- doJSON(t, mux, cookie, "GET", path, "").Code }()
+			select {
+			case <-started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("refresh did not start")
+			}
+			for i := 0; i < 8; i++ {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				entered := make(chan struct{}, 1)
+				r := httptest.NewRequest("GET", path, nil).WithContext(catalogWaitContext{Context: ctx, entered: entered})
+				r.AddCookie(cookie)
+				go func() { w := httptest.NewRecorder(); mux.ServeHTTP(w, r); codes <- w.Code }()
+				select {
+				case <-entered:
+				case <-time.After(5 * time.Second):
+					t.Fatal("waiter did not enter refresh gate")
+				}
+				if i == 0 {
+					cancel()
+					select {
+					case code := <-codes:
+						if code != 408 {
+							t.Fatalf("canceled waiter: %d", code)
+						}
+					case <-time.After(5 * time.Second):
+						t.Fatal("canceled waiter blocked")
+					}
+				}
+			}
+			close(release)
+			want := 200
+			if tc.fail && !tc.warm {
+				want = 502
+			}
+			for i := 0; i < 8; i++ {
+				select {
+				case code := <-codes:
+					if code != want {
+						t.Errorf("coalesced response: %d, want %d", code, want)
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("refresh waiter blocked")
+				}
+			}
+			if got := calls.Load() - before; got != 1 {
+				t.Fatalf("refresh fan-out: %d upstream calls, want 1", got)
+			}
+		})
+	}
+}
 
 func TestKiloCacheFreshExpiredFailureAndConcurrency(t *testing.T) {
 	var calls atomic.Int32

@@ -256,6 +256,9 @@ func validateCatalog(config Config) error {
 		if hex.EncodeToString(decoded) != key.Hash {
 			return fmt.Errorf("API key %q digest is not canonical lowercase hex", key.ID)
 		}
+		if _, err := auth.NormalizeAllow(key.Allow); err != nil {
+			return fmt.Errorf("API key %q access: %w", key.ID, err)
+		}
 		if _, exists := keys[key.Hash]; exists {
 			return fmt.Errorf("duplicate API key digest")
 		}

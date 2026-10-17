@@ -237,6 +237,26 @@ func TestWorkflowAvailabilityCatalogSyncBatchAndCustomDelete(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"total":3`) || !strings.Contains(w.Body.String(), `"passed":1`) {
 		t.Fatalf("corrupt credential stopped batch: %d %s", w.Code, w.Body)
 	}
+	checkAttribution := func(w *httptest.ResponseRecorder, method string) {
+		t.Helper()
+		var result struct {
+			Results []validationResult `json:"results"`
+		}
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &result) != nil {
+			t.Fatalf("workflow failed: %d %s", w.Code, w.Body)
+		}
+		for _, item := range result.Results {
+			if item.ConnectionID == corrupt.ID {
+				if item.OK || item.ProviderID != "broken" || item.Method != method || item.Error == "" {
+					t.Fatalf("unattributed credential failure: %+v", item)
+				}
+				return
+			}
+		}
+		t.Fatal("corrupt account result missing")
+	}
+	checkAttribution(w, "inference")
+	checkAttribution(doJSON(t, mux, cookie, "POST", "/admin/v1/models/catalog-sync", `{}`), "models")
 	w = doJSON(t, mux, cookie, "POST", "/admin/v1/providers/test-batch", `{"mode":"provider","providerId":"catalog","modelId":"shared"}`)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"total":2`) {
 		t.Fatalf("unselected corrupt credential included: %d %s", w.Code, w.Body)

@@ -44,6 +44,11 @@ func (h *Handler) dispatchError(w http.ResponseWriter, r *http.Request, err erro
 // Dispatch completes retries before exposing upstream headers. Once a stream
 // starts it is never replayed, including after a partial response or disconnect.
 func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSnapshot, model, source string, compact bool, prepare func(routing.ProviderRef) (ChatTranslation, error)) (*http.Response, routing.ProviderRef, error) {
+	// Key policy is checked before any resolution so a restricted key cannot
+	// probe which models, aliases or Combos exist.
+	if !requestPermitted(callerKey(r, snapshot), snapshot, model) {
+		return nil, routing.ProviderRef{}, &dispatchError{403, "model_not_allowed", modelNotAllowed(model)}
+	}
 	var candidates []routing.ProviderRef
 	if h.opts.Candidates != nil && h.opts.AccountProvider != nil {
 		providerID := modelProviderID(model)

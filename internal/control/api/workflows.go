@@ -161,27 +161,27 @@ func (h *Handler) handleValidateNode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, h.validateConnection(r.Context(), c, node, body.Transports[0], body.ModelID))
 }
 
-func (h *Handler) workflowIDs(ctx context.Context) ([]string, error) {
+func (h *Handler) workflowConnections(ctx context.Context) ([]credentials.Connection, error) {
 	if h.opts.DB == nil || h.opts.Credentials == nil {
 		return nil, errors.New("credentials unavailable")
 	}
-	rows, err := h.opts.DB.QueryContext(ctx, "SELECT id FROM provider_connections WHERE enabled=1 ORDER BY priority,name,id LIMIT 201")
+	rows, err := h.opts.DB.QueryContext(ctx, "SELECT c.id,n.provider_id FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id WHERE c.enabled=1 ORDER BY c.priority,c.name,c.id LIMIT 201")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	ids := []string{}
+	connections := []credentials.Connection{}
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var connection credentials.Connection
+		if err := rows.Scan(&connection.ID, &connection.ProviderID); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		connections = append(connections, connection)
 	}
-	if len(ids) > 200 {
+	if len(connections) > 200 {
 		return nil, errors.New("workflow supports at most 200 enabled connections; disable or scope connections first")
 	}
-	return ids, rows.Err()
+	return connections, rows.Err()
 }
 
 func batchMatch(mode, provider string, c credentials.Connection, node credentials.Node) bool {
@@ -246,26 +246,27 @@ func (h *Handler) handleTestBatch(w http.ResponseWriter, r *http.Request) {
 	for _, node := range config.Nodes {
 		nodes[node.ID] = node
 	}
-	ids := []string{}
+	selected := []credentials.Connection{}
 	for _, c := range config.Connections {
 		if c.Enabled && batchMatch(body.Mode, body.ProviderID, c, nodes[c.NodeID]) {
-			ids = append(ids, c.ID)
+			selected = append(selected, c)
 		}
 	}
-	if len(ids) > 200 {
+	if len(selected) > 200 {
 		writeError(w, 400, "batch_too_large", "select at most 200 connections using a narrower mode")
 		return
 	}
 	results := []validationResult{}
 	passed := 0
-	for _, id := range ids {
+	for _, configured := range selected {
+		id := configured.ID
 		if ctx.Err() != nil {
 			writeError(w, http.StatusRequestTimeout, "batch_canceled", "batch validation was canceled")
 			return
 		}
 		c, node, err := h.workflowConnection(ctx, id)
 		if err != nil {
-			results = append(results, validationResult{ConnectionID: id, Error: "connection credentials unavailable"})
+			results = append(results, validationResult{ConnectionID: id, ProviderID: configured.ProviderID, Method: "inference", Error: "connection credentials unavailable"})
 			continue
 		}
 		result := h.validateConnection(ctx, c, node, "", body.ModelID)
@@ -367,7 +368,7 @@ func (h *Handler) handleCatalogSync(w http.ResponseWriter, r *http.Request) {
 			h.syncState.LastError = "one or more catalogs could not be synced; known models retained"
 		}
 	}()
-	ids, err := h.workflowIDs(ctx)
+	connections, err := h.workflowConnections(ctx)
 	if err != nil || h.opts.ProviderCatalog == nil {
 		failed = true
 		writeError(w, 503, "catalog_unavailable", "catalog sync requires credential and model storage (maximum 200 connections)")
@@ -375,17 +376,19 @@ func (h *Handler) handleCatalogSync(w http.ResponseWriter, r *http.Request) {
 	}
 	merged := map[string][]runtime.Model{}
 	results := []validationResult{}
-	for _, id := range ids {
+	for _, configured := range connections {
+		id := configured.ID
 		if ctx.Err() != nil {
 			failed = true
 			writeError(w, http.StatusRequestTimeout, "sync_canceled", "catalog sync was canceled")
 			return
 		}
 		c, node, err := h.workflowConnection(ctx, id)
-		result := validationResult{ConnectionID: id, ProviderID: node.ProviderID, Method: "models"}
+		result := validationResult{ConnectionID: id, ProviderID: configured.ProviderID, Method: "models"}
 		if err != nil {
 			result.Error = "connection credentials unavailable"
 		} else {
+			result.ProviderID = node.ProviderID
 			probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 			var models []discovery.Model
 			models, err = h.fetchConnectionModelEntries(probeCtx, c, node)
