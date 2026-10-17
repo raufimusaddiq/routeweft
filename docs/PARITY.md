@@ -83,8 +83,11 @@ boundary implements bidirectional Chat Completions / Responses translation:
 - Evidence: synthetic `internal/protocol/openai/testdata/chat-responses.json`
   and paired SSE transcripts; adapter tests and actual-app restart/closed-DB,
   native-first/fallback and cancellation regressions in
-  `internal/app/translation_test.go`. These are deterministic Routeweft wire
-  fixtures informed by pinned v1, not the R11 differential certification suite.
+  `internal/app/translation_test.go`. Fixed expected SSE transcripts pin the
+  complete translated wire output. Compact eligibility, stream failure
+  cooldown and non-stream exact/over-limit regressions are included. These are
+  deterministic Routeweft wire fixtures informed by pinned v1, not the R11
+  differential certification suite.
 - R02 remains **PARTIAL**. Messages in both directions, count-tokens parity,
   Gemini/Ollama/System One hooks and provider-specific compact semantics are
   separate dependent work, not implemented or certified by this first PR.

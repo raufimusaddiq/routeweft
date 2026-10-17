@@ -240,7 +240,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
 		return
 	}
-	response, provider, err := h.dispatchAttempts(r, snapshot, request.Model, anthropicadapter.MessagesProtocol, func(provider routing.ProviderRef) (ChatTranslation, error) {
+	response, provider, err := h.dispatchAttempts(r, snapshot, request.Model, anthropicadapter.MessagesProtocol, false, func(provider routing.ProviderRef) (ChatTranslation, error) {
 		plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: anthropicadapter.MessagesProtocol, Provider: provider})
 		if err != nil {
 			return ChatTranslation{}, err

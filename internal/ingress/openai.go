@@ -53,7 +53,7 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 	}
 	started := time.Now()
 	var translation ChatTranslation
-	response, provider, err := h.dispatchAttempts(r, snapshot, model, source, func(provider routing.ProviderRef) (ChatTranslation, error) {
+	response, provider, err := h.dispatchAttempts(r, snapshot, model, source, compact, func(provider routing.ProviderRef) (ChatTranslation, error) {
 		translation = ChatTranslation{}
 		plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: source, Provider: provider})
 		if err != nil {
@@ -158,6 +158,9 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 		}
 		if err != nil {
 			status = http.StatusBadGateway
+			if r.Context().Err() == nil {
+				h.recordClassification(provider.ConnectionID, classifyResponse(status, nil), time.Now())
+			}
 		}
 		h.emitOutcome(r, provider, status, true, usage, started)
 		return

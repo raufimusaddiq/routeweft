@@ -334,6 +334,8 @@ Native paths bypass these converters. Translated responses are bounded to
 32 MiB (body or total SSE input) with a 4 MiB SSE event/line bound. A truncated,
 malformed or oversized translated stream emits a failure terminal rather than
 claiming successful completion; client cancellation emits no synthetic terminal.
+Failed translated streams penalize the selected account through normal runtime
+cooldown classification; client cancellation does not penalize the account.
 
 ## 10. Protocol adapters
 
@@ -436,6 +438,12 @@ the attempt cap. Matching native accounts form the first tier; accounts with an
 implemented translation form the fallback tier. RR/sticky ordering applies
 within each tier using the same provider-local cursor. Unsupported pairs do not
 consume an attempt; both tiers share the same request wire budget.
+Eligibility includes the request mode and wired translator: a compact request
+cannot select a Chat account without a compact translator. Such accounts are
+skipped before dispatch, preserving `503 no_eligible_accounts` when none remain
+and preserving the final real upstream error when failover is exhausted.
+Protocol-pair support belongs to the translator layer; snapshot resolution uses
+the caller's policy. Each account reference is resolved once per request.
 
 ## 14. Cooldown and error classification
 

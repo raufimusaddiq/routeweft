@@ -8,6 +8,28 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 )
 
+// CanTranslate declares the implemented protocol pairs, independent of providers.
+func CanTranslate(source, target string) bool {
+	return source == openai.ChatProtocol && target == openai.ResponsesProtocol ||
+		source == openai.ResponsesProtocol && target == openai.ChatProtocol
+}
+
+func (h *Handler) translationAvailable(source, target string, compact bool) bool {
+	if !CanTranslate(source, target) {
+		return false
+	}
+	switch source {
+	case openai.ChatProtocol:
+		return h.opts.TranslateChat != nil
+	case openai.ResponsesProtocol:
+		if compact {
+			return h.opts.TranslateResponsesCompact != nil
+		}
+		return h.opts.TranslateResponses != nil
+	}
+	return false
+}
+
 // TranslateChat wires both halves of a Chat request served by Responses.
 func TranslateChat(request *openai.ChatRequest, target string) (ChatTranslation, error) {
 	if target != openai.ResponsesProtocol {

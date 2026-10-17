@@ -5,6 +5,10 @@ provider calls. The JSON cases assert the complete translated request and
 non-streaming response. Paired SSE transcripts prove incremental text,
 reasoning, interleaved parallel calls, a custom-tool wrapper and a usage trailer;
 the final assembled stream must match the corresponding JSON response.
+The committed `chat-expected.sse` and `responses-expected.sse` transcripts also
+pin complete event order, IDs, deltas, sequence numbers and usage. Actual-app
+tests compare bytes against these fixed expectations, never another converter
+invocation.
 
 Behavioral reference read-only at LiteRouter `1c3b9f47`:
 

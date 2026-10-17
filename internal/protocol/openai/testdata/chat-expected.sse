@@ -1,0 +1,24 @@
+data: {"choices":[{"delta":{"role":"assistant"},"finish_reason":null,"index":0}],"created":1735689602,"id":"chatcmpl_resp_fixture","model":"vendor/model","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"reasoning_content":"Thought"},"finish_reason":null,"index":0}],"created":1735689602,"id":"chatcmpl_resp_fixture","model":"vendor/model","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"content":"An"},"finish_reason":null,"index":0}],"created":1735689602,"id":"chatcmpl_resp_fixture","model":"vendor/model","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"content":"swer"},"finish_reason":null,"index":0}],"created":1735689602,"id":"chatcmpl_resp_fixture","model":"vendor/model","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"","name":"lookup"},"id":"call_1","index":0,"type":"function"}]},"finish_reason":null,"index":0}],"created":1735689602,"id":"chatcmpl_resp_fixture","model":"vendor/model","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"","name":"lookup"},"id":"call_2","index":1,"type":"function"}]},"finish_reason":null,"index":0}],"created":1735689602,"id":"chatcmpl_resp_fixture","model":"vendor/model","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{\"city\":"},"index":1}]},"finish_reason":null,"index":0}],"created":1735689602,"id":"chatcmpl_resp_fixture","model":"vendor/model","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{\"city\":"},"index":0}]},"finish_reason":null,"index":0}],"created":1735689602,"id":"chatcmpl_resp_fixture","model":"vendor/model","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"\"Oslo\"}"},"index":0}]},"finish_reason":null,"index":0}],"created":1735689602,"id":"chatcmpl_resp_fixture","model":"vendor/model","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"\"Lima\"}"},"index":1}]},"finish_reason":null,"index":0}],"created":1735689602,"id":"chatcmpl_resp_fixture","model":"vendor/model","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}],"created":1735689602,"id":"chatcmpl_resp_fixture","model":"vendor/model","object":"chat.completion.chunk","usage":{"completion_tokens":18,"completion_tokens_details":{"reasoning_tokens":4},"prompt_tokens":31,"prompt_tokens_details":{"cached_tokens":8},"total_tokens":49}}
+
+data: [DONE]
+

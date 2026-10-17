@@ -255,8 +255,8 @@ func comboAccounts(members []routing.Member) []routing.Account {
 	return accounts
 }
 
-func (h *Handler) planProviderAttempts(snapshot *runtime.RuntimeSnapshot, providerID, model, source string, now time.Time) ([]routing.Account, bool) {
-	if h.opts.Candidates == nil {
+func (h *Handler) planProviderAttempts(snapshot *runtime.RuntimeSnapshot, providerID, model, source string, compact bool, now time.Time) ([]routing.ProviderRef, bool) {
+	if h.opts.Candidates == nil || h.opts.AccountProvider == nil {
 		return nil, false
 	}
 	accounts, ok := h.opts.Candidates(snapshot, model)
@@ -271,21 +271,21 @@ func (h *Handler) planProviderAttempts(snapshot *runtime.RuntimeSnapshot, provid
 		cursor = state.NextCursor("provider|" + providerID)
 	}
 	var translated []routing.Account
-	if source != "" && h.opts.AccountProvider != nil {
-		native := make([]routing.Account, 0, len(accounts))
-		for _, account := range accounts {
-			provider, ok := h.opts.AccountProvider(snapshot, model, account.ID, source)
-			if !ok {
-				continue
-			}
-			if provider.Protocol == source {
-				native = append(native, account)
-			} else {
-				translated = append(translated, account)
-			}
+	resolved := make(map[string]routing.ProviderRef, len(accounts))
+	native := make([]routing.Account, 0, len(accounts))
+	for _, account := range accounts {
+		provider, ok := h.opts.AccountProvider(snapshot, model, account.ID, source)
+		if !ok || provider.Protocol != source && !h.translationAvailable(source, provider.Protocol, compact) {
+			continue
 		}
-		accounts = native
+		resolved[account.ID] = provider
+		if provider.Protocol == source {
+			native = append(native, account)
+		} else {
+			translated = append(translated, account)
+		}
 	}
+	accounts = native
 	options := routing.SelectOptions{
 		Strategy:    strategy,
 		Accounts:    accounts,
@@ -310,7 +310,14 @@ func (h *Handler) planProviderAttempts(snapshot *runtime.RuntimeSnapshot, provid
 		options.Accounts = translated
 		selection.Candidates = append(selection.Candidates, routing.Select(options).Candidates...)
 	}
-	return selection.Candidates, true
+	candidates := make([]routing.ProviderRef, 0, min(len(selection.Candidates), maxAccountAttempts))
+	for _, account := range selection.Candidates {
+		candidates = append(candidates, resolved[account.ID])
+		if len(candidates) == maxAccountAttempts {
+			break
+		}
+	}
+	return candidates, true
 }
 
 func modelProviderID(model string) string {
