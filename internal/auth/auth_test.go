@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -66,6 +67,31 @@ func BenchmarkAPIKeyLookup(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		if _, ok := index.Lookup(key); !ok {
 			b.Fatal("benchmark key lookup failed")
+		}
+	}
+}
+
+func TestEntryPermitsAndNormalizeAllow(t *testing.T) {
+	if !(Entry{}).Permits("anything") {
+		t.Fatal("unrestricted key must permit everything")
+	}
+	scoped := Entry{Restricted: true, Allow: []string{"fast", "openai/gpt-4o"}}
+	if !scoped.Permits("fast") || !scoped.Permits("other", "openai/gpt-4o") {
+		t.Fatal("restricted key must permit listed identities")
+	}
+	if scoped.Permits("openai/gpt-4") || scoped.Permits() {
+		t.Fatal("restricted key must reject unlisted identities")
+	}
+	if (Entry{Restricted: true}).Permits("fast") {
+		t.Fatal("restricted key with an empty allowlist permits nothing")
+	}
+	got, err := NormalizeAllow([]string{" b ", "a", "b"})
+	if err != nil || len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("NormalizeAllow = %v, %v", got, err)
+	}
+	for _, bad := range [][]string{{""}, {"  "}, {strings.Repeat("x", MaxAllowLength+1)}} {
+		if _, err := NormalizeAllow(bad); err == nil {
+			t.Fatalf("NormalizeAllow(%q) should fail", bad)
 		}
 	}
 }

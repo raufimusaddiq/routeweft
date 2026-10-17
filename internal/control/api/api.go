@@ -32,7 +32,8 @@ type SettingsStore interface {
 // KeyManager mutates the compiled inference-key index through RuntimeSnapshot.
 type KeyManager interface {
 	CreateAPIKey(context.Context, string) (auth.Entry, string, error)
-	SetAPIKeyPaused(context.Context, string, bool) error
+	CreateAPIKeyWithAccess(context.Context, string, bool, []string) (auth.Entry, string, error)
+	UpdateAPIKey(context.Context, string, *bool, *runtime.KeyAccess) error
 	DeleteAPIKey(context.Context, string) error
 }
 

@@ -714,7 +714,7 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 	if kind == "" {
 		kind = "llm"
 	}
-	data := publicModels(snapshot, kind)
+	data := publicModels(snapshot, kind, accessFilter(r, snapshot))
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
 }
 
@@ -732,7 +732,7 @@ func (h *Handler) handleModelsInfo(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "invalid_request_error", "query parameter id is required")
 		return
 	}
-	for _, model := range publicModels(snapshot, r.URL.Query().Get("kind")) {
+	for _, model := range publicModels(snapshot, r.URL.Query().Get("kind"), accessFilter(r, snapshot)) {
 		if model["id"] == id {
 			model["endpoint"] = "/v1/chat/completions"
 			if model["kind"] == "systemone" {
@@ -757,10 +757,10 @@ func (h *Handler) handleModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Query().Get("kind") != "" {
-		writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": publicModels(snapshot, r.URL.Query().Get("kind"))})
+		writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": publicModels(snapshot, r.URL.Query().Get("kind"), accessFilter(r, snapshot))})
 		return
 	}
-	for _, entry := range publicModels(snapshot, "llm") {
+	for _, entry := range publicModels(snapshot, "llm", accessFilter(r, snapshot)) {
 		if entry["id"] == provider+"/"+model {
 			writeJSON(w, http.StatusOK, entry)
 			return

@@ -4,6 +4,8 @@ package auth
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"sort"
 	"strings"
 )
 
@@ -29,6 +31,70 @@ type Entry struct {
 	Hash     string
 	Paused   bool
 	Disabled bool
+	// Restricted limits the key to Allow. Allow lists the exact names a client
+	// may request: a Combo name, a model alias, or "provider/model". A request
+	// is also permitted when it resolves to an allowed "provider/model".
+	// A restricted key with an empty Allow list can request nothing.
+	Restricted bool
+	Allow      []string
+	// allowSet is built by NewKeyIndex so Permits is O(1) per identity; it is
+	// always rebuilt from Allow, never trusted from a copied Entry.
+	allowSet map[string]struct{}
+}
+
+// Limits on a stored allowlist keep the compiled key index small and bounded.
+const (
+	MaxAllowEntries = 1000
+	MaxAllowLength  = 256
+)
+
+// NormalizeAllow trims, de-duplicates and validates an allowlist.
+func NormalizeAllow(allow []string) ([]string, error) {
+	out := make([]string, 0, len(allow))
+	seen := make(map[string]struct{}, len(allow))
+	for _, name := range allow {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return nil, errors.New("allowlist entries must not be empty")
+		}
+		if len(name) > MaxAllowLength {
+			return nil, errors.New("allowlist entry is too long")
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	if len(out) > MaxAllowEntries {
+		return nil, errors.New("allowlist has too many entries")
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// Permits reports whether the key may use a request that names any of the
+// given identities (the requested name plus its resolved "provider/model").
+func (e Entry) Permits(identities ...string) bool {
+	if !e.Restricted {
+		return true
+	}
+	if e.allowSet == nil {
+		for _, identity := range identities {
+			for _, allowed := range e.Allow {
+				if allowed == identity {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for _, identity := range identities {
+		if _, ok := e.allowSet[identity]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // NewKeyIndex builds the immutable index.
@@ -37,6 +103,10 @@ func NewKeyIndex(entries []Entry) *KeyIndex {
 	index := &KeyIndex{byHash: byHash}
 	for _, entry := range entries {
 		if entry.Hash != "" {
+			entry.allowSet = make(map[string]struct{}, len(entry.Allow))
+			for _, allowed := range entry.Allow {
+				entry.allowSet[allowed] = struct{}{}
+			}
 			byHash[entry.Hash] = entry
 		}
 	}

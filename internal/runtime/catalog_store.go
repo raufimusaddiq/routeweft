@@ -17,7 +17,7 @@ func persistCatalog(ctx context.Context, tx *sql.Tx, config Config, removed [][2
 		return fmt.Errorf("replace api keys: %w", err)
 	}
 	for _, key := range config.APIKeys {
-		const insert = "INSERT INTO api_keys (id,name,key_hash,key_prefix,enabled,paused) VALUES (?,?,?,?,?,?)"
+		const insert = "INSERT INTO api_keys (id,name,key_hash,key_prefix,enabled,paused,access_restricted,access_allow) VALUES (?,?,?,?,?,?,?,?)"
 		enabled := 0
 		if !key.Disabled {
 			enabled = 1
@@ -26,7 +26,15 @@ func persistCatalog(ctx context.Context, tx *sql.Tx, config Config, removed [][2
 		if key.Paused {
 			paused = 1
 		}
-		if _, err := tx.ExecContext(ctx, insert, key.ID, key.Name, key.Hash, key.Prefix, enabled, paused); err != nil {
+		restricted := 0
+		if key.Restricted {
+			restricted = 1
+		}
+		allow, err := json.Marshal(append([]string{}, key.Allow...))
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, insert, key.ID, key.Name, key.Hash, key.Prefix, enabled, paused, restricted, string(allow)); err != nil {
 			return fmt.Errorf("persist api key %q: %w", key.ID, err)
 		}
 	}
@@ -95,16 +103,21 @@ WHERE display_name IS NOT excluded.display_name OR context_window IS NOT exclude
 }
 
 func loadCatalog(ctx context.Context, db *sql.DB, config *Config) error {
-	keyRows, err := db.QueryContext(ctx, "SELECT id,name,key_hash,key_prefix,enabled,paused FROM api_keys ORDER BY id")
+	keyRows, err := db.QueryContext(ctx, "SELECT id,name,key_hash,key_prefix,enabled,paused,access_restricted,access_allow FROM api_keys ORDER BY id")
 	if err != nil {
 		return fmt.Errorf("load api keys: %w", err)
 	}
 	defer keyRows.Close()
 	for keyRows.Next() {
 		var entry auth.Entry
-		var enabled, paused int
-		if err := keyRows.Scan(&entry.ID, &entry.Name, &entry.Hash, &entry.Prefix, &enabled, &paused); err != nil {
+		var enabled, paused, restricted int
+		var allow string
+		if err := keyRows.Scan(&entry.ID, &entry.Name, &entry.Hash, &entry.Prefix, &enabled, &paused, &restricted, &allow); err != nil {
 			return err
+		}
+		entry.Restricted = restricted == 1
+		if err := json.Unmarshal([]byte(allow), &entry.Allow); err != nil {
+			return fmt.Errorf("decode access allowlist for API key %q: %w", entry.ID, err)
 		}
 		entry.Disabled = enabled == 0
 		entry.Paused = paused == 1

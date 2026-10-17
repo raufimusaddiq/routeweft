@@ -445,6 +445,43 @@ The request path:
 
 Dashboard sessions are a separate auth domain from inference API keys.
 
+### 12.1 Key access policy
+
+Each client key carries `access: {restricted, allow[]}` (stored in `api_keys`
+`access_restricted`/`access_allow`, compiled into the key index in the
+`RuntimeSnapshot`). Existing keys migrate as unrestricted.
+
+- Unrestricted keys behave as before.
+- A restricted key may request only names in `allow`: a Combo name, a model
+  alias, or `provider/model`. A request also passes when the name resolves to an
+  allowed `provider/model` (so allowing a model admits its aliases). Allowing an
+  alias does not admit its canonical `provider/model`, and allowing a Combo does
+  not admit its members directly. A restricted key with an empty list can use
+  nothing.
+- Enforcement is a single check at the top of dispatch, before model
+  resolution, for Chat, Responses, Compact, Messages, System One, Gemini and
+  Ollama chat; a denied request returns `403 model_not_allowed` whether or not
+  the model exists (no existence oracle). `count_tokens` applies it when the body
+  names a model.
+- Capacity-adapter pool members: **not yet enforced in serving.** `PlanCombo`
+  takes the caller's key and drops pool members outside its allowlist, but
+  `PlanCombo`/`PlanComboRequest` have no production caller yet (Combo and adapter
+  planning is not wired into dispatch). Whoever wires them must pass the
+  request's key; until then restricted-key pool enforcement is covered only by
+  unit tests of the planner.
+- An unresolvable key (paused, revoked or reloaded between authentication and
+  dispatch) is treated as restricted with an empty allowlist: it is denied,
+  never widened.
+- Discovery is access-aware: `/v1/models`, `/v1/models/{kind}`, `/v1/models/info`,
+  `/v1/models/{provider}/{model}`, `/v1beta/models` and `/api/tags` list or
+  return only permitted entries; hidden single lookups return 404.
+- Admin API: `POST /admin/v1/keys` accepts `access`; `PATCH /admin/v1/keys/{id}`
+  accepts `paused` and/or `access` and returns the stored key (same shape as
+  create); `GET /admin/v1/keys` returns `access`.
+  Entries are trimmed, de-duplicated, at most 1000 entries of 256 bytes (request
+  bodies up to 512 KiB). A missing `restricted` is a 400, never read as false.
+  Switching to unrestricted clears the stored list.
+
 ## 13. Account selection
 
 Inputs:
@@ -788,8 +825,10 @@ Client API key management:
 
 ```text
 GET    /admin/v1/keys            bounded list; digest and plaintext never returned
-POST   /admin/v1/keys            create {name}; returns the plaintext secret exactly once
-PATCH  /admin/v1/keys/{id}       {paused: bool} pause/resume without deleting
+POST   /admin/v1/keys            create {name, access?}; returns the plaintext secret exactly once
+PATCH  /admin/v1/keys/{id}       {paused?: bool, access?: {restricted: bool, allow: []}} applied atomically;
+                                 access.restricted is required whenever access is sent
+                                 (see §12.1); restricted:false takes an empty allow
 DELETE /admin/v1/keys/{id}       revoke; the compiled key index drops it immediately
 ```
 
