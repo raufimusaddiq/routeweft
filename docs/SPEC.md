@@ -364,6 +364,42 @@ Initial protocol families:
 - Ollama chat compatibility;
 - System One.
 
+### 10.1 System One native transport
+
+`POST /v1/systemone` requires one JSON object: a non-blank string `model`,
+presence of `state` (including null), and a non-null, non-array, non-empty
+`questions` object. Question values and state remain provider-owned; the gateway
+does not validate primitives or inject prompt-policy fields. Unchanged native
+bodies preserve their bytes, including unknown fields; model resolution may
+replace only the model value while preserving opaque JSON values.
+
+TypeSafe seeds `jev-latest` and posts to its full configured typed endpoint.
+A Generic node with sole transport `systemone` provides the same full-endpoint
+behavior for custom models; typed and Chat transports cannot share that node.
+Cloudflare seeds `@cf/cloudflare/clef` and `@cf/cloudflare/clef-flash`, serving
+them only through System One. Its base URL is the accounts root; connection
+`accountId` selects `/{accountId}/ai/run/{model}` for typed requests and
+`/{accountId}/ai/v1/chat/completions` for Chat models. Missing/unsafe account IDs
+or unsupported model/transport pairs are ineligible before dispatch.
+
+Schema v5 adds non-secret `provider_connections.account_id`, default empty,
+without changing existing secrets. Admin connection create/PATCH accepts
+`accountId`; omitted PATCH preserves it, explicit empty clears it. Account IDs
+permit ASCII letters, digits, hyphens and underscores only. Existing Cloudflare
+connections need this metadata configured; nodes explicitly restricted to Chat
+remain restricted (create a builtin node advertising System One to enable it).
+No writable state is shared with LiteRouter. Older binaries cannot open a v5
+database; rollback requires the pre-upgrade database backup.
+
+Upstream response status/body and allowed headers remain opaque. A successful
+`text/event-stream` response streams incrementally regardless of request-side
+stream hints; Routeweft neither synthesizes events nor rewrites terminal markers.
+Client cancellation stops upstream work and suppresses completed accounting.
+Usage parsing recognizes native and Cloudflare `result.usage` token/cache
+counters without unwrapping the client response. Streaming usage is accounted
+once only after clean EOF; canceled/broken relays cannot report partial tokens.
+Accounting scans skip opaque SSE lines over 4 MiB without changing relayed bytes.
+
 ## 11. Provider modules
 
 Provider modules own:
@@ -579,7 +615,7 @@ Routeweft compression endpoint. `pxpipeUrl` is an optional full helper endpoint,
 empty by default; an enabled but unconfigured PXPIPE fails open. Both URL
 settings use the common outbound policy; local endpoints require the explicit
 trusted-local deployment option. Native Headroom `/v1/compress` compatibility
-and PXPIPE image-rendering integration remain separate R03/R09 follow-ups.
+and PXPIPE image-rendering integration belong to R09, not System One R04.
 
 ### 17.1 RTK
 

@@ -32,3 +32,10 @@ upstream in `compat/mockupstream`.
 
 > Fixtures must contain synthetic content only. Never record real prompts,
 > credentials, cookies, or provider responses here.
+
+The R04 `systemone-*` additions are synthetic transport/accounting regression
+transcripts informed by LiteRouter v1 at `1c3b9f47`, not captured live provider
+responses or R11 differential certification. Streaming fixtures describe an
+upstream-owned SSE response; they do not require providers to support SSE or
+authorize Routeweft to synthesize typed events. Cloudflare's `result` wrapper
+stays on the wire and is unwrapped only for usage accounting.

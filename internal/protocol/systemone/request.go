@@ -36,8 +36,9 @@ func ParseRequest(body []byte) (*Request, error) {
 	if _, ok := fields["state"]; !ok {
 		return nil, errors.New("state is required")
 	}
-	if _, ok := fields["questions"]; !ok {
-		return nil, errors.New("questions is required")
+	var questions map[string]json.RawMessage
+	if json.Unmarshal(fields["questions"], &questions) != nil || len(questions) == 0 {
+		return nil, errors.New("questions must be a non-empty object")
 	}
 	return &Request{model, append([]byte(nil), body...), fields}, nil
 }

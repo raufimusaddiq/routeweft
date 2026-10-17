@@ -67,6 +67,31 @@ func TestPutConnectionSealsSecretAtRest(t *testing.T) {
 	}
 }
 
+func TestConnectionAccountMetadataRoundTripsWithoutSecrets(t *testing.T) {
+	ctx := context.Background()
+	s, _ := testStore(t)
+	node, err := s.PutNode(ctx, Node{Kind: NodeBuiltin, ProviderID: "cloudflare-ai", Name: "Cloudflare"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := s.PutConnection(ctx, Connection{NodeID: node.ID, Name: "CF", Identity: "CF", AuthKind: AuthAPIKey, Secret: Secret{AccessToken: "synthetic"}, AccountID: "account-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := s.GetConnection(ctx, connection.ID)
+	if err != nil || loaded.AccountID != "account-a" || loaded.Secret.AccessToken != "synthetic" {
+		t.Fatalf("account metadata: %+v %v", loaded, err)
+	}
+	connections, err := s.ListConnections(ctx, "cloudflare-ai")
+	if err != nil || len(connections) != 1 || connections[0].AccountID != "account-a" {
+		t.Fatalf("list account metadata: %+v %v", connections, err)
+	}
+	config, err := LoadConfiguration(ctx, s.db)
+	if err != nil || len(config.Connections) != 1 || config.Connections[0].AccountID != "account-a" || !config.Connections[0].Secret.Empty() {
+		t.Fatalf("snapshot metadata lost account or contains secrets: %+v %v", config, err)
+	}
+}
+
 func TestPutConnectionPreservesStoredSecretOnEdit(t *testing.T) {
 	ctx := context.Background()
 	store, _ := testStore(t)

@@ -520,27 +520,41 @@ func isSSEDataLine(line []byte) bool {
 	return bytes.HasPrefix(line, []byte("data:"))
 }
 
-// usageScanner observes a streamed SSE body for one protocol family and merges
-// the usage fields the upstream reports. It only latches completion on the
-// family's terminal event so a cancelled stream never reports partial
-// accounting (SPEC §21 bounded Usage, PRD §13).
+// usageScanner tracks reported usage without changing relayed stream bytes.
 type usageScanner struct {
 	family   string
 	buffer   []byte
 	merged   promptcache.Usage
 	found    bool
 	complete bool
+	skipping bool
 }
 
 func (s *usageScanner) Write(chunk []byte) (int, error) {
+	n := len(chunk)
+	if s.skipping {
+		index := bytes.IndexByte(chunk, '\n')
+		if index < 0 {
+			return n, nil
+		}
+		chunk = chunk[index+1:]
+		s.skipping = false
+	}
 	s.buffer = append(s.buffer, chunk...)
 	for {
 		index := bytes.IndexByte(s.buffer, '\n')
 		if index < 0 {
+			if s.family == shared.FamilySystemOne && len(s.buffer) > 4<<20 {
+				s.buffer = nil
+				s.skipping = true
+			}
 			break
 		}
 		line := bytes.TrimSpace(s.buffer[:index])
 		s.buffer = s.buffer[index+1:]
+		if s.family == shared.FamilySystemOne && len(line) > 4<<20 {
+			continue
+		}
 		if !bytes.HasPrefix(line, []byte("data:")) {
 			continue
 		}
@@ -560,18 +574,23 @@ func (s *usageScanner) Write(chunk []byte) (int, error) {
 			s.found = true
 		}
 	}
-	return len(chunk), nil
+	return n, nil
 }
 
-func (s *usageScanner) usage() (promptcache.Usage, bool) { return s.merged, s.found }
+func (s *usageScanner) usage() (promptcache.Usage, bool) {
+	if s.family == shared.FamilySystemOne && len(s.buffer) > 0 {
+		s.Write([]byte("\n"))
+	}
+	return s.merged, s.found
+}
 
-// reportsUsage reports whether a scanner observed a terminal marker or, for
-// Gemini streams that end by closing the response with no terminal event, a
-// clean stream end. A cancelled or errored relay passes clean=false so partial
-// accounting is never reported (SPEC §21).
+// System One has no gateway-defined terminal marker; accounting needs clean EOF.
 func (s *usageScanner) reportsUsage(clean bool) bool {
 	if !s.found {
 		return false
+	}
+	if s.family == shared.FamilySystemOne {
+		return clean
 	}
 	return s.complete || (clean && s.family == shared.FamilyGemini)
 }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/providers/cloudflare"
 	"github.com/raufimusaddiq/routeweft/internal/providers/discovery"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
@@ -38,6 +39,7 @@ type connectionRequest struct {
 	Enabled    *bool              `json:"enabled"`
 	Priority   *int               `json:"priority"`
 	ProxyPool  *string            `json:"proxyPoolId"`
+	AccountID  *string            `json:"accountId"`
 }
 
 type modelRequest struct {
@@ -109,7 +111,7 @@ func (h *Handler) handlePutProviderNode(w http.ResponseWriter, r *http.Request) 
 		}
 		seen := map[string]bool{}
 		for _, item := range body.Transports {
-			if item != "openai-chat" && item != "openai-responses" && item != "anthropic-messages" || seen[item] {
+			if item != "openai-chat" && item != "openai-responses" && item != "anthropic-messages" && item != "systemone" || seen[item] || item == "systemone" && len(body.Transports) != 1 {
 				writeError(w, http.StatusBadRequest, "invalid_transport", "Generic Provider transport is unsupported or duplicated")
 				return
 			}
@@ -241,6 +243,17 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 		if body.ProxyPool == nil {
 			body.ProxyPool = &old.ProxyPoolID
 		}
+		if body.AccountID == nil {
+			body.AccountID = &old.AccountID
+		}
+	}
+	accountID := ""
+	if body.AccountID != nil {
+		accountID = *body.AccountID
+	}
+	if accountID != "" && !cloudflare.ValidAccountID(accountID) {
+		writeError(w, http.StatusBadRequest, "invalid_account_id", "account ID must be a single alphanumeric, hyphen or underscore path segment")
+		return
 	}
 	var node credentials.Node
 	var err error
@@ -318,7 +331,7 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 	if body.ProxyPool != nil {
 		proxyPool = *body.ProxyPool
 	}
-	connection, err := h.opts.Credentials.PutConnection(r.Context(), credentials.Connection{ID: r.PathValue("id"), NodeID: node.ID, Name: body.Name, AuthKind: authKind, Identity: body.Identity, Secret: body.Secret, Enabled: enabled, Priority: priority, ProxyPoolID: proxyPool})
+	connection, err := h.opts.Credentials.PutConnection(r.Context(), credentials.Connection{ID: r.PathValue("id"), NodeID: node.ID, Name: body.Name, AuthKind: authKind, Identity: body.Identity, Secret: body.Secret, Enabled: enabled, Priority: priority, ProxyPoolID: proxyPool, AccountID: accountID})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity, auth mode, and proxy pool")
 		return
@@ -485,6 +498,14 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	}
 	if custom, ok := spec.EndpointFor(registry.Protocol(transportName)); ok {
 		endpoint = custom
+	}
+	if node.Kind == credentials.NodeBuiltin && node.ProviderID == "cloudflare-ai" {
+		var valid bool
+		endpoint, valid = cloudflare.Endpoint(transportName, connection.AccountID, modelID)
+		if !valid {
+			result.Error = "Cloudflare account ID or model transport is not configured"
+			return result
+		}
 	}
 	if connection.ProviderID == "openai" && transportName == string(registry.TransportOpenAIChat) {
 		endpoint = "chat/completions"
@@ -951,7 +972,7 @@ func nodeJSON(node credentials.Node) map[string]any {
 }
 
 func connectionJSON(connection credentials.Connection) map[string]any {
-	return map[string]any{"id": connection.ID, "nodeId": connection.NodeID, "providerId": connection.ProviderID, "name": connection.Name, "authKind": connection.AuthKind, "identity": connection.Identity, "enabled": connection.Enabled, "priority": connection.Priority, "proxyPoolId": connection.ProxyPoolID, "credentialConfigured": !connection.Secret.Empty()}
+	return map[string]any{"id": connection.ID, "nodeId": connection.NodeID, "providerId": connection.ProviderID, "name": connection.Name, "authKind": connection.AuthKind, "identity": connection.Identity, "enabled": connection.Enabled, "priority": connection.Priority, "proxyPoolId": connection.ProxyPoolID, "accountId": connection.AccountID, "credentialConfigured": !connection.Secret.Empty()}
 }
 
 func slicesContain(items []string, target string) bool {

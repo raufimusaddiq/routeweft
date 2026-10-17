@@ -61,6 +61,7 @@ type Connection struct {
 	Enabled     bool
 	Priority    int
 	ProxyPoolID string
+	AccountID   string
 }
 
 // Secret is one decryptable credential payload. Fields are optional per auth
@@ -239,8 +240,8 @@ func (s *Store) PutConnection(ctx context.Context, connection Connection) (Conne
 	if connection.Enabled {
 		enabled = 1
 	}
-	const upsert = `INSERT INTO provider_connections(id,node_id,name,auth_kind,identity,secret_blob,enabled,priority,proxy_pool_id) VALUES(?,?,?,?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_kind=excluded.auth_kind,identity=excluded.identity,secret_blob=COALESCE(excluded.secret_blob,provider_connections.secret_blob),enabled=excluded.enabled,priority=excluded.priority,proxy_pool_id=excluded.proxy_pool_id,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+	const upsert = `INSERT INTO provider_connections(id,node_id,name,auth_kind,identity,secret_blob,enabled,priority,proxy_pool_id,account_id) VALUES(?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_kind=excluded.auth_kind,identity=excluded.identity,secret_blob=COALESCE(excluded.secret_blob,provider_connections.secret_blob),enabled=excluded.enabled,priority=excluded.priority,proxy_pool_id=excluded.proxy_pool_id,account_id=excluded.account_id,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 	change := func(c *Configuration) error {
 		metadata := connection
 		metadata.Secret = Secret{}
@@ -253,7 +254,7 @@ ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_k
 		c.Connections = append(c.Connections, metadata)
 		return nil
 	}
-	if err := s.exec(ctx, change, upsert, connection.ID, connection.NodeID, connection.Name, string(connection.AuthKind), connection.Identity, blob, enabled, connection.Priority, nullable(connection.ProxyPoolID)); err != nil {
+	if err := s.exec(ctx, change, upsert, connection.ID, connection.NodeID, connection.Name, string(connection.AuthKind), connection.Identity, blob, enabled, connection.Priority, nullable(connection.ProxyPoolID), connection.AccountID); err != nil {
 		return Connection{}, fmt.Errorf("persist provider connection %q: %w", connection.Name, err)
 	}
 	return connection, nil
@@ -312,7 +313,7 @@ func (s *Store) RotateSecret(ctx context.Context, connectionID string, secret Se
 
 // GetConnection returns one connection with its decrypted secret.
 func (s *Store) GetConnection(ctx context.Context, id string) (Connection, error) {
-	const query = "SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,c.identity,COALESCE(c.secret_blob,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,'') FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id WHERE c.id=?"
+	const query = "SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,c.identity,COALESCE(c.secret_blob,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.account_id FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id WHERE c.id=?"
 	row := s.db.QueryRowContext(ctx, query, id)
 	connection, err := s.scanConnection(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -324,7 +325,7 @@ func (s *Store) GetConnection(ctx context.Context, id string) (Connection, error
 // ListConnections returns a provider's connections in routing order: priority
 // ascending, then name, so selection is deterministic across restarts.
 func (s *Store) ListConnections(ctx context.Context, providerID string) ([]Connection, error) {
-	const query = `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,c.identity,COALESCE(c.secret_blob,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,'')
+	const query = `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,c.identity,COALESCE(c.secret_blob,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.account_id
 FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id
 WHERE n.provider_id=? ORDER BY c.priority,c.name,c.id`
 	rows, err := s.db.QueryContext(ctx, query, providerID)
@@ -470,7 +471,7 @@ func (s *Store) scanConnection(scan func(...any) error) (Connection, error) {
 	var connection Connection
 	var blob string
 	var enabled int
-	if err := scan(&connection.ID, &connection.NodeID, &connection.ProviderID, &connection.Name, &connection.AuthKind, &connection.Identity, &blob, &enabled, &connection.Priority, &connection.ProxyPoolID); err != nil {
+	if err := scan(&connection.ID, &connection.NodeID, &connection.ProviderID, &connection.Name, &connection.AuthKind, &connection.Identity, &blob, &enabled, &connection.Priority, &connection.ProxyPoolID, &connection.AccountID); err != nil {
 		return Connection{}, err
 	}
 	connection.Enabled = enabled != 0

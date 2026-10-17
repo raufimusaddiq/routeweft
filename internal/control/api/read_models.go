@@ -255,7 +255,7 @@ func (h *Handler) providerNodes(w http.ResponseWriter, r *http.Request) error {
 
 func (h *Handler) connections(w http.ResponseWriter, r *http.Request) error {
 	where, args := providerFilter(r, "n.provider_id")
-	return h.sqlList(w, r, `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,c.identity,c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.secret_blob IS NOT NULL AND c.secret_blob!='',c.created_at,c.updated_at
+	return h.sqlList(w, r, `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,c.identity,c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.secret_blob IS NOT NULL AND c.secret_blob!='',c.created_at,c.updated_at,c.account_id
 FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where+` ORDER BY n.provider_id,c.priority,c.name,c.id`, `SELECT COUNT(*) FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where, func(rows *sql.Rows) (any, error) {
 		var item struct {
 			ID                   string `json:"id"`
@@ -270,9 +270,10 @@ FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where+` ORD
 			CredentialConfigured bool   `json:"credentialConfigured"`
 			CreatedAt            string `json:"createdAt"`
 			UpdatedAt            string `json:"updatedAt"`
+			AccountID            string `json:"accountId,omitempty"`
 		}
 		var enabled, credential int
-		if err := rows.Scan(&item.ID, &item.NodeID, &item.ProviderID, &item.Name, &item.AuthKind, &item.Identity, &enabled, &item.Priority, &item.ProxyPoolID, &credential, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.NodeID, &item.ProviderID, &item.Name, &item.AuthKind, &item.Identity, &enabled, &item.Priority, &item.ProxyPoolID, &credential, &item.CreatedAt, &item.UpdatedAt, &item.AccountID); err != nil {
 			return nil, err
 		}
 		item.Enabled = enabled != 0
