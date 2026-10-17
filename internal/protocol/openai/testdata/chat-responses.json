@@ -1,0 +1,100 @@
+[
+  {
+    "source": "openai-chat",
+    "request": {
+      "model": "fast",
+      "messages": [
+        {"role": "system", "content": "Rules."},
+        {"role": "developer", "content": [{"type": "text", "text": "Be brief."}]},
+        {"role": "user", "content": [{"type": "text", "text": "Inspect"}, {"type": "image_url", "image_url": {"url": "data:image/png;base64,c3ludGhldGlj", "detail": "low"}}, {"type": "file", "file": {"file_id": "file_synthetic", "filename": "notes.txt"}}, {"type": "input_audio", "input_audio": {"data": "c3ludGhldGlj", "format": "wav"}}]},
+        {"role": "assistant", "content": null, "reasoning_content": "Plan.", "encrypted_content": "synthetic-continuity", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "lookup", "arguments": "{\"city\":\"Oslo\"}"}}, {"id": "call_2", "type": "function", "function": {"name": "lookup", "arguments": "{\"city\":\"Lima\"}"}}]},
+        {"role": "tool", "tool_call_id": "call_1", "content": "Cold"},
+        {"role": "tool", "tool_call_id": "call_2", "content": "Warm"},
+        {"role": "user", "content": "Summarize"}
+      ],
+      "tools": [{"type": "function", "function": {"name": "lookup", "description": "Look up city", "parameters": {"type": "object", "properties": {"city": {"type": "string"}}}, "strict": true}}],
+      "tool_choice": {"type": "function", "function": {"name": "lookup"}},
+      "parallel_tool_calls": true,
+      "reasoning_effort": "low",
+      "max_tokens": 17,
+      "max_completion_tokens": 19,
+      "response_format": {"type": "json_schema", "json_schema": {"name": "answer", "schema": {"type": "object", "properties": {}}}}
+    },
+    "target_request": {
+      "model": "vendor/model", "stream": false, "store": false, "instructions": "Rules.\nBe brief.",
+      "input": [
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Inspect"}, {"type": "input_image", "image_url": "data:image/png;base64,c3ludGhldGlj", "detail": "low"}, {"type": "input_file", "file_id": "file_synthetic", "filename": "notes.txt"}, {"type": "input_audio", "input_audio": {"data": "c3ludGhldGlj", "format": "wav"}}]},
+        {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Plan."}], "encrypted_content": "synthetic-continuity"},
+        {"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{\"city\":\"Oslo\"}"},
+        {"type": "function_call", "call_id": "call_2", "name": "lookup", "arguments": "{\"city\":\"Lima\"}"},
+        {"type": "function_call_output", "call_id": "call_1", "output": "Cold"},
+        {"type": "function_call_output", "call_id": "call_2", "output": "Warm"},
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Summarize"}]}
+      ],
+      "tools": [{"type": "function", "name": "lookup", "description": "Look up city", "parameters": {"type": "object", "properties": {"city": {"type": "string"}}}, "strict": true}],
+      "tool_choice": {"type": "function", "name": "lookup"}, "parallel_tool_calls": true,
+      "reasoning": {"effort": "low", "summary": "auto"}, "max_output_tokens": 19,
+      "text": {"format": {"type": "json_schema", "name": "answer", "schema": {"type": "object", "properties": {}}}}
+    },
+    "upstream_response": {
+      "id": "resp_fixture", "object": "response", "created_at": 1735689602, "model": "vendor/model", "status": "completed",
+      "output": [
+        {"type": "reasoning", "id": "rs_1", "summary": [{"type": "summary_text", "text": "Thought"}]},
+        {"type": "message", "id": "msg_1", "role": "assistant", "content": [{"type": "output_text", "text": "Answer"}]},
+        {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "lookup", "arguments": "{\"city\":\"Oslo\"}"},
+        {"type": "function_call", "id": "fc_2", "call_id": "call_2", "name": "lookup", "arguments": "{\"city\":\"Lima\"}"}
+      ],
+      "usage": {"input_tokens": 31, "output_tokens": 18, "total_tokens": 49, "input_tokens_details": {"cached_tokens": 8}, "output_tokens_details": {"reasoning_tokens": 4}}
+    },
+    "response": {
+      "id": "chatcmpl_resp_fixture", "object": "chat.completion", "created": 1735689602, "model": "vendor/model",
+      "choices": [{"index": 0, "message": {"role": "assistant", "content": "Answer", "reasoning_content": "Thought", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "lookup", "arguments": "{\"city\":\"Oslo\"}"}}, {"id": "call_2", "type": "function", "function": {"name": "lookup", "arguments": "{\"city\":\"Lima\"}"}}]}, "finish_reason": "tool_calls"}],
+      "usage": {"prompt_tokens": 31, "completion_tokens": 18, "total_tokens": 49, "prompt_tokens_details": {"cached_tokens": 8}, "completion_tokens_details": {"reasoning_tokens": 4}}
+    }
+  },
+  {
+    "source": "openai-responses",
+    "request": {
+      "model": "fast", "instructions": "Rules.", "max_output_tokens": 19, "reasoning": {"effort": "low"}, "parallel_tool_calls": true,
+      "input": [
+        {"role": "user", "content": [{"type": "input_text", "text": "Inspect"}, {"type": "input_image", "image_url": "data:image/png;base64,c3ludGhldGlj", "detail": "low"}, {"type": "input_file", "file_id": "file_synthetic"}]},
+        {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Plan."}], "encrypted_content": "synthetic-continuity"},
+        {"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{\"city\":\"Oslo\"}"},
+        {"type": "custom_tool_call", "call_id": "call_2", "name": "exec", "input": "echo hello"},
+        {"type": "function_call_output", "call_id": "call_1", "output": "Cold"},
+        {"type": "custom_tool_call_output", "call_id": "call_2", "output": "hello"},
+        {"role": "user", "content": "Summarize"}
+      ],
+      "tools": [{"type": "function", "name": "lookup", "parameters": {"type": "object", "properties": {}}}, {"type": "custom", "name": "exec", "description": "Run synthetic command"}, {"type": "web_search"}],
+      "tool_choice": {"type": "custom", "name": "exec"}
+    },
+    "target_request": {
+      "model": "vendor/model", "stream": false, "max_tokens": 19, "reasoning_effort": "low", "parallel_tool_calls": true,
+      "messages": [
+        {"role": "system", "content": "Rules."},
+        {"role": "user", "content": [{"type": "text", "text": "Inspect"}, {"type": "image_url", "image_url": {"url": "data:image/png;base64,c3ludGhldGlj", "detail": "low"}}, {"type": "file", "file": {"file_id": "file_synthetic"}}]},
+        {"role": "assistant", "content": null, "reasoning_content": "Plan.", "encrypted_content": "synthetic-continuity", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "lookup", "arguments": "{\"city\":\"Oslo\"}"}}, {"id": "call_2", "type": "function", "function": {"name": "exec", "arguments": "{\"input\":\"echo hello\"}"}}]},
+        {"role": "tool", "tool_call_id": "call_1", "content": "Cold"},
+        {"role": "tool", "tool_call_id": "call_2", "content": "hello"},
+        {"role": "user", "content": "Summarize"}
+      ],
+      "tools": [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object", "properties": {}}}}, {"type": "function", "function": {"name": "exec", "description": "Run synthetic command", "parameters": {"type": "object", "properties": {"input": {"type": "string"}}, "required": ["input"], "additionalProperties": false}}}],
+      "tool_choice": {"type": "function", "function": {"name": "exec"}}
+    },
+    "upstream_response": {
+      "id": "chat_fixture", "object": "chat.completion", "created": 1735689602, "model": "vendor/model",
+      "choices": [{"index": 0, "message": {"role": "assistant", "content": "Answer", "reasoning_content": "Thought", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "lookup", "arguments": "{\"city\":\"Oslo\"}"}}, {"id": "call_2", "type": "function", "function": {"name": "exec", "arguments": "{\"input\":\"echo hello\"}"}}]}, "finish_reason": "tool_calls"}],
+      "usage": {"prompt_tokens": 31, "completion_tokens": 18, "total_tokens": 49, "prompt_tokens_details": {"cached_tokens": 8}, "completion_tokens_details": {"reasoning_tokens": 4}}
+    },
+    "response": {
+      "id": "resp_chat_fixture", "object": "response", "created_at": 1735689602, "model": "vendor/model", "status": "completed", "error": null,
+      "output": [
+        {"id": "item_resp_chat_fixture_0", "type": "reasoning", "summary": [{"type": "summary_text", "text": "Thought"}]},
+        {"id": "item_resp_chat_fixture_1", "type": "message", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": "Answer"}]},
+        {"id": "item_resp_chat_fixture_2", "type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{\"city\":\"Oslo\"}", "status": "completed"},
+        {"id": "item_resp_chat_fixture_3", "type": "custom_tool_call", "call_id": "call_2", "name": "exec", "input": "echo hello", "status": "completed"}
+      ],
+      "usage": {"input_tokens": 31, "output_tokens": 18, "total_tokens": 49, "input_tokens_details": {"cached_tokens": 8}, "output_tokens_details": {"reasoning_tokens": 4}}
+    }
+  }
+]

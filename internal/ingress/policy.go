@@ -270,17 +270,28 @@ func (h *Handler) planProviderAttempts(snapshot *runtime.RuntimeSnapshot, provid
 	if state != nil && strategy != routing.StrategyFillFirst {
 		cursor = state.NextCursor("provider|" + providerID)
 	}
-	selection := routing.Select(routing.SelectOptions{
+	var translated []routing.Account
+	if source != "" && h.opts.AccountProvider != nil {
+		native := make([]routing.Account, 0, len(accounts))
+		for _, account := range accounts {
+			provider, ok := h.opts.AccountProvider(snapshot, model, account.ID, source)
+			if !ok {
+				continue
+			}
+			if provider.Protocol == source {
+				native = append(native, account)
+			} else {
+				translated = append(translated, account)
+			}
+		}
+		accounts = native
+	}
+	options := routing.SelectOptions{
 		Strategy:    strategy,
 		Accounts:    accounts,
 		Cursor:      cursor,
 		StickyLimit: limit,
 		Eligible: func(account routing.Account) bool {
-			if source != "" && h.opts.AccountProvider != nil {
-				if _, ok := h.opts.AccountProvider(snapshot, model, account.ID, source); !ok {
-					return false
-				}
-			}
 			if state == nil {
 				return true
 			}
@@ -292,7 +303,13 @@ func (h *Handler) planProviderAttempts(snapshot *runtime.RuntimeSnapshot, provid
 			}
 			return true
 		},
-	})
+	}
+	selection := routing.Select(options)
+	if len(translated) > 0 {
+		// Native-first applies before RR/sticky rotation and the shared wire cap.
+		options.Accounts = translated
+		selection.Candidates = append(selection.Candidates, routing.Select(options).Candidates...)
+	}
 	return selection.Candidates, true
 }
 

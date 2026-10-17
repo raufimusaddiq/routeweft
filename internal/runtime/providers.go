@@ -119,11 +119,16 @@ func (s *RuntimeSnapshot) AccountProvider(requested, account, source string) (ro
 	}
 	protocol := config.node.Transports[0]
 	if source != "" {
-		// shortcut: native-only app candidates; R02 adds translator-aware eligibility.
-		if !slices.Contains(config.node.Transports, source) {
+		switch {
+		case slices.Contains(config.node.Transports, source):
+			protocol = source
+		case source == string(registry.TransportOpenAIChat) && slices.Contains(config.node.Transports, string(registry.TransportOpenAIResponses)):
+			protocol = string(registry.TransportOpenAIResponses)
+		case source == string(registry.TransportOpenAIResponses) && slices.Contains(config.node.Transports, string(registry.TransportOpenAIChat)):
+			protocol = string(registry.TransportOpenAIChat)
+		default:
 			return routing.ProviderRef{}, false
 		}
-		protocol = source
 	}
 	return routing.ProviderRef{ProviderID: model.ProviderID, ConnectionID: account, BaseURL: config.node.BaseURL, Protocol: protocol, UpstreamModel: model.ID, Endpoint: config.endpoints[registry.Protocol(protocol)]}, true
 }

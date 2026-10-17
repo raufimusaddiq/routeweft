@@ -183,6 +183,8 @@ func (a *App) initialize(ctx context.Context) error {
 		return err
 	}
 	a.ingress = ingress.New(manager, ingress.Options{
+		TranslateChat:      ingress.TranslateChat,
+		TranslateResponses: ingress.TranslateResponses,
 		Candidates: func(snapshot *runtime.RuntimeSnapshot, model string) ([]routing.Account, bool) {
 			return snapshot.ProviderCandidates(model)
 		},
