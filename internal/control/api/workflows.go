@@ -38,6 +38,7 @@ type validationResult struct {
 	Classification  string `json:"classification,omitempty"`
 	LatencyMS       int64  `json:"latencyMs,omitempty"`
 	Status          int    `json:"status,omitempty"`
+	UpstreamStatus  int    `json:"upstreamStatus,omitempty"`
 	Error           string `json:"error,omitempty"`
 }
 
@@ -87,6 +88,7 @@ func (h *Handler) validateConnection(ctx context.Context, c credentials.Connecti
 	var status *discovery.StatusError
 	if errors.As(err, &status) && (status.Status == 401 || status.Status == 403) {
 		result.Status, result.Error = status.Status, "provider rejected credentials"
+		result.UpstreamStatus = status.Status
 		return result
 	}
 	model = strings.TrimSpace(model)
@@ -128,6 +130,7 @@ func (h *Handler) validateConnection(ctx context.Context, c credentials.Connecti
 	result.OK, result.Status, result.Error, result.ModelID = probe.OK, probe.Status, probe.Error, model
 	result.UpstreamModelID, result.ServedModelID = probe.UpstreamModelID, probe.ServedModelID
 	result.Classification, result.LatencyMS = probe.Classification, probe.LatencyMS
+	result.UpstreamStatus = probe.UpstreamStatus
 	return result
 }
 
@@ -241,7 +244,8 @@ func (h *Handler) handleTestBatch(w http.ResponseWriter, r *http.Request) {
 		h.batchBusy = false
 		h.workflowMu.Unlock()
 	}()
-	ctx := r.Context()
+	ctx, cancel := context.WithTimeout(r.Context(), modelBatchTimeout)
+	defer cancel()
 	config, err := credentials.LoadConfiguration(ctx, h.opts.DB)
 	if err != nil {
 		writeError(w, 503, "batch_unavailable", "enabled connections could not be loaded (maximum 200)")
@@ -266,7 +270,7 @@ func (h *Handler) handleTestBatch(w http.ResponseWriter, r *http.Request) {
 	for _, configured := range selected {
 		id := configured.ID
 		if ctx.Err() != nil {
-			writeError(w, http.StatusRequestTimeout, "batch_canceled", "batch validation was canceled")
+			writeProbeInterrupted(w, ctx, "batch", results)
 			return
 		}
 		c, node, err := h.workflowConnection(ctx, id)
@@ -277,7 +281,7 @@ func (h *Handler) handleTestBatch(w http.ResponseWriter, r *http.Request) {
 		result := h.validateConnection(ctx, c, node, "", body.ModelID)
 		results = append(results, result)
 		if ctx.Err() != nil {
-			writeError(w, http.StatusRequestTimeout, "batch_canceled", "batch validation was canceled")
+			writeProbeInterrupted(w, ctx, "batch", results)
 			return
 		}
 		if result.OK {

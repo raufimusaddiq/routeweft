@@ -1151,8 +1151,10 @@ and no model is known/supplied, the response asks for a manual ID. Saved
 connection failures retain HTTP 502 so existing UI callers cannot report false
 success; unsaved validation and aggregate batch results expose `ok/status/error`.
 Discovery has its own 20-second deadline. Each inference probe gets a fresh
-200-second first-token budget, bounded by caller cancellation/deadlines. Native
-Chat, Responses, Messages, Gemini, Ollama and System One requests stream; probes
+200-second first-token budget, bounded by caller cancellation/deadlines and a
+ten-minute aggregate ceiling on both connection `test-models` and provider
+`test-batch` requests. Native Chat, Responses, Messages, Gemini, Ollama and
+System One requests stream; probes
 stop at the first content, reasoning, tool-call or typed-answer event, then
 close/cancel upstream work. Empty/error streams fail. A length-limited reasoning
 response certifies reachability. Providers ignoring streaming may return native
@@ -1165,13 +1167,22 @@ response failures have status 502 (`failed`); caller cancellation has status 408
 (`canceled`). An upstream HTTP 504 remains `failed`, not an own timeout. Saved
 connection tests return HTTP 504/408 for own timeout/cancellation, preserving the
 HTTP 502 failure envelope otherwise. That envelope also includes the probe
-`result`. Aggregate endpoints retain HTTP 200 with per-model verdicts.
+`result`. `upstreamStatus` retains the actual upstream HTTP status (zero when no
+response arrived), separately from the synthesized probe `status`. Aggregate
+endpoints return HTTP 200 with per-model verdicts when complete; cancellation
+returns 408, aggregate deadline expiry returns 504. Both retain completed and
+interrupted verdicts in `results`; later models/accounts are not started.
 
 `modelId` always records the tested ID, including its alias/qualified spelling.
 `upstreamModelId` records the resolved model sent in the native request.
-`servedModelId` records the model reported by the provider, only when present;
-it is not inferred from the alias. Aliases resolving to another provider are
-rejected before sending credentials. `latencyMs` measures the inference probe,
+`servedModelId` records the model reported by a successful provider probe, only
+when present; it is not inferred from the alias or retained on failures.
+Account-local native catalog IDs take precedence over aliases, including native
+slash-bearing passthrough IDs such as `openai/gpt-5.4`. A qualified spelling is
+resolved only when its provider equals the selected account's provider. Otherwise
+slash-bearing manual IDs remain literal. Aliases resolving to another provider
+or a disabled target fail before sending credentials; disabled targets never
+fall through as literal alias text. `latencyMs` measures the inference probe,
 excluding discovery. This is control-result attribution, not R10 request logs.
 
 Batch modes are `all`, `provider`, `oauth`, `free` (no-auth connections),
@@ -1183,9 +1194,9 @@ deadline; cancellation stops subsequent work and cancels the active fetch.
 
 Availability reads paginate with the normal `page/pageSize` bounds. Batch
 validation and catalog sync are single-flight. Catalog sync retains a two-minute
-aggregate deadline; inference batches use independent per-model budgets, not a
-shared deadline that can exhaust later models' first-token allowance. Both stop
-on caller cancellation. Current
+aggregate deadline; inference batches allow up to ten minutes total, with fresh
+per-model budgets within that remaining aggregate allowance. Both stop on
+caller cancellation. Current
 routing cooldowns are account-wide, represented by model `__all`. Availability
 includes disabled accounts so operators can inspect retained cooldowns; batch
 validation and catalog sync exclude disabled accounts. Reset clears

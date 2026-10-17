@@ -79,6 +79,24 @@ type probeHTTPFunc func(*http.Request) (*http.Response, error)
 
 func (f probeHTTPFunc) Do(r *http.Request) (*http.Response, error) { return f(r) }
 
+func TestProbeBudgetOverridesDiscoveryLimits(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(30 * time.Millisecond)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"OK\"}}]}\n\n")
+	}))
+	defer upstream.Close()
+	h := New(Options{AllowPrivateUpstreams: true})
+	discoveryClient := h.opts.DiscoveryClient.HTTP.(*http.Client)
+	discoveryTransport := discoveryClient.Transport.(*http.Transport)
+	discoveryClient.Timeout = time.Millisecond
+	discoveryTransport.ResponseHeaderTimeout = time.Millisecond
+	result := h.testProviderModel(context.Background(), credentials.Connection{AuthKind: credentials.AuthNone}, credentials.Node{}, registry.Spec{}, upstream.URL, "openai-chat", "manual", time.Second)
+	if !result.OK || discoveryClient.Timeout != time.Millisecond || discoveryTransport.ResponseHeaderTimeout != time.Millisecond {
+		t.Fatalf("probe inherited or mutated discovery limits: %+v", result)
+	}
+}
+
 func TestProbeIndependentBudgetsAndFailureEnvelopes(t *testing.T) {
 	h, mux, store, creds, cookie := newProvidersAPI(t, true, nil)
 	defer store.Close()
@@ -125,6 +143,71 @@ func TestProbeIndependentBudgetsAndFailureEnvelopes(t *testing.T) {
 		w := doJSON(t, mux, cookie, "POST", "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"manual"}`)
 		if w.Code != failure.status || !strings.Contains(w.Body.String(), `"classification":"`+failure.classification+`"`) || strings.Contains(w.Body.String(), "credential-bearing") {
 			t.Fatalf("failure envelope: %d %s", w.Code, w.Body)
+		}
+	}
+	for _, workflow := range []struct{ path, body string }{
+		{"/admin/v1/connections/" + c.ID + "/test-models", `{"modelIds":["completed","interrupted","never-started"]}`},
+		{"/admin/v1/providers/test-batch", `{"mode":"all","modelId":"manual"}`},
+	} {
+		for _, stop := range []string{"cancel", "deadline"} {
+			ctx, cancel := context.WithCancel(context.Background())
+			if stop == "deadline" {
+				cancel()
+				ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+			}
+			calls := 0
+			h.opts.DiscoveryClient.HTTP = probeHTTPFunc(func(r *http.Request) (*http.Response, error) {
+				if r.Method == "GET" {
+					return &http.Response{StatusCode: 404, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}, nil
+				}
+				calls++
+				if calls == 1 {
+					return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"OK"}}]}`))}, nil
+				}
+				if stop == "cancel" {
+					cancel()
+				}
+				<-r.Context().Done()
+				return nil, r.Context().Err()
+			})
+			request := httptest.NewRequest("POST", workflow.path, strings.NewReader(workflow.body)).WithContext(ctx)
+			request.AddCookie(cookie)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, request)
+			cancel()
+			var partial struct {
+				Results []modelTestResult `json:"results"`
+			}
+			want := 408
+			if stop == "deadline" {
+				want = 504
+			}
+			if w.Code != want || json.Unmarshal(w.Body.Bytes(), &partial) != nil || len(partial.Results) != 2 || !partial.Results[0].OK || partial.Results[1].OK || calls != 2 {
+				t.Fatalf("lost partial %s results: %d %s calls=%d", stop, w.Code, w.Body, calls)
+			}
+		}
+	}
+	for _, body := range []string{
+		"data: {\"model\":\"not-served\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+		"data: {\"model\":\"not-served\",\"error\":{\"message\":\"secret\"}}\n\n",
+		"data: {\"model\":\"not-served\",\"choices\":[{\"delta\":{}}]}\n\ndata: {\"error\":{\"message\":\"secret\"}}\n\n",
+	} {
+		h.opts.DiscoveryClient.HTTP = probeHTTPFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+		})
+		r := h.testProviderModel(context.Background(), c, credentials.Node{ProviderID: "manual"}, registry.Spec{}, "http://127.0.0.1:1234", "openai-chat", "manual", time.Second)
+		if r.OK || r.Status != 502 || r.UpstreamStatus != 200 || r.ServedModelID != "" || strings.Contains(r.Error, "secret") {
+			t.Fatalf("error metadata claimed successful serving: %+v", r)
+		}
+		w := doJSON(t, mux, cookie, "POST", "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"manual"}`)
+		var failure struct {
+			Error struct {
+				UpstreamStatus int `json:"upstreamStatus"`
+			} `json:"error"`
+			Result modelTestResult `json:"result"`
+		}
+		if w.Code != 502 || json.Unmarshal(w.Body.Bytes(), &failure) != nil || failure.Error.UpstreamStatus != 200 || failure.Result.Status != 502 || failure.Result.ServedModelID != "" {
+			t.Fatalf("legacy upstream status was replaced by the probe verdict: %d %s", w.Code, w.Body)
 		}
 	}
 }
@@ -280,7 +363,7 @@ func TestProbeAliasAttributionAcrossWorkflows(t *testing.T) {
 		var body struct {
 			Model string `json:"model"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Model != "actual-model" && body.Model != "provider-native" {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Model != "actual-model" && body.Model != "provider-native" && body.Model != "openai/gpt-5.4" {
 			t.Errorf("alias not resolved: model=%q err=%v", body.Model, err)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -336,5 +419,28 @@ func TestProbeAliasAttributionAcrossWorkflows(t *testing.T) {
 	w = doJSON(t, mux, cookie, "POST", "/admin/v1/connections/"+c.ID+"/test-models", `{"modelIds":["provider-native"]}`)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"ok":true`) || !strings.Contains(w.Body.String(), `"upstreamModelId":"provider-native"`) {
 		t.Fatalf("another provider's catalog blocked a raw manual ID: %d %s", w.Code, w.Body)
+	}
+	for _, model := range []runtime.Model{
+		{ProviderID: "openai", ID: "gpt-5.4"},
+		{ProviderID: "manual", ID: "openai/gpt-5.4"},
+		{ProviderID: "manual", ID: "provider-native"},
+	} {
+		if err := h.opts.ProviderCatalog.PutModel(ctx, model); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.opts.ProviderCatalog.PutAlias(ctx, "provider-native", runtime.ModelRef{ProviderID: "other", ModelID: "other-model"}); err != nil {
+		t.Fatal(err)
+	}
+	w = doJSON(t, mux, cookie, "POST", "/admin/v1/connections/"+c.ID+"/test-models", `{"modelIds":["openai/gpt-5.4","provider-native"]}`)
+	if w.Code != 200 || strings.Count(w.Body.String(), `"ok":true`) != 2 || !strings.Contains(w.Body.String(), `"upstreamModelId":"openai/gpt-5.4"`) {
+		t.Fatalf("native passthrough/alias collision lost: %d %s", w.Code, w.Body)
+	}
+	if err := h.opts.ProviderCatalog.SetModelDisabled(ctx, "manual", "actual-model", true); err != nil {
+		t.Fatal(err)
+	}
+	w = doJSON(t, mux, cookie, "POST", "/admin/v1/connections/"+c.ID+"/test-models", `{"modelIds":["friendly"]}`)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"ok":false`) || !strings.Contains(w.Body.String(), "disabled") || strings.Contains(w.Body.String(), "servedModelId") {
+		t.Fatalf("disabled alias was sent literally: %d %s", w.Code, w.Body)
 	}
 }

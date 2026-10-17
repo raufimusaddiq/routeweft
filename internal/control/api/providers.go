@@ -398,7 +398,7 @@ func (h *Handler) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 		if result.Classification == "slow" || result.Classification == "canceled" {
 			status = result.Status
 		}
-		writeJSON(w, status, map[string]any{"error": map[string]any{"code": "connection_test_failed", "message": result.Error, "upstreamStatus": result.Status}, "result": result})
+		writeJSON(w, status, map[string]any{"error": map[string]any{"code": "connection_test_failed", "message": result.Error, "upstreamStatus": result.UpstreamStatus}, "result": result})
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -412,6 +412,7 @@ type modelTestResult struct {
 	LatencyMS       int64  `json:"latencyMs"`
 	OK              bool   `json:"ok"`
 	Status          int    `json:"status,omitempty"`
+	UpstreamStatus  int    `json:"upstreamStatus,omitempty"`
 	Error           string `json:"error,omitempty"`
 }
 
@@ -471,14 +472,20 @@ func (h *Handler) handleTestModels(w http.ResponseWriter, r *http.Request) {
 	if baseURL == "" {
 		baseURL = spec.DefaultBaseURL
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), modelBatchTimeout)
+	defer cancel()
 	results := make([]modelTestResult, 0, len(body.ModelIDs))
 	for _, modelID := range body.ModelIDs {
-		if r.Context().Err() != nil {
-			writeError(w, http.StatusRequestTimeout, "probe_canceled", "model testing was canceled")
+		if ctx.Err() != nil {
+			writeProbeInterrupted(w, ctx, "probe", results)
 			return
 		}
-		result := h.testProviderModel(r.Context(), connection, node, spec, baseURL, transportName, modelID, modelProbeTimeout)
+		result := h.testProviderModel(ctx, connection, node, spec, baseURL, transportName, modelID, modelProbeTimeout)
 		results = append(results, result)
+		if ctx.Err() != nil {
+			writeProbeInterrupted(w, ctx, "probe", results)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"connectionId": connection.ID, "transport": transportName, "results": results})
 }
@@ -488,21 +495,18 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	result = modelTestResult{ModelID: modelID, Classification: "failed"}
-	defer func() { result.LatencyMS = time.Since(start).Milliseconds() }()
+	defer func() {
+		result.LatencyMS = time.Since(start).Milliseconds()
+		if !result.OK {
+			result.ServedModelID = ""
+		}
+	}()
 	if h.opts.Runtime != nil {
 		if snapshot, err := h.opts.Runtime.Load(); err == nil {
-			model, ok := snapshot.ResolveModel("", modelID)
-			if !ok {
-				if provider, id, qualified := strings.Cut(modelID, "/"); qualified {
-					model, ok = snapshot.ResolveModel(provider, id)
-				}
-			}
-			if ok {
-				if model.ProviderID != node.ProviderID {
-					result.Error = "model resolves to a different provider"
-					return result
-				}
-				modelID = model.ID
+			modelID, err = snapshot.ProbeModel(node.ProviderID, modelID)
+			if err != nil {
+				result.Error = err.Error()
+				return result
 			}
 		}
 	}
@@ -625,17 +629,24 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	}
 	client := http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	if h.opts.DiscoveryClient != nil && h.opts.DiscoveryClient.HTTP != nil {
-		client.Transport = roundTripperFromClient(h.opts.DiscoveryClient.HTTP)
+		if discoveryClient, ok := h.opts.DiscoveryClient.HTTP.(*http.Client); ok {
+			client.Transport = discoveryClient.Transport
+		} else {
+			client.Transport = roundTripperFromClient(h.opts.DiscoveryClient.HTTP)
+		}
 	}
 	if client.Transport == nil {
 		protected := transport.NewSSRFProtectedClient()
 		if h.opts.AllowPrivateUpstreams {
 			protected = transport.NewTrustedLocalSSRFProtectedClient()
 		}
-		client = *protected
-		client.Timeout = timeout
-		client.Transport.(*http.Transport).ResponseHeaderTimeout = timeout
-		defer client.CloseIdleConnections()
+		client.Transport = protected.Transport
+	}
+	if base, ok := client.Transport.(*http.Transport); ok {
+		probeTransport := base.Clone()
+		probeTransport.ResponseHeaderTimeout = timeout
+		client.Transport = probeTransport
+		defer probeTransport.CloseIdleConnections()
 	}
 	response, err := client.Do(request)
 	if err != nil {
@@ -644,6 +655,7 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	}
 	defer response.Body.Close()
 	result.Status = response.StatusCode
+	result.UpstreamStatus = response.StatusCode
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		result.Error = "upstream rejected the model test"
 		return result
@@ -654,6 +666,7 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	} else if result.OK {
 		result.Classification = "reachable"
 	} else {
+		result.Status = http.StatusBadGateway
 		result.Error = "provider returned no usable output for this model"
 	}
 	return result

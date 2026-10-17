@@ -218,15 +218,21 @@ The original inventory remains the audit baseline.
   streaming, stop at first content/reasoning/tool/typed output and cancel the
   remaining generation. JSON-only providers retain native bounded fallback.
 - Each model gets a 200-second first-token budget. Discovery keeps its own
-  20-second limit; catalog sync retains its two-minute aggregate limit. Batch
-  inference no longer spends later models' allowance on earlier models.
+  20-second limit; catalog sync retains its two-minute aggregate limit. Model
+  lists and inference batches have a ten-minute aggregate ceiling. Per-model
+  budgets are independent within that remaining allowance; interruption returns
+  completed/interrupted verdicts and stops later work.
 - Own timeout is `slow`/504; hard failure is `failed`/502; caller cancellation is
-  `canceled`/408. Upstream HTTP errors retain their status with `failed` rather
-  than being relabeled as own timeouts. Empty/malformed/error streams cannot
+  `canceled`/408. `upstreamStatus` preserves the real HTTP response status,
+  separately from the synthesized probe status. Upstream HTTP errors retain
+  their status with `failed` rather than being relabeled as own timeouts.
+  Empty/malformed/error streams cannot
   certify inference, and discovery success alone still cannot pass validation.
 - Results separate tested `modelId`, resolved outbound `upstreamModelId` and
-  optional provider-reported `servedModelId`; aliases/qualified catalog IDs
-  resolve through RuntimeSnapshot. A different provider target is rejected.
+  optional successful provider-reported `servedModelId`. Snapshot lookup prefers
+  account-native IDs (including passthrough IDs and alias-name collisions), then
+  same-provider qualified IDs/aliases. Other slash-bearing manual IDs stay
+  literal. Cross-provider aliases and disabled targets fail explicitly.
 - Evidence: `internal/control/api/probes_test.go` covers fixed protocol payloads,
   framing, empty/error/oversized responses, slow versus failed classification,
   per-transport first-token cancellation, real client disconnect propagation

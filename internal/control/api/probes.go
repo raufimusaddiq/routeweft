@@ -15,7 +15,16 @@ import (
 )
 
 const modelProbeTimeout = 200 * time.Second
+const modelBatchTimeout = 10 * time.Minute
 const maxProbeBytes = 1 << 20
+
+func writeProbeInterrupted(w http.ResponseWriter, ctx context.Context, workflow string, results any) {
+	status, code, message := http.StatusRequestTimeout, workflow+"_canceled", "model testing was canceled"
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		status, code, message = http.StatusGatewayTimeout, workflow+"_timeout", "model testing exceeded the aggregate deadline"
+	}
+	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": message}, "results": results})
+}
 
 func (r *modelTestResult) probeFailure(ctx context.Context, err error) {
 	var networkError net.Error

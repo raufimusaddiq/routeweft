@@ -494,9 +494,7 @@ func TestNativeModelProbeIsBoundedAndRedacted(t *testing.T) {
 	}
 }
 
-// The System One/Jev provider configures the full typed endpoint as its base
-// URL, so the typed request workflow posts verbatim with state/questions.
-func TestSystemOneModelProbePostsVerbatim(t *testing.T) {
+func TestSystemOneModelProbeUsesTypedEndpoint(t *testing.T) {
 	const wantBody = `{"model":"jev","questions":{"probe":{"instructions":"Reply with OK.","type":"noul"}},"state":{"message":"Routeweft System One probe."},"stream":true}`
 	var gotBody []byte
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
