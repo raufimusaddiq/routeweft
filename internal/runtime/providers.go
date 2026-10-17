@@ -110,6 +110,24 @@ func (s *RuntimeSnapshot) ProviderCandidates(requested string) ([]routing.Accoun
 	return append([]routing.Account(nil), s.providerAccounts[model.ProviderID]...), true
 }
 
+// ModelKind derives typed catalog membership without changing durable model metadata.
+func (s *RuntimeSnapshot) ModelKind(model Model) string {
+	if model.Source == "alias" {
+		if resolved, ok := s.ResolveModel(model.ProviderID, model.ID); ok {
+			model = resolved
+		}
+	}
+	if model.ProviderID == "typesafe" || (model.ProviderID == "cloudflare-ai" && (model.ID == cloudflare.Clef || model.ID == cloudflare.ClefFlash)) {
+		return string(registry.TransportSystemOne)
+	}
+	for _, node := range s.providerConfig.Nodes {
+		if node.ProviderID == model.ProviderID && len(node.Transports) == 1 && node.Transports[0] == string(registry.TransportSystemOne) {
+			return string(registry.TransportSystemOne)
+		}
+	}
+	return "llm"
+}
+
 func (s *RuntimeSnapshot) AccountProvider(requested, account, source string, canTranslate func(string, string) bool) (routing.ProviderRef, bool) {
 	model, ok := s.ServingModel(requested)
 	if !ok {

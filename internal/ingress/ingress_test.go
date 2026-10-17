@@ -94,9 +94,9 @@ func TestModelLifecycleVisibleThroughAPI(t *testing.T) {
 	}
 	ids := map[string]bool{}
 	for _, model := range payload.Data {
-		ids[model["provider"].(string)+"/"+model["id"].(string)] = true
+		ids[model["id"].(string)] = true
 	}
-	for _, want := range []string{"openai/gpt-4o-mini", "openai/fast"} {
+	for _, want := range []string{"openai/gpt-4o-mini", "fast"} {
 		if !ids[want] {
 			t.Fatalf("model list missing %s: %v", want, ids)
 		}
@@ -178,7 +178,7 @@ func TestCORSAllowlistAndModelInfo(t *testing.T) {
 		t.Fatal("unconfigured origin received CORS permission")
 	}
 
-	info := httptest.NewRequest(http.MethodGet, "/v1/models/info", nil)
+	info := httptest.NewRequest(http.MethodGet, "/v1/models/info?id=local/model:small", nil)
 	info.Header.Set("X-Goog-Api-Key", key)
 	infoRecorder := httptest.NewRecorder()
 	mux.ServeHTTP(infoRecorder, info)
