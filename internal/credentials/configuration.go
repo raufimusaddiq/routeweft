@@ -99,7 +99,7 @@ func LoadConfiguration(ctx context.Context, db *sql.DB) (Configuration, error) {
 	if err != nil {
 		return Configuration{}, err
 	}
-	rows, err := db.QueryContext(ctx, `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,c.identity,c.enabled,c.priority,COALESCE(c.proxy_pool_id,'') FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id ORDER BY c.priority,c.name,c.id`)
+	rows, err := db.QueryContext(ctx, `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,c.identity,c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.account_id FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id ORDER BY c.priority,c.name,c.id`)
 	if err != nil {
 		return Configuration{}, err
 	}
@@ -107,7 +107,7 @@ func LoadConfiguration(ctx context.Context, db *sql.DB) (Configuration, error) {
 	config := Configuration{Nodes: nodes}
 	for rows.Next() {
 		var c Connection
-		if err := rows.Scan(&c.ID, &c.NodeID, &c.ProviderID, &c.Name, &c.AuthKind, &c.Identity, &c.Enabled, &c.Priority, &c.ProxyPoolID); err != nil {
+		if err := rows.Scan(&c.ID, &c.NodeID, &c.ProviderID, &c.Name, &c.AuthKind, &c.Identity, &c.Enabled, &c.Priority, &c.ProxyPoolID, &c.AccountID); err != nil {
 			return Configuration{}, err
 		}
 		config.Connections = append(config.Connections, c)

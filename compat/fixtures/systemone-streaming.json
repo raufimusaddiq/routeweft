@@ -1,0 +1,18 @@
+{
+  "id": "systemone-streaming",
+  "protocol": "systemone",
+  "kind": "streaming",
+  "description": "Synthetic System One upstream-owned SSE, relayed unchanged with typed answers and reported usage.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": "{\"model\":\"jev-latest\",\"state\":{\"message\":\"Synthetic request.\"},\"questions\":{\"urgent\":{\"type\":\"noul\"}},\"stream\":true,\"future\":9007199254740993}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {"content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store"},
+    "body": "event: answer\ndata: {\"answers\":{\"urgent\":{\"noul\":0.9}}}\n\nevent: usage\ndata: {\"usage\":{\"input_tokens\":18,\"output_tokens\":2}}\n\ndata: [DONE]\n\n"
+  },
+  "terminal": "data: [DONE]",
+  "usage": {"inputTokens": 18, "outputTokens": 2}
+}

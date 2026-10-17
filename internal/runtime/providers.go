@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/providers/cloudflare"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
@@ -20,6 +21,7 @@ type servingProvider struct {
 	endpoints map[registry.Protocol]string
 	account   routing.Account
 	name      string
+	accountID string
 }
 
 func compileProviders(config credentials.Configuration) (map[string]servingProvider, error) {
@@ -60,7 +62,7 @@ func compileProviders(config credentials.Configuration) (map[string]servingProvi
 		if node.Kind == credentials.NodeBuiltin {
 			endpoints = specs[node.ProviderID].TransportEndpoints
 		}
-		result[connection.ID] = servingProvider{node: node, endpoints: endpoints, account: routing.Account{ID: connection.ID, Enabled: connection.Enabled, Priority: connection.Priority}, name: connection.Name}
+		result[connection.ID] = servingProvider{node: node, endpoints: endpoints, account: routing.Account{ID: connection.ID, Enabled: connection.Enabled, Priority: connection.Priority}, name: connection.Name, accountID: connection.AccountID}
 	}
 	return result, nil
 }
@@ -134,7 +136,15 @@ func (s *RuntimeSnapshot) AccountProvider(requested, account, source string, can
 			}
 		}
 	}
-	return routing.ProviderRef{ProviderID: model.ProviderID, ConnectionID: account, BaseURL: config.node.BaseURL, Protocol: protocol, UpstreamModel: model.ID, Endpoint: config.endpoints[registry.Protocol(protocol)]}, true
+	endpoint := config.endpoints[registry.Protocol(protocol)]
+	if config.node.Kind == credentials.NodeBuiltin && model.ProviderID == "cloudflare-ai" {
+		var valid bool
+		endpoint, valid = cloudflare.Endpoint(protocol, config.accountID, model.ID)
+		if !valid {
+			return routing.ProviderRef{}, false
+		}
+	}
+	return routing.ProviderRef{ProviderID: model.ProviderID, ConnectionID: account, BaseURL: config.node.BaseURL, Protocol: protocol, UpstreamModel: model.ID, Endpoint: endpoint}, true
 }
 
 func (s *RuntimeSnapshot) compileServingIndexes() {

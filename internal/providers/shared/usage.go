@@ -35,6 +35,17 @@ func ParseUsage(family string, body []byte) (promptcache.Usage, bool) {
 		return parseGeminiUsage(body)
 	case FamilyOllama:
 		return parseOllamaUsage(body)
+	case FamilySystemOne:
+		var envelope struct {
+			Result json.RawMessage `json:"result"`
+		}
+		if json.Unmarshal(body, &envelope) != nil {
+			return promptcache.Usage{}, false
+		}
+		if len(envelope.Result) > 0 && string(envelope.Result) != "null" {
+			body = envelope.Result
+		}
+		return parseOpenAIUsage(body)
 	default:
 		return promptcache.Usage{}, false
 	}
@@ -49,6 +60,9 @@ func parseOpenAIUsage(body []byte) (promptcache.Usage, bool) {
 			CompletionTokens int64               `json:"completion_tokens"`
 			PromptCacheRead  int64               `json:"prompt_cache_hit_tokens"`
 			PromptCacheMiss  int64               `json:"prompt_cache_miss_tokens"`
+			CachedTokens     int64               `json:"cached_tokens"`
+			CacheRead        int64               `json:"cache_read_input_tokens"`
+			CacheWrite       int64               `json:"cache_creation_input_tokens"`
 			InputDetails     *openAIUsageDetails `json:"input_tokens_details"`
 			PromptDetails    *openAIUsageDetails `json:"prompt_tokens_details"`
 		} `json:"usage"`
@@ -83,7 +97,13 @@ func parseOpenAIUsage(body []byte) (promptcache.Usage, bool) {
 			cacheRead = details.CachedTokens
 		}
 	}
-	return promptcache.Usage{InputTokens: input, OutputTokens: output, CacheReadTokens: cacheRead}, true
+	if usage.CachedTokens != 0 {
+		cacheRead = usage.CachedTokens
+	}
+	if usage.CacheRead != 0 {
+		cacheRead = usage.CacheRead
+	}
+	return promptcache.Usage{InputTokens: input, OutputTokens: output, CacheReadTokens: cacheRead, CacheWriteTokens: usage.CacheWrite}, true
 }
 
 type openAIUsageDetails struct {

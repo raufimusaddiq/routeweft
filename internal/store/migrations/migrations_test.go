@@ -88,6 +88,29 @@ INSERT INTO custom_models(id,provider_id,model_id,display_name) VALUES('m1','pro
 	}
 }
 
+func TestV4ConnectionAccountIDUpgradePreservesRecords(t *testing.T) {
+	ctx := context.Background()
+	s, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "routeweft.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := NewRunner(s.DB(), v1, v2, v3, v4).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `INSERT INTO provider_nodes(id,kind,provider_id,name) VALUES('n','builtin','typesafe','TypeSafe');
+INSERT INTO provider_connections(id,node_id,name,auth_kind,identity,secret_blob) VALUES('c','n','Account','api-key','account','sealed-fixture');`); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewRunner(s.DB()).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var account, blob string
+	if err := s.DB().QueryRowContext(ctx, "SELECT account_id,secret_blob FROM provider_connections WHERE id='c'").Scan(&account, &blob); err != nil || account != "" || blob != "sealed-fixture" {
+		t.Fatalf("upgrade changed existing connection: account=%q blob=%q err=%v", account, blob, err)
+	}
+}
+
 func TestMigrationFailureRollsBackSchemaAndVersion(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "routeweft.sqlite"))

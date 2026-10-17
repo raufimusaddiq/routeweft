@@ -1,0 +1,17 @@
+{
+  "id": "systemone-cloudflare",
+  "protocol": "systemone",
+  "kind": "non-streaming",
+  "description": "Synthetic Cloudflare Clef typed result wrapper, preserved on the wire and unwrapped only for accounting.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": "{\"model\":\"@cf/cloudflare/clef\",\"state\":{\"message\":\"Synthetic request.\"},\"questions\":{\"urgent\":{\"type\":\"noul\"}},\"future\":true}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {"content-type": "application/json", "x-request-id": "fixture-clef"},
+    "body": "{\"result\":{\"answers\":{\"urgent\":{\"noul\":0.9}},\"usage\":{\"input_tokens\":18,\"output_tokens\":2,\"cache_read_input_tokens\":4,\"cache_creation_input_tokens\":1}},\"success\":true,\"errors\":[]}"
+  },
+  "usage": {"inputTokens": 18, "outputTokens": 2, "cacheReadTokens": 4, "cacheCreateTokens": 1}
+}

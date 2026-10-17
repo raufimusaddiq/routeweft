@@ -2,6 +2,29 @@ package shared
 
 import "testing"
 
+func TestSystemOneUsageNativeAndCloudflare(t *testing.T) {
+	for _, body := range []string{
+		`{"answers":{"q":true},"usage":{"input_tokens":18,"output_tokens":2,"cache_read_input_tokens":4,"cache_creation_input_tokens":1}}`,
+		`{"result":{"answers":{"q":true},"usage":{"input_tokens":18,"output_tokens":2,"cache_read_input_tokens":4,"cache_creation_input_tokens":1}},"success":true}`,
+	} {
+		usage, ok := ParseUsage(FamilySystemOne, []byte(body))
+		if !ok || usage.InputTokens != 18 || usage.OutputTokens != 2 || usage.CacheReadTokens != 4 || usage.CacheWriteTokens != 1 {
+			t.Errorf("usage=%+v present=%v", usage, ok)
+		}
+	}
+	for _, body := range []string{`{"usage":{"input_tokens":18,"output_tokens":2,"input_tokens_details":{"cached_tokens":4}}}`, `{"usage":{"prompt_tokens":18,"completion_tokens":2,"cached_tokens":4}}`} {
+		usage, ok := ParseUsage(FamilySystemOne, []byte(body))
+		if !ok || usage.InputTokens != 18 || usage.OutputTokens != 2 || usage.CacheReadTokens != 4 {
+			t.Errorf("compatibility usage=%+v present=%v", usage, ok)
+		}
+	}
+	for _, body := range []string{`{"result":null}`, `{"result":[]}`, `{"result":{"answers":{}}}`, `{"usage":{"input_tokens":"bad"}}`, `{"result":`, `not JSON`} {
+		if _, ok := ParseUsage(FamilySystemOne, []byte(body)); ok {
+			t.Errorf("malformed or absent usage accepted: %s", body)
+		}
+	}
+}
+
 func TestParseUsagePerProtocolFamily(t *testing.T) {
 	cases := []struct {
 		name   string

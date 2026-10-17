@@ -1,5 +1,7 @@
 package registry
 
+import "github.com/raufimusaddiq/routeweft/internal/providers/cloudflare"
+
 // Builtins returns the first built-in provider group: OpenAI Chat
 // Completions providers that authenticate with API keys and use a fixed base
 // URL (docs/PROVIDER_BASELINE.md group 1). Base URLs were verified against the
@@ -186,7 +188,7 @@ func APIGateways() []Spec {
 		{ID: "tokenrouter", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.tokenrouter.com/v1", ModelCatalog: CatalogDynamic, PassthroughModels: true},
 		{ID: "perplexity-agent", Transports: []Protocol{TransportOpenAIResponses}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.perplexity.ai/v1", ModelCatalog: CatalogDynamic, PassthroughModels: true},
 		{ID: "opencode-go", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://opencode.ai/zen/go/v1", ModelCatalog: CatalogStatic, ReportsUsage: true},
-		{ID: "cloudflare-ai", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.cloudflare.com/client/v4/accounts", ModelCatalog: CatalogStatic},
+		{ID: "cloudflare-ai", Transports: []Protocol{TransportOpenAIChat, TransportSystemOne}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.cloudflare.com/client/v4/accounts", ModelCatalog: CatalogStatic, StaticModels: []string{cloudflare.Clef, cloudflare.ClefFlash}, ReportsUsage: true},
 	}
 }
 
@@ -201,7 +203,7 @@ func LocalAndNoAuth() []Spec {
 		{ID: "opencode", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, DefaultBaseURL: "https://opencode.ai", ModelCatalog: CatalogDynamic, PassthroughModels: true},
 		{ID: "ollama", Transports: []Protocol{TransportOllama}, Auth: AuthAPIKey, DefaultBaseURL: "https://ollama.com", ModelCatalog: CatalogStatic},
 		{ID: "ollama-local", Transports: []Protocol{TransportOllama}, Auth: AuthNone, DefaultBaseURL: "http://localhost:11434", ModelCatalog: CatalogStatic},
-		{ID: "typesafe", Transports: []Protocol{TransportSystemOne}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.typesafe.ai/v1/systemone", ModelCatalog: CatalogStatic},
+		{ID: "typesafe", Transports: []Protocol{TransportSystemOne}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.typesafe.ai/v1/systemone", ModelCatalog: CatalogStatic, StaticModels: []string{"jev-latest"}, ReportsUsage: true},
 	}
 }
 

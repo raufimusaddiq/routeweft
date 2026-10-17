@@ -134,6 +134,39 @@ the actual app. This boundary delivers pipeline integration, not helper parity:
   actual Combo/Fusion serving (R01) remain their existing prerequisite gaps;
   their future wire dispatch must reuse this shared boundary.
 
+### R04 implementation progress (System One serving boundary)
+
+#75 task R04 addresses the System One rows without changing the
+audit-baseline table counts:
+
+- Exact envelope validation rejects null/array/empty/scalar questions; null
+  state and opaque question values remain valid. Model aliases/prefix resolution
+  reuse the serving snapshot; unchanged requests retain their original bytes.
+- Actual-app TypeSafe, sole-System-One Generic nodes and Cloudflare Clef/Clef
+  Flash transport eligibility are wired. TypeSafe's `jev-latest` and both Clef
+  seeds are available. Cloudflare Chat and typed endpoints use per-connection
+  `accountId`, persisted by additive schema v5 and published in snapshots.
+  Existing connections default to empty/ineligible until configured; explicitly
+  Chat-only nodes are not silently expanded. Custom typed-node CRUD/probes and
+  Cloudflare typed/Chat probes share the serving endpoint rules.
+- Native status, response bytes and allowed headers pass through. Upstream-owned
+  SSE streams incrementally without invented events, including when the request
+  omits a streaming hint. Native/Cloudflare usage and cache counters are parsed
+  separately from the wire response, once per completed request; streaming
+  accounting requires clean EOF. Client disconnect cancels upstream work.
+- Evidence: `internal/app/systemone_test.go` configures durable accounts,
+  restarts the real app, tests DB-closed routing/validation/fallback, fixed
+  native/Cloudflare streaming and non-streaming fixtures, incremental relay,
+  cancellation and durable usage/daily accounting. Parser, transport, snapshot,
+  store migration, control API and scanner tests cover the lower boundaries.
+  R03's shared fail-open saver/cache boundary remains unchanged; typed bodies
+  do not acquire invented prompt fields even with savers enabled.
+- Scope limits: deterministic synthetic fixtures are not live TypeSafe/Clef
+  certification or the R11 differential suite. Remaining Cloudflare Chat catalog
+  breadth belongs to P03; dashboard configuration workflow belongs to U09.
+  Native Headroom `/v1/compress` and PXPIPE image-rendering parity are separate
+  **R09** work, not System One behavior; neither is folded into R04.
+
 ### Area issues and ownership
 
 | Area | Backlog | Gap IDs owned |
