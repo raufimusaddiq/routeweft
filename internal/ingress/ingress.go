@@ -4,6 +4,7 @@ package ingress
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -49,6 +50,7 @@ type Options struct {
 	TranslateSystemOne        SystemOneTranslator
 	Candidates                CandidateResolver
 	AccountProvider           AccountProvider
+	CredentialFor             func(context.Context, string) (string, error)
 	State                     *runtime.RuntimeState
 	Strategy                  routing.Strategy
 	StickyLimit               uint64
@@ -240,66 +242,45 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
 		return
 	}
-	if h.opts.ProviderResolver == nil {
-		h.writeError(w, http.StatusServiceUnavailable, "no_provider", "no Anthropic Messages provider is configured")
-		return
-	}
-	provider, ok := h.opts.ProviderResolver(snapshot, request.Model)
-	if !ok {
-		h.writeError(w, http.StatusNotFound, "model_not_found", fmt.Sprintf("model %q is not configured for inference", request.Model))
-		return
-	}
-	plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: anthropicadapter.MessagesProtocol, TargetProtocol: provider.Protocol, Provider: provider})
-	if err != nil {
-		h.writeError(w, http.StatusBadGateway, "route_unavailable", err.Error())
-		return
-	}
-	endpoint := "messages"
-	var outbound []byte
-	var headers http.Header
-	if plan.NativePath() {
-		if h.opts.EndpointFor != nil {
-			if override, ok := h.opts.EndpointFor(provider.ProviderID, provider.Protocol); ok {
-				endpoint = override
+	response, provider, err := h.dispatchAttempts(r, snapshot, request.Model, anthropicadapter.MessagesProtocol, func(provider routing.ProviderRef) (ChatTranslation, error) {
+		plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: anthropicadapter.MessagesProtocol, Provider: provider})
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		var translated ChatTranslation
+		if plan.NativePath() {
+			translated.Endpoint = "messages"
+			if provider.Endpoint != "" {
+				translated.Endpoint = provider.Endpoint
+			} else if h.opts.EndpointFor != nil {
+				if override, ok := h.opts.EndpointFor(provider.ProviderID, provider.Protocol); ok {
+					translated.Endpoint = override
+				}
+			}
+			translated.Body, err = request.MarshalBody(provider.UpstreamModel)
+			translated.Headers = anthropicHeaders(r, provider)
+		} else if h.opts.TranslateMessages != nil {
+			translated, err = h.opts.TranslateMessages(request, plan.TargetProtocol)
+		} else {
+			err = fmt.Errorf("no Messages translator registered for target protocol %q", plan.TargetProtocol)
+		}
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		if h.opts.TransformFinalBody != nil {
+			if transformed, transformErr := h.opts.TransformFinalBody(provider.Protocol, translated.Body); transformErr == nil {
+				translated.Body = transformed
 			}
 		}
-		// Sprint 4 owns Routeweft-side token savers and cache anchoring. Until
-		// those transforms exist, preserve the native body (including client
-		// cache_control markers) rather than normalize or drop fields here.
-		outbound, err = request.MarshalBody(provider.UpstreamModel)
-		headers = anthropicHeaders(r, provider)
-	} else if h.opts.TranslateMessages != nil {
-		var translated ChatTranslation
-		translated, err = h.opts.TranslateMessages(request, plan.TargetProtocol)
-		endpoint, outbound, headers = translated.Endpoint, translated.Body, translated.Headers
-	} else {
-		err = fmt.Errorf("no Messages translator registered for target protocol %q", plan.TargetProtocol)
-	}
-	if err != nil {
-		h.writeError(w, http.StatusBadGateway, "request_translation_failed", err.Error())
-		return
-	}
-	if h.opts.TransformFinalBody != nil {
-		if transformed, transformErr := h.opts.TransformFinalBody(provider.Protocol, outbound); transformErr == nil {
-			outbound = transformed
+		if provider.Protocol == anthropicadapter.MessagesProtocol {
+			if anchored, anchorErr := promptcache.Anchor(translated.Body, promptcache.DefaultBudget); anchorErr == nil {
+				translated.Body = anchored
+			}
 		}
-	}
-	if provider.Protocol == anthropicadapter.MessagesProtocol {
-		if anchored, anchorErr := promptcache.Anchor(outbound, promptcache.DefaultBudget); anchorErr == nil {
-			outbound = anchored
-		}
-	}
-	upstreamRequest, err := h.newUpstreamRequest(r, provider, endpoint, outbound, headers)
+		return translated, nil
+	})
 	if err != nil {
-		h.writeError(w, http.StatusBadGateway, "upstream_configuration_error", err.Error())
-		return
-	}
-	response, err := h.clientFor(provider).Do(upstreamRequest)
-	if err != nil {
-		if r.Context().Err() != nil {
-			return
-		}
-		h.writeError(w, http.StatusBadGateway, "upstream_request_failed", "upstream request failed")
+		h.dispatchError(w, r, err)
 		return
 	}
 	defer response.Body.Close()
@@ -411,176 +392,11 @@ func (h *Handler) handleResponsesCompact(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Handler) handleResponsesRequest(w http.ResponseWriter, r *http.Request, compact bool) {
-	if !h.authorize(w, r) {
-		return
-	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, h.opts.MaxBodyBytes))
-	if err != nil {
-		var limitErr *http.MaxBytesError
-		if errors.As(err, &limitErr) {
-			h.writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds configured limit")
-		} else if r.Context().Err() == nil {
-			h.writeError(w, http.StatusBadRequest, "request_read_failed", "request body could not be read")
-		}
-		return
-	}
-	request, err := openaiadapter.ParseResponsesRequest(body, compact)
-	if err != nil {
-		h.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
-		return
-	}
-	snapshot, err := h.snapshot.Load()
-	if err != nil {
-		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
-		return
-	}
-	if h.opts.ProviderResolver == nil {
-		h.writeError(w, http.StatusServiceUnavailable, "no_provider", "no OpenAI Responses provider is configured")
-		return
-	}
-	provider, ok := h.opts.ProviderResolver(snapshot, request.Model)
-	if !ok {
-		h.writeError(w, http.StatusNotFound, "model_not_found", fmt.Sprintf("model %q is not configured for inference", request.Model))
-		return
-	}
-	plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: openaiadapter.ResponsesProtocol, TargetProtocol: provider.Protocol, Provider: provider})
-	if err != nil {
-		h.writeError(w, http.StatusBadGateway, "route_unavailable", err.Error())
-		return
-	}
-	endpoint := "responses"
-	if compact {
-		endpoint += "/compact"
-	}
-	var outbound []byte
-	var headers http.Header
-	if plan.NativePath() {
-		if h.opts.EndpointFor != nil && !compact {
-			if override, ok := h.opts.EndpointFor(provider.ProviderID, provider.Protocol); ok {
-				endpoint = override
-			}
-		}
-		outbound, err = request.MarshalBody(provider.UpstreamModel)
-		headers = openAIProviderHeaders(provider)
-	} else if compact && h.opts.TranslateResponsesCompact != nil {
-		var translated ChatTranslation
-		translated, err = h.opts.TranslateResponsesCompact(request, plan.TargetProtocol)
-		endpoint, outbound, headers = translated.Endpoint, translated.Body, translated.Headers
-	} else if !compact && h.opts.TranslateResponses != nil {
-		var translated ChatTranslation
-		translated, err = h.opts.TranslateResponses(request, plan.TargetProtocol)
-		endpoint, outbound, headers = translated.Endpoint, translated.Body, translated.Headers
-	} else {
-		err = fmt.Errorf("no Responses translator registered for target protocol %q", plan.TargetProtocol)
-	}
-	if err != nil {
-		h.writeError(w, http.StatusBadGateway, "request_translation_failed", err.Error())
-		return
-	}
-	upstreamRequest, err := h.newUpstreamRequest(r, provider, endpoint, outbound, headers)
-	if err != nil {
-		h.writeError(w, http.StatusBadGateway, "upstream_configuration_error", err.Error())
-		return
-	}
-	response, err := h.clientFor(provider).Do(upstreamRequest)
-	if err != nil {
-		if r.Context().Err() != nil {
-			return
-		}
-		h.writeError(w, http.StatusBadGateway, "upstream_request_failed", "upstream request failed")
-		return
-	}
-	defer response.Body.Close()
-	copyResponseHeaders(w.Header(), response.Header)
-	w.WriteHeader(response.StatusCode)
-	if request.Stream {
-		h.copyResponsesStream(w, r, response)
-		return
-	}
-	_, _ = io.Copy(w, response.Body)
+	h.handleOpenAI(w, r, openaiadapter.ResponsesProtocol, compact)
 }
 
 func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
-	if !h.authorize(w, r) {
-		return
-	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, h.opts.MaxBodyBytes))
-	if err != nil {
-		var limitErr *http.MaxBytesError
-		if errors.As(err, &limitErr) {
-			h.writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds configured limit")
-		} else if r.Context().Err() == nil {
-			h.writeError(w, http.StatusBadRequest, "request_read_failed", "request body could not be read")
-		}
-		return
-	}
-	request, err := openaiadapter.ParseChatRequest(body)
-	if err != nil {
-		h.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
-		return
-	}
-	snapshot, err := h.snapshot.Load()
-	if err != nil {
-		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
-		return
-	}
-	if h.opts.ProviderResolver == nil {
-		h.writeError(w, http.StatusServiceUnavailable, "no_provider", "no OpenAI Chat provider is configured")
-		return
-	}
-	provider, ok := h.opts.ProviderResolver(snapshot, request.Model)
-	if !ok {
-		h.writeError(w, http.StatusNotFound, "model_not_found", fmt.Sprintf("model %q is not configured for inference", request.Model))
-		return
-	}
-	plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: openaiadapter.ChatProtocol, TargetProtocol: provider.Protocol, Provider: provider})
-	if err != nil {
-		h.writeError(w, http.StatusBadGateway, "route_unavailable", err.Error())
-		return
-	}
-	endpoint := "chat/completions"
-	var outbound []byte
-	var headers http.Header
-	if plan.NativePath() {
-		if h.opts.EndpointFor != nil {
-			if override, ok := h.opts.EndpointFor(provider.ProviderID, provider.Protocol); ok {
-				endpoint = override
-			}
-		}
-		outbound, err = request.MarshalBody(provider.UpstreamModel)
-		headers = openAIProviderHeaders(provider)
-	} else if h.opts.TranslateChat != nil {
-		var translated ChatTranslation
-		translated, err = h.opts.TranslateChat(request, plan.TargetProtocol)
-		endpoint, outbound, headers = translated.Endpoint, translated.Body, translated.Headers
-	} else {
-		err = fmt.Errorf("no Chat Completions translator registered for target protocol %q", plan.TargetProtocol)
-	}
-	if err != nil {
-		h.writeError(w, http.StatusBadGateway, "request_translation_failed", err.Error())
-		return
-	}
-	upstreamRequest, err := h.newUpstreamRequest(r, provider, endpoint, outbound, headers)
-	if err != nil {
-		h.writeError(w, http.StatusBadGateway, "upstream_configuration_error", err.Error())
-		return
-	}
-	response, err := h.clientFor(provider).Do(upstreamRequest)
-	if err != nil {
-		if r.Context().Err() != nil {
-			return
-		}
-		h.writeError(w, http.StatusBadGateway, "upstream_request_failed", "upstream request failed")
-		return
-	}
-	defer response.Body.Close()
-	copyResponseHeaders(w.Header(), response.Header)
-	w.WriteHeader(response.StatusCode)
-	if request.Stream {
-		h.copyStream(w, r, response)
-		return
-	}
-	_, _ = io.Copy(w, response.Body)
+	h.handleOpenAI(w, r, openaiadapter.ChatProtocol, false)
 }
 
 func (h *Handler) newUpstreamRequest(r *http.Request, provider routing.ProviderRef, endpoint string, body []byte, headers http.Header) (*http.Request, error) {

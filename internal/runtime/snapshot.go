@@ -1,21 +1,39 @@
 // Package runtime owns immutable request configuration and mutable live state.
 package runtime
 
-import "github.com/raufimusaddiq/routeweft/internal/auth"
+import (
+	"github.com/raufimusaddiq/routeweft/internal/auth"
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/routing"
+)
 
 // RuntimeSnapshot is immutable after publication. Accessors return copies of
 // mutable values so consumers cannot modify the active configuration.
 type RuntimeSnapshot struct {
-	version        uint64
-	configRevision uint64
-	settings       map[string]string
-	keys           *auth.KeyIndex
-	models         map[string]Model
-	aliases        map[string]ModelRef
-	disabledModels map[string]struct{}
-	combos         map[string]Combo
-	poolBindings   map[string]string
-	poolPools      map[string]proxyPoolEntry
+	providerConfig      credentials.Configuration
+	providers           map[string]servingProvider
+	providerAccounts    map[string][]routing.Account
+	bareModels          map[string]ModelRef
+	providerStrategy    routing.Strategy
+	providerStrategies  map[string]routing.Strategy
+	providerStickyLimit uint64
+	version             uint64
+	configRevision      uint64
+	settings            map[string]string
+	keys                *auth.KeyIndex
+	models              map[string]Model
+	aliases             map[string]ModelRef
+	disabledModels      map[string]struct{}
+	combos              map[string]Combo
+	poolBindings        map[string]string
+	poolPools           map[string]proxyPoolEntry
+	proxyEnabled        bool
+	proxyURL            string
+	noProxy             []string
+}
+
+func (s *RuntimeSnapshot) OutboundProxy() (bool, string, []string) {
+	return s.proxyEnabled, s.proxyURL, append([]string(nil), s.noProxy...)
 }
 
 type proxyPoolEntry struct {

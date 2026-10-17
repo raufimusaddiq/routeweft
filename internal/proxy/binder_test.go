@@ -74,11 +74,22 @@ func TestBinderNilWhenNothingConfigured(t *testing.T) {
 	}
 }
 
-func TestParseNoProxy(t *testing.T) {
-	if got := parseNoProxy(`["localhost",".internal.example"]`); len(got) != 2 || got[0] != "localhost" {
+func TestCompiledNoProxy(t *testing.T) {
+	snapshot := testSnapshot(t, map[string]string{"noProxy": `["localhost",".internal.example"]`}, nil, nil)
+	_, _, got := snapshot.OutboundProxy()
+	if len(got) != 2 || got[0] != "localhost" {
 		t.Fatalf("noProxy=%v", got)
 	}
-	if parseNoProxy("not-json") != nil || parseNoProxy("") != nil {
-		t.Fatal("invalid/blank no-proxy should decode to nil")
+	got[0] = "mutated"
+	_, _, fresh := snapshot.OutboundProxy()
+	if fresh[0] != "localhost" {
+		t.Fatal("caller mutated compiled proxy config")
+	}
+	for _, raw := range []string{"not-json", "", `["localhost",1]`} {
+		view := testSnapshot(t, map[string]string{"noProxy": raw}, nil, nil)
+		_, _, got := view.OutboundProxy()
+		if got != nil {
+			t.Fatal("invalid/blank no-proxy should decode to nil")
+		}
 	}
 }

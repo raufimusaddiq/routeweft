@@ -16,6 +16,7 @@ type ProviderRef struct {
 	APIToken      string
 	ConnectionID  string
 	UpstreamModel string
+	Endpoint      string
 }
 
 // Plan is the immutable route decision for one request attempt.

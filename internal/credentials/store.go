@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -83,9 +84,10 @@ func (s Secret) Empty() bool {
 // Store owns durable provider node/connection records. Every write is a single
 // short transaction and no transaction spans network work (SPEC §4).
 type Store struct {
-	db     *sql.DB
-	sealer *Sealer
-	now    func() time.Time
+	db      *sql.DB
+	sealer  *Sealer
+	now     func() time.Time
+	publish Publisher
 }
 
 // NewStore builds the credential store. A nil sealer is rejected because
@@ -125,7 +127,17 @@ func (s *Store) PutNode(ctx context.Context, node Node) (Node, error) {
 	}
 	const upsert = `INSERT INTO provider_nodes(id,kind,provider_id,name,prefix,base_url,transports) VALUES(?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,provider_id=excluded.provider_id,name=excluded.name,prefix=excluded.prefix,base_url=excluded.base_url,transports=excluded.transports,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
-	if _, err := s.db.ExecContext(ctx, upsert, node.ID, string(node.Kind), node.ProviderID, node.Name, nullable(node.Prefix), nullable(node.BaseURL), transports); err != nil {
+	change := func(c *Configuration) error {
+		for i := range c.Nodes {
+			if c.Nodes[i].ID == node.ID {
+				c.Nodes[i] = node
+				return nil
+			}
+		}
+		c.Nodes = append(c.Nodes, node)
+		return nil
+	}
+	if _, err := s.exec(ctx, change, upsert, node.ID, string(node.Kind), node.ProviderID, node.Name, nullable(node.Prefix), nullable(node.BaseURL), transports); err != nil {
 		return Node{}, fmt.Errorf("persist provider node %q: %w", node.Name, err)
 	}
 	return node, nil
@@ -174,7 +186,24 @@ func (s *Store) GetNode(ctx context.Context, id string) (Node, error) {
 // Generic Provider deletion cascades to its connections and is audited by the
 // caller as a destructive operator action.
 func (s *Store) DeleteGenericNode(ctx context.Context, id string) error {
-	result, err := s.db.ExecContext(ctx, "DELETE FROM provider_nodes WHERE id=? AND kind=?", id, string(NodeGeneric))
+	change := func(c *Configuration) error {
+		for i, node := range c.Nodes {
+			if node.ID != id || node.Kind != NodeGeneric {
+				continue
+			}
+			c.Nodes = append(c.Nodes[:i], c.Nodes[i+1:]...)
+			kept := c.Connections[:0]
+			for _, connection := range c.Connections {
+				if connection.NodeID != id {
+					kept = append(kept, connection)
+				}
+			}
+			c.Connections = kept
+			return nil
+		}
+		return ErrNotFound
+	}
+	result, err := s.exec(ctx, change, "DELETE FROM provider_nodes WHERE id=? AND kind=?", id, string(NodeGeneric))
 	if err != nil {
 		return fmt.Errorf("delete generic provider node: %w", err)
 	}
@@ -219,7 +248,19 @@ func (s *Store) PutConnection(ctx context.Context, connection Connection) (Conne
 	}
 	const upsert = `INSERT INTO provider_connections(id,node_id,name,auth_kind,identity,secret_blob,enabled,priority,proxy_pool_id) VALUES(?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_kind=excluded.auth_kind,identity=excluded.identity,secret_blob=COALESCE(excluded.secret_blob,provider_connections.secret_blob),enabled=excluded.enabled,priority=excluded.priority,proxy_pool_id=excluded.proxy_pool_id,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
-	if _, err := s.db.ExecContext(ctx, upsert, connection.ID, connection.NodeID, connection.Name, string(connection.AuthKind), connection.Identity, blob, enabled, connection.Priority, nullable(connection.ProxyPoolID)); err != nil {
+	change := func(c *Configuration) error {
+		metadata := connection
+		metadata.Secret = Secret{}
+		for i := range c.Connections {
+			if c.Connections[i].ID == connection.ID {
+				c.Connections[i] = metadata
+				return nil
+			}
+		}
+		c.Connections = append(c.Connections, metadata)
+		return nil
+	}
+	if _, err := s.exec(ctx, change, upsert, connection.ID, connection.NodeID, connection.Name, string(connection.AuthKind), connection.Identity, blob, enabled, connection.Priority, nullable(connection.ProxyPoolID)); err != nil {
 		return Connection{}, fmt.Errorf("persist provider connection %q: %w", connection.Name, err)
 	}
 	return connection, nil
@@ -315,7 +356,7 @@ func (s *Store) SetConnectionEnabled(ctx context.Context, id string, enabled boo
 	if enabled {
 		flag = 1
 	}
-	result, err := s.db.ExecContext(ctx, "UPDATE provider_connections SET enabled=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", flag, id)
+	result, err := s.exec(ctx, editConnection(id, func(c *Connection) { c.Enabled = enabled }), "UPDATE provider_connections SET enabled=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", flag, id)
 	if err != nil {
 		return fmt.Errorf("update provider connection: %w", err)
 	}
@@ -331,7 +372,7 @@ func (s *Store) SetConnectionEnabled(ctx context.Context, id string, enabled boo
 
 // SetConnectionPriority changes stable account order without loading secrets.
 func (s *Store) SetConnectionPriority(ctx context.Context, id string, priority int) error {
-	result, err := s.db.ExecContext(ctx, "UPDATE provider_connections SET priority=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", priority, id)
+	result, err := s.exec(ctx, editConnection(id, func(c *Connection) { c.Priority = priority }), "UPDATE provider_connections SET priority=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", priority, id)
 	if err != nil {
 		return fmt.Errorf("update provider connection priority: %w", err)
 	}
@@ -351,66 +392,65 @@ func (s *Store) MoveConnection(ctx context.Context, id string, direction int) er
 	if direction != -1 && direction != 1 {
 		return errors.New("connection move direction must be -1 or 1")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	var nodeID string
-	if err := tx.QueryRowContext(ctx, "SELECT node_id FROM provider_connections WHERE id=?", id).Scan(&nodeID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	var ordered []Connection
+	change := func(c *Configuration) error {
+		nodeID := ""
+		for _, connection := range c.Connections {
+			if connection.ID == id {
+				nodeID = connection.NodeID
+				break
+			}
+		}
+		if nodeID == "" {
 			return ErrNotFound
 		}
-		return err
-	}
-	rows, err := tx.QueryContext(ctx, "SELECT id,priority FROM provider_connections WHERE node_id=? ORDER BY priority,name,id", nodeID)
-	if err != nil {
-		return err
-	}
-	type ordered struct {
-		id       string
-		priority int
-	}
-	items := []ordered{}
-	for rows.Next() {
-		var item ordered
-		if err := rows.Scan(&item.id, &item.priority); err != nil {
-			_ = rows.Close()
-			return err
+		for _, connection := range c.Connections {
+			if connection.NodeID == nodeID {
+				ordered = append(ordered, connection)
+			}
 		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	_ = rows.Close()
-	index := -1
-	for i := range items {
-		if items[i].id == id {
-			index = i
-			break
+		sort.Slice(ordered, func(i, j int) bool {
+			if ordered[i].Priority != ordered[j].Priority {
+				return ordered[i].Priority < ordered[j].Priority
+			}
+			if ordered[i].Name != ordered[j].Name {
+				return ordered[i].Name < ordered[j].Name
+			}
+			return ordered[i].ID < ordered[j].ID
+		})
+		for i := range ordered {
+			if ordered[i].ID == id {
+				next := i + direction
+				if next < 0 || next >= len(ordered) {
+					ordered = nil
+					return nil
+				}
+				ordered[i], ordered[next] = ordered[next], ordered[i]
+				break
+			}
 		}
-	}
-	next := index + direction
-	if index < 0 {
-		return ErrNotFound
-	}
-	if next >= 0 && next < len(items) {
-		items[index].priority, items[next].priority = items[next].priority, items[index].priority
-		for _, item := range []ordered{items[index], items[next]} {
-			if _, err := tx.ExecContext(ctx, "UPDATE provider_connections SET priority=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", item.priority, item.id); err != nil {
+		for i := range ordered {
+			ordered[i].Priority = i
+			if err := editConnection(ordered[i].ID, func(item *Connection) { item.Priority = i })(c); err != nil {
 				return err
 			}
 		}
+		return nil
 	}
-	return tx.Commit()
+	return s.update(ctx, change, func(tx *sql.Tx) error {
+		for _, item := range ordered {
+			if _, err := tx.ExecContext(ctx, "UPDATE provider_connections SET priority=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", item.Priority, item.ID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // SetConnectionProxy changes a connection's proxy-pool binding without
 // exposing its sealed credential.
 func (s *Store) SetConnectionProxy(ctx context.Context, id, poolID string) error {
-	result, err := s.db.ExecContext(ctx, "UPDATE provider_connections SET proxy_pool_id=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", nullable(poolID), id)
+	result, err := s.exec(ctx, editConnection(id, func(c *Connection) { c.ProxyPoolID = poolID }), "UPDATE provider_connections SET proxy_pool_id=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", nullable(poolID), id)
 	if err != nil {
 		return fmt.Errorf("update provider connection proxy: %w", err)
 	}
@@ -427,7 +467,16 @@ func (s *Store) SetConnectionProxy(ctx context.Context, id, poolID string) error
 // DeleteConnection removes one connection. Disabling is preferred for routing
 // continuity, so callers should treat this as an explicit destructive action.
 func (s *Store) DeleteConnection(ctx context.Context, id string) error {
-	result, err := s.db.ExecContext(ctx, "DELETE FROM provider_connections WHERE id=?", id)
+	change := func(c *Configuration) error {
+		for i := range c.Connections {
+			if c.Connections[i].ID == id {
+				c.Connections = append(c.Connections[:i], c.Connections[i+1:]...)
+				return nil
+			}
+		}
+		return ErrNotFound
+	}
+	result, err := s.exec(ctx, change, "DELETE FROM provider_connections WHERE id=?", id)
 	if err != nil {
 		return fmt.Errorf("delete provider connection: %w", err)
 	}

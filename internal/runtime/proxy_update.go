@@ -10,17 +10,21 @@ import (
 // proxy_pool_id changes, so the request path sees the new proxy without ever
 // querying SQLite itself (SPEC §5).
 func (m *Manager) RefreshPoolBindings(ctx context.Context) (*RuntimeSnapshot, error) {
-	bindings, err := loadPoolBindingsDB(ctx, m.db)
-	if err != nil {
-		return nil, err
-	}
-	pools, err := loadProxyPools(ctx, m.db)
-	if err != nil {
-		return nil, err
-	}
 	return m.Update(ctx, func(candidate *Candidate) error {
+		bindings, err := loadPoolBindingsDB(ctx, m.db)
+		if err != nil {
+			return err
+		}
+		pools, err := loadProxyPools(ctx, m.db)
+		if err != nil {
+			return err
+		}
 		candidate.PoolBindings = bindings
 		candidate.ProxyPools = pools
+		for i := range candidate.Providers.Connections {
+			connection := &candidate.Providers.Connections[i]
+			connection.ProxyPoolID = bindings[connection.ID]
+		}
 		return nil
 	})
 }
