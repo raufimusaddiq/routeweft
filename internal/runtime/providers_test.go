@@ -133,15 +133,21 @@ func TestProviderSnapshotCompileCommitPublish(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := m.Load()
-	ref, ok := before.AccountProvider("openai/gpt-4o", "c", "openai-responses")
+	ref, ok := before.AccountProvider("openai/gpt-4o", "c", "openai-responses", nil)
 	if !ok || ref.BaseURL != "https://api.openai.com/v1" || ref.Protocol != "openai-responses" || ref.APIToken != "" {
 		t.Fatalf("compiled ref %+v ok=%v", ref, ok)
 	}
 	if !before.providerConfig.Connections[0].Secret.Empty() {
 		t.Fatal("snapshot retained credential material")
 	}
-	if _, ok := before.AccountProvider("openai/gpt-4o", "c", "anthropic-messages"); ok {
+	if _, ok := before.AccountProvider("openai/gpt-4o", "c", "anthropic-messages", nil); ok {
 		t.Fatal("unsupported native transport is eligible")
+	}
+	ref, ok = before.AccountProvider("openai/gpt-4o", "c", "external-protocol", func(source, target string) bool {
+		return source == "external-protocol" && target == "openai-responses"
+	})
+	if !ok || ref.Protocol != "openai-responses" {
+		t.Fatal("runtime did not use the caller's protocol policy")
 	}
 	if _, err := m.db.ExecContext(ctx, `CREATE TRIGGER fail_connection BEFORE UPDATE ON provider_connections BEGIN SELECT RAISE(ABORT,'synthetic failure'); END`); err != nil {
 		t.Fatal(err)
@@ -164,10 +170,10 @@ func TestProviderSnapshotCompileCommitPublish(t *testing.T) {
 		t.Fatal(err)
 	}
 	after, _ = m.Load()
-	if _, ok := after.AccountProvider("openai/gpt-4o", "c", "openai-chat"); ok {
+	if _, ok := after.AccountProvider("openai/gpt-4o", "c", "openai-chat", nil); ok {
 		t.Fatal("disabled connection remains eligible")
 	}
-	if _, ok := before.AccountProvider("openai/gpt-4o", "c", "openai-chat"); !ok {
+	if _, ok := before.AccountProvider("openai/gpt-4o", "c", "openai-chat", nil); !ok {
 		t.Fatal("old snapshot mutated")
 	}
 	called := false
@@ -233,7 +239,7 @@ func TestProviderMetadataUpdatesAndConcurrentSnapshots(t *testing.T) {
 					t.Error("incoherent candidates")
 				}
 				for _, item := range items {
-					ref, found := view.AccountProvider("test/model", item.ID, "openai-chat")
+					ref, found := view.AccountProvider("test/model", item.ID, "openai-chat", nil)
 					if item.Enabled && (!found || ref.BaseURL != "https://example.com/v1") {
 						t.Error("incoherent provider")
 					}

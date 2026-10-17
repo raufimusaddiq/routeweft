@@ -322,7 +322,7 @@ func TestConfiguredServingSkipsTransportMismatchBeforeRotationAndCap(t *testing.
 	if err := a.creds.SetConnectionEnabled(ctx, "account-11", false); err != nil {
 		t.Fatal(err)
 	}
-	w := serveRequest(a.Handler(), key, "/v1/responses", `{"model":"fast","input":"hi"}`)
+	w := serveRequest(a.Handler(), key, "/v1/messages", `{"model":"fast","messages":[{"role":"user","content":"hi"}],"max_tokens":1}`)
 	if w.Code != 503 || !strings.Contains(w.Body.String(), "no_eligible_accounts") {
 		t.Fatalf("unsupported transports status=%d body=%s", w.Code, w.Body)
 	}

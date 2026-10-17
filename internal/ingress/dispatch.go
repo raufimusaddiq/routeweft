@@ -43,24 +43,17 @@ func (h *Handler) dispatchError(w http.ResponseWriter, r *http.Request, err erro
 
 // Dispatch completes retries before exposing upstream headers. Once a stream
 // starts it is never replayed, including after a partial response or disconnect.
-func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSnapshot, model, source string, prepare func(routing.ProviderRef) (ChatTranslation, error)) (*http.Response, routing.ProviderRef, error) {
+func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSnapshot, model, source string, compact bool, prepare func(routing.ProviderRef) (ChatTranslation, error)) (*http.Response, routing.ProviderRef, error) {
 	var candidates []routing.ProviderRef
 	if h.opts.Candidates != nil && h.opts.AccountProvider != nil {
 		providerID := modelProviderID(model)
 		if resolved, ok := snapshot.ServingModel(model); ok {
 			providerID = resolved.ProviderID
 		}
-		accounts, known := h.planProviderAttempts(snapshot, providerID, model, source, time.Now())
+		var known bool
+		candidates, known = h.planProviderAttempts(snapshot, providerID, model, source, compact, time.Now())
 		if !known {
 			return nil, routing.ProviderRef{}, &dispatchError{404, "model_not_found", fmt.Sprintf("model %q is not configured for inference", model)}
-		}
-		for _, account := range accounts {
-			if provider, ok := h.opts.AccountProvider(snapshot, model, account.ID, source); ok {
-				candidates = append(candidates, provider)
-			}
-			if len(candidates) == maxAccountAttempts {
-				break
-			}
 		}
 	} else if h.opts.ProviderResolver != nil {
 		if provider, ok := h.opts.ProviderResolver(snapshot, model); ok {

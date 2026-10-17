@@ -108,7 +108,7 @@ func (s *RuntimeSnapshot) ProviderCandidates(requested string) ([]routing.Accoun
 	return append([]routing.Account(nil), s.providerAccounts[model.ProviderID]...), true
 }
 
-func (s *RuntimeSnapshot) AccountProvider(requested, account, source string) (routing.ProviderRef, bool) {
+func (s *RuntimeSnapshot) AccountProvider(requested, account, source string, canTranslate func(string, string) bool) (routing.ProviderRef, bool) {
 	model, ok := s.ServingModel(requested)
 	if !ok {
 		return routing.ProviderRef{}, false
@@ -119,11 +119,20 @@ func (s *RuntimeSnapshot) AccountProvider(requested, account, source string) (ro
 	}
 	protocol := config.node.Transports[0]
 	if source != "" {
-		// shortcut: native-only app candidates; R02 adds translator-aware eligibility.
-		if !slices.Contains(config.node.Transports, source) {
-			return routing.ProviderRef{}, false
+		if slices.Contains(config.node.Transports, source) {
+			protocol = source
+		} else {
+			protocol = ""
+			for _, target := range config.node.Transports {
+				if canTranslate != nil && canTranslate(source, target) {
+					protocol = target
+					break
+				}
+			}
+			if protocol == "" {
+				return routing.ProviderRef{}, false
+			}
 		}
-		protocol = source
 	}
 	return routing.ProviderRef{ProviderID: model.ProviderID, ConnectionID: account, BaseURL: config.node.BaseURL, Protocol: protocol, UpstreamModel: model.ID, Endpoint: config.endpoints[registry.Protocol(protocol)]}, true
 }

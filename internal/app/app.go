@@ -183,11 +183,13 @@ func (a *App) initialize(ctx context.Context) error {
 		return err
 	}
 	a.ingress = ingress.New(manager, ingress.Options{
+		TranslateChat:      ingress.TranslateChat,
+		TranslateResponses: ingress.TranslateResponses,
 		Candidates: func(snapshot *runtime.RuntimeSnapshot, model string) ([]routing.Account, bool) {
 			return snapshot.ProviderCandidates(model)
 		},
 		AccountProvider: func(snapshot *runtime.RuntimeSnapshot, model, account, source string) (routing.ProviderRef, bool) {
-			return snapshot.AccountProvider(model, account, source)
+			return snapshot.AccountProvider(model, account, source, ingress.CanTranslate)
 		},
 		CredentialFor: func(ctx context.Context, account string) (string, error) {
 			if a.credReg == nil {
