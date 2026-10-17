@@ -76,6 +76,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 	}
 	var lastErr error
 	used := 0
+	authFailureSeen := false
 	for index, provider := range candidates {
 		if used == maxAccountAttempts {
 			break
@@ -134,7 +135,13 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				classification.Outcome = mapped.Outcome
 			}
 			now := time.Now()
-			h.recordClassification(provider.ConnectionID, classification, now)
+			// A request-scoped auth rejection must not cool the entire fallback chain.
+			if classification.Outcome != routing.OutcomeAuthRefreshRequired || !authFailureSeen {
+				h.recordClassification(provider.ConnectionID, classification, now)
+			}
+			if classification.Outcome == routing.OutcomeAuthRefreshRequired {
+				authFailureSeen = true
+			}
 			if classification.Outcome == routing.OutcomeRetrySameAccount && retry == 0 && used < maxAccountAttempts && readErr == nil {
 				response.Body.Close()
 				delay := time.Until(routing.CooldownDeadline(classification, now, time.Second))

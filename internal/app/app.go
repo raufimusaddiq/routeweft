@@ -322,10 +322,10 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 		if seeded[node.ProviderID] {
 			continue
 		}
-		if _, err := registry.Load(ctx, node.ProviderID); err != nil {
-			return fmt.Errorf("seed %s credentials: %w", node.ProviderID, err)
-		}
 		seeded[node.ProviderID] = true
+		if _, err := registry.Load(ctx, node.ProviderID); err != nil {
+			a.log.Warn("provider credentials unavailable; skipping startup seed", "provider", node.ProviderID, "error", err)
+		}
 	}
 	observer := quota.Observer{
 		Clients: map[string]quota.UsageClient{

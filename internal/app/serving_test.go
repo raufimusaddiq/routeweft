@@ -1,10 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -323,6 +325,82 @@ func TestConfiguredServingSkipsTransportMismatchBeforeRotationAndCap(t *testing.
 	w := serveRequest(a.Handler(), key, "/v1/responses", `{"model":"fast","input":"hi"}`)
 	if w.Code != 503 || !strings.Contains(w.Body.String(), "no_eligible_accounts") {
 		t.Fatalf("unsupported transports status=%d body=%s", w.Code, w.Body)
+	}
+}
+
+func TestConfiguredServingCorruptCredentialStartup(t *testing.T) {
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		fmt.Fprint(w, r.Header.Get("Authorization"))
+	}))
+	defer upstream.Close()
+	a, key := servingApp(t, upstream.URL, 1)
+	ctx := context.Background()
+	if _, err := a.creds.PutNode(ctx, credentials.Node{ID: "broken", Kind: credentials.NodeGeneric, ProviderID: "broken", Name: "broken", BaseURL: upstream.URL, Transports: []string{"openai-responses"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.creds.PutConnection(ctx, credentials.Connection{ID: "broken-account", NodeID: "broken", Name: "broken account", Identity: "broken-identity", AuthKind: credentials.AuthAPIKey, Secret: credentials.Secret{AccessToken: "synthetic-broken-token"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.runtime.PutModel(ctx, runtime.Model{ProviderID: "broken", ID: "model"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.store.DB().ExecContext(ctx, "UPDATE provider_connections SET secret_blob=? WHERE id=?", "synthetic-corrupt-blob", "broken-account"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	a.log = slog.New(slog.NewTextHandler(&logs, nil))
+	if err := a.Initialize(ctx); err != nil {
+		t.Fatalf("corrupt provider blocked startup: %v", err)
+	}
+	if !strings.Contains(logs.String(), "provider=broken") || !strings.Contains(logs.String(), "level=WARN") || strings.Contains(logs.String(), "synthetic-") {
+		t.Fatalf("missing warning or exposed credential material: %s", &logs)
+	}
+	if err := a.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	w := serveRequest(a.Handler(), key, "/v1/responses", `{"model":"broken/model","input":"hi"}`)
+	if w.Code != 503 || !strings.Contains(w.Body.String(), "credentials_unavailable") || calls.Load() != 0 {
+		t.Fatalf("corrupt credential status=%d calls=%d body=%s", w.Code, calls.Load(), w.Body)
+	}
+	w = serveRequest(a.Handler(), key, "/v1/responses", `{"model":"fast","input":"hi"}`)
+	if w.Code != 200 || w.Body.String() != "Bearer synthetic-0" || calls.Load() != 1 {
+		t.Fatalf("healthy provider status=%d calls=%d body=%s", w.Code, calls.Load(), w.Body)
+	}
+}
+
+func TestConfiguredServingAuthCooldownOncePerRequest(t *testing.T) {
+	for _, path := range []string{"/v1/chat/completions", "/v1/responses", "/v1/responses/compact", "/v1/messages"} {
+		t.Run(path, func(t *testing.T) {
+			var calls atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				w.WriteHeader(http.StatusUnauthorized)
+				fmt.Fprint(w, `{"error":"request scope rejected"}`)
+			}))
+			defer upstream.Close()
+			a, key := servingApp(t, upstream.URL, 3)
+			for request := 0; request < 2; request++ {
+				w := serveRequest(a.Handler(), key, path, `{"model":"fast","input":"hi","messages":[{"role":"user","content":"hi"}],"max_tokens":1}`)
+				wantCalls := int32(3)
+				if request == 1 {
+					wantCalls = 5
+				}
+				if w.Code != 401 || !strings.Contains(w.Body.String(), "request scope rejected") || calls.Load() != wantCalls {
+					t.Fatalf("request=%d status=%d calls=%d body=%s", request, w.Code, calls.Load(), w.Body)
+				}
+				for account := 0; account < 3; account++ {
+					until, cooling := a.runtime.State().CooldownUntil(fmt.Sprintf("account-%02d", account), time.Now())
+					if cooling != (account <= request) || (cooling && time.Until(until) < 110*time.Second) {
+						t.Fatalf("request=%d account=%d cooling=%v until=%s", request, account, cooling, until)
+					}
+				}
+			}
+		})
 	}
 }
 
