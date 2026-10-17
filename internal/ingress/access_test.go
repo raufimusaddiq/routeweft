@@ -271,10 +271,15 @@ func TestKeyMissAfterAuthenticationFailsClosed(t *testing.T) {
 		t.Fatal("live restricted key must stay restricted")
 	}
 	paused := true
-	for name, mutate := range map[string]func() error{
-		"paused":  func() error { return manager.UpdateAPIKey(ctx, entry.ID, &paused, nil) },
-		"revoked": func() error { return manager.DeleteAPIKey(ctx, entry.ID) },
+	// Ordered: revoking is terminal, so it must run after the pause case.
+	for _, step := range []struct {
+		name   string
+		mutate func() error
+	}{
+		{"paused", func() error { return manager.UpdateAPIKey(ctx, entry.ID, &paused, nil) }},
+		{"revoked", func() error { return manager.DeleteAPIKey(ctx, entry.ID) }},
 	} {
+		name, mutate := step.name, step.mutate
 		if err := mutate(); err != nil {
 			t.Fatal(err)
 		}

@@ -471,7 +471,7 @@ Oracle dashboard prefix **V/** = `src/app/(dashboard)/dashboard/`; **W/** = Rout
 | Oracle page file | Routeweft screen / evidence | Status | Shortfall |
 | --- | --- | --- | --- |
 | `V/page.js` | `#overview`; W/Overview.tsx | PARTIAL | Runtime/count/error summary exists; readiness per provider, topology/live activity/invalidation incomplete (U03/U05/U08). |
-| `V/endpoint/page.js` | `#endpoint-key`; W/EndpointAndKey.tsx | PARTIAL | Key create/copy/pause/revoke exists; restricted model/Combo access editor missing (U02/C02). |
+| `V/endpoint/page.js` | `#endpoint-key`; W/EndpointAndKey.tsx | PARTIAL | Key create/copy/pause/revoke and the restricted/unrestricted model, alias and Combo allowlist editor exist (U02); picker lists only reachable entries (enabled connection, not disabled). Adapter-pool enforcement for restricted keys still waits on Combo planning being wired (C02). |
 | `V/providers/page.js` | `#providers`; W/Providers.tsx | PARTIAL | Catalog/list/filter exists; muse/readiness/health/real auth flows and pagination beyond 100 missing (U03/U04). |
 | `V/providers/new/page.js` | Inline add-account/Generic form; W/Providers.tsx | PARTIAL | API-key/token paste is not OAuth/device/PAT/cookie/import onboarding; pre-save validation incomplete (U03/R06/P04). |
 | `V/providers/[id]/page.js` | Selected provider panel; W/Providers.tsx | PARTIAL | Connection/model/alias/price/order/test operations exist; special imports, quota/compatibility/proxy management/default models/deletion/paging incomplete (U03/U04). |
