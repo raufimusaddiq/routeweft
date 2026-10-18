@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/auth"
@@ -79,6 +80,9 @@ type RequestOutcome struct {
 	ProviderID   string
 	ModelID      string
 	ConnectionID string
+	// APIKeyID is the opaque id of the authenticated client key, never the key
+	// or its prefix. It is empty when the deployment does not require keys.
+	APIKeyID     string
 	Status       int
 	InputTokens  int64
 	OutputTokens int64
@@ -86,6 +90,21 @@ type RequestOutcome struct {
 	CacheWrite   int64
 	Duration     time.Duration
 	Stream       bool
+}
+
+// attribution carries the authenticated key id from authorize to the completion
+// record without re-running key lookup, so a key revoked mid-request is still
+// attributed correctly.
+type attribution struct{ keyID atomic.Pointer[string] }
+
+type attributionKey struct{}
+
+func attributionFrom(r *http.Request) *attribution {
+	if r == nil {
+		return nil
+	}
+	holder, _ := r.Context().Value(attributionKey{}).(*attribution)
+	return holder
 }
 
 // ProviderResolver is request-time code that uses only the already-loaded
@@ -164,7 +183,14 @@ func (h *Handler) emitOutcome(r *http.Request, provider routing.ProviderRef, sta
 	if !started.IsZero() {
 		duration = time.Since(started)
 	}
+	apiKeyID := ""
+	if holder := attributionFrom(r); holder != nil {
+		if id := holder.keyID.Load(); id != nil {
+			apiKeyID = *id
+		}
+	}
 	h.opts.OnRequestComplete(RequestOutcome{
+		APIKeyID:     apiKeyID,
 		RequestID:    requestID,
 		ProviderID:   provider.ProviderID,
 		ModelID:      provider.UpstreamModel,
@@ -793,9 +819,14 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) bool {
 		h.writeError(w, http.StatusUnauthorized, "missing_api_key", "a Routeweft API key is required")
 		return false
 	}
-	if _, ok := snapshot.APIKeys().Lookup(presented); !ok {
+	entry, ok := snapshot.APIKeys().Lookup(presented)
+	if !ok {
 		h.writeError(w, http.StatusUnauthorized, "invalid_api_key", "the Routeweft API key is invalid")
 		return false
+	}
+	if holder := attributionFrom(r); holder != nil {
+		id := entry.ID
+		holder.keyID.Store(&id)
 	}
 	return true
 }
@@ -831,6 +862,7 @@ func clientKey(r *http.Request) (string, bool) {
 
 func (h *Handler) withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		r = r.WithContext(context.WithValue(r.Context(), attributionKey{}, &attribution{}))
 		if origin := h.allowedOrigin(r); origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			if origin != "*" {

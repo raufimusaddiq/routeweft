@@ -877,6 +877,21 @@ restarting a helper, Headroom extras, and proxying the Headroom dashboard are
 privileged host operations or arbitrary passthroughs; they are intentionally not
 exposed over this API and need an explicit product/host decision.
 
+Usage and console logs (SPEC §21):
+
+```text
+GET    /admin/v1/usage    bounded list; optional exact filters providerId, modelId,
+                          connectionId, apiKeyId, status (100-599), and inclusive
+                          startDate/endDate (RFC 3339); a malformed filter is 400
+                          invalid_filter without echoing the value
+DELETE /admin/v1/logs     clears the bounded console buffer -> {cleared}
+```
+
+Each usage event carries `apiKeyId`: the opaque id of the authenticated client
+key, resolved once at authorization, never the key or its prefix. It is empty
+when `requireApiKey` is false. Time-to-first-token, cost, and a metrics scrape
+endpoint are not yet defined by this specification and are not exposed.
+
 Dashboard password rotation uses `POST /admin/v1/auth/password` with the
 current and replacement password. It is same-origin and session-gated; the
 current password is reverified before changing the stored hash. All sessions

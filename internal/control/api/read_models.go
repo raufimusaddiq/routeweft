@@ -548,7 +548,12 @@ func (h *Handler) keys(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (h *Handler) usage(w http.ResponseWriter, r *http.Request) error {
-	return h.sqlList(w, r, `SELECT id,request_id,provider_id,model_id,connection_id,api_key_id,status,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,duration_ms,ttft_ms,created_at FROM usage_events ORDER BY created_at DESC,id DESC`, "SELECT COUNT(*) FROM usage_events", func(rows *sql.Rows) (any, error) {
+	where, args, err := usageFilter(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
+		return nil
+	}
+	return h.sqlList(w, r, `SELECT id,request_id,provider_id,model_id,connection_id,api_key_id,status,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,duration_ms,ttft_ms,created_at FROM usage_events`+where+` ORDER BY created_at DESC,id DESC`, "SELECT COUNT(*) FROM usage_events"+where, func(rows *sql.Rows) (any, error) {
 		var item struct {
 			ID         int64  `json:"id"`
 			RequestID  string `json:"requestId"`
@@ -576,7 +581,7 @@ func (h *Handler) usage(w http.ResponseWriter, r *http.Request) error {
 		putNullInt(result, "durationMs", item.Duration)
 		putNullInt(result, "ttftMs", item.TTFT)
 		return result, nil
-	})
+	}, args...)
 }
 
 func (h *Handler) requests(w http.ResponseWriter, r *http.Request) error {

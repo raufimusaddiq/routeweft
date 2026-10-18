@@ -74,6 +74,19 @@ func (b *LogBuffer) append(record slog.Record, attrs map[string]any) {
 	b.entries = append(b.entries, entry)
 }
 
+// clear drops every buffered record and reports how many it removed. Record ids
+// keep increasing so a client polling by id never sees an id reused.
+func (b *LogBuffer) clear() int {
+	if b == nil {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	removed := len(b.entries)
+	b.entries = b.entries[:0]
+	return removed
+}
+
 func (b *LogBuffer) list(p page, level, query string) ([]ConsoleLog, int64) {
 	if b == nil {
 		return []ConsoleLog{}, 0
