@@ -832,6 +832,26 @@ PATCH  /admin/v1/keys/{id}       {paused?: bool, access?: {restricted: bool, all
 DELETE /admin/v1/keys/{id}       revoke; the compiled key index drops it immediately
 ```
 
+Proxy pools (SPEC §20) are managed through the admin API. Member URLs may carry
+credentials; responses always strip userinfo, query, and fragment, and an update
+may send a stored member by `id` alone to keep its URL.
+
+```text
+GET    /admin/v1/proxy-pools            bounded list (existing read model)
+GET    /admin/v1/proxy-pools/{id}
+POST   /admin/v1/proxy-pools            {name, enabled?, strategy?, members: [{url, enabled?}]}; 201
+PUT    /admin/v1/proxy-pools/{id}       replaces fields and members; member {id} alone keeps its stored url
+DELETE /admin/v1/proxy-pools/{id}       409 proxy_pool_in_use while any connection is bound to it
+POST   /admin/v1/proxy-pools/{id}/test  {memberId?}; per-member classified result
+POST   /admin/v1/settings/proxy-test    {url?}; tests url, else the global outbound proxy
+```
+
+Mutations publish through `RefreshPoolBindings` and return `configRevision`.
+Proxy hosts and test destinations pass the shared SSRF policy; redirects are not
+followed. A connectivity failure is a 200 with `ok:false` and a `class`
+(`blocked`, `dns`, `refused`, `timeout`, `tls`, `proxy_auth`, `proxy_error`,
+`unreachable`); raw transport errors are never returned.
+
 Dashboard password rotation uses `POST /admin/v1/auth/password` with the
 current and replacement password. It is same-origin and session-gated; the
 current password is reverified before changing the stored hash. All sessions

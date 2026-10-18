@@ -52,20 +52,30 @@ func NewStore(db *sql.DB) (*Store, error) {
 // ErrNotFound reports a missing pool or member.
 var ErrNotFound = errors.New("proxy pool record not found")
 
+// ErrInvalid wraps every caller-correctable validation failure so control
+// handlers can answer 400 without string matching.
+var ErrInvalid = errors.New("invalid proxy pool")
+
+// ErrConflict reports a pool name that is already in use.
+var ErrConflict = errors.New("proxy pool name already exists")
+
+// ValidateURL applies the store's proxy URL rules without persisting anything.
+func ValidateURL(raw string) (string, error) { return validateProxyURL(raw) }
+
 // PutPool creates or replaces one pool and its members in a single transaction.
 // Member URLs are validated and de-duplicated so an invalid entry cannot reach
 // the outbound transport.
 func (s *Store) PutPool(ctx context.Context, pool Pool) (Pool, error) {
 	pool.Name = strings.TrimSpace(pool.Name)
 	if pool.Name == "" {
-		return Pool{}, errors.New("proxy pool name is required")
+		return Pool{}, fmt.Errorf("%w: name is required", ErrInvalid)
 	}
 	switch pool.Strategy {
 	case "":
 		pool.Strategy = StrategyRoundRobin
 	case StrategyRoundRobin, StrategyFillFirst:
 	default:
-		return Pool{}, errors.New("unsupported proxy pool strategy")
+		return Pool{}, fmt.Errorf("%w: unsupported strategy", ErrInvalid)
 	}
 	if pool.ID == "" {
 		pool.ID = uuid.NewString()
@@ -86,6 +96,9 @@ func (s *Store) PutPool(ctx context.Context, pool Pool) (Pool, error) {
 	const upsertPool = `INSERT INTO proxy_pools(id,name,enabled,strategy) VALUES(?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET name=excluded.name,enabled=excluded.enabled,strategy=excluded.strategy,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 	if _, err := tx.ExecContext(ctx, upsertPool, pool.ID, pool.Name, enabled, string(pool.Strategy)); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed: proxy_pools.name") {
+			return Pool{}, ErrConflict
+		}
 		return Pool{}, fmt.Errorf("persist proxy pool %q: %w", pool.Name, err)
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM proxy_pool_members WHERE pool_id=?", pool.ID); err != nil {
@@ -227,16 +240,16 @@ func normalizeMembers(poolID string, members []Member) ([]Member, error) {
 func validateProxyURL(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return "", errors.New("proxy URL is required")
+		return "", fmt.Errorf("%w: proxy URL is required", ErrInvalid)
 	}
 	parsed, err := url.Parse(trimmed)
 	if err != nil || parsed.Host == "" {
-		return "", errors.New("proxy URL must include a host")
+		return "", fmt.Errorf("%w: proxy URL must include a host", ErrInvalid)
 	}
 	switch parsed.Scheme {
 	case "http", "https", "socks5", "socks5h":
 	default:
-		return "", errors.New("unsupported proxy URL scheme")
+		return "", fmt.Errorf("%w: unsupported proxy URL scheme", ErrInvalid)
 	}
 	return parsed.String(), nil
 }
