@@ -8,6 +8,27 @@ permissions:
   contents: read
 
 jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Fetch immutable oracle into disposable test storage
+        run: |
+          oracle_dir=$(mktemp -d)
+          git init --bare "$oracle_dir"
+          git -C "$oracle_dir" fetch --depth=1 https://github.com/raufimusaddiq/literouter.git 1c3b9f47837d42ea64992063309064af755a14a3
+          echo "ORACLE_DIR=$oracle_dir" >> "$GITHUB_ENV"
+      - run: node compat/parity/inventory.mjs
+      - run: go test -race ./internal/app -run TestPinnedSystemOneDifferential -count=1
+      - run: go test -race ./internal/security ./internal/ingress ./internal/providers/shared
+
   go:
     runs-on: ubuntu-latest
     steps:
@@ -45,6 +66,12 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -t routeweft:ci .
       - run: test "$(docker image inspect routeweft:ci --format '{{.Config.Entrypoint}}')" = '[/routeweft]'
+      - name: Verify runtime TLS trust bundle
+        run: |
+          container_id=$(docker create routeweft:ci)
+          trap 'docker rm "$container_id"' EXIT
+          docker cp "$container_id:/etc/ssl/certs/ca-certificates.crt" "$RUNNER_TEMP/routeweft-ca.crt"
+          test -s "$RUNNER_TEMP/routeweft-ca.crt"
       - name: Enforce production image budget
         run: |
           image_bytes=$(docker image inspect routeweft:ci --format '{{.Size}}')

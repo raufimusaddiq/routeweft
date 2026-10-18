@@ -29,19 +29,22 @@ func newThrottler() *throttler {
 	return &throttler{windows: make(map[string]attemptWindow), now: time.Now}
 }
 
-// allow reports whether another attempt may proceed for key.
-func (t *throttler) allow(key string) bool {
+func (t *throttler) retryAfter(key string) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	window, ok := t.windows[key]
+	now := t.now()
 	if !ok {
-		return true
+		return 0
 	}
-	if !t.now().Before(window.resetAt) {
+	if !now.Before(window.resetAt) {
 		delete(t.windows, key)
-		return true
+		return 0
 	}
-	return window.failures < loginMaxFailures
+	if window.failures < loginMaxFailures {
+		return 0
+	}
+	return int((window.resetAt.Sub(now) + time.Second - 1) / time.Second)
 }
 
 // fail records one failed attempt for key.

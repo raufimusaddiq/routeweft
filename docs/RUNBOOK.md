@@ -582,3 +582,97 @@ Maintain:
 - Caddy/reverse proxy config.
 
 A fresh server should be recoverable using only Routeweft artifacts, without LiteRouter.
+
+## 25. Parallel-run evaluation (R11, not a cutover)
+
+Read the current per-row dispositions in `docs/PARITY.md` first. R11 permits a
+limited, opt-in evaluation alongside LiteRouter v1. It does not certify full
+feature parity, authorize production deployment, or retire v1. Keep v1 running
+with its existing state and client endpoints throughout the evaluation.
+
+### Readiness reached and still required
+
+The configured app serves native Chat, Responses/Compact, Messages, Gemini,
+Ollama and System One, with bounded account fallback and snapshot-backed
+configuration. Chat/Responses translation, ordered savers/final cache, typed
+System One transports, access-aware aliases/tags/info, catalog workflows and
+first-token probes have tests. External helper diagnostics, proxy-pool tests,
+API-key usage attribution and console clear are implemented.
+
+Do not select a workload requiring the unresolved rows: actual Combo/Fusion/
+capacity serving, Messages/other protocol translators, specialized OAuth/wire/
+quota modules, native Headroom/PXPIPE compatibility, complete cost/TTFT/details/
+live UI, or v1 migration/history continuity. Provider readiness is not fully
+advertised by the current registry/UI; manually restrict evaluation to the
+specific provider/account/protocol combinations the operator has validated.
+An enabled provider or a successful model listing is not inference validation.
+
+Standalone media, hidden providers, cloud/tunnel lifecycle, Redis and
+multi-replica operation stay excluded by PRD 4.2 / BDR-005/016. Remote helper
+install/start/stop/restart and host auto-import stay unavailable. Manage any
+external helper locally under a separate host policy. Never substitute an
+arbitrary remote command endpoint.
+
+### Prepare independent state
+
+1. Choose a separate Routeweft container/process, listen port (default 21128),
+   private data volume, browser origin and reverse-proxy route. Do not mount or
+   copy a live v1 database, credential cache, writable helper state or WAL/SHM.
+   One Routeweft writer owns its SQLite file (BDR-001/017).
+2. Generate a fresh 32-byte credential sealing key using a trusted secret
+   source. Set `ROUTEWEFT_CREDENTIAL_KEY`, bootstrap username/password and
+   `ROUTEWEFT_DATA_DIR` for Routeweft only. Preserve that key with Routeweft's
+   recovery material; never reuse v1's master key. Do not paste values into
+   commands recorded in shell history, fixtures, issue comments or logs.
+3. Recreate provider nodes, independently provisioned accounts, manual models,
+   aliases and settings through Routeweft's own UI/API. Reissue client API keys;
+   do not import v1 plaintext keys or assume digest/schema compatibility. Leave
+   v1 history in v1; do not combine accounting histories during evaluation.
+   Snapshot publication and an independent restart must preserve the new config.
+4. Prefer separate provider identities/keys. If identities must be shared,
+   designate exactly one refresh-token rotation owner and verify the provider's
+   concurrency policy first. Shared identities also share upstream quotas;
+   duplicated evaluation calls may consume tokens or incur charges twice.
+5. Use the production image's CA trust bundle and existing SSRF policy. Keep
+   `ROUTEWEFT_ALLOW_PRIVATE_UPSTREAMS=false` unless a trusted local operator
+   explicitly needs LAN helpers/models. Permit only the required browser
+   origins with `ROUTEWEFT_CORS_ORIGINS`; do not weaken redirect revalidation.
+   Do not forward v1 session cookies, Authorization, proxy userinfo, tokens or
+   `X-Sync-Secret` into an application/access log. #74 owns deployed ingress
+   redaction and image-retention evidence; R11 has not verified that deployment.
+
+### Evaluate without moving ordinary traffic
+
+1. Record the independent image commit, schema/config revision and Routeweft
+   backup. Check `/health/live` and `/health/ready` on the separate port. Leave
+   ordinary clients pointed at v1; health alone does not prove provider parity.
+2. Run `ORACLE_DIR=/path/to/pinned-oracle make parity-test` in a disposable
+   development checkout, then review the `parity` PR CI result. The suite reads
+   pinned source and synthetic inputs only. It never calls a live provider.
+3. Use a dedicated test client/key to send sanitized, consented inputs to each
+   selected router independently. Do not mirror production prompts by default.
+   Compare status, model/account attribution, JSON shape, native unknown fields,
+   stream termination, first-token latency and upstream cancellation. Explicitly
+   exercise account fallback, client-key denial and disabled models.
+4. For savers, compare the outbound N/N+1 cache-prefix fixtures with each saver
+   enabled and bypassed, including fallback. Helper failures must still serve
+   valid requests. Read cache-token accounting through the existing shared
+   parser; do not equate token reduction with verified provider cache reuse.
+5. Check Usage append/key attribution, quota state, logs for secret leakage,
+   config publication/restart, and an isolated Routeweft backup/restore rehearsal.
+   Record missing cost/TTFT/request details as known gaps, not zero values or
+   evidence that those workflows passed. Record all discrepancies against the
+   specific PARITY row and area issue (#75-#78).
+
+### Stop conditions and handoff
+
+Stop the affected evaluation workload for an auth leak, model mismatch, broken
+cancellation, incorrect accounting, cache regression or unsupported transport.
+Point that test client back at its unchanged v1 endpoint; leave v1 running.
+Preserve sanitized diagnostics and the independent Routeweft backup. No v1
+database restore, service stop or decommission is part of this procedure.
+
+An operator may continue only the explicitly validated native/configuration
+subset. Full parity and broad-provider GA require the remaining PARITY rows,
+provider readiness and complete differential/browser evidence to close through
+reviewed follow-ups. A future traffic change needs its own approved plan.

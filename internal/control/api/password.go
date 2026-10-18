@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/raufimusaddiq/routeweft/internal/adminauth"
 )
@@ -29,7 +30,8 @@ func (h *Handler) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := clientKey(r)
-	if !h.throttler.allow(key) {
+	if retry := h.throttler.retryAfter(key); retry > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(retry))
 		writeError(w, http.StatusTooManyRequests, "too_many_attempts", "too many failed password attempts; try again later")
 		return
 	}

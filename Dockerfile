@@ -7,12 +7,14 @@ COPY ui/ ./
 RUN npm run build
 
 FROM golang:1.24-alpine AS go-build
+RUN apk add --no-cache ca-certificates
 WORKDIR /src
 COPY go.mod ./
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/routeweft ./cmd/routeweft
 
 FROM scratch
+COPY --from=go-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=go-build /out/routeweft /routeweft
 COPY --from=ui-build /src/ui/dist /ui
 ENV ROUTEWEFT_UI_DIR=/ui
