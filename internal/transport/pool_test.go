@@ -79,3 +79,18 @@ func underlyingTransport(client *http.Client) *http.Transport {
 	}
 	return client.Transport.(*http.Transport)
 }
+
+func TestPooledClientsReleaseDropsOnlyThatPolicy(t *testing.T) {
+	pool := NewPooledClients()
+	kept := ProxyPolicy{Enabled: true, ConnectionProxyURL: "http://kept.example:3128"}
+	released := ProxyPolicy{Enabled: true, ConnectionProxyURL: "http://released.example:3128"}
+	keptClient, _ := pool.Client(kept)
+	releasedClient, _ := pool.Client(released)
+	pool.Release(released)
+	if again, _ := pool.Client(kept); again != keptClient {
+		t.Fatal("release evicted an unrelated client")
+	}
+	if again, _ := pool.Client(released); again == releasedClient {
+		t.Fatal("released policy kept its cached client")
+	}
+}

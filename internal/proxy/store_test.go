@@ -118,3 +118,42 @@ func TestEmptyPoolIsListedWithoutMembers(t *testing.T) {
 		t.Fatalf("pools=%+v", pools)
 	}
 }
+
+func TestPutPoolClassifiesValidationAndNameConflicts(t *testing.T) {
+	ctx := context.Background()
+	store := testStore(t)
+	for name, pool := range map[string]Pool{
+		"blank name":   {Name: " "},
+		"bad strategy": {Name: "x", Strategy: "random"},
+		"bad scheme":   {Name: "x", Members: []Member{{URL: "ftp://proxy.example"}}},
+		"no host":      {Name: "x", Members: []Member{{URL: "http://"}}},
+	} {
+		if _, err := store.PutPool(ctx, pool); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("%s: err=%v want ErrInvalid", name, err)
+		}
+	}
+	if _, err := store.PutPool(ctx, Pool{Name: "taken"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutPool(ctx, Pool{Name: "taken"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate name err=%v want ErrConflict", err)
+	}
+}
+
+func TestDeletePoolIfUnboundReportsMissingAndDeletes(t *testing.T) {
+	ctx := context.Background()
+	store := testStore(t)
+	if _, err := store.DeletePoolIfUnbound(ctx, "ghost"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing err=%v want ErrNotFound", err)
+	}
+	pool, err := store.PutPool(ctx, Pool{Name: "temp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DeletePoolIfUnbound(ctx, pool.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetPool(ctx, pool.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("pool still present: %v", err)
+	}
+}

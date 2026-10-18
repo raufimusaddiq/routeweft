@@ -21,6 +21,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/discovery"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
+	"github.com/raufimusaddiq/routeweft/internal/proxy"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
@@ -55,17 +56,20 @@ type Options struct {
 	Combos                ComboManager
 	QuotaRefresher        func(context.Context) error
 	AllowPrivateUpstreams bool
-	DiscoveryClient       *discovery.Client
-	Providers             []registry.Spec
-	Telemetry             TelemetryReader
-	Events                *controlevents.Bus
-	Logs                  *LogBuffer
-	ActiveRequests        func() int64
-	Ready                 func() bool
-	Build                 buildinfo.Info
-	DataDir               string
-	Backup                func(context.Context, string) (backup.Metadata, error)
-	Restore               func(context.Context, string) (backup.Metadata, error)
+	// ProxyTestURL overrides the destination proxy connectivity tests request.
+	// It passes the same SSRF policy as any outbound URL.
+	ProxyTestURL    string
+	DiscoveryClient *discovery.Client
+	Providers       []registry.Spec
+	Telemetry       TelemetryReader
+	Events          *controlevents.Bus
+	Logs            *LogBuffer
+	ActiveRequests  func() int64
+	Ready           func() bool
+	Build           buildinfo.Info
+	DataDir         string
+	Backup          func(context.Context, string) (backup.Metadata, error)
+	Restore         func(context.Context, string) (backup.Metadata, error)
 }
 
 // RuntimeReader exposes immutable active configuration and process-local state.
@@ -119,6 +123,10 @@ type Handler struct {
 	kiloAt         time.Time
 	kiloFlight     chan struct{}
 	probeTransport http.RoundTripper
+	// proxyStore and proxyClients back proxy-pool CRUD and connectivity tests.
+	proxyStore      *proxy.Store
+	proxyClients    *transport.PooledClients
+	proxyTestTarget string
 }
 
 // New builds the control API handler.
@@ -130,7 +138,13 @@ func New(opts Options) *Handler {
 	if opts.DiscoveryClient == nil || opts.DiscoveryClient.HTTP == nil {
 		opts.DiscoveryClient = &discovery.Client{HTTP: client}
 	}
-	h := &Handler{opts: opts, throttler: newThrottler(), probeTransport: client.Transport}
+	h := &Handler{opts: opts, throttler: newThrottler(), probeTransport: client.Transport, proxyClients: transport.NewPooledClients(), proxyTestTarget: defaultProxyTestTarget}
+	if strings.TrimSpace(opts.ProxyTestURL) != "" {
+		h.proxyTestTarget = strings.TrimSpace(opts.ProxyTestURL)
+	}
+	if opts.DB != nil {
+		h.proxyStore, _ = proxy.NewStore(opts.DB)
+	}
 	if provided, ok := opts.DiscoveryClient.HTTP.(*http.Client); ok && provided.Transport != nil {
 		h.probeTransport = provided.Transport
 	}
@@ -184,6 +198,12 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.Handle("DELETE /admin/v1/combos/{id}", h.requireSessionHandler(http.HandlerFunc(h.handleDeleteCombo)))
 	mux.HandleFunc("GET /admin/v1/capability-adapters", h.requireSession(h.handleGetCapabilityAdapters))
 	mux.Handle("PUT /admin/v1/capability-adapters/{capability}", h.requireSessionHandler(http.HandlerFunc(h.handlePutCapabilityAdapter)))
+	mux.Handle("GET /admin/v1/proxy-pools/{id}", h.requireSessionHandler(http.HandlerFunc(h.handleGetProxyPool)))
+	mux.Handle("POST /admin/v1/proxy-pools", h.requireSessionHandler(http.HandlerFunc(h.handlePutProxyPool)))
+	mux.Handle("PUT /admin/v1/proxy-pools/{id}", h.requireSessionHandler(http.HandlerFunc(h.handlePutProxyPool)))
+	mux.Handle("DELETE /admin/v1/proxy-pools/{id}", h.requireSessionHandler(http.HandlerFunc(h.handleDeleteProxyPool)))
+	mux.Handle("POST /admin/v1/proxy-pools/{id}/test", h.requireSessionHandler(http.HandlerFunc(h.handleTestProxyPool)))
+	mux.Handle("POST /admin/v1/settings/proxy-test", h.requireSessionHandler(http.HandlerFunc(h.handleProxyTest)))
 	mux.Handle("POST /admin/v1/connections/{id}/proxy", h.requireSessionHandler(http.HandlerFunc(h.handleSetConnectionProxy)))
 	mux.Handle("POST /admin/v1/connections/{id}/order", h.requireSessionHandler(http.HandlerFunc(h.handleMoveConnection)))
 	for _, path := range []string{"overview", "providers", "provider-nodes", "connections", "models", "aliases", "pricing", "combos", "proxy-pools", "keys", "usage", "requests", "quota", "token-saver", "systemone"} {

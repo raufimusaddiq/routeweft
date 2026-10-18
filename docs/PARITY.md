@@ -374,10 +374,10 @@ The effective guard is `src/dashboardGuard.js`, not just each route body.
 | 54 | `/api/providers/suggested-models` | GET | D | ?url,type => {data} filtered upstream suggestions | MISSING | Shared /discover is not suggested-model filter | R06,P03: named filters/cache/failure behavior missing. |
 | 55 | `/api/providers/test-batch` | POST | D | {mode,providerId} => aggregate batch results | MISSING | Per-connection test-models only | R06: no across-connection/provider batch equivalent. |
 | 56 | `/api/providers/validate` | POST | D | {provider,apiKey,providerSpecificData} => {valid,error?} | PARTIAL | /connections/{id}/test; A/providers.go | R06,P02: pre-save specialized provider validation absent. |
-| 57 | `/api/proxy-pools/[id]` | GET, PUT, DELETE | D | GET pool; PUT pool fields; DELETE => success / 409 in use | PARTIAL | GET /admin/v1/proxy-pools; internal/runtime/proxy_update.go | R08: storage/rotation exists; HTTP create/update/delete absent. |
-| 58 | `/api/proxy-pools/[id]/test` | POST | D | pool id => connectivity/status result | MISSING | internal/proxy test primitive, no control route | R08: operator API missing. |
+| 57 | `/api/proxy-pools/[id]` | GET, PUT, DELETE | D | GET pool; PUT pool fields; DELETE => success / 409 in use | PRESENT | GET/PUT/DELETE /admin/v1/proxy-pools/{id}; A/proxy_pools.go | R08: delete returns 409 while bound. |
+| 58 | `/api/proxy-pools/[id]/test` | POST | D | pool id => connectivity/status result | PRESENT | POST /admin/v1/proxy-pools/{id}/test; A/proxy_pools.go | R08: classified per-member result. |
 | 59 | `/api/proxy-pools/netlify-deploy` | POST | D | Netlify deployment credentials/config => {proxyPool,deployUrl} (201) | MISSING | No provisioning action | R08: pending product decision; cloud-sync exclusion does not itself exclude outbound relay provisioning. |
-| 60 | `/api/proxy-pools` | GET, POST | D | ?isActive,includeUsage => {proxyPools}; POST pool => pool (201) | PARTIAL | GET /admin/v1/proxy-pools; A/read_models.go | R08: read-only HTTP resource; create/filter/usage parity incomplete. |
+| 60 | `/api/proxy-pools` | GET, POST | D | ?isActive,includeUsage => {proxyPools}; POST pool => pool (201) | PARTIAL | GET/POST /admin/v1/proxy-pools; A/proxy_pools.go | R08: isActive filter and includeUsage not provided. |
 | 61 | `/api/pxpipe/health` | POST, GET | D | => {healthy,checks,...} | MISSING | internal/transforms/pxpipe health helper only | R09: no admin control action. |
 | 62 | `/api/pxpipe/install` | POST | D | => installation info + health | MISSING | internal/transforms/pxpipe has HTTP transform/health/log/stats helpers only | R09: managed install/auto-install control absent. |
 | 63 | `/api/pxpipe/logs` | GET | D | ?limit<=500 => logs result | MISSING | No PXPIPE log endpoint | R09: diagnostic log control absent. |
@@ -387,7 +387,7 @@ The effective guard is `src/dashboardGuard.js`, not just each route body.
 | 67 | `/api/pxpipe/status` | GET | D | => helper installation/load/runtime state | MISSING | /admin/v1/token-saver settings only | R09: no process/helper state read model. |
 | 68 | `/api/pxpipe/stop` | POST | D | => {stopped,...status} | MISSING | No lifecycle route | R09: stop absent. |
 | 69 | `/api/settings/database` | GET, POST | DB | GET export JSON; POST {password,...export} => success | PARTIAL | /admin/v1/backup, /backup/restore[/check]; A/backup.go | D08: validated Routeweft ZIP intentional; C01: v1 import/recreation policy and tests missing. |
-| 70 | `/api/settings/proxy-test` | POST | D | proxy config => {ok,...connectivity,error} | MISSING | No control proxy-test route | R08: outbound connectivity action absent. |
+| 70 | `/api/settings/proxy-test` | POST | D | proxy config => {ok,...connectivity,error} | PRESENT | POST /admin/v1/settings/proxy-test; A/proxy_pools.go | R08: tests a url or the configured global proxy. |
 | 71 | `/api/settings/require-login` | GET | PUB | => {requireLogin}, defaults true | PARTIAL | /admin/v1/auth/session; A/api.go | C03: requireLogin stored true; no public setting read/change behavior. |
 | 72 | `/api/settings` | GET, PATCH | D | GET safe merged settings; PATCH settings/password fields => safe settings | PARTIAL | GET/PATCH /admin/v1/settings; A/settings.go | D01,D04; C03-C06: allowlist string settings, missing/changed semantics and live effects. |
 | 73 | `/api/tags` | OPTIONS, GET | D | => Ollama {models} manifest + CORS | MISSING | No /api/tags handler in internal/ingress/ingress.go | R05: retained chat-client discovery compatibility missing. |

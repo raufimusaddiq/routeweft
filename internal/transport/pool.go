@@ -92,6 +92,23 @@ func (p *PooledClients) Client(policy ProxyPolicy) (*http.Client, error) {
 	return client, nil
 }
 
+// Release drops and closes the cached client for a policy. Operator-triggered
+// connectivity tests use it for one-off proxy URLs so an unbounded set of
+// untrusted inputs cannot accumulate transports.
+func (p *PooledClients) Release(policy ProxyPolicy) {
+	key, err := policyCacheKey(policy)
+	if err != nil {
+		return
+	}
+	p.mu.Lock()
+	client := p.clients[key]
+	delete(p.clients, key)
+	p.mu.Unlock()
+	if client != nil {
+		client.CloseIdleConnections()
+	}
+}
+
 func policyCacheKey(policy ProxyPolicy) (string, error) {
 	key := fmt.Sprintf("enabled=%t|global=%s|connection=%s|private=%t|", policy.Enabled, policy.GlobalProxyURL, policy.ConnectionProxyURL, policy.AllowPrivate)
 	noProxy := append([]string(nil), policy.NoProxy...)
@@ -132,6 +149,14 @@ func newProxiedClient(policy ProxyPolicy) (*http.Client, error) {
 type destinationGuard struct {
 	next         http.RoundTripper
 	allowPrivate bool
+}
+
+// CloseIdleConnections lets http.Client.CloseIdleConnections reach the wrapped
+// transport.
+func (g destinationGuard) CloseIdleConnections() {
+	if closer, ok := g.next.(interface{ CloseIdleConnections() }); ok {
+		closer.CloseIdleConnections()
+	}
 }
 
 func (g destinationGuard) RoundTrip(request *http.Request) (*http.Response, error) {
