@@ -230,6 +230,7 @@ func (a *App) initialize(ctx context.Context) error {
 				ProviderID:   outcome.ProviderID,
 				ModelID:      outcome.ModelID,
 				ConnectionID: outcome.ConnectionID,
+				APIKeyID:     outcome.APIKeyID,
 				Status:       outcome.Status,
 				InputTokens:  outcome.InputTokens,
 				OutputTokens: outcome.OutputTokens,

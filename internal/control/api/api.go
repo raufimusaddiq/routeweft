@@ -225,6 +225,7 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/v1/quota/refresh", h.requireSession(h.handleQuotaRefresh))
 	mux.Handle("GET /admin/v1/events", h.requireSessionHandler(http.HandlerFunc(h.handleEvents)))
 	mux.Handle("GET /admin/v1/logs", h.requireSessionHandler(http.HandlerFunc(h.handleLogs)))
+	mux.Handle("DELETE /admin/v1/logs", h.requireSessionHandler(http.HandlerFunc(h.handleClearLogs)))
 	mux.Handle("GET /admin/v1/backup", h.requireSessionHandler(http.HandlerFunc(h.handleBackup)))
 	mux.Handle("POST /admin/v1/backup/restore/check", h.requireSessionHandler(http.HandlerFunc(h.handleRestoreCheck)))
 	mux.Handle("POST /admin/v1/backup/restore", h.requireSessionHandler(http.HandlerFunc(h.handleRestore)))
