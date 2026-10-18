@@ -81,11 +81,21 @@ func (h *Handler) handlePutProxyPool(w http.ResponseWriter, r *http.Request) {
 	if body.Enabled != nil {
 		pool.Enabled = *body.Enabled
 	}
+	seenIDs := map[string]bool{}
 	for position, input := range body.Members {
 		member := proxy.Member{ID: strings.TrimSpace(input.ID), URL: strings.TrimSpace(input.URL), Position: position, Enabled: true}
-		if previous, ok := stored[member.ID]; ok && member.ID != "" {
+		if member.ID != "" {
+			previous, known := stored[member.ID]
+			if !known || seenIDs[member.ID] {
+				writeError(w, http.StatusBadRequest, "invalid_proxy_pool", "member id is unknown or repeated")
+				return
+			}
+			seenIDs[member.ID] = true
 			member.Enabled = previous.Enabled
-			if member.URL == "" {
+			// Responses redact credentials, so a client that echoes back the
+			// redacted URL means "unchanged". A URL carrying userinfo or a query
+			// is an explicit replacement.
+			if member.URL == "" || (!carriesSecrets(member.URL) && safeURL(member.URL) == safeURL(previous.URL)) {
 				member.URL = previous.URL
 			}
 		} else if member.URL == "" {
@@ -189,14 +199,15 @@ func (h *Handler) handleDeleteProxyPool(w http.ResponseWriter, r *http.Request) 
 // emits the config event. It writes the error response itself.
 func (h *Handler) publishProxyPools(w http.ResponseWriter, ctx context.Context, failure string) (uint64, bool) {
 	var revision uint64
-	if h.opts.PoolBindings != nil {
-		snapshot, err := h.opts.PoolBindings.RefreshPoolBindings(ctx)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "proxy_pool_publish_failed", failure)
-			return 0, false
-		}
-		revision = snapshot.ConfigRevision()
+	if h.opts.PoolBindings == nil {
+		return 0, true
 	}
+	snapshot, err := h.opts.PoolBindings.RefreshPoolBindings(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "proxy_pool_publish_failed", failure)
+		return 0, false
+	}
+	revision = snapshot.ConfigRevision()
 	if h.opts.Events != nil {
 		h.opts.Events.Publish("config.updated", map[string]any{"resource": "proxy-pool", "configRevision": revision})
 	}
@@ -287,6 +298,9 @@ func (h *Handler) handleTestProxyPool(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// One deadline for the whole fan-out so a large pool cannot pin the handler.
+	ctx, cancel := context.WithTimeout(r.Context(), 2*proxyTestTimeout)
+	defer cancel()
 	results := make([]proxyMemberTestResult, len(members))
 	var wg sync.WaitGroup
 	slots := make(chan struct{}, proxyTestConcurrency)
@@ -297,7 +311,7 @@ func (h *Handler) handleTestProxyPool(w http.ResponseWriter, r *http.Request) {
 		go func(i int, member proxy.Member) {
 			defer wg.Done()
 			defer func() { <-slots }()
-			results[i].proxyTestResult = h.testProxy(r.Context(), member.URL, false)
+			results[i].proxyTestResult = h.testProxy(ctx, member.URL, false)
 		}(i, member)
 	}
 	wg.Wait()
@@ -422,6 +436,11 @@ func classifyProxyError(err error) string {
 		return "timeout"
 	}
 	return "unreachable"
+}
+
+func carriesSecrets(raw string) bool {
+	parsed, err := url.Parse(raw)
+	return err == nil && (parsed.User != nil || parsed.RawQuery != "")
 }
 
 // checkProxyHost applies the shared outbound SSRF policy to a proxy's address.

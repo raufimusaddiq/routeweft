@@ -86,6 +86,28 @@ func TestProxyPoolCRUDNeverEchoesCredentials(t *testing.T) {
 	if err != nil || stored.Name != "edge-2" || len(stored.Members) != 1 || !strings.Contains(stored.Members[0].URL, proxySecret) {
 		t.Fatalf("stored pool lost its credentials: %+v err=%v", stored, err)
 	}
+	// Round-trip: GET, then PUT the redacted URL back with its id.
+	roundTrip := doJSON(t, mux, cookie, http.MethodPut, "/admin/v1/proxy-pools/"+pool.ID, `{"name":"edge-2","members":[{"id":"`+pool.Members[0].ID+`","url":"`+pool.Members[0].URL+`"}]}`)
+	if roundTrip.Code != http.StatusOK {
+		t.Fatalf("round-trip status=%d body=%s", roundTrip.Code, roundTrip.Body.String())
+	}
+	if stored, _ := handler.proxyStore.GetPool(ctx, pool.ID); len(stored.Members) != 1 || !strings.Contains(stored.Members[0].URL, proxySecret) {
+		t.Fatalf("redacted round-trip destroyed credentials: %+v", stored)
+	}
+	// An explicit credentialed URL replaces the stored one.
+	replaced := doJSON(t, mux, cookie, http.MethodPut, "/admin/v1/proxy-pools/"+pool.ID, `{"name":"edge-2","members":[{"id":"`+pool.Members[0].ID+`","url":"http://operator:rotated-secret@proxy.example.net:3128"}]}`)
+	if stored, _ := handler.proxyStore.GetPool(ctx, pool.ID); replaced.Code != http.StatusOK || !strings.Contains(stored.Members[0].URL, "rotated-secret") {
+		t.Fatalf("explicit credentials not applied: %+v", stored)
+	}
+	// Unknown and repeated member ids are client errors, not 500s.
+	for _, bad := range []string{
+		`{"name":"edge-2","members":[{"id":"ghost","url":"http://203.0.113.5:3128"}]}`,
+		`{"name":"edge-2","members":[{"id":"` + pool.Members[0].ID + `"},{"id":"` + pool.Members[0].ID + `"}]}`,
+	} {
+		if recorder := doJSON(t, mux, cookie, http.MethodPut, "/admin/v1/proxy-pools/"+pool.ID, bad); recorder.Code != http.StatusBadRequest {
+			t.Fatalf("%s status=%d want 400", bad, recorder.Code)
+		}
+	}
 	snapshot, err := handler.opts.Runtime.Load()
 	if err != nil {
 		t.Fatal(err)
