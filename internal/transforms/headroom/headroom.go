@@ -172,7 +172,13 @@ func (t Transform) Health(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := transport.ValidatePublicURL(endpoint.String()); err != nil {
+	// Same policy selection as Apply: the default Headroom endpoint is local, so a
+	// probe must honor the explicit trusted-local deployment option.
+	validate := transport.ValidatePublicURL
+	if t.AllowPrivate {
+		validate = transport.ValidateTrustedLocalURL
+	}
+	if _, err := validate(endpoint.String()); err != nil {
 		return err
 	}
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/health"
@@ -196,7 +202,7 @@ func (t Transform) Health(ctx context.Context) error {
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("headroom health returned HTTP %d", response.StatusCode)
+		return &transforms.HealthStatusError{Service: "headroom", StatusCode: response.StatusCode}
 	}
 	return nil
 }

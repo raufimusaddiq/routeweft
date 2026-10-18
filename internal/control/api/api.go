@@ -23,6 +23,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/proxy"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
+	"github.com/raufimusaddiq/routeweft/internal/transforms/pxpipe"
 	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
@@ -56,6 +57,9 @@ type Options struct {
 	Combos                ComboManager
 	QuotaRefresher        func(context.Context) error
 	AllowPrivateUpstreams bool
+	// PXPIPE is the process-level sink compiled saver pipelines report into;
+	// it backs the PXPIPE logs and stats routes.
+	PXPIPE *pxpipe.Service
 	// ProxyTestURL overrides the destination proxy connectivity tests request.
 	// It passes the same SSRF policy as any outbound URL.
 	ProxyTestURL    string
@@ -127,6 +131,8 @@ type Handler struct {
 	proxyStore      *proxy.Store
 	proxyClients    *transport.PooledClients
 	proxyTestTarget string
+	// saverClient is the guarded client for Headroom/PXPIPE health probes.
+	saverClient *http.Client
 }
 
 // New builds the control API handler.
@@ -138,7 +144,7 @@ func New(opts Options) *Handler {
 	if opts.DiscoveryClient == nil || opts.DiscoveryClient.HTTP == nil {
 		opts.DiscoveryClient = &discovery.Client{HTTP: client}
 	}
-	h := &Handler{opts: opts, throttler: newThrottler(), probeTransport: client.Transport, proxyClients: transport.NewPooledClients(), proxyTestTarget: defaultProxyTestTarget}
+	h := &Handler{opts: opts, throttler: newThrottler(), probeTransport: client.Transport, proxyClients: transport.NewPooledClients(), proxyTestTarget: defaultProxyTestTarget, saverClient: client}
 	if strings.TrimSpace(opts.ProxyTestURL) != "" {
 		h.proxyTestTarget = strings.TrimSpace(opts.ProxyTestURL)
 	}
@@ -204,6 +210,11 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.Handle("DELETE /admin/v1/proxy-pools/{id}", h.requireSessionHandler(http.HandlerFunc(h.handleDeleteProxyPool)))
 	mux.Handle("POST /admin/v1/proxy-pools/{id}/test", h.requireSessionHandler(http.HandlerFunc(h.handleTestProxyPool)))
 	mux.Handle("POST /admin/v1/settings/proxy-test", h.requireSessionHandler(http.HandlerFunc(h.handleProxyTest)))
+	mux.HandleFunc("GET /admin/v1/headroom/status", h.requireSession(h.handleHeadroomStatus))
+	mux.HandleFunc("GET /admin/v1/pxpipe/status", h.requireSession(h.handlePXPIPEStatus))
+	mux.HandleFunc("GET /admin/v1/pxpipe/health", h.requireSession(h.handlePXPIPEHealth))
+	mux.HandleFunc("GET /admin/v1/pxpipe/logs", h.requireSession(h.handlePXPIPELogs))
+	mux.HandleFunc("GET /admin/v1/pxpipe/stats", h.requireSession(h.handlePXPIPEStats))
 	mux.Handle("POST /admin/v1/connections/{id}/proxy", h.requireSessionHandler(http.HandlerFunc(h.handleSetConnectionProxy)))
 	mux.Handle("POST /admin/v1/connections/{id}/order", h.requireSessionHandler(http.HandlerFunc(h.handleMoveConnection)))
 	for _, path := range []string{"overview", "providers", "provider-nodes", "connections", "models", "aliases", "pricing", "combos", "proxy-pools", "keys", "usage", "requests", "quota", "token-saver", "systemone"} {

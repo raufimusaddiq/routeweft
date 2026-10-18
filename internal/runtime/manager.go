@@ -10,6 +10,7 @@ import (
 
 	"github.com/raufimusaddiq/routeweft/internal/auth"
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/transforms/pxpipe"
 )
 
 var ErrUninitialized = errors.New("runtime snapshot is not initialized")
@@ -21,16 +22,24 @@ type Manager struct {
 	active  atomic.Pointer[RuntimeSnapshot]
 	version atomic.Uint64
 	state   *RuntimeState
+	// compiler carries process-level hooks shared by every snapshot.
+	compiler Compiler
 }
 
 // NewManager loads durable configuration and compiles the initial snapshot.
 func NewManager(ctx context.Context, db *sql.DB) (*Manager, error) {
-	m := &Manager{db: db, state: NewState()}
+	return NewManagerObserved(ctx, db, nil)
+}
+
+// NewManagerObserved is NewManager with a PXPIPE diagnostics sink that is part
+// of the initial snapshot and of every later one.
+func NewManagerObserved(ctx context.Context, db *sql.DB, observePXPIPE func(pxpipe.Diagnostic)) (*Manager, error) {
+	m := &Manager{db: db, state: NewState(), compiler: Compiler{PXPIPEObserver: observePXPIPE}}
 	config, err := loadConfig(ctx, db)
 	if err != nil {
 		return nil, err
 	}
-	snapshot, err := (Compiler{}).Compile(config, 1)
+	snapshot, err := m.compiler.Compile(config, 1)
 	if err != nil {
 		return nil, fmt.Errorf("compile initial runtime snapshot: %w", err)
 	}
@@ -70,7 +79,7 @@ func (m *Manager) update(ctx context.Context, mutate func(*Candidate) error, per
 	config := Config{Revision: current.ConfigRevision() + 1, Settings: cloneSettings(candidate.Settings), APIKeys: append([]auth.Entry(nil), candidate.APIKeys...), Models: append([]Model(nil), candidate.Models...), Aliases: cloneAliases(candidate.Aliases), DisabledModels: cloneDisabled(candidate.DisabledModels), Combos: append([]Combo(nil), candidate.Combos...), PoolBindings: cloneStringMap(candidate.PoolBindings), ProxyPools: append([]ProxyPool(nil), candidate.ProxyPools...)}
 	config.Providers = candidate.Providers.Clone()
 	nextVersion := m.version.Load() + 1
-	compiled, err := (Compiler{}).Compile(config, nextVersion)
+	compiled, err := m.compiler.Compile(config, nextVersion)
 	if err != nil {
 		return nil, err
 	}

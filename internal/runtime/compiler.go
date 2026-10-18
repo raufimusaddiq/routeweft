@@ -11,6 +11,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	transformbody "github.com/raufimusaddiq/routeweft/internal/transforms/body"
+	"github.com/raufimusaddiq/routeweft/internal/transforms/pxpipe"
 )
 
 type Config struct {
@@ -126,9 +127,13 @@ var defaultSettings = map[string]string{
 
 func defaultSettingsCopy() map[string]string { return cloneSettings(defaultSettings) }
 
-type Compiler struct{}
+type Compiler struct {
+	// PXPIPEObserver receives PXPIPE attempt diagnostics from every compiled
+	// snapshot's saver pipeline.
+	PXPIPEObserver func(pxpipe.Diagnostic)
+}
 
-func (Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, error) {
+func (c Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, error) {
 	// Built-in catalog seeds are selectable without requiring discovery first.
 	config.Models = append([]Model(nil), config.Models...)
 	known := make(map[string]bool)
@@ -174,7 +179,7 @@ func (Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, error)
 		return nil, err
 	}
 	snapshot := &RuntimeSnapshot{
-		savers:         transformbody.Compile(settings),
+		savers:         transformbody.Compile(settings, c.PXPIPEObserver),
 		providerConfig: config.Providers.Clone(),
 		providers:      providers,
 		version:        version,

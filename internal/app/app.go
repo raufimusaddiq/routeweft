@@ -34,6 +34,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/store/migrations"
 	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
 	"github.com/raufimusaddiq/routeweft/internal/telemetry"
+	"github.com/raufimusaddiq/routeweft/internal/transforms/pxpipe"
 )
 
 type Config struct {
@@ -105,6 +106,7 @@ type App struct {
 	log     *slog.Logger
 	store   *sqlite.Store
 	runtime *runtime.Manager
+	pxpipe  *pxpipe.Service
 	ingress *ingress.Handler
 	quota   *quota.Service
 	usage   *telemetry.Service
@@ -162,7 +164,10 @@ func (a *App) initialize(ctx context.Context) error {
 		_ = store.Close()
 		return fmt.Errorf("validate database integrity: %w", err)
 	}
-	manager, err := runtime.NewManager(ctx, store.DB())
+	// PXPIPE diagnostics outlive snapshots, so the sink is process-level and
+	// handed to every compiled pipeline.
+	a.pxpipe = pxpipe.NewService(pxpipe.Transform{})
+	manager, err := runtime.NewManagerObserved(ctx, store.DB(), a.pxpipe.Observe)
 	if err != nil {
 		_ = store.Close()
 		return fmt.Errorf("initialize runtime: %w", err)
@@ -280,6 +285,7 @@ func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager 
 		Combos:                manager,
 		QuotaRefresher:        a.RefreshQuota,
 		AllowPrivateUpstreams: a.cfg.AllowPrivateUpstreams,
+		PXPIPE:                a.pxpipe,
 		DiscoveryClient:       &discovery.Client{},
 		Telemetry:             a.usage,
 		Events:                a.events,

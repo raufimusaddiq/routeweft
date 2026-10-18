@@ -185,7 +185,11 @@ func (t Transform) Health(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := transport.ValidatePublicURL(endpoint.String()); err != nil {
+	validate := transport.ValidatePublicURL
+	if t.AllowPrivate {
+		validate = transport.ValidateTrustedLocalURL
+	}
+	if _, err := validate(endpoint.String()); err != nil {
 		return err
 	}
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/health"
@@ -205,7 +209,7 @@ func (t Transform) Health(ctx context.Context) error {
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("pxpipe health returned HTTP %d", response.StatusCode)
+		return &transforms.HealthStatusError{Service: "pxpipe", StatusCode: response.StatusCode}
 	}
 	return nil
 }
@@ -254,6 +258,10 @@ func NewService(transform Transform) *Service {
 	service.Transform.Diagnostics = service.observe
 	return service
 }
+
+// Observe records one diagnostic. It is safe for concurrent use and is the
+// process-level sink that compiled pipelines report into.
+func (s *Service) Observe(diagnostic Diagnostic) { s.observe(diagnostic) }
 
 func (s *Service) observe(diagnostic Diagnostic) {
 	switch {
