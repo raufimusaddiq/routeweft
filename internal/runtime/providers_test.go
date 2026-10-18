@@ -5,11 +5,50 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 )
+
+func TestProbeModelPreservesNativeIDsAndRejectsDisabledAliases(t *testing.T) {
+	models, aliases, disabled := compileCatalog([]Model{
+		{ProviderID: "openai", ID: "gpt-5.4"},
+		{ProviderID: "openrouter", ID: "openai/gpt-5.4"},
+		{ProviderID: "openrouter", ID: "raw-name"},
+		{ProviderID: "openrouter", ID: "real"},
+		{ProviderID: "openrouter", ID: "paused-target"},
+		{ProviderID: "meta-llama", ID: "Llama-3-8B"},
+	}, map[string]ModelRef{
+		"friendly": {ProviderID: "openrouter", ModelID: "real"},
+		"paused":   {ProviderID: "openrouter", ModelID: "paused-target"},
+		"outside":  {ProviderID: "openai", ModelID: "gpt-5.4"},
+		"raw-name": {ProviderID: "openai", ModelID: "gpt-5.4"},
+	}, map[string]struct{}{modelKey("openrouter", "paused-target"): {}})
+	s := &RuntimeSnapshot{models: models, aliases: aliases, disabledModels: disabled}
+	for _, tc := range []struct{ requested, want, failure string }{
+		{"openai/gpt-5.4", "openai/gpt-5.4", ""},
+		{"meta-llama/Llama-3-8B", "meta-llama/Llama-3-8B", ""},
+		{"raw-name", "raw-name", ""},
+		{"unknown-native", "unknown-native", ""},
+		{"gpt-5.4", "gpt-5.4", ""},
+		{"openrouter/real", "real", ""},
+		{"friendly", "real", ""},
+		{"openrouter/friendly", "real", ""},
+		{"outside", "", "different provider"},
+		{"paused", "", "disabled"},
+		{"openrouter/paused", "", "disabled"},
+		{"paused-target", "", "disabled"},
+	} {
+		t.Run(tc.requested, func(t *testing.T) {
+			got, err := s.ProbeModel("openrouter", tc.requested)
+			if got != tc.want || tc.failure == "" && err != nil || tc.failure != "" && (err == nil || !strings.Contains(err.Error(), tc.failure)) {
+				t.Fatalf("model=%q error=%v", got, err)
+			}
+		})
+	}
+}
 
 func TestSystemOneSeedsAndCloudflareAccountEndpoints(t *testing.T) {
 	m, s := providerStore(t)

@@ -102,6 +102,32 @@ func (s *RuntimeSnapshot) ServingModel(requested string) (Model, bool) {
 	return s.ResolveModel(found.ProviderID, found.ModelID)
 }
 
+// ProbeModel keeps native account IDs ahead of aliases, including disabled targets.
+func (s *RuntimeSnapshot) ProbeModel(provider, requested string) (string, error) {
+	target := ModelRef{ProviderID: provider, ModelID: requested}
+	if _, native := s.models[modelKey(provider, requested)]; !native {
+		if prefix, id, qualified := strings.Cut(requested, "/"); qualified && prefix == provider {
+			_, known := s.models[modelKey(provider, id)]
+			_, alias := s.aliases[id]
+			if known || alias {
+				target.ModelID = id
+			}
+		}
+		if _, native := s.models[modelKey(provider, target.ModelID)]; !native {
+			if alias, ok := s.aliases[target.ModelID]; ok {
+				target = alias
+			}
+		}
+	}
+	if target.ProviderID != provider {
+		return "", fmt.Errorf("model resolves to a different provider")
+	}
+	if _, disabled := s.disabledModels[modelKey(target.ProviderID, target.ModelID)]; disabled {
+		return "", fmt.Errorf("model is disabled")
+	}
+	return target.ModelID, nil
+}
+
 func (s *RuntimeSnapshot) ProviderCandidates(requested string) ([]routing.Account, bool) {
 	model, ok := s.ServingModel(requested)
 	if !ok {

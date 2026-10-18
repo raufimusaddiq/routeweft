@@ -29,6 +29,7 @@ const assert = require('node:assert/strict');
   let createAccessBody = null;
   let lastAccessBody = null;
   let providerPatches = 0;
+  let modelProbeStatus = 200;
   let comboCreated = false;
   let comboPutCalls = 0;
   let comboDeleteCalls = 0;
@@ -165,6 +166,13 @@ const assert = require('node:assert/strict');
     systemOneProbeCalls += 1;
     systemOneProbeTransport = route.request().postDataJSON().transport;
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ connectionId: 'conn-jev', transport: 'systemone', results: [{ modelId: 'jev', ok: true, status: 200 }] }) });
+  }
+  if (url.pathname === '/admin/v1/connections/conn-1/test-models' && method === 'POST') {
+    if (modelProbeStatus === 0) return;
+    const message = modelProbeStatus === 504 ? 'Model testing exceeded the aggregate deadline.' : 'Model testing was canceled.';
+    const body = { transport: 'openai-chat', error: modelProbeStatus === 200 ? undefined : { message } };
+    if (modelProbeStatus !== 400) body.results = [{ modelId: 'gpt-5', ok: modelProbeStatus !== 408, error: modelProbeStatus === 408 ? message : undefined }];
+    return route.fulfill({ status: modelProbeStatus, contentType: 'application/json', body: JSON.stringify(body) });
   }
   if (url.pathname === '/admin/v1/models/disabled' && method === 'GET') {
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [], page: 1, pageSize: 100, total: 0 }) });
@@ -332,6 +340,31 @@ const assert = require('node:assert/strict');
   report.connectionRows = await page.locator('.connection-row').count();
   report.providerDetail = await page.locator('.provider-summary h2').textContent();
   report.modelRows = await page.locator('.model-row').count();
+  report.modelProbeGuidance = await page.locator('.model-test-form .count-label').textContent();
+  report.modelProbeResults = [];
+  for (const status of [200, 504, 408, 400]) {
+    modelProbeStatus = status;
+    await page.fill('#test-model-id', 'gpt-5');
+    await page.getByRole('button', { name: 'Run model test', exact: true }).click();
+    await page.getByRole('button', { name: 'Run model test', exact: true }).waitFor();
+    if (status !== 200) await page.locator('.providers-content > .auth-error').waitFor();
+    const notice = await page.locator('.providers-content > .inline-notice').allTextContents();
+    const error = await page.locator('.providers-content > .auth-error').allTextContents();
+    assert.equal(error.length, status === 200 ? 0 : 1);
+    if (status === 400) assert.equal(notice.length, 0);
+    else assert.match(notice.join(''), status === 408 ? /gpt-5: Model testing was canceled/ : /gpt-5: OK/);
+    report.modelProbeResults.push({ status, notice, error });
+  }
+  modelProbeStatus = 0;
+  const probeAborted = page.waitForEvent('requestfailed', request => request.url().endsWith('/connections/conn-1/test-models') && request.failure()?.errorText === 'net::ERR_ABORTED');
+  await page.fill('#test-model-id', 'gpt-5');
+  await page.getByRole('button', { name: 'Run model test', exact: true }).click();
+  await page.getByRole('button', { name: 'Cancel model test', exact: true }).click();
+  await probeAborted;
+  await page.getByRole('button', { name: 'Run model test', exact: true }).waitFor();
+  report.modelProbeCancelError = await page.locator('.providers-content > .auth-error').textContent();
+  assert.equal(report.modelProbeCancelError, 'Model test canceled.');
+  assert.match(report.modelProbeGuidance, /10-minute batch limit/);
   await page.fill('#provider-filter', 'openrouter');
   report.filteredCards = await page.locator('.provider-card').count();
   await page.fill('#provider-filter', '');

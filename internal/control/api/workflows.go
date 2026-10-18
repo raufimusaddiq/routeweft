@@ -33,7 +33,12 @@ type validationResult struct {
 	Method          string `json:"method"`
 	ModelsAvailable int    `json:"modelsAvailable"`
 	ModelID         string `json:"modelId,omitempty"`
+	UpstreamModelID string `json:"upstreamModelId,omitempty"`
+	ServedModelID   string `json:"servedModelId,omitempty"`
+	Classification  string `json:"classification,omitempty"`
+	LatencyMS       int64  `json:"latencyMs,omitempty"`
 	Status          int    `json:"status,omitempty"`
+	UpstreamStatus  int    `json:"upstreamStatus,omitempty"`
 	Error           string `json:"error,omitempty"`
 }
 
@@ -76,13 +81,14 @@ func (h *Handler) validateConnection(ctx context.Context, c credentials.Connecti
 		result.Error = "enable the connection before validation"
 		return result
 	}
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-	models, err := h.fetchConnectionModels(ctx, c, node)
+	discoveryCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	models, err := h.fetchConnectionModels(discoveryCtx, c, node)
+	cancel()
 	result.ModelsAvailable = len(models)
 	var status *discovery.StatusError
 	if errors.As(err, &status) && (status.Status == 401 || status.Status == 403) {
 		result.Status, result.Error = status.Status, "provider rejected credentials"
+		result.UpstreamStatus = status.Status
 		return result
 	}
 	model = strings.TrimSpace(model)
@@ -120,8 +126,11 @@ func (h *Handler) validateConnection(ctx context.Context, c credentials.Connecti
 	if base == "" {
 		base = spec.DefaultBaseURL
 	}
-	probe := h.testProviderModel(ctx, c, node, spec, base, protocol, model, probeTimeout)
+	probe := h.testProviderModel(ctx, c, node, spec, base, protocol, model, modelProbeTimeout)
 	result.OK, result.Status, result.Error, result.ModelID = probe.OK, probe.Status, probe.Error, model
+	result.UpstreamModelID, result.ServedModelID = probe.UpstreamModelID, probe.ServedModelID
+	result.Classification, result.LatencyMS = probe.Classification, probe.LatencyMS
+	result.UpstreamStatus = probe.UpstreamStatus
 	return result
 }
 
@@ -235,7 +244,7 @@ func (h *Handler) handleTestBatch(w http.ResponseWriter, r *http.Request) {
 		h.batchBusy = false
 		h.workflowMu.Unlock()
 	}()
-	ctx, cancel := context.WithTimeout(r.Context(), workflowTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), modelBatchTimeout)
 	defer cancel()
 	config, err := credentials.LoadConfiguration(ctx, h.opts.DB)
 	if err != nil {
@@ -261,7 +270,7 @@ func (h *Handler) handleTestBatch(w http.ResponseWriter, r *http.Request) {
 	for _, configured := range selected {
 		id := configured.ID
 		if ctx.Err() != nil {
-			writeError(w, http.StatusRequestTimeout, "batch_canceled", "batch validation was canceled")
+			writeProbeInterrupted(w, ctx, "batch", results)
 			return
 		}
 		c, node, err := h.workflowConnection(ctx, id)
@@ -272,7 +281,7 @@ func (h *Handler) handleTestBatch(w http.ResponseWriter, r *http.Request) {
 		result := h.validateConnection(ctx, c, node, "", body.ModelID)
 		results = append(results, result)
 		if ctx.Err() != nil {
-			writeError(w, http.StatusRequestTimeout, "batch_canceled", "batch validation was canceled")
+			writeProbeInterrupted(w, ctx, "batch", results)
 			return
 		}
 		if result.OK {

@@ -21,8 +21,8 @@ func TestWorkflowNativeRoutesDiscoveryAndProbe(t *testing.T) {
 	for _, tc := range []struct {
 		provider, basePath, listing, probe, model, route, header, response string
 	}{
-		{"gemini", "/v1beta/models", "/v1beta/models", "/v1beta/models/gemini-2.5-flash:generateContent", "gemini-2.5-flash", "/v1beta/models/{model}:generateContent", "x-goog-api-key", `{"models":[{"name":"models/gemini-2.5-flash"}]}`},
-		{"gemini", "/v1beta/", "/v1beta/models", "/v1beta/models/gemini-2.5-flash:generateContent", "gemini-2.5-flash", "/v1beta/models/{model}:generateContent", "x-goog-api-key", `{"models":[{"name":"models/gemini-2.5-flash"}]}`},
+		{"gemini", "/v1beta/models", "/v1beta/models", "/v1beta/models/gemini-2.5-flash:streamGenerateContent", "gemini-2.5-flash", "/v1beta/models/{model}:generateContent", "x-goog-api-key", `{"models":[{"name":"models/gemini-2.5-flash"}]}`},
+		{"gemini", "/v1beta/", "/v1beta/models", "/v1beta/models/gemini-2.5-flash:streamGenerateContent", "gemini-2.5-flash", "/v1beta/models/{model}:generateContent", "x-goog-api-key", `{"models":[{"name":"models/gemini-2.5-flash"}]}`},
 		{"ollama", "", "/api/tags", "/api/chat", "llama3:latest", "/api/chat", "Authorization", `{"models":[{"name":"llama3:latest"}]}`},
 		{"anthropic", "/v1", "/v1/models", "/v1/messages", "claude-sonnet-4", "/v1/messages", "x-api-key", `{"data":[{"id":"claude-sonnet-4"}]}`},
 		{"claude", "/v1", "/v1/models", "/v1/messages", "claude-sonnet-4", "/v1/messages", "x-api-key", `{"data":[{"id":"claude-sonnet-4"}]}`},
@@ -40,7 +40,7 @@ func TestWorkflowNativeRoutesDiscoveryAndProbe(t *testing.T) {
 					io.WriteString(w, tc.response)
 				case r.Method == "POST" && r.URL.Path == tc.probe:
 					io.Copy(io.Discard, r.Body)
-					io.WriteString(w, `{}`)
+					io.WriteString(w, `{"choices":[{"message":{"content":"OK"}}],"message":{"content":"OK"},"content":[{"text":"OK"}],"candidates":[{"content":{"parts":[{"text":"OK"}]}}]}`)
 				default:
 					t.Errorf("unexpected native path: %s %s", r.Method, r.URL.Path)
 					w.WriteHeader(404)
