@@ -1164,7 +1164,9 @@ user prompts or expose provider response bodies/secrets in results.
 Probe `classification` is `reachable`, `slow`, `failed` or `canceled`.
 Own deadline/network timeouts have status 504 (`slow`); connection/read/invalid
 response failures have status 502 (`failed`); caller cancellation has status 408
-(`canceled`). An upstream HTTP 504 remains `failed`, not an own timeout. Saved
+(`canceled`). Parent request/batch deadlines cancel the active probe with
+`canceled`/408, not `slow`; only the model's own budget certifies slowness.
+An upstream HTTP 504 remains `failed`, not an own timeout. Saved
 connection tests return HTTP 504/408 for own timeout/cancellation, preserving the
 HTTP 502 failure envelope otherwise. That envelope also includes the probe
 `result`. `upstreamStatus` retains the actual upstream HTTP status (zero when no
@@ -1172,6 +1174,13 @@ response arrived), separately from the synthesized probe `status`. Aggregate
 endpoints return HTTP 200 with per-model verdicts when complete; cancellation
 returns 408, aggregate deadline expiry returns 504. Both retain completed and
 interrupted verdicts in `results`; later models/accounts are not started.
+The Providers UI retains these partial verdicts alongside the interruption error
+and can abort an in-flight model test. SSE data lines within one event are joined
+with a newline before decoding. A leading `data:` frame selects SSE framing even
+when an upstream mislabels its Content-Type.
+Probes reuse a handler-owned guarded transport with their 200-second header
+budget, without mutating discovery's transport. Complete responses and HTTP/2
+streams can reuse connections; aborting an unfinished HTTP/1 stream closes it.
 
 `modelId` always records the tested ID, including its alias/qualified spelling.
 `upstreamModelId` records the resolved model sent in the native request.

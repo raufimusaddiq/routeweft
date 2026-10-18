@@ -222,6 +222,11 @@ The original inventory remains the audit baseline.
   lists and inference batches have a ten-minute aggregate ceiling. Per-model
   budgets are independent within that remaining allowance; interruption returns
   completed/interrupted verdicts and stops later work.
+- Parent request/batch deadlines classify the interrupted model as `canceled`,
+  not `slow`. Multiline SSE events join data lines before decoding. A pooled
+  handler-owned transport preserves discovery isolation and connection reuse
+  where the protocol permits it. Providers retains partial results on errors and
+  can cancel an in-flight model test.
 - Own timeout is `slow`/504; hard failure is `failed`/502; caller cancellation is
   `canceled`/408. `upstreamStatus` preserves the real HTTP response status,
   separately from the synthesized probe status. Upstream HTTP errors retain

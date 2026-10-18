@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/iotest"
 	"time"
@@ -25,7 +27,7 @@ func TestProbeWireVerdicts(t *testing.T) {
 	}{
 		{"chat", "openai-chat", "text/event-stream", "data: {\"choices\":[{\"delta\":{}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"OK\"},\"finish_reason\":\"stop\"}]}\r\n\r\n", true, false},
 		{"reasoning", "openai-chat", "text/event-stream", "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking\"}}]}\r\r", true, false},
-		{"multi-data", "openai-chat", "text/event-stream", "data: {\"choices\":[{\"delta\":{}}]}\ndata: {\"choices\":[{\"delta\":{\"thinking\":\"thinking\"}}]}\n\n", true, false},
+		{"multi-data", "openai-chat", "text/event-stream", "data: {\"choices\":[{\"delta\":{\"content\":\r\ndata: \"OK\"}}]}\r\n\r\n", true, false},
 		{"tool", "openai-chat", "text/event-stream", "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0}]}}]}\n\n", true, false},
 		{"length", "openai-chat", "text/event-stream", "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n", true, false},
 		{"trailing", "openai-chat", "text/event-stream", "data: {\"choices\":[{\"delta\":{\"content\":\"OK\"}}]}", true, false},
@@ -75,25 +77,47 @@ func TestProbeWireVerdicts(t *testing.T) {
 	}
 }
 
+func TestProbeBudgetContract(t *testing.T) {
+	if modelProbeTimeout != 200*time.Second || modelBatchTimeout != 10*time.Minute {
+		t.Fatalf("probe budgets: per-model=%s aggregate=%s", modelProbeTimeout, modelBatchTimeout)
+	}
+	body, err := json.Marshal(modelTestResult{ModelID: "unreached", Classification: "failed"})
+	if err != nil || strings.Contains(string(body), "latencyMs") {
+		t.Fatalf("unreached failure latency: %s %v", body, err)
+	}
+}
+
 type probeHTTPFunc func(*http.Request) (*http.Response, error)
 
 func (f probeHTTPFunc) Do(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestProbeBudgetOverridesDiscoveryLimits(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestProbeBudgetAndConnectionReuse(t *testing.T) {
+	var connections atomic.Int64
+	upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(30 * time.Millisecond)
-		w.Header().Set("Content-Type", "text/event-stream")
-		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"OK\"}}]}\n\n")
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"choices":[{"message":{"content":"OK"}}]}`)
 	}))
+	upstream.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			connections.Add(1)
+		}
+	}
+	upstream.Start()
 	defer upstream.Close()
 	h := New(Options{AllowPrivateUpstreams: true})
 	discoveryClient := h.opts.DiscoveryClient.HTTP.(*http.Client)
 	discoveryTransport := discoveryClient.Transport.(*http.Transport)
 	discoveryClient.Timeout = time.Millisecond
 	discoveryTransport.ResponseHeaderTimeout = time.Millisecond
-	result := h.testProviderModel(context.Background(), credentials.Connection{AuthKind: credentials.AuthNone}, credentials.Node{}, registry.Spec{}, upstream.URL, "openai-chat", "manual", time.Second)
-	if !result.OK || discoveryClient.Timeout != time.Millisecond || discoveryTransport.ResponseHeaderTimeout != time.Millisecond {
-		t.Fatalf("probe inherited or mutated discovery limits: %+v", result)
+	for i := 0; i < 2; i++ {
+		result := h.testProviderModel(context.Background(), credentials.Connection{AuthKind: credentials.AuthNone}, credentials.Node{}, registry.Spec{}, upstream.URL, "openai-chat", "manual", time.Second)
+		if !result.OK || discoveryClient.Timeout != time.Millisecond || discoveryTransport.ResponseHeaderTimeout != time.Millisecond {
+			t.Fatalf("probe inherited or mutated discovery limits: %+v", result)
+		}
+	}
+	if connections.Load() != 1 {
+		t.Fatalf("probe transport did not reuse the connection: %d", connections.Load())
 	}
 }
 
@@ -182,7 +206,7 @@ func TestProbeIndependentBudgetsAndFailureEnvelopes(t *testing.T) {
 			if stop == "deadline" {
 				want = 504
 			}
-			if w.Code != want || json.Unmarshal(w.Body.Bytes(), &partial) != nil || len(partial.Results) != 2 || !partial.Results[0].OK || partial.Results[1].OK || calls != 2 {
+			if w.Code != want || json.Unmarshal(w.Body.Bytes(), &partial) != nil || len(partial.Results) != 2 || !partial.Results[0].OK || partial.Results[1].OK || partial.Results[1].Classification != "canceled" || partial.Results[1].Status != 408 || calls != 2 {
 				t.Fatalf("lost partial %s results: %d %s calls=%d", stop, w.Code, w.Body, calls)
 			}
 		}
@@ -222,15 +246,17 @@ func waitProbeSignal(t *testing.T, signal <-chan struct{}) {
 }
 
 func TestProbeFirstTokenCancelsEveryNativeTransport(t *testing.T) {
-	for _, tc := range []struct{ protocol, path, typ, token string }{
-		{"openai-chat", "/chat/completions", "text/event-stream", "data: {\"model\":\"served-version\",\"choices\":[{\"delta\":{\"content\":\"OK\"}}]}\r\n\r\n"},
-		{"openai-responses", "/responses", "text/event-stream", "data: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\n"},
-		{"anthropic-messages", "/messages", "text/event-stream", "data: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"OK\"}}\n\n"},
-		{"gemini", "/models/manual:7b:streamGenerateContent", "text/event-stream", "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"OK\"}]}}]}\n\n"},
-		{"ollama", "/api/chat", "application/x-ndjson", "{\"message\":{\"content\":\"OK\"},\"done\":false}\n"},
-		{"systemone", "/", "text/event-stream", "data: {\"answers\":{\"probe\":true}}\n\n"},
+	for _, tc := range []struct{ name, protocol, path, typ, token string }{
+		{"chat", "openai-chat", "/chat/completions", "text/event-stream", "data: {\"model\":\"served-version\",\"choices\":[{\"delta\":{\"content\":\"OK\"}}]}\r\n\r\n"},
+		{"chat-json-mime", "openai-chat", "/chat/completions", "application/json", "data: {\"model\":\"served-version\",\"choices\":[{\"delta\":{\"content\":\"OK\"}}]}\n\n"},
+		{"chat-text-mime", "openai-chat", "/chat/completions", "text/plain", "data: {\"model\":\"served-version\",\"choices\":[{\"delta\":{\"content\":\"OK\"}}]}\n\n"},
+		{"responses", "openai-responses", "/responses", "text/event-stream", "data: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\n"},
+		{"messages", "anthropic-messages", "/messages", "text/event-stream", "data: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"OK\"}}\n\n"},
+		{"gemini", "gemini", "/models/manual:7b:streamGenerateContent", "text/event-stream", "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"OK\"}]}}]}\n\n"},
+		{"ollama", "ollama", "/api/chat", "application/x-ndjson", "{\"message\":{\"content\":\"OK\"},\"done\":false}\n"},
+		{"systemone", "systemone", "/", "text/event-stream", "data: {\"answers\":{\"probe\":true}}\n\n"},
 	} {
-		t.Run(tc.protocol, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			canceled := make(chan struct{})
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				defer close(canceled)

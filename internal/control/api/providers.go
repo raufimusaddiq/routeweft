@@ -409,7 +409,7 @@ type modelTestResult struct {
 	UpstreamModelID string `json:"upstreamModelId,omitempty"`
 	ServedModelID   string `json:"servedModelId,omitempty"`
 	Classification  string `json:"classification,omitempty"`
-	LatencyMS       int64  `json:"latencyMs"`
+	LatencyMS       int64  `json:"latencyMs,omitempty"`
 	OK              bool   `json:"ok"`
 	Status          int    `json:"status,omitempty"`
 	UpstreamStatus  int    `json:"upstreamStatus,omitempty"`
@@ -492,12 +492,16 @@ func (h *Handler) handleTestModels(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) testProviderModel(ctx context.Context, connection credentials.Connection, node credentials.Node, spec registry.Spec, baseURL, transportName, modelID string, timeout time.Duration) (result modelTestResult) {
 	start := time.Now()
+	requestCtx := ctx
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	result = modelTestResult{ModelID: modelID, Classification: "failed"}
 	defer func() {
 		result.LatencyMS = time.Since(start).Milliseconds()
 		if !result.OK {
+			if requestCtx.Err() != nil {
+				result.Status, result.Classification, result.Error = http.StatusRequestTimeout, "canceled", "model test was canceled by the enclosing request"
+			}
 			result.ServedModelID = ""
 		}
 	}()
@@ -627,26 +631,9 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 		result.Error = "provider authentication mode is not supported for model probes"
 		return result
 	}
-	client := http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	if h.opts.DiscoveryClient != nil && h.opts.DiscoveryClient.HTTP != nil {
-		if discoveryClient, ok := h.opts.DiscoveryClient.HTTP.(*http.Client); ok {
-			client.Transport = discoveryClient.Transport
-		} else {
-			client.Transport = roundTripperFromClient(h.opts.DiscoveryClient.HTTP)
-		}
-	}
-	if client.Transport == nil {
-		protected := transport.NewSSRFProtectedClient()
-		if h.opts.AllowPrivateUpstreams {
-			protected = transport.NewTrustedLocalSSRFProtectedClient()
-		}
-		client.Transport = protected.Transport
-	}
-	if base, ok := client.Transport.(*http.Transport); ok {
-		probeTransport := base.Clone()
-		probeTransport.ResponseHeaderTimeout = timeout
-		client.Transport = probeTransport
-		defer probeTransport.CloseIdleConnections()
+	client := http.Client{Timeout: timeout, Transport: h.probeTransport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	if _, native := h.opts.DiscoveryClient.HTTP.(*http.Client); !native {
+		client.Transport = roundTripperFromClient(h.opts.DiscoveryClient.HTTP)
 	}
 	response, err := client.Do(request)
 	if err != nil {

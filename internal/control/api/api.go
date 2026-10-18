@@ -110,26 +110,37 @@ const sessionCookieName = "routeweft_admin_session"
 
 // Handler serves the authenticated control API.
 type Handler struct {
-	opts       Options
-	throttler  *throttler
-	workflowMu sync.Mutex
-	batchBusy  bool
-	syncState  catalogSyncState
-	kiloCache  []suggestedModel
-	kiloAt     time.Time
-	kiloFlight chan struct{}
+	opts           Options
+	throttler      *throttler
+	workflowMu     sync.Mutex
+	batchBusy      bool
+	syncState      catalogSyncState
+	kiloCache      []suggestedModel
+	kiloAt         time.Time
+	kiloFlight     chan struct{}
+	probeTransport http.RoundTripper
 }
 
 // New builds the control API handler.
 func New(opts Options) *Handler {
+	client := transport.NewSSRFProtectedClient()
+	if opts.AllowPrivateUpstreams {
+		client = transport.NewTrustedLocalSSRFProtectedClient()
+	}
 	if opts.DiscoveryClient == nil || opts.DiscoveryClient.HTTP == nil {
-		client := transport.NewSSRFProtectedClient()
-		if opts.AllowPrivateUpstreams {
-			client = transport.NewTrustedLocalSSRFProtectedClient()
-		}
 		opts.DiscoveryClient = &discovery.Client{HTTP: client}
 	}
-	return &Handler{opts: opts, throttler: newThrottler()}
+	h := &Handler{opts: opts, throttler: newThrottler(), probeTransport: client.Transport}
+	if provided, ok := opts.DiscoveryClient.HTTP.(*http.Client); ok && provided.Transport != nil {
+		h.probeTransport = provided.Transport
+	}
+	if base, ok := h.probeTransport.(*http.Transport); ok {
+		// Own the header budget without changing discovery's shared transport.
+		pooled := base.Clone()
+		pooled.ResponseHeaderTimeout = modelProbeTimeout
+		h.probeTransport = pooled
+	}
+	return h
 }
 
 // Attach registers the admin routes on the shared mux.

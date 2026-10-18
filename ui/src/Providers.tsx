@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchAll, PAGE_SIZE, Pager, usePagedList } from './ProviderPaging'
 
 type Provider = { id: string; transports: string[]; auth: string; authModes: string[]; defaultBaseURL?: string; modelCatalog: string; passthroughModels: boolean; staticModels?: string[]; reportsUsage: boolean; configuredNodes: number; enabledAccounts: number }
@@ -38,6 +38,7 @@ export function Providers({ onUnauthorized }: Props) {
   const [alias, setAlias] = useState('')
   const [aliasTarget, setAliasTarget] = useState('')
   const [price, setPrice] = useState({ modelId: '', input: '', output: '', cacheRead: '', cacheWrite: '' })
+  const modelProbeController = useRef<AbortController | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -59,6 +60,7 @@ export function Providers({ onUnauthorized }: Props) {
   }, [onUnauthorized])
 
   useEffect(() => { void load() }, [load])
+  useEffect(() => () => modelProbeController.current?.abort(), [])
 
   const selectedProvider = providers.find(provider => provider.id === selected)
   const selectedNode = nodes.find(node => node.kind === 'generic' && node.providerId === selected)
@@ -147,14 +149,20 @@ export function Providers({ onUnauthorized }: Props) {
   async function testModels(connection: Connection, selectedIDs?: string[]) {
     const modelIDs = selectedIDs || modelChoices.slice(0,20)
     if (!modelIDs.length) return
+    const controller = new AbortController()
+    modelProbeController.current = controller
     setBusy(`testmodels-${connection.id}`); setError(''); setNotice('')
     try {
       const transport = nodes.find(item => item.id === connection.nodeId)?.transports?.[0] || selectedProvider?.transports[0]
-      const response = await send(`/connections/${encodeURIComponent(connection.id)}/test-models`, 'POST', { transport, modelIds: modelIDs }) as { transport: string; results: Array<{ modelId: string; ok: boolean; status?: number; error?: string }> }
-      const passed = response.results.filter(result => result.ok).length
-      setNotice(`Model test: ${passed}/${response.results.length} passed on ${response.transport}. ${response.results.map(result => `${result.modelId}: ${result.ok ? 'OK' : result.error || `HTTP ${result.status}`}`).join('; ')}`)
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Model test failed.') }
-    finally { setBusy('') }
+      const response = await fetch(`/admin/v1/connections/${encodeURIComponent(connection.id)}/test-models`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transport, modelIds: modelIDs }), signal: controller.signal })
+      if (response.status === 401) { onUnauthorized(); throw new Error('Admin session expired.') }
+      const body = await response.json() as { transport?: string; error?: { message?: string }; results?: Array<{ modelId: string; ok: boolean; status?: number; error?: string }> }
+      if (!Array.isArray(body.results)) throw new Error(body.error?.message || 'Model test failed.')
+      if (!response.ok) setError(body.error?.message || 'Model test interrupted.')
+      const passed = body.results.filter(result => result.ok).length
+      setNotice(`Model test: ${passed}/${body.results.length} passed on ${body.transport || transport}. ${body.results.map(result => `${result.modelId}: ${result.ok ? 'OK' : result.error || `HTTP ${result.status}`}`).join('; ')}`)
+    } catch (cause) { setError(controller.signal.aborted ? 'Model test canceled.' : cause instanceof Error ? cause.message : 'Model test failed.') }
+    finally { if (modelProbeController.current === controller) modelProbeController.current = null; setBusy('') }
   }
 
   async function addManualModel(event: FormEvent<HTMLFormElement>) {
@@ -182,7 +190,7 @@ export function Providers({ onUnauthorized }: Props) {
     <div className="providers-toolbar"><label htmlFor="provider-filter">Find provider</label><input id="provider-filter" value={filter} onChange={event => setFilter(event.target.value)} placeholder="Name or transport" /><span className="count-label">{loading ? 'Loading…' : `${providers.length} providers`}</span><button className="button-primary" type="button" onClick={() => { setGenericNodeID(''); setGeneric({ name: '', prefix: '', baseUrl: '', transports: ['openai-chat'] }); setGenericOpen(value => !value) }}>Add Generic Provider</button><button className="button-secondary" type="button" disabled={loading} onClick={() => void load()}>Refresh</button></div>
     {error && <p className="auth-error" role="alert">{error}</p>}{notice && <p className="inline-notice" role="status">{notice}</p>}
 
-    {selectedProvider && selectedConnections[0] && <form className="detail-panel model-test-form" onSubmit={event => { event.preventDefault(); if (testModelID) void testModels(selectedConnections[0], [testModelID]) }}><label htmlFor="test-model-id">Test model</label><input id="test-model-id" required list="provider-model-choices" placeholder="Model ID" value={testModelID} onChange={event => setTestModelID(event.target.value)} /><button className="button-secondary" type="submit" disabled={busy !== '' || !testModelID.trim()}>{busy.startsWith('testmodels-') ? 'Testing…' : 'Run model test'}</button><span className="count-label">Native transport probe; small upstream request.</span></form>}
+    {selectedProvider && selectedConnections[0] && <form className="detail-panel model-test-form" onSubmit={event => { event.preventDefault(); if (testModelID) void testModels(selectedConnections[0], [testModelID]) }}><label htmlFor="test-model-id">Test model</label><input id="test-model-id" required list="provider-model-choices" placeholder="Model ID" value={testModelID} onChange={event => setTestModelID(event.target.value)} /><button className="button-secondary" type="submit" disabled={busy !== '' || !testModelID.trim()}>{busy.startsWith('testmodels-') ? 'Testing…' : 'Run model test'}</button>{busy.startsWith('testmodels-') && <button className="button-ghost" type="button" onClick={() => modelProbeController.current?.abort()}>Cancel model test</button>}<span className="count-label">Native transport probe; small upstream request.</span></form>}
 
     {genericOpen && <form className="detail-panel provider-form" onSubmit={event => void createGeneric(event)}>
       <div className="section-heading"><div><h2>New Generic Provider</h2><p>Endpoint and native LLM transports. URLs follow the configured outbound SSRF policy.</p></div><button className="button-ghost" type="button" onClick={() => setGenericOpen(false)}>Close</button></div>

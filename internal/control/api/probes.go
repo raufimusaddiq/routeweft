@@ -41,31 +41,34 @@ func readProbe(response *http.Response, protocol string, served *string) (bool, 
 	typ := strings.ToLower(response.Header.Get("Content-Type"))
 	sse := strings.Contains(typ, "text/event-stream")
 	ndjson := protocol == string(registry.TransportOllama)
+	body := bufio.NewReader(io.LimitReader(response.Body, maxProbeBytes+1))
 	if !sse && !ndjson {
-		body, err := io.ReadAll(io.LimitReader(response.Body, maxProbeBytes+1))
+		prefix, err := body.Peek(len("data:"))
+		if err != nil && !errors.Is(err, io.EOF) {
+			return false, err
+		}
+		sse = string(prefix) == "data:"
+	}
+	if !sse && !ndjson {
+		payload, err := io.ReadAll(body)
 		if err != nil {
 			return false, err
 		}
-		if len(body) > maxProbeBytes {
+		if len(payload) > maxProbeBytes {
 			return false, errors.New("probe response exceeds limit")
 		}
-		ok, _, err := probePayload(body, protocol, false, served)
+		ok, _, err := probePayload(payload, protocol, false, served)
 		return ok, err
 	}
-	scanner := bufio.NewScanner(io.LimitReader(response.Body, maxProbeBytes+1))
+	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 4096), maxProbeBytes)
 	scanner.Split(probeLines)
 	total := 0
 	var payloads []string
 	emit := func() (bool, bool, error) {
-		for _, payload := range payloads {
-			ok, done, err := probePayload([]byte(payload), protocol, true, served)
-			if done || err != nil {
-				return ok, true, err
-			}
-		}
+		payload := strings.Join(payloads, "\n")
 		payloads = payloads[:0]
-		return false, false, nil
+		return probePayload([]byte(payload), protocol, true, served)
 	}
 	for scanner.Scan() {
 		line := scanner.Text()
