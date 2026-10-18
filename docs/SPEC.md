@@ -854,6 +854,29 @@ followed. A connectivity failure is a 200 with `ok:false` and a `class`
 (`blocked`, `dns`, `refused`, `timeout`, `tls`, `proxy_auth`, `proxy_error`,
 `unreachable`); raw transport errors are never returned.
 
+Headroom and PXPIPE are external HTTP helpers reached only at the configured
+`headroomUrl`/`pxpipeUrl` (§17). Routeweft owns no helper process, so the control
+API is read-only diagnostics; every route is session-gated and probes use the
+shared SSRF-guarded client (trusted-local only when the deployment allows it)
+and forward no credentials or client headers:
+
+```text
+GET /admin/v1/headroom/status   {enabled, url, timeoutMs, compressUserMessages, health}
+GET /admin/v1/pxpipe/status     {enabled, url, autoInstall, minChars, timeoutMs, health, stats}
+GET /admin/v1/pxpipe/health     live probe of the helper's /health
+GET /admin/v1/pxpipe/logs       ?limit=1..500 (default 50); bounded in-process diagnostic log
+GET /admin/v1/pxpipe/stats      ?limit=1..500; cumulative counters plus recent diagnostics
+```
+
+An unavailable helper is a 200 with `healthy:false` and a `class` (`not_configured`,
+`blocked`, `bad_status` with `statusCode`, `dns`, `refused`, `timeout`, `tls`,
+`unreachable`); raw transport errors are never returned. PXPIPE counters and logs
+are process-local and fed by every compiled saver pipeline, so they survive
+snapshot republication but reset on restart. Installing, starting, stopping or
+restarting a helper, Headroom extras, and proxying the Headroom dashboard are
+privileged host operations or arbitrary passthroughs; they are intentionally not
+exposed over this API and need an explicit product/host decision.
+
 Dashboard password rotation uses `POST /admin/v1/auth/password` with the
 current and replacement password. It is same-origin and session-gated; the
 current password is reverified before changing the stored hash. All sessions

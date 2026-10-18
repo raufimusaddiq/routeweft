@@ -32,7 +32,14 @@ type Pipeline struct {
 }
 
 // Compile freezes saver settings with the routing snapshot, not per attempt.
-func Compile(settings map[string]string) *Pipeline {
+//
+// observePXPIPE, when given, receives every PXPIPE attempt's diagnostic. It is
+// supplied by the process, not the snapshot, so counters survive republishing.
+func Compile(settings map[string]string, observePXPIPE ...func(pxpipe.Diagnostic)) *Pipeline {
+	var observer func(pxpipe.Diagnostic)
+	if len(observePXPIPE) > 0 {
+		observer = observePXPIPE[0]
+	}
 	build := func(local bool) transforms.Pipeline {
 		var steps []transforms.Transform
 		client := publicClient
@@ -53,7 +60,7 @@ func Compile(settings map[string]string) *Pipeline {
 		}
 		if settings["pxpipeEnabled"] == "true" {
 			min, _ := strconv.Atoi(settings["pxpipeMinChars"])
-			steps = append(steps, pxpipe.Transform{Enabled: true, URL: settings["pxpipeUrl"], MinChars: min, Timeout: milliseconds(settings["pxpipeTimeoutMs"]), Client: client, AllowPrivate: local})
+			steps = append(steps, pxpipe.Transform{Enabled: true, URL: settings["pxpipeUrl"], MinChars: min, Timeout: milliseconds(settings["pxpipeTimeoutMs"]), Client: client, AllowPrivate: local, Diagnostics: observer})
 		}
 		return transforms.Pipeline{Steps: steps}
 	}

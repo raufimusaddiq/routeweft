@@ -6,11 +6,13 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/transforms"
+	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
 type fakeClient struct {
@@ -110,5 +112,23 @@ func TestHeadroomTransportErrorDiagnostic(t *testing.T) {
 	_, err := transform.Apply(transforms.Request{System: []string{"secret"}})
 	if err == nil || diagnostic.Error != "offline" || strings.Contains(diagnostic.Error, "secret") {
 		t.Fatalf("err=%v diagnostic=%+v", err, diagnostic)
+	}
+}
+
+func TestHealthHonorsTrustedLocalOptionAndTypesStatusErrors(t *testing.T) {
+	status := http.StatusOK
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status) }))
+	defer server.Close()
+	if err := (Transform{URL: server.URL}).Health(context.Background()); err == nil {
+		t.Fatal("loopback helper must be refused without the trusted-local option")
+	}
+	local := Transform{URL: server.URL, AllowPrivate: true, Client: transport.NewTrustedLocalSSRFProtectedClient()}
+	if err := local.Health(context.Background()); err != nil {
+		t.Fatalf("trusted-local health: %v", err)
+	}
+	status = http.StatusBadGateway
+	var failure *transforms.HealthStatusError
+	if err := local.Health(context.Background()); !errors.As(err, &failure) || failure.StatusCode != http.StatusBadGateway {
+		t.Fatalf("err=%v want HealthStatusError 502", err)
 	}
 }
