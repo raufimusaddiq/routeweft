@@ -1,8 +1,10 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { fetchAll } from './ProviderPaging'
+import { buildChoices, describeFailure, keysAllowingCombo, memberFromInput, memberIsKnown, memberIsReachable, type AccessState, type CatalogInput, type Choice } from './keyAccess'
 
 type Member = { providerId: string; modelId: string; position: number; selected: boolean }
 type Combo = { id: string; name: string; strategy: string; stickyLimit: number; judgeModel: string; fusionEnabled: boolean; members: Member[] }
-type Model = { providerId: string; id: string; disabled: boolean; source?: string }
+type StoredKey = { id: string; name: string; access?: AccessState }
 type Adapter = { capability: string; enabled: boolean; pool: { providerId: string; modelId: string }[] }
 type Props = { onUnauthorized: () => void }
 
@@ -23,10 +25,14 @@ async function responseError(response: Response, fallback: string) {
   }
 }
 
+async function failure(action: string, response: Response) {
+  return describeFailure(action, response.status, await responseError(response, ''))
+}
+
 export function Combos({ onUnauthorized }: Props) {
   const [combos, setCombos] = useState<Combo[]>([])
-  const [models, setModels] = useState<Model[]>([])
-  const [aliases, setAliases] = useState<{ alias: string; providerId: string; modelId: string }[]>([])
+  const [choices, setChoices] = useState<Choice[]>([])
+  const [keys, setKeys] = useState<StoredKey[]>([])
   const [adapters, setAdapters] = useState<Adapter[]>([])
   const [draft, setDraft] = useState(blankCombo)
   const [editing, setEditing] = useState(false)
@@ -35,22 +41,32 @@ export function Combos({ onUnauthorized }: Props) {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [memberPick, setMemberPick] = useState('')
+  const [memberError, setMemberError] = useState('')
   const [adapterPick, setAdapterPick] = useState<Record<string, string>>({})
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const paths = ['/combos?page=1&pageSize=100', '/models?page=1&pageSize=100', '/aliases?page=1&pageSize=100', '/capability-adapters']
-      const responses = await Promise.all(paths.map(path => fetch(`/admin/v1${path}`, { credentials: 'same-origin' })))
-      if (responses.some(response => response.status === 401)) { onUnauthorized(); return }
-      const failed = responses.find(response => !response.ok)
-      if (failed) throw new Error(await responseError(failed, 'Could not load Combo configuration.'))
-      const [comboData, modelData, aliasData, adapterData] = await Promise.all(responses.map(response => response.json())) as Array<{ items: unknown[] }>
-      setCombos(comboData.items as Combo[])
-      setModels((modelData.items as Model[]).filter(model => !model.disabled))
-      setAliases(aliasData.items as { alias: string; providerId: string; modelId: string }[])
-      setAdapters(adapterData.items as Adapter[])
+      // Every list is read to its last page, so nothing past the first 100 rows is hidden.
+      const [loadedCombos, models, aliases, disabled, providers, connections, loadedKeys, adapterResponse] = await Promise.all([
+        fetchAll<Combo>('combos', onUnauthorized),
+        fetchAll<CatalogInput['models'][number]>('models', onUnauthorized),
+        fetchAll<CatalogInput['aliases'][number]>('aliases', onUnauthorized),
+        fetchAll<CatalogInput['disabled'][number]>('models/disabled', onUnauthorized),
+        fetchAll<CatalogInput['providers'][number]>('providers', onUnauthorized),
+        fetchAll<CatalogInput['connections'][number]>('connections', onUnauthorized),
+        fetchAll<StoredKey>('keys', onUnauthorized),
+        fetch('/admin/v1/capability-adapters', { credentials: 'same-origin' }),
+      ])
+      if (adapterResponse.status === 401) { onUnauthorized(); return }
+      if (!adapterResponse.ok) throw new Error(await failure('Could not load capacity adapters', adapterResponse))
+      if (!loadedCombos || !models || !aliases || !disabled || !providers || !connections || !loadedKeys) return
+      const adapterData = await adapterResponse.json() as { items: Adapter[] }
+      setCombos(loadedCombos)
+      setChoices(buildChoices({ providers, connections, models, disabled, aliases, combos: [] }, { all: true }).filter(choice => choice.kind !== 'combo'))
+      setKeys(loadedKeys)
+      setAdapters(adapterData.items)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not load Combo configuration.')
     } finally {
@@ -60,18 +76,13 @@ export function Combos({ onUnauthorized }: Props) {
 
   useEffect(() => { void load() }, [load])
 
-  const options = useMemo(() => {
-    const listed = models.map(model => ({ value: `${model.providerId}\x1f${model.id}`, label: `${model.providerId} / ${model.id}` }))
-    // Aliases are usable as Combo members (PRD-COMBO-001); they resolve to their
-    // target provider/model at dispatch.
-    for (const item of aliases) listed.push({ value: `${item.providerId}\x1f${item.alias}`, label: `${item.providerId} / ${item.alias} (alias)` })
-    return listed
-  }, [models, aliases])
+  // Members and adapter pool entries are picked by typing; models and aliases both qualify.
+  const options = choices
 
   async function send(path: string, method: string, body?: unknown) {
     const response = await fetch(`/admin/v1${path}`, { method, credentials: 'same-origin', headers: body === undefined ? undefined : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
     if (response.status === 401) { onUnauthorized(); throw new Error('Admin session expired.') }
-    if (!response.ok) throw new Error(await responseError(response, 'Combo action failed.'))
+    if (!response.ok) throw new Error(await failure('Combo action failed', response))
     return response.status === 204 ? null : response.json()
   }
 
@@ -86,6 +97,7 @@ export function Combos({ onUnauthorized }: Props) {
     setDraft(blankCombo)
     setEditing(true)
     setMemberPick('')
+    setMemberError('')
   }
 
   function startEdit(combo: Combo) {
@@ -94,10 +106,11 @@ export function Combos({ onUnauthorized }: Props) {
   }
 
   function addMember() {
-    if (!memberPick) return
-    const [providerId, modelId] = memberPick.split('\x1f')
-    if (draft.members.some(member => member.providerId === providerId && member.modelId === modelId)) return
-    setDraft({ ...draft, members: [...draft.members, { providerId, modelId, position: draft.members.length, selected: true }] })
+    const member = memberFromInput(memberPick, choices)
+    if (!member) { setMemberError(`“${memberPick.trim()}” is not a known model or alias. Pick one from the list.`); return }
+    setMemberError('')
+    if (draft.members.some(item => item.providerId === member.providerId && item.modelId === member.modelId)) { setMemberError('That member is already in this Combo.'); return }
+    setDraft({ ...draft, members: [...draft.members, { ...member, position: draft.members.length, selected: true }] })
     setMemberPick('')
   }
 
@@ -120,6 +133,11 @@ export function Combos({ onUnauthorized }: Props) {
   async function saveCombo(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!draft.name.trim() || draft.members.length === 0) return
+    const original = combos.find(combo => combo.id === draft.id)
+    const renamedFrom = original && original.name !== draft.name.trim() ? keysAllowingCombo(original.name, keys) : []
+    if (original && renamedFrom.length > 0 && !window.confirm(`Renaming “${original.name}” to “${draft.name.trim()}”: these restricted keys list the old name and will lose access: ${renamedFrom.join(', ')}. Their allowlists are not edited. Rename anyway?`)) return
+    const unknown = draft.members.filter(member => !memberIsKnown(member, choices))
+    if (unknown.length > 0 && !window.confirm(`Not a known, enabled model or alias: ${unknown.map(member => `${member.providerId}/${member.modelId}`).join(', ')}. The server may reject this Combo. Save anyway?`)) return
     const body = { name: draft.name.trim(), strategy: draft.strategy, stickyLimit: Number(draft.stickyLimit) || 1, judgeModel: draft.judgeModel.trim(), fusionEnabled: draft.fusionEnabled, members: draft.members.map((member, order) => ({ providerId: member.providerId, modelId: member.modelId, position: order, selected: member.selected })) }
     await action('combo', draft.id ? 'Combo updated.' : 'Combo created.', async () => {
       await send(draft.id ? `/combos/${encodeURIComponent(draft.id)}` : '/combos', draft.id ? 'PUT' : 'POST', body)
@@ -128,7 +146,9 @@ export function Combos({ onUnauthorized }: Props) {
   }
 
   async function deleteCombo(combo: Combo) {
-    if (!window.confirm(`Delete Combo “${combo.name}”?`)) return
+    const users = keysAllowingCombo(combo.name, keys)
+    const warning = users.length > 0 ? `\n\nThese restricted keys list this Combo: ${users.join(', ')}. After deletion that entry matches nothing, so those keys lose it. Their allowlists are not edited.` : ''
+    if (!window.confirm(`Delete Combo “${combo.name}”?${warning}`)) return
     await action(combo.id, 'Combo deleted.', () => send(`/combos/${encodeURIComponent(combo.id)}`, 'DELETE').then(() => { if (draft.id === combo.id) { setEditing(false); setDraft(blankCombo) } }))
   }
 
@@ -141,6 +161,8 @@ export function Combos({ onUnauthorized }: Props) {
   }
 
   return <div className="combos-content" aria-busy={loading}>
+    <datalist id="combo-member-choices">{choices.slice(0, 500).map(choice => <option key={`${choice.kind}-${choice.id}`} value={choice.id}>{choice.detail}</option>)}</datalist>
+    <datalist id="combo-model-choices">{choices.filter(choice => choice.kind === 'model').slice(0, 500).map(choice => <option key={choice.id} value={choice.id} />)}</datalist>
     <div className="combos-toolbar"><span className="count-label">{loading ? 'Loading…' : `${combos.length} Combo${combos.length === 1 ? '' : 's'}`}</span><button className="button-primary" type="button" onClick={startCreate}>New Combo</button><button className="button-secondary" type="button" disabled={loading} onClick={() => void load()}>Refresh</button></div>
     {error && <p className="auth-error" role="alert">{error}</p>}{notice && <p className="inline-notice" role="status">{notice}</p>}
 
@@ -150,6 +172,7 @@ export function Combos({ onUnauthorized }: Props) {
           <div className="combo-main"><strong>{combo.name}</strong><small>{combo.members.filter(member => member.selected).length} selected · {combo.members.length} member{combo.members.length === 1 ? '' : 's'}</small></div>
           <span className="state-tag">{combo.strategy || 'fallback'}</span>
           {combo.fusionEnabled && <span className="state-tag state-good">Fusion</span>}
+          {(() => { const users = keysAllowingCombo(combo.name, keys); return users.length > 0 ? <span className="state-tag combo-inuse" title={users.join(', ')}>Allowed by {users.length} key{users.length === 1 ? '' : 's'}</span> : null })()}
           <div className="combo-actions"><button className="button-secondary" type="button" onClick={() => startEdit(combo)}>Edit</button><button className="button-danger" type="button" disabled={busy !== ''} onClick={() => void deleteCombo(combo)}>Delete</button></div>
         </article>)}</div>}
       </section>
@@ -165,11 +188,13 @@ export function Combos({ onUnauthorized }: Props) {
             <label>Judge model<input placeholder="Defaults to first member" value={draft.judgeModel} onChange={event => setDraft({ ...draft, judgeModel: event.target.value })} /></label>
             <label className="combo-toggle"><input type="checkbox" checked={draft.fusionEnabled} onChange={event => setDraft({ ...draft, fusionEnabled: event.target.checked })} />Enable Fusion</label>
           </div>
-          <div className="member-picker"><select aria-label="Add Combo member" value={memberPick} onChange={event => setMemberPick(event.target.value)}><option value="">Choose a model or alias</option>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><button className="button-secondary" type="button" disabled={!memberPick} onClick={addMember}>Add member</button></div>
+          <div className="member-picker"><input aria-label="Add Combo member" list="combo-member-choices" autoComplete="off" placeholder="provider/model or alias name" value={memberPick} onChange={event => { setMemberPick(event.target.value); setMemberError('') }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addMember() } }} /><button className="button-secondary" type="button" disabled={!memberPick.trim()} onClick={addMember}>Add member</button></div>
+          {memberError && <p className="auth-error" role="alert">{memberError}</p>}
           <ol className="member-list">{draft.members.map((member, index) => <li className={`member-row${member.selected ? '' : ' member-row-deselected'}`} key={`${member.providerId}/${member.modelId}`}>
             <span className="member-order">{index + 1}</span>
             <code>{member.providerId} / {member.modelId}</code>
             <span className={`state-tag${member.selected ? ' state-good' : ' state-warn'}`}>{member.selected ? 'Selected' : 'Deselected'}</span>
+            {!memberIsKnown(member, choices) ? <span className="state-tag state-warn">Unknown or disabled</span> : !memberIsReachable(member, choices) ? <span className="state-tag state-warn">No enabled connection</span> : null}
             <div className="member-actions"><button className="button-secondary" type="button" disabled={index === 0} onClick={() => reorder(index, -1)} aria-label={`Move ${member.modelId} up`} title="Move up">↑</button><button className="button-secondary" type="button" disabled={index === draft.members.length - 1} onClick={() => reorder(index, 1)} aria-label={`Move ${member.modelId} down`} title="Move down">↓</button><button className="button-secondary" type="button" onClick={() => toggleMember(index)}>{member.selected ? 'Deselect' : 'Select'}</button><button className="button-danger" type="button" onClick={() => removeMember(index)}>Remove</button></div>
           </li>)}{draft.members.length === 0 && <li className="empty-keys">Add at least one member.</li>}</ol>
           <button className="button-primary" type="submit" disabled={busy === 'combo' || !draft.name.trim() || draft.members.length === 0}>{busy === 'combo' ? 'Saving…' : draft.id ? 'Save Combo' : 'Create Combo'}</button>
@@ -185,7 +210,7 @@ export function Combos({ onUnauthorized }: Props) {
         return <div className="adapter-card" key={capability}>
           <div className="adapter-header"><div><strong>{capability}</strong><small>{adapter.enabled ? (adapter.pool.length ? `${adapter.pool.length} pool member${adapter.pool.length === 1 ? '' : 's'}` : 'Enabled · empty pool is a no-op') : 'Disabled'}</small></div><button className="button-secondary" type="button" disabled={busy === `adapter-${capability}`} onClick={() => void saveAdapter(capability, !adapter.enabled, adapter.pool)}>{adapter.enabled ? 'Disable' : 'Enable'}</button></div>
           {adapter.pool.length > 0 && <ul className="adapter-pool">{adapter.pool.map(member => <li key={`${member.providerId}/${member.modelId}`}><code>{member.providerId} / {member.modelId}</code><button className="button-danger" type="button" disabled={busy === `adapter-${capability}`} onClick={() => void saveAdapter(capability, adapter.enabled, adapter.pool.filter(item => item !== member))}>Remove</button></li>)}</ul>}
-          <div className="member-picker"><select aria-label={`Add ${capability} adapter member`} value={pick} onChange={event => setAdapterPick({ ...adapterPick, [capability]: event.target.value })}><option value="">Choose a model</option>{options.filter(option => !option.label.includes('(alias)')).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><button className="button-secondary" type="button" disabled={!pick} onClick={() => { const [providerId, modelId] = pick.split('\x1f'); void saveAdapter(capability, adapter.enabled, [...adapter.pool, { providerId, modelId }]); setAdapterPick({ ...adapterPick, [capability]: '' }) }}>Add to pool</button></div>
+          <div className="member-picker"><input aria-label={`Add ${capability} adapter member`} list="combo-model-choices" autoComplete="off" placeholder="provider/model" value={pick} onChange={event => setAdapterPick({ ...adapterPick, [capability]: event.target.value })} /><button className="button-secondary" type="button" disabled={!pick.trim()} onClick={() => { const member = memberFromInput(pick, choices.filter(choice => choice.kind === 'model')); if (!member) { setError(`“${pick.trim()}” is not a known model.`); return } void saveAdapter(capability, adapter.enabled, [...adapter.pool, member]); setAdapterPick({ ...adapterPick, [capability]: '' }) }}>Add to pool</button></div>
         </div>
       })}
     </section>

@@ -3,7 +3,17 @@
 
 export type AccessState = { restricted: boolean; allow: string[] }
 export type ChoiceKind = 'combo' | 'alias' | 'model'
-export type Choice = { id: string; kind: ChoiceKind; detail: string }
+export type Choice = {
+  id: string
+  kind: ChoiceKind
+  detail: string
+  // Model and alias choices carry the pair a Combo member is stored as; for an
+  // alias, providerId is the alias target's provider and modelId the alias name.
+  providerId?: string
+  modelId?: string
+  // False when the provider has no enabled connection (only listed with `all`).
+  reachable: boolean
+}
 
 export type CatalogInput = {
   providers: Array<{ id: string; staticModels?: string[] }>
@@ -21,14 +31,15 @@ const modelID = (provider: string, model: string) => `${provider}/${model}`
  * reach: the provider needs an enabled connection and the model must not be
  * disabled. Aliases need a reachable target; Combos need a reachable member.
  */
-export function buildChoices(input: CatalogInput): Choice[] {
+export function buildChoices(input: CatalogInput, options: { all?: boolean } = {}): Choice[] {
   const live = new Set(input.connections.filter(connection => connection.enabled).map(connection => connection.providerId))
   const off = new Set(input.disabled.map(item => modelID(item.providerId, item.modelId)))
   for (const model of input.models) if (model.disabled) off.add(modelID(model.providerId, model.id))
   const models = new Map<string, Choice>()
   const add = (provider: string, model: string) => {
     const id = modelID(provider, model)
-    if (live.has(provider) && !off.has(id) && !models.has(id)) models.set(id, { id, kind: 'model', detail: provider })
+    if (off.has(id) || models.has(id)) return
+    if (live.has(provider) || options.all) models.set(id, { id, kind: 'model', detail: provider, providerId: provider, modelId: model, reachable: live.has(provider) })
   }
   for (const model of input.models) add(model.providerId, model.id)
   for (const provider of input.providers) for (const model of provider.staticModels ?? []) add(provider.id, model)
@@ -36,14 +47,14 @@ export function buildChoices(input: CatalogInput): Choice[] {
   const aliasTargets = new Map(input.aliases.map(alias => [alias.alias, modelID(alias.providerId, alias.modelId)]))
   const aliases: Choice[] = input.aliases
     .filter(alias => models.has(modelID(alias.providerId, alias.modelId)))
-    .map(alias => ({ id: alias.alias, kind: 'alias' as const, detail: `→ ${modelID(alias.providerId, alias.modelId)}` }))
+    .map(alias => ({ id: alias.alias, kind: 'alias' as const, detail: `→ ${modelID(alias.providerId, alias.modelId)}`, providerId: alias.providerId, modelId: alias.alias, reachable: models.get(modelID(alias.providerId, alias.modelId))?.reachable ?? false }))
   const reachableMember = (member: { providerId: string; modelId: string }) => {
     const target = aliasTargets.get(member.modelId)
-    return models.has(target ?? modelID(member.providerId, member.modelId))
+    return models.get(target ?? modelID(member.providerId, member.modelId))?.reachable === true
   }
   const combos: Choice[] = input.combos
     .filter(combo => combo.members.some(member => member.selected !== false && reachableMember(member)))
-    .map(combo => ({ id: combo.name, kind: 'combo' as const, detail: `${combo.members.filter(member => member.selected !== false).length} members` }))
+    .map(combo => ({ id: combo.name, kind: 'combo' as const, detail: `${combo.members.filter(member => member.selected !== false).length} members`, reachable: true }))
   const order: Record<ChoiceKind, number> = { combo: 0, alias: 1, model: 2 }
   return [...combos, ...aliases, ...models.values()].sort((a, b) => order[a.kind] - order[b.kind] || a.id.localeCompare(b.id))
 }
@@ -80,4 +91,27 @@ export function describeFailure(action: string, status: number, serverMessage: s
   const detail = serverMessage?.trim()
   if (status === 503) return `${action}: the service is unavailable (503)${detail ? ` — ${detail}` : ''}.`
   return `${action} (${status})${detail ? `: ${detail}` : '.'}`
+}
+
+/** Names of keys whose restricted allowlist grants this Combo (an unrestricted key needs no grant). */
+export function keysAllowingCombo(name: string, keys: Array<{ name: string; access?: AccessState }>): string[] {
+  return keys.filter(key => key.access?.restricted && key.access.allow.includes(name)).map(key => key.name).sort()
+}
+
+export type MemberRef = { providerId: string; modelId: string }
+
+/** Resolves a typed picker value (`provider/model` or an alias name) to a Combo member. */
+export function memberFromInput(value: string, choices: Choice[]): MemberRef | undefined {
+  const needle = value.trim()
+  const found = choices.find(choice => choice.kind !== 'combo' && choice.id === needle)
+  return found?.providerId && found.modelId ? { providerId: found.providerId, modelId: found.modelId } : undefined
+}
+
+/** Members that no longer resolve to a known, non-disabled model or alias. */
+export function memberIsKnown(member: MemberRef, choices: Choice[]): boolean {
+  return choices.some(choice => choice.kind !== 'combo' && choice.providerId === member.providerId && choice.modelId === member.modelId)
+}
+
+export function memberIsReachable(member: MemberRef, choices: Choice[]): boolean {
+  return choices.some(choice => choice.kind !== 'combo' && choice.providerId === member.providerId && choice.modelId === member.modelId && choice.reachable)
 }

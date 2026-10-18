@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { accessBody, buildChoices, describeFailure, filterChoices, sameAccess, staleEntries, toggleAllow, type CatalogInput } from './keyAccess.ts'
+import { accessBody, buildChoices, describeFailure, filterChoices, keysAllowingCombo, memberFromInput, memberIsKnown, memberIsReachable, sameAccess, staleEntries, toggleAllow, type CatalogInput } from './keyAccess.ts'
 
 const catalog: CatalogInput = {
   providers: [{ id: 'openai', staticModels: ['gpt-4o', 'gpt-4o-mini'] }, { id: 'idle', staticModels: ['never'] }],
@@ -64,4 +64,42 @@ test('failures keep status and server wording', () => {
   assert.equal(describeFailure('Could not save access', 400, 'allowlist entries must not be empty'), 'Could not save access (400): allowlist entries must not be empty')
   assert.match(describeFailure('Could not save access', 503, 'API key management is not configured'), /unavailable \(503\).*not configured/)
   assert.equal(describeFailure('Could not save access', 409, undefined), 'Could not save access (409).')
+})
+
+test('combo member picker lists unreachable models flagged, but never disabled ones', () => {
+  const all = buildChoices({ ...catalog, combos: [] }, { all: true }).filter(choice => choice.kind !== 'combo')
+  const idle = all.find(choice => choice.id === 'idle/never')
+  assert.equal(idle?.reachable, false)
+  assert.equal(all.find(choice => choice.id === 'openai/gpt-4o-mini')?.reachable, true)
+  assert.equal(all.some(choice => choice.id === 'openai/gpt-4o'), false)
+  assert.equal(all.some(choice => choice.id === 'custom-x/off'), false)
+})
+
+test('typed picker values resolve to the member pair the API stores', () => {
+  const all = buildChoices({ ...catalog, combos: [] }, { all: true })
+  assert.deepEqual(memberFromInput(' openai/gpt-4o-mini ', all), { providerId: 'openai', modelId: 'gpt-4o-mini' })
+  // An alias member is stored as its target provider with the alias name.
+  assert.deepEqual(memberFromInput('fast', all), { providerId: 'openai', modelId: 'fast' })
+  assert.equal(memberFromInput('nope/none', all), undefined)
+  assert.equal(memberFromInput('', all), undefined)
+})
+
+test('existing members are flagged unknown or unreachable', () => {
+  const all = buildChoices({ ...catalog, combos: [] }, { all: true })
+  assert.equal(memberIsKnown({ providerId: 'openai', modelId: 'gpt-4o-mini' }, all), true)
+  assert.equal(memberIsKnown({ providerId: 'openai', modelId: 'gpt-4o' }, all), false)
+  assert.equal(memberIsReachable({ providerId: 'idle', modelId: 'never' }, all), false)
+  assert.equal(memberIsReachable({ providerId: 'openai', modelId: 'fast' }, all), true)
+})
+
+test('keysAllowingCombo lists only restricted keys that grant the name', () => {
+  const keys = [
+    { name: 'b-reader', access: { restricted: true, allow: ['daily', 'x'] } },
+    { name: 'a-reader', access: { restricted: true, allow: ['daily'] } },
+    { name: 'other', access: { restricted: true, allow: ['weekly'] } },
+    { name: 'open', access: { restricted: false, allow: ['daily'] } },
+    { name: 'legacy' },
+  ]
+  assert.deepEqual(keysAllowingCombo('daily', keys), ['a-reader', 'b-reader'])
+  assert.deepEqual(keysAllowingCombo('missing', keys), [])
 })

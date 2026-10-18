@@ -30,6 +30,8 @@ const assert = require('node:assert/strict');
   let lastAccessBody = null;
   let providerPatches = 0;
   let comboCreated = false;
+  let comboPutCalls = 0;
+  let comboDeleteCalls = 0;
   let comboPayload = null;
   let adapterEnabled = false;
   let systemOneModelAdded = false;
@@ -85,7 +87,8 @@ const assert = require('node:assert/strict');
   }
   if (url.pathname === '/admin/v1/keys' && method === 'GET') {
     keyListCalls += 1;
-  const items = deleteCalls > 0 ? [] : [{ id: createdKeyID, name: 'ci-pipeline', prefix: 'rw_smoke', enabled: true, paused: patchKeyCalls % 2 === 1, createdAt: '2026-09-25T20:00:00Z', access: keyAccess }];
+  const readerKey = comboCreated ? [{ id: 'k-reader', name: 'combo-reader', prefix: 'rw_rdr', enabled: true, paused: false, createdAt: '2026-09-25T20:05:00Z', access: { restricted: true, allow: ['daily'] } }] : [];
+  const items = deleteCalls > 0 ? readerKey : [{ id: createdKeyID, name: 'ci-pipeline', prefix: 'rw_smoke', enabled: true, paused: patchKeyCalls % 2 === 1, createdAt: '2026-09-25T20:00:00Z', access: keyAccess }, ...readerKey];
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items, page: 1, pageSize: 50, total: items.length }) });
   }
   if (url.pathname === '/admin/v1/keys' && method === 'POST') {
@@ -174,6 +177,14 @@ const assert = require('node:assert/strict');
   }
   if (url.pathname === '/admin/v1/combos' && method === 'GET') {
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: comboCreated ? [{ id: 'combo-1', name: 'daily', strategy: 'sticky-round-robin', stickyLimit: 3, judgeModel: '', fusionEnabled: true, members: [{ providerId: 'openai', modelId: 'gpt-5', position: 0, selected: true }] }] : [], page: 1, pageSize: 100, total: comboCreated ? 1 : 0 }) });
+  }
+  if (url.pathname.startsWith('/admin/v1/combos/') && method === 'PUT') {
+    comboPutCalls += 1;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'combo-1', ...route.request().postDataJSON(), configRevision: 11 }) });
+  }
+  if (url.pathname.startsWith('/admin/v1/combos/') && method === 'DELETE') {
+    comboDeleteCalls += 1;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'combo-1', deleted: true, configRevision: 12 }) });
   }
   if (url.pathname === '/admin/v1/combos' && method === 'POST') {
     comboCreated = true;
@@ -336,18 +347,44 @@ const assert = require('node:assert/strict');
   await page.waitForSelector('.combo-form');
   await page.fill('.combo-form-grid input', 'daily');
   await page.selectOption('.combo-form-grid select', 'sticky-round-robin');
-  await page.selectOption('.member-picker select', { label: 'openai / gpt-5' });
+  // Typed picker: unknown names are refused with a reason, known ones resolve to provider/model.
+  await page.fill('.member-picker input', 'nope/none');
+  await page.click('.member-picker .button-secondary');
+  report.memberUnknownError = await page.locator('.combo-form .auth-error').textContent();
+  report.memberRowsAfterUnknown = await page.locator('.member-row').count();
+  report.memberChoices = await page.locator('#combo-member-choices option').evaluateAll(options => options.map(option => option.getAttribute('value')));
+  await page.fill('.member-picker input', 'openai/gpt-5');
   await page.click('.member-picker .button-secondary');
   report.memberRows = await page.locator('.member-row').count();
   report.memberLabel = await page.locator('.member-row code').textContent();
   await page.click('.member-row .member-actions .button-secondary:nth-child(3)');
-  report.memberDeselected = await page.locator('.member-row .state-tag').textContent();
+  report.memberDeselected = await page.locator('.member-row .state-tag').first().textContent();
   await page.click('.member-row .member-actions .button-secondary:nth-child(3)');
   await page.click('.combo-form > .button-primary');
   await page.waitForSelector('.combo-row');
   report.comboRowName = await page.locator('.combo-row strong').textContent();
   report.comboCreated = comboCreated;
   report.comboStrategy = comboCreated ? comboPayload.strategy : '';
+  // In-use feedback comes from restricted keys that list this Combo by name.
+  await page.waitForFunction(() => document.querySelector('.combo-row .combo-inuse'));
+  report.comboInUse = await page.locator('.combo-row .combo-inuse').textContent();
+  report.comboInUseTitle = await page.locator('.combo-row .combo-inuse').getAttribute('title');
+  let deleteMessage = '';
+  page.once('dialog', async dialog => { deleteMessage = dialog.message(); await dialog.dismiss(); });
+  await page.locator('.combo-row').getByRole('button', { name: 'Delete', exact: true }).click();
+  await page.waitForTimeout(150);
+  report.deleteWarning = deleteMessage;
+  report.deleteCallsAfterCancel = comboDeleteCalls;
+  let renameMessage = '';
+  page.once('dialog', async dialog => { renameMessage = dialog.message(); await dialog.dismiss(); });
+  await page.locator('.combo-row').getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.fill('.combo-form-grid input', 'daily-renamed');
+  await page.click('.combo-form > .button-primary');
+  await page.waitForTimeout(150);
+  report.renameWarning = renameMessage;
+  report.putCallsAfterCancel = comboPutCalls;
+  await page.fill('.combo-form-grid input', 'daily');
+  await page.click('.combo-form .button-ghost');
   report.adapterCards = await page.locator('.adapter-card').count();
   report.adapterInitial = await page.locator('.adapter-card').first().locator('small').textContent();
   await page.locator('.adapter-card').first().locator('.adapter-header .button-secondary').click();
@@ -683,6 +720,15 @@ const assert = require('node:assert/strict');
   assert.equal(report.memberLabel, 'openai / gpt-5');
   assert.equal(report.memberDeselected, 'Deselected');
   assert.equal(report.comboRowName, 'daily');
+  assert.match(report.memberUnknownError, /not a known model or alias/);
+  assert.equal(report.memberRowsAfterUnknown, 0);
+  assert.ok(report.memberChoices.includes('openai/gpt-5'));
+  assert.equal(report.comboInUse, 'Allowed by 1 key');
+  assert.equal(report.comboInUseTitle, 'combo-reader');
+  assert.match(report.deleteWarning, /combo-reader/);
+  assert.equal(report.deleteCallsAfterCancel, 0);
+  assert.match(report.renameWarning, /combo-reader/);
+  assert.equal(report.putCallsAfterCancel, 0);
   assert.equal(report.comboCreated, true);
   assert.equal(report.comboStrategy, 'sticky-round-robin');
   assert.equal(report.adapterCards, 2);
