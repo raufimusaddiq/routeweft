@@ -92,12 +92,7 @@ func (h *Handler) handlePutProxyPool(w http.ResponseWriter, r *http.Request) {
 			}
 			seenIDs[member.ID] = true
 			member.Enabled = previous.Enabled
-			// Responses redact credentials, so a client that echoes back the
-			// redacted URL means "unchanged". A URL carrying userinfo or a query
-			// is an explicit replacement.
-			if member.URL == "" || (!carriesSecrets(member.URL) && safeURL(member.URL) == safeURL(previous.URL)) {
-				member.URL = previous.URL
-			}
+			member.URL = resolveMemberURL(member.URL, previous.URL)
 		} else if member.URL == "" {
 			writeError(w, http.StatusBadRequest, "invalid_proxy_pool", "every member needs a url or the id of a stored member")
 			return
@@ -162,29 +157,16 @@ func (h *Handler) handleDeleteProxyPool(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id := r.PathValue("id")
-	if _, err := h.proxyStore.GetPool(r.Context(), id); errors.Is(err, proxy.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "proxy_pool_not_found", "proxy pool was not found")
-		return
-	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, "proxy_pool_read_failed", "proxy pool could not be read")
-		return
-	}
 	// Deleting a bound pool would silently send those connections direct (or via
-	// the global proxy), so refuse until they are rebound.
-	var bound int
-	if err := h.opts.DB.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM provider_connections WHERE proxy_pool_id=?", id).Scan(&bound); err != nil {
-		writeError(w, http.StatusInternalServerError, "proxy_pool_read_failed", "proxy pool usage could not be read")
-		return
-	}
-	if bound > 0 {
+	// the global proxy), so the store refuses atomically until they are rebound.
+	switch bound, err := h.proxyStore.DeletePoolIfUnbound(r.Context(), id); {
+	case errors.Is(err, proxy.ErrInUse):
 		writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]any{"code": "proxy_pool_in_use", "message": "proxy pool is bound to provider connections; rebind them first", "connections": bound}})
 		return
-	}
-	if err := h.proxyStore.DeletePool(r.Context(), id); err != nil {
-		if errors.Is(err, proxy.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "proxy_pool_not_found", "proxy pool was not found")
-			return
-		}
+	case errors.Is(err, proxy.ErrNotFound):
+		writeError(w, http.StatusNotFound, "proxy_pool_not_found", "proxy pool was not found")
+		return
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, "proxy_pool_delete_failed", "proxy pool could not be deleted")
 		return
 	}
@@ -298,8 +280,10 @@ func (h *Handler) handleTestProxyPool(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// One deadline for the whole fan-out so a large pool cannot pin the handler.
-	ctx, cancel := context.WithTimeout(r.Context(), 2*proxyTestTimeout)
+	// One deadline for the whole fan-out, scaled to the number of waves so a
+	// member waiting for a slot is never cut off before it is dialed.
+	waves := (len(members) + proxyTestConcurrency - 1) / proxyTestConcurrency
+	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(waves+1)*proxyTestTimeout)
 	defer cancel()
 	results := make([]proxyMemberTestResult, len(members))
 	var wg sync.WaitGroup
@@ -311,7 +295,7 @@ func (h *Handler) handleTestProxyPool(w http.ResponseWriter, r *http.Request) {
 		go func(i int, member proxy.Member) {
 			defer wg.Done()
 			defer func() { <-slots }()
-			results[i].proxyTestResult = h.testProxy(ctx, member.URL, false)
+			results[i].proxyTestResult = h.testProxy(ctx, member.URL)
 		}(i, member)
 	}
 	wg.Wait()
@@ -337,9 +321,8 @@ func (h *Handler) handleProxyTest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "request body is not valid JSON")
 		return
 	}
-	raw, adHoc := strings.TrimSpace(body.URL), true
+	raw := strings.TrimSpace(body.URL)
 	if raw == "" {
-		adHoc = false
 		if h.opts.Runtime == nil {
 			writeError(w, http.StatusServiceUnavailable, "runtime_unavailable", "runtime snapshot is not available")
 			return
@@ -349,9 +332,14 @@ func (h *Handler) handleProxyTest(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, "runtime_unavailable", "runtime snapshot is not available")
 			return
 		}
-		_, raw, _ = snapshot.OutboundProxy()
+		var enabled bool
+		enabled, raw, _ = snapshot.OutboundProxy()
 		if strings.TrimSpace(raw) == "" {
 			writeError(w, http.StatusBadRequest, "no_proxy_configured", "no proxy url was given and no global outbound proxy is configured")
+			return
+		}
+		if !enabled {
+			writeError(w, http.StatusBadRequest, "global_proxy_disabled", "the global outbound proxy is configured but disabled")
 			return
 		}
 	}
@@ -360,13 +348,12 @@ func (h *Handler) handleProxyTest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_proxy_url", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, h.testProxy(r.Context(), normalized, adHoc))
+	writeJSON(w, http.StatusOK, h.testProxy(r.Context(), normalized))
 }
 
 // testProxy sends one GET through the proxy using a shared client keyed by its
-// transport policy. releaseClient drops that client afterwards, used for
-// caller-supplied URLs so arbitrary input cannot accumulate transports.
-func (h *Handler) testProxy(ctx context.Context, proxyURL string, releaseClient bool) proxyTestResult {
+// transport policy and releases it afterwards.
+func (h *Handler) testProxy(ctx context.Context, proxyURL string) proxyTestResult {
 	if err := h.checkProxyHost(proxyURL); err != nil {
 		return failedProxyTest("blocked", 0)
 	}
@@ -375,9 +362,9 @@ func (h *Handler) testProxy(ctx context.Context, proxyURL string, releaseClient 
 	if err != nil {
 		return failedProxyTest("unreachable", 0)
 	}
-	if releaseClient {
-		defer h.proxyClients.Release(policy)
-	}
+	// Release on the way out: stored and caller-supplied URLs alike must not
+	// pin a transport for the process lifetime.
+	defer h.proxyClients.Release(policy)
 	ctx, cancel := context.WithTimeout(ctx, proxyTestTimeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, h.proxyTestTarget, nil)
@@ -438,9 +425,54 @@ func classifyProxyError(err error) string {
 	return "unreachable"
 }
 
-func carriesSecrets(raw string) bool {
-	parsed, err := url.Parse(raw)
-	return err == nil && (parsed.User != nil || parsed.RawQuery != "")
+// resolveMemberURL decides what URL a stored member keeps on update. Responses
+// redact credentials, so a client echoing the redacted URL back means
+// "unchanged" even if it reformatted it (trailing slash, explicit default
+// port, host case). A URL with userinfo or a query is an explicit replacement,
+// and an empty userinfo section (http://@host:3128) explicitly removes the
+// stored credentials.
+func resolveMemberURL(submitted, stored string) string {
+	if submitted == "" {
+		return stored
+	}
+	parsed, err := url.Parse(submitted)
+	if err != nil {
+		return submitted
+	}
+	if parsed.User != nil && parsed.User.Username() == "" {
+		if _, hasPassword := parsed.User.Password(); !hasPassword {
+			parsed.User = nil
+			return parsed.String()
+		}
+	}
+	if parsed.User != nil || parsed.RawQuery != "" {
+		return submitted
+	}
+	previous, err := url.Parse(stored)
+	if err == nil && sameEndpoint(parsed, previous) {
+		return stored
+	}
+	return submitted
+}
+
+// sameEndpoint compares what the redacted form exposes: scheme, host, effective
+// port, and path.
+func sameEndpoint(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Hostname(), b.Hostname()) &&
+		effectivePort(a) == effectivePort(b) && strings.TrimRight(a.EscapedPath(), "/") == strings.TrimRight(b.EscapedPath(), "/")
+}
+
+func effectivePort(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		return port
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+		return "443"
+	case "socks5", "socks5h":
+		return "1080"
+	}
+	return "80"
 }
 
 // checkProxyHost applies the shared outbound SSRF policy to a proxy's address.

@@ -59,6 +59,9 @@ var ErrInvalid = errors.New("invalid proxy pool")
 // ErrConflict reports a pool name that is already in use.
 var ErrConflict = errors.New("proxy pool name already exists")
 
+// ErrInUse reports a pool that provider connections are still bound to.
+var ErrInUse = errors.New("proxy pool is bound to connections")
+
 // ValidateURL applies the store's proxy URL rules without persisting anything.
 func ValidateURL(raw string) (string, error) { return validateProxyURL(raw) }
 
@@ -187,6 +190,33 @@ func (s *Store) DeletePool(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// DeletePoolIfUnbound removes a pool only while no provider connection is bound
+// to it. The check and the delete are one statement, so a binding created
+// concurrently cannot be silently unbound by the foreign key. When refused it
+// returns ErrInUse and the number of bound connections.
+func (s *Store) DeletePoolIfUnbound(ctx context.Context, id string) (int, error) {
+	const del = "DELETE FROM proxy_pools WHERE id=? AND NOT EXISTS (SELECT 1 FROM provider_connections WHERE proxy_pool_id=?)"
+	result, err := s.db.ExecContext(ctx, del, id, id)
+	if err != nil {
+		return 0, fmt.Errorf("delete proxy pool: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if affected > 0 {
+		return 0, nil
+	}
+	var bound int
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM provider_connections WHERE proxy_pool_id=?", id).Scan(&bound); err != nil {
+		return 0, err
+	}
+	if bound > 0 {
+		return bound, ErrInUse
+	}
+	return 0, ErrNotFound
 }
 
 func (s *Store) listMembers(ctx context.Context, poolID string) ([]Member, error) {

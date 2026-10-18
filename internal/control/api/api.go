@@ -56,17 +56,20 @@ type Options struct {
 	Combos                ComboManager
 	QuotaRefresher        func(context.Context) error
 	AllowPrivateUpstreams bool
-	DiscoveryClient       *discovery.Client
-	Providers             []registry.Spec
-	Telemetry             TelemetryReader
-	Events                *controlevents.Bus
-	Logs                  *LogBuffer
-	ActiveRequests        func() int64
-	Ready                 func() bool
-	Build                 buildinfo.Info
-	DataDir               string
-	Backup                func(context.Context, string) (backup.Metadata, error)
-	Restore               func(context.Context, string) (backup.Metadata, error)
+	// ProxyTestURL overrides the destination proxy connectivity tests request.
+	// It passes the same SSRF policy as any outbound URL.
+	ProxyTestURL    string
+	DiscoveryClient *discovery.Client
+	Providers       []registry.Spec
+	Telemetry       TelemetryReader
+	Events          *controlevents.Bus
+	Logs            *LogBuffer
+	ActiveRequests  func() int64
+	Ready           func() bool
+	Build           buildinfo.Info
+	DataDir         string
+	Backup          func(context.Context, string) (backup.Metadata, error)
+	Restore         func(context.Context, string) (backup.Metadata, error)
 }
 
 // RuntimeReader exposes immutable active configuration and process-local state.
@@ -136,6 +139,9 @@ func New(opts Options) *Handler {
 		opts.DiscoveryClient = &discovery.Client{HTTP: client}
 	}
 	h := &Handler{opts: opts, throttler: newThrottler(), probeTransport: client.Transport, proxyClients: transport.NewPooledClients(), proxyTestTarget: defaultProxyTestTarget}
+	if strings.TrimSpace(opts.ProxyTestURL) != "" {
+		h.proxyTestTarget = strings.TrimSpace(opts.ProxyTestURL)
+	}
 	if opts.DB != nil {
 		h.proxyStore, _ = proxy.NewStore(opts.DB)
 	}

@@ -840,10 +840,12 @@ may send a stored member by `id` alone to keep its URL.
 GET    /admin/v1/proxy-pools            bounded list (existing read model)
 GET    /admin/v1/proxy-pools/{id}
 POST   /admin/v1/proxy-pools            {name, enabled?, strategy?, members: [{url, enabled?}]}; 201
-PUT    /admin/v1/proxy-pools/{id}       replaces fields and members; member {id} alone keeps its stored url
+PUT    /admin/v1/proxy-pools/{id}       replaces fields and members; member {id} alone, or with the redacted
+                                         url echoed back, keeps its stored url; url with userinfo replaces it;
+                                         url with an empty userinfo (http://@host:3128) removes credentials
 DELETE /admin/v1/proxy-pools/{id}       409 proxy_pool_in_use while any connection is bound to it
 POST   /admin/v1/proxy-pools/{id}/test  {memberId?}; per-member classified result
-POST   /admin/v1/settings/proxy-test    {url?}; tests url, else the global outbound proxy
+POST   /admin/v1/settings/proxy-test    {url?}; tests url, else the global outbound proxy (400 if disabled)
 ```
 
 Mutations publish through `RefreshPoolBindings` and return `configRevision`.

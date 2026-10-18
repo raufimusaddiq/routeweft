@@ -275,3 +275,120 @@ func TestProxyConnectivityRejectsPrivateAddressesBeforeDialing(t *testing.T) {
 		t.Fatalf("private proxy was dialed %d times", hits.Load())
 	}
 }
+
+func TestProxyPoolUpdateKeepsCredentialsForReformattedEchoes(t *testing.T) {
+	ctx := context.Background()
+	handler, mux, store, _, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	cases := []struct{ name, stored, echoed string }{
+		{"trailing slash", "http://operator:" + proxySecret + "@proxy.example.net:3128", "http://proxy.example.net:3128/"},
+		{"host case", "http://operator:" + proxySecret + "@proxy.example.net:3128", "http://PROXY.Example.net:3128"},
+		{"explicit default http port", "http://operator:" + proxySecret + "@proxy.example.net", "http://proxy.example.net:80"},
+		{"explicit default https port", "https://operator:" + proxySecret + "@proxy.example.net", "https://proxy.example.net:443/"},
+	}
+	for _, c := range cases {
+		created := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/proxy-pools", `{"name":"`+c.name+`","members":[{"url":"`+c.stored+`"}]}`)
+		var pool struct {
+			ID      string `json:"id"`
+			Members []struct {
+				ID string `json:"id"`
+			} `json:"members"`
+		}
+		decodeBody(t, created, &pool)
+		put := doJSON(t, mux, cookie, http.MethodPut, "/admin/v1/proxy-pools/"+pool.ID, `{"name":"`+c.name+`","members":[{"id":"`+pool.Members[0].ID+`","url":"`+c.echoed+`"}]}`)
+		stored, err := handler.proxyStore.GetPool(ctx, pool.ID)
+		if put.Code != http.StatusOK || err != nil || len(stored.Members) != 1 || stored.Members[0].URL != c.stored {
+			t.Fatalf("%s: status=%d stored=%+v err=%v", c.name, put.Code, stored.Members, err)
+		}
+	}
+}
+
+func TestProxyPoolUpdateCanExplicitlyRemoveAndChange(t *testing.T) {
+	ctx := context.Background()
+	handler, mux, store, _, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	created := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/proxy-pools", `{"name":"creds","members":[{"url":"http://operator:`+proxySecret+`@proxy.example.net:3128"}]}`)
+	var pool struct {
+		ID      string `json:"id"`
+		Members []struct {
+			ID string `json:"id"`
+		} `json:"members"`
+	}
+	decodeBody(t, created, &pool)
+	member := pool.Members[0].ID
+	put := func(url string) string {
+		t.Helper()
+		recorder := doJSON(t, mux, cookie, http.MethodPut, "/admin/v1/proxy-pools/"+pool.ID, `{"name":"creds","members":[{"id":"`+member+`","url":"`+url+`"}]}`)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("put %s status=%d body=%s", url, recorder.Code, recorder.Body.String())
+		}
+		stored, _ := handler.proxyStore.GetPool(ctx, pool.ID)
+		return stored.Members[0].URL
+	}
+	if got := put("http://other.example.net:3128"); got != "http://other.example.net:3128" {
+		t.Fatalf("changed host not applied: %q", got)
+	}
+	if got := put("http://@other.example.net:3128"); got != "http://other.example.net:3128" {
+		t.Fatalf("empty userinfo should store a credential-free url: %q", got)
+	}
+	if got := put("http://operator:fresh@other.example.net:3128"); !strings.Contains(got, "fresh") {
+		t.Fatalf("explicit credentials not applied: %q", got)
+	}
+	if got := put("http://@other.example.net:3128"); strings.Contains(got, "fresh") || strings.Contains(got, "@") {
+		t.Fatalf("credentials not removed: %q", got)
+	}
+}
+
+func TestProxyTestHonorsGlobalProxyEnabledFlag(t *testing.T) {
+	_, mux, store, _, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	dead := "http://" + closedPort(t)
+	set := func(enabled string) {
+		t.Helper()
+		recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/settings", `{"set":{"outboundProxyUrl":"`+dead+`","outboundProxyEnabled":"`+enabled+`"}}`)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("settings status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+	}
+	set("false")
+	disabled := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/settings/proxy-test", "")
+	if disabled.Code != http.StatusBadRequest || !strings.Contains(disabled.Body.String(), "global_proxy_disabled") {
+		t.Fatalf("disabled status=%d body=%s", disabled.Code, disabled.Body.String())
+	}
+	set("true")
+	enabled := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/settings/proxy-test", "")
+	if enabled.Code != http.StatusOK || !strings.Contains(enabled.Body.String(), `"class":"refused"`) {
+		t.Fatalf("enabled status=%d body=%s", enabled.Code, enabled.Body.String())
+	}
+}
+
+// A pool larger than the concurrency limit must dial every member; members
+// waiting for a slot may not be reported as timeouts without being tried.
+func TestProxyPoolTestDialsEveryMemberOfALargePool(t *testing.T) {
+	_, mux, store, _, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	var members []string
+	for i := 0; i < 9; i++ {
+		members = append(members, `{"url":"http://`+closedPort(t)+`"}`)
+	}
+	created := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/proxy-pools", `{"name":"big","members":[`+strings.Join(members, ",")+`]}`)
+	var pool struct {
+		ID string `json:"id"`
+	}
+	decodeBody(t, created, &pool)
+	tested := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/proxy-pools/"+pool.ID+"/test", "")
+	var result struct {
+		Members []struct {
+			Class string `json:"class"`
+		} `json:"members"`
+	}
+	decodeBody(t, tested, &result)
+	if len(result.Members) != 9 {
+		t.Fatalf("members=%d body=%s", len(result.Members), tested.Body.String())
+	}
+	for _, member := range result.Members {
+		if member.Class != "refused" {
+			t.Fatalf("member class=%q want refused: %s", member.Class, tested.Body.String())
+		}
+	}
+}
