@@ -298,6 +298,8 @@ func TestSafeSettingsRedactsURLCredentialsAndSecretValues(t *testing.T) {
 
 func TestLoginThrottleBlocksBruteForce(t *testing.T) {
 	handler, _, store := newAPI(t, &fakeSettings{values: map[string]string{}})
+	now := time.Unix(100, 0)
+	handler.throttler.now = func() time.Time { return now }
 	defer store.Close()
 	mux := http.NewServeMux()
 	handler.Attach(mux)
@@ -309,6 +311,9 @@ func TestLoginThrottleBlocksBruteForce(t *testing.T) {
 		mux.ServeHTTP(recorder, request)
 		if recorder.Code == http.StatusTooManyRequests {
 			blocked = true
+			if recorder.Header().Get("Retry-After") != "300" {
+				t.Fatalf("missing bounded retry delay: %s", recorder.Header().Get("Retry-After"))
+			}
 		}
 	}
 	if !blocked {
@@ -321,6 +326,23 @@ func TestLoginThrottleBlocksBruteForce(t *testing.T) {
 	mux.ServeHTTP(recorder, other)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("other client status=%d want 200", recorder.Code)
+	}
+}
+
+func TestThrottleRetryAfterExpiresAndRoundsUp(t *testing.T) {
+	throttle := newThrottler()
+	now := time.Unix(100, 0)
+	throttle.now = func() time.Time { return now }
+	for i := 0; i < loginMaxFailures; i++ {
+		throttle.fail("client")
+	}
+	now = now.Add(loginWindow - time.Millisecond)
+	if got := throttle.retryAfter("client"); got != 1 {
+		t.Fatalf("retry=%d, want 1", got)
+	}
+	now = now.Add(time.Millisecond)
+	if got := throttle.retryAfter("client"); got != 0 {
+		t.Fatalf("expired retry=%d", got)
 	}
 }
 

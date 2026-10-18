@@ -160,7 +160,11 @@ func serve(args []string) error {
 	if flags.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments: %v", flags.Args())
 	}
-	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(envOr("ROUTEWEFT_LOG_LEVEL", "info"))); err != nil {
+		return errors.New("invalid ROUTEWEFT_LOG_LEVEL")
+	}
+	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var key []byte

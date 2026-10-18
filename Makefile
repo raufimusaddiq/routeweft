@@ -1,4 +1,4 @@
-.PHONY: test build run ui-install ui-test ui-typecheck ui-build compat-test bench-router check
+.PHONY: test build run ui-install ui-test ui-typecheck ui-build compat-test parity-test bench-router check
 
 test:
 	go test ./...
@@ -23,6 +23,11 @@ ui-build:
 
 compat-test:
 	go test ./compat/...
+
+parity-test:
+	node compat/parity/inventory.mjs
+	go test -race ./internal/app -run TestPinnedSystemOneDifferential -count=1
+	go test -race ./internal/security ./internal/ingress ./internal/providers/shared
 
 bench-router:
 	go test ./bench/router -run '^$$' -bench . -benchmem -count=5

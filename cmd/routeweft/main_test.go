@@ -40,6 +40,17 @@ func TestBackupMetadataAndRestoreCheckLeaveInputUntouched(t *testing.T) {
 	}
 }
 
+func TestInvalidLogLevelFailsBeforeOpeningData(t *testing.T) {
+	t.Setenv("ROUTEWEFT_LOG_LEVEL", "verbose")
+	dir := filepath.Join(t.TempDir(), "unopened")
+	if err := serve([]string{"--data-dir", dir}); err == nil || err.Error() != "invalid ROUTEWEFT_LOG_LEVEL" {
+		t.Fatalf("invalid level: %v", err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("invalid configuration touched data: %v", err)
+	}
+}
+
 func TestRestoreCheckRejectsMismatchedMetadata(t *testing.T) {
 	dir := t.TempDir()
 	store, err := sqlite.Open(context.Background(), filepath.Join(dir, "candidate.sqlite"))

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -300,7 +301,8 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	throttleKey := clientKey(r)
-	if !h.throttler.allow(throttleKey) {
+	if retry := h.throttler.retryAfter(throttleKey); retry > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(retry))
 		writeError(w, http.StatusTooManyRequests, "too_many_attempts", "too many failed login attempts; try again later")
 		return
 	}
