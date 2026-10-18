@@ -1158,7 +1158,10 @@ System One requests stream; probes
 stop at the first content, reasoning, tool-call or typed-answer event, then
 close/cancel upstream work. Empty/error streams fail. A length-limited reasoning
 response certifies reachability. Providers ignoring streaming may return native
-JSON, subject to the same deadline and a 1 MiB response limit. Probes never use
+JSON, subject to the same deadline and a 1 MiB response limit. Gemini's
+unframed top-level JSON array is accepted. Non-streaming fallback generation is
+capped at 32 output tokens because only first-token reachability is certified.
+Probes never use
 user prompts or expose provider response bodies/secrets in results.
 
 Probe `classification` is `reachable`, `slow`, `failed` or `canceled`.
@@ -1167,15 +1170,17 @@ response failures have status 502 (`failed`); caller cancellation has status 408
 (`canceled`). Parent request/batch deadlines cancel the active probe with
 `canceled`/408, not `slow`; only the model's own budget certifies slowness.
 An upstream HTTP 504 remains `failed`, not an own timeout. Saved
-connection tests return HTTP 504/408 for own timeout/cancellation, preserving the
-HTTP 502 failure envelope otherwise. That envelope also includes the probe
+connection tests return HTTP 504/408 for own timeout/cancellation with error code
+`connection_test_timeout`/`connection_test_canceled`, preserving the HTTP 502
+`connection_test_failed` envelope otherwise. That envelope also includes the probe
 `result`. `upstreamStatus` retains the actual upstream HTTP status (zero when no
 response arrived), separately from the synthesized probe `status`. Aggregate
 endpoints return HTTP 200 with per-model verdicts when complete; cancellation
 returns 408, aggregate deadline expiry returns 504. Both retain completed and
 interrupted verdicts in `results`; later models/accounts are not started.
-The Providers UI retains these partial verdicts alongside the interruption error
-and can abort an in-flight model test. SSE data lines within one event are joined
+The Providers UI retains these partial verdicts alongside the interruption error,
+can abort an in-flight model test and states the aggregate limit for multi-model
+runs. SSE data lines within one event are joined
 with a newline before decoding. A leading `data:` frame selects SSE framing even
 when an upstream mislabels its Content-Type.
 Probes reuse a handler-owned guarded transport with their 200-second header

@@ -170,7 +170,7 @@ const assert = require('node:assert/strict');
   if (url.pathname === '/admin/v1/connections/conn-1/test-models' && method === 'POST') {
     if (modelProbeStatus === 0) return;
     const message = modelProbeStatus === 504 ? 'Model testing exceeded the aggregate deadline.' : 'Model testing was canceled.';
-    const body = { error: modelProbeStatus === 200 ? undefined : { message } };
+    const body = { transport: 'openai-chat', error: modelProbeStatus === 200 ? undefined : { message } };
     if (modelProbeStatus !== 400) body.results = [{ modelId: 'gpt-5', ok: modelProbeStatus !== 408, error: modelProbeStatus === 408 ? message : undefined }];
     return route.fulfill({ status: modelProbeStatus, contentType: 'application/json', body: JSON.stringify(body) });
   }
@@ -340,6 +340,7 @@ const assert = require('node:assert/strict');
   report.connectionRows = await page.locator('.connection-row').count();
   report.providerDetail = await page.locator('.provider-summary h2').textContent();
   report.modelRows = await page.locator('.model-row').count();
+  report.modelProbeGuidance = await page.locator('.model-test-form .count-label').textContent();
   report.modelProbeResults = [];
   for (const status of [200, 504, 408, 400]) {
     modelProbeStatus = status;
@@ -363,6 +364,7 @@ const assert = require('node:assert/strict');
   await page.getByRole('button', { name: 'Run model test', exact: true }).waitFor();
   report.modelProbeCancelError = await page.locator('.providers-content > .auth-error').textContent();
   assert.equal(report.modelProbeCancelError, 'Model test canceled.');
+  assert.match(report.modelProbeGuidance, /10-minute batch limit/);
   await page.fill('#provider-filter', 'openrouter');
   report.filteredCards = await page.locator('.provider-card').count();
   await page.fill('#provider-filter', '');

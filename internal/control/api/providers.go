@@ -398,7 +398,13 @@ func (h *Handler) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 		if result.Classification == "slow" || result.Classification == "canceled" {
 			status = result.Status
 		}
-		writeJSON(w, status, map[string]any{"error": map[string]any{"code": "connection_test_failed", "message": result.Error, "upstreamStatus": result.UpstreamStatus}, "result": result})
+		code := "connection_test_failed"
+		if result.Classification == "slow" {
+			code = "connection_test_timeout"
+		} else if result.Classification == "canceled" {
+			code = "connection_test_canceled"
+		}
+		writeJSON(w, status, map[string]any{"error": map[string]any{"code": code, "message": result.Error, "upstreamStatus": result.UpstreamStatus}, "result": result})
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -524,19 +530,19 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	switch transportName {
 	case string(registry.TransportOpenAIChat):
 		endpoint = "chat/completions"
-		body = map[string]any{"model": modelID, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}, "max_tokens": 1024, "stream": true}
+		body = map[string]any{"model": modelID, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}, "max_tokens": modelProbeTokens, "stream": true}
 	case string(registry.TransportOpenAIResponses):
 		endpoint = "responses"
-		body = map[string]any{"model": modelID, "input": "Reply with OK.", "max_output_tokens": 1024, "stream": true}
+		body = map[string]any{"model": modelID, "input": "Reply with OK.", "max_output_tokens": modelProbeTokens, "stream": true}
 	case string(registry.TransportAnthropic):
 		endpoint = "messages"
-		body = map[string]any{"model": modelID, "max_tokens": 1024, "stream": true, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}}
+		body = map[string]any{"model": modelID, "max_tokens": modelProbeTokens, "stream": true, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}}
 	case string(registry.TransportGemini):
 		endpoint = "models/" + strings.TrimPrefix(modelID, "models/") + ":streamGenerateContent"
-		body = map[string]any{"contents": []any{map[string]any{"parts": []any{map[string]string{"text": "Reply with OK."}}}}, "generationConfig": map[string]any{"maxOutputTokens": 1024}}
+		body = map[string]any{"contents": []any{map[string]any{"parts": []any{map[string]string{"text": "Reply with OK."}}}}, "generationConfig": map[string]any{"maxOutputTokens": modelProbeTokens}}
 	case string(registry.TransportOllama):
 		endpoint = "api/chat"
-		body = map[string]any{"model": modelID, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}, "stream": true, "options": map[string]int{"num_predict": 1024}}
+		body = map[string]any{"model": modelID, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}, "stream": true, "options": map[string]int{"num_predict": modelProbeTokens}}
 	case string(registry.TransportSystemOne):
 		// System One uses the typed endpoint and state/questions envelope (PRD section 6).
 		body = map[string]any{

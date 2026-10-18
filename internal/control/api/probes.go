@@ -16,6 +16,7 @@ import (
 
 const modelProbeTimeout = 200 * time.Second
 const modelBatchTimeout = 10 * time.Minute
+const modelProbeTokens = 32
 const maxProbeBytes = 1 << 20
 
 func writeProbeInterrupted(w http.ResponseWriter, ctx context.Context, workflow string, results any) {
@@ -143,10 +144,30 @@ func probePayload(body []byte, protocol string, stream bool, served *string) (ok
 	if string(body) == "[DONE]" {
 		return false, true, nil
 	}
-	var p map[string]any
-	if err := json.Unmarshal(body, &p); err != nil || p == nil {
+	var envelope any
+	if err := json.Unmarshal(body, &envelope); err != nil {
 		return false, true, errors.New("invalid probe response")
 	}
+	if items, array := envelope.([]any); array {
+		if protocol != string(registry.TransportGemini) {
+			return false, true, errors.New("invalid probe response")
+		}
+		for _, item := range items {
+			ok, _, err := probeObjectPayload(probeObject(item), protocol, stream, served)
+			if ok || err != nil {
+				return ok, true, err
+			}
+		}
+		return false, true, nil
+	}
+	p := probeObject(envelope)
+	if p == nil {
+		return false, true, errors.New("invalid probe response")
+	}
+	return probeObjectPayload(p, protocol, stream, served)
+}
+
+func probeObjectPayload(p map[string]any, protocol string, stream bool, served *string) (ok, done bool, err error) {
 	if model, _ := p["model"].(string); model != "" && validProbeModel(model) {
 		*served = model
 	}

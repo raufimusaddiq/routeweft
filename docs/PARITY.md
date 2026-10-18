@@ -225,8 +225,9 @@ The original inventory remains the audit baseline.
 - Parent request/batch deadlines classify the interrupted model as `canceled`,
   not `slow`. Multiline SSE events join data lines before decoding. A pooled
   handler-owned transport preserves discovery isolation and connection reuse
-  where the protocol permits it. Providers retains partial results on errors and
-  can cancel an in-flight model test.
+  where the protocol permits it. Providers retains partial results on errors,
+  can cancel an in-flight model test and states the aggregate limit. Gemini's
+  unframed JSON array envelope is accepted.
 - Own timeout is `slow`/504; hard failure is `failed`/502; caller cancellation is
   `canceled`/408. `upstreamStatus` preserves the real HTTP response status,
   separately from the synthesized probe status. Upstream HTTP errors retain

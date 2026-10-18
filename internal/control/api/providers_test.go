@@ -459,7 +459,7 @@ func TestNativeModelProbeIsBoundedAndRedacted(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode probe request: %v", err)
 		}
-		if body.Model != "gpt-test" || body.MaxTokens != 1024 {
+		if body.Model != "gpt-test" || body.MaxTokens != modelProbeTokens {
 			t.Errorf("probe body=%+v", body)
 		}
 		w.WriteHeader(http.StatusOK)

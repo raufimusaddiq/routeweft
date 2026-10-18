@@ -51,7 +51,7 @@ func TestWorkflowValidationFallbackAuthAndDiscoveryOnly(t *testing.T) {
 			w.WriteHeader(404)
 			return
 		}
-		if string(body) != `{"max_tokens":1024,"messages":[{"content":"Reply with OK.","role":"user"}],"model":"manual:7b","stream":true}` {
+		if string(body) != `{"max_tokens":32,"messages":[{"content":"Reply with OK.","role":"user"}],"model":"manual:7b","stream":true}` {
 			t.Errorf("probe wire changed: %s", body)
 		}
 		probes.Add(1)
@@ -399,6 +399,9 @@ func TestWorkflowCancellationAndSyncSingleflight(t *testing.T) {
 		}
 		if !strings.HasSuffix(path, "/test") && (rec.Code != http.StatusRequestTimeout || !strings.Contains(rec.Body.String(), "canceled")) {
 			t.Fatalf("canceled %s: %d %s", path, rec.Code, rec.Body)
+		}
+		if strings.HasSuffix(path, "/test") && (rec.Code != http.StatusRequestTimeout || !strings.Contains(rec.Body.String(), `"code":"connection_test_canceled"`)) {
+			t.Fatalf("canceled saved connection %s: %d %s", path, rec.Code, rec.Body)
 		}
 		select {
 		case <-canceled:

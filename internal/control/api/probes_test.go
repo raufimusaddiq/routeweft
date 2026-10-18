@@ -53,6 +53,7 @@ func TestProbeWireVerdicts(t *testing.T) {
 		{"messages-json", "anthropic-messages", "application/json", `{"content":[{"type":"text","text":"OK"}]}`, true, false},
 		{"messages-json-length", "anthropic-messages", "application/json", `{"content":[],"stop_reason":"max_tokens"}`, true, false},
 		{"gemini", "gemini", "text/event-stream", "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"OK\"}]}}]}\n\n", true, false},
+		{"gemini-json-array", "gemini", "application/json", `[{"candidates":[{"content":{"parts":[]}}]},{"candidates":[{"content":{"parts":[{"text":"OK"}]}}]}]`, true, false},
 		{"gemini-empty", "gemini", "text/event-stream", "data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n", false, false},
 		{"ollama", "ollama", "application/x-ndjson", "{\"message\":{\"content\":\"\"}}\n{\"message\":{\"thinking\":\"thinking\"},\"done\":false}\n", true, false},
 		{"ollama-empty", "ollama", "application/x-ndjson", "{\"done\":true}\n", false, false},
@@ -78,8 +79,8 @@ func TestProbeWireVerdicts(t *testing.T) {
 }
 
 func TestProbeBudgetContract(t *testing.T) {
-	if modelProbeTimeout != 200*time.Second || modelBatchTimeout != 10*time.Minute {
-		t.Fatalf("probe budgets: per-model=%s aggregate=%s", modelProbeTimeout, modelBatchTimeout)
+	if modelProbeTimeout != 200*time.Second || modelBatchTimeout != 10*time.Minute || modelProbeTokens != 32 {
+		t.Fatalf("probe budgets: per-model=%s aggregate=%s tokens=%d", modelProbeTimeout, modelBatchTimeout, modelProbeTokens)
 	}
 	body, err := json.Marshal(modelTestResult{ModelID: "unreached", Classification: "failed"})
 	if err != nil || strings.Contains(string(body), "latencyMs") {
@@ -154,9 +155,10 @@ func TestProbeIndependentBudgetsAndFailureEnvelopes(t *testing.T) {
 		err            error
 		status         int
 		classification string
+		code           string
 	}{
-		{context.DeadlineExceeded, 504, "slow"},
-		{errors.New("synthetic credential-bearing network failure"), 502, "failed"},
+		{context.DeadlineExceeded, 504, "slow", "connection_test_timeout"},
+		{errors.New("synthetic credential-bearing network failure"), 502, "failed", "connection_test_failed"},
 	} {
 		h.opts.DiscoveryClient.HTTP = probeHTTPFunc(func(r *http.Request) (*http.Response, error) {
 			if r.Method == "GET" {
@@ -165,7 +167,7 @@ func TestProbeIndependentBudgetsAndFailureEnvelopes(t *testing.T) {
 			return nil, failure.err
 		})
 		w := doJSON(t, mux, cookie, "POST", "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"manual"}`)
-		if w.Code != failure.status || !strings.Contains(w.Body.String(), `"classification":"`+failure.classification+`"`) || strings.Contains(w.Body.String(), "credential-bearing") {
+		if w.Code != failure.status || !strings.Contains(w.Body.String(), `"code":"`+failure.code+`"`) || !strings.Contains(w.Body.String(), `"classification":"`+failure.classification+`"`) || strings.Contains(w.Body.String(), "credential-bearing") {
 			t.Fatalf("failure envelope: %d %s", w.Code, w.Body)
 		}
 	}
