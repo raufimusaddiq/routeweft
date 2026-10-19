@@ -19,3 +19,16 @@ Pending coverage stays explicit in PARITY R11.
 CI runs this as the `parity` PR job, alongside existing Go/UI/container jobs.
 No test may update golden files from its actual output or turn a missing oracle
 into a passing dedicated gate. Ordinary unit tests remain usable without v1.
+
+## Drift guards (`internal/parity`)
+
+`go test ./internal/parity` derives, from the pinned commit's own files read
+with `git show`, the active/hidden provider ids (`open-sse/providers/registry/index.js`
+and each entry's `id`), the format identifiers (`open-sse/translator/formats.js`)
+and every conversion leg (`register(...)` calls in `translator/request` and
+`translator/response`). It fails when LiteRouter has a provider, format or leg
+that Routeweft lacks and that is not in the tracked list. Tracked lists only
+shrink: a closed gap that is still listed also fails. Nothing in the tests is a
+copy of the oracle's lists. The `formatNames` map only translates identifiers to
+Routeweft protocol names, and the test fails when LiteRouter adds a format the
+map does not cover.

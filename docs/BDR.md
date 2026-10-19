@@ -32,6 +32,7 @@ This document records binding architecture/build choices so implementation agent
 | BDR-022 | 80-provider built-in catalog is a first-class GA target | Accepted |
 | BDR-023 | Generic Provider unifies Chat/Responses/Messages compatible nodes | Accepted |
 | BDR-024 | Product requirements freeze gates Codex implementation | Accepted |
+| BDR-025 | OpenAI Chat Completions is the conversion hub | Accepted |
 
 ## BDR-001 — Standalone product
 
@@ -132,7 +133,7 @@ Routing modes:
 2. native normalized;
 3. translated.
 
-Do not force every request through a universal canonical object if no translation is required.
+Do not force every request through the conversion hub (BDR-025) if no translation is required.
 
 ## BDR-011 — Full Combo product
 
@@ -314,3 +315,19 @@ Implementation work does not start until the product requirements freeze is merg
 The implementation-start gate is PRD §22 plus `docs/REQUIREMENTS_TRACEABILITY.md`.
 
 After the freeze, technical decisions intentionally deferred by BDR (for example SQLite driver selection) are resolved in their named implementation PR; product scope is not reopened casually inside code PRs.
+
+## BDR-025 — OpenAI Chat Completions is the conversion hub
+
+Decision (owner, 2026-10-19): when a request arrives in one wire format and the selected provider speaks another, Routeweft converts through OpenAI Chat Completions, exactly as LiteRouter does. There is no separate canonical intermediate type; the `internal/protocol/canonical` package was never built and is removed.
+
+Reference: LiteRouter `open-sse/translator/index.js` `translateRequest` and `translateResponse`: use a registered direct pair if one exists, otherwise source→OpenAI then OpenAI→target. Pairs are registered per direction in `translator/request/*.js` and `translator/response/*.js`, so each format adds one or two legs instead of a leg per other format.
+
+Rules:
+
+- Native passthrough and native normalization (BDR-010) never enter the hub.
+- A format joins by adding legs to and from Chat. Responses↔Messages is Responses→Chat→Messages, not a direct converter.
+- Where LiteRouter registers a direct pair that bypasses the hub, Routeweft mirrors the bypass rather than forcing the pair through Chat. The pairs are derived from LiteRouter's translator directory at test time, not listed here.
+- The format set and every pair are the pinned oracle's, read from its source by the drift tests in `internal/parity`. A format or pair that LiteRouter has and Routeweft lacks fails those tests unless it is listed as tracked work in that package. Tracked work only ever shrinks; it is never a reason to make a provider unroutable.
+- Routeweft's `internal/protocol/hub` is the single declaration of which legs exist. Provider selection asks it whether a source/target pair is convertible.
+
+Reopening this decision requires a reviewed BDR change.

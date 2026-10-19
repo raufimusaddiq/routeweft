@@ -28,6 +28,7 @@ parity-test:
 	node compat/parity/inventory.mjs
 	go test -race ./internal/app -run TestPinnedSystemOneDifferential -count=1
 	go test -race ./internal/security ./internal/ingress ./internal/providers/shared
+	go test -race ./internal/parity ./internal/protocol/hub -count=1
 
 bench-router:
 	go test ./bench/router -run '^$$' -bench . -benchmem -count=5

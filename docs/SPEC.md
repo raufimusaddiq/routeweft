@@ -60,7 +60,7 @@ internal/
     fusion.go
     capability.go
   protocol/
-    canonical/
+    hub/
     openai/
     anthropic/
     gemini/
@@ -312,7 +312,7 @@ Decode once, transform once, encode once.
 
 ### 9.3 Translated
 
-Use canonical intermediate types only when source/target protocols differ.
+Use the OpenAI Chat Completions hub (BDR-025) only when source/target protocols differ.
 
 Translation must explicitly cover:
 
@@ -337,6 +337,14 @@ claiming successful completion; client cancellation emits no synthetic terminal.
 Failed translated streams penalize the selected account through normal runtime
 cooldown classification; client cancellation does not penalize the account.
 
+### 9.4 Hub topology
+
+Conversion is expressed as legs. A request leg converts a client-format body into a provider-format body; a response leg converts provider-format output (non-stream and stream) into the client format. A conversion from A to B uses a registered direct leg if there is one, otherwise the A→Chat leg followed by the Chat→B leg (request side), and B→Chat followed by Chat→A (response side). A format with no leg in one direction cannot be used in that direction; that is reported, never silently skipped.
+
+`internal/protocol/hub` declares the implemented legs and answers whether a pair is convertible. Provider selection uses that answer, so a provider whose wire is reachable from a client wire is selected without a per-pair special case.
+
+The format identifiers and the legs LiteRouter registers are read from the pinned oracle by `internal/parity` (`translator/formats.js`, `translator/request/`, `translator/response/`). They are not written in this document.
+
 ## 10. Protocol adapters
 
 A protocol adapter owns wire behavior, not provider identity.
@@ -346,14 +354,14 @@ Conceptual interface:
 ```go
 type ProtocolAdapter interface {
     Name() string
-    DecodeRequest(ctx context.Context, req *http.Request) (*canonical.Request, error)
-    EncodeRequest(ctx context.Context, req *canonical.Request, target Target) (*UpstreamRequest, error)
+    DecodeRequest(ctx context.Context, req *http.Request) (*openai.ChatRequest, error)
+    EncodeRequest(ctx context.Context, req *openai.ChatRequest, target Target) (*UpstreamRequest, error)
     StreamResponse(ctx context.Context, upstream *http.Response, dst io.Writer) (*Usage, error)
-    DecodeResponse(ctx context.Context, upstream *http.Response) (*canonical.Response, error)
+    DecodeResponse(ctx context.Context, upstream *http.Response) (*openai.ChatResponse, error)
 }
 ```
 
-Native fast paths may bypass canonical objects when safe.
+Native fast paths may bypass the hub when safe.
 
 Initial protocol families:
 
