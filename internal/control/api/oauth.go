@@ -39,10 +39,19 @@ type oauthFlow struct {
 	sessionID string
 	provider  string
 	verifier  string
-	// deviceCode is set for device-authorization attempts; like the verifier it
-	// never leaves the server.
+	// deviceCode is set for device-authorization attempts. Browser requests
+	// carry only the opaque state. A provider whose protocol uses one code for
+	// both roles (Kilo Code) must also show it to the operator, so the code is
+	// never treated as hidden from them; it is kept out of poll responses and
+	// logs.
 	deviceCode string
 	nextPoll   time.Time
+	// ttl, when set, caps the attempt's lifetime below oauthFlowTTL (a device
+	// code that expires sooner than the flow must not outlive its code).
+	ttl time.Duration
+	// completing marks an approved attempt whose connection is being saved, so a
+	// concurrent poll cannot save it twice.
+	completing bool
 	name       string
 	identity   string
 	expiresAt  time.Time
@@ -71,7 +80,11 @@ func (f *oauthFlows) begin(flow oauthFlow) (string, time.Time, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	now := f.now()
-	flow.expiresAt = now.Add(oauthFlowTTL)
+	ttl := oauthFlowTTL
+	if flow.ttl > 0 && flow.ttl < ttl {
+		ttl = flow.ttl
+	}
+	flow.expiresAt = now.Add(ttl)
 	oldest, owned := "", 0
 	for key, existing := range f.pending {
 		if !now.Before(existing.expiresAt) {
@@ -135,12 +148,48 @@ func (f *oauthFlows) claimPoll(state, sessionID, provider string, interval time.
 	if subtle.ConstantTimeCompare([]byte(flow.sessionID), []byte(sessionID)) != 1 || flow.provider != provider {
 		return oauthFlow{}, false, false
 	}
-	if now.Before(flow.nextPoll) {
+	if flow.completing || now.Before(flow.nextPoll) {
 		return flow, true, true
 	}
 	flow.nextPoll = now.Add(interval)
 	f.pending[state] = flow
 	return flow, true, false
+}
+
+// reserve takes the exclusive right to save an approved attempt. It fails for an
+// unknown, expired, foreign or already-completing state. The attempt stays
+// pending until finish, so a failed save does not lose a token that was already
+// issued upstream; release hands the attempt back for another poll.
+func (f *oauthFlows) reserve(state, sessionID, provider string) (oauthFlow, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	flow, ok := f.pending[state]
+	if !ok || flow.completing || !f.now().Before(flow.expiresAt) {
+		return oauthFlow{}, false
+	}
+	if subtle.ConstantTimeCompare([]byte(flow.sessionID), []byte(sessionID)) != 1 || flow.provider != provider {
+		return oauthFlow{}, false
+	}
+	flow.completing = true
+	f.pending[state] = flow
+	return flow, true
+}
+
+// release reopens a reserved attempt after a save that persisted nothing.
+func (f *oauthFlows) release(state string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if flow, ok := f.pending[state]; ok {
+		flow.completing = false
+		f.pending[state] = flow
+	}
+}
+
+// finish ends an attempt for good.
+func (f *oauthFlows) finish(state string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.pending, state)
 }
 
 // oauthProvider adapts one provider's engine to the shared start/callback flow.
@@ -165,7 +214,7 @@ type deviceProvider struct {
 
 type deviceStart struct {
 	deviceCode, userCode, verificationURL string
-	interval                              time.Duration
+	interval, expiresIn                   time.Duration
 }
 
 type devicePoll struct {
@@ -183,7 +232,7 @@ var oauthProviders = map[string]oauthProvider{
 	"kilocode": {device: &deviceProvider{
 		request: func(ctx context.Context, client OAuthClient) (deviceStart, error) {
 			device, err := kilocode.RequestDevice(ctx, kilocode.Config{}, client)
-			return deviceStart{deviceCode: device.Code, userCode: device.Code, verificationURL: device.VerificationURL, interval: device.Interval}, err
+			return deviceStart{deviceCode: device.Code, userCode: device.Code, verificationURL: device.VerificationURL, interval: device.Interval, expiresIn: device.ExpiresIn}, err
 		},
 		poll: func(ctx context.Context, client OAuthClient, deviceCode string) (devicePoll, error) {
 			poll, err := kilocode.PollDevice(ctx, kilocode.Config{}, deviceCode, client)
@@ -220,7 +269,11 @@ func (h *Handler) oauthProviderFor(w http.ResponseWriter, id string, device bool
 	provider, known := oauthProviders[id]
 	spec, inCatalog := h.providerSpec(id)
 	if !known || !inCatalog || !specAllowsOAuth(spec) || (provider.device != nil) != device {
-		writeError(w, http.StatusNotFound, "oauth_unsupported", "this provider does not offer browser sign-in")
+		message := "this provider does not offer browser sign-in"
+		if device {
+			message = "this provider does not offer device sign-in"
+		}
+		writeError(w, http.StatusNotFound, "oauth_unsupported", message)
 		return oauthProvider{}, false
 	}
 	return provider, true
@@ -340,7 +393,7 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "oauth_exchange_failed", "the provider did not accept the authorization code; start again")
 		return
 	}
-	if saved, ok := h.saveOAuthConnection(w, r, providerID, flow, secret); ok {
+	if saved, _, ok := h.saveOAuthConnection(w, r, providerID, flow, secret); ok {
 		writeJSON(w, http.StatusOK, saved)
 	}
 }
@@ -380,7 +433,7 @@ func (h *Handler) handleOAuthDeviceStart(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadGateway, "oauth_start_failed", "the provider did not start a sign-in; try again shortly")
 		return
 	}
-	state, expiresAt, ok := h.oauth.begin(oauthFlow{sessionID: session.ID, provider: providerID, deviceCode: device.deviceCode, name: name, identity: identity, nextPoll: h.oauth.now().Add(device.interval)})
+	state, expiresAt, ok := h.oauth.begin(oauthFlow{sessionID: session.ID, provider: providerID, deviceCode: device.deviceCode, name: name, identity: identity, ttl: device.expiresIn, nextPoll: h.oauth.now().Add(device.interval)})
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "oauth_busy", "too many sign-ins in progress; try again shortly")
 		return
@@ -428,13 +481,21 @@ func (h *Handler) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request) 
 	}
 	switch poll.outcome {
 	case "approved":
-		// Redeem before saving: of two concurrent approved polls only one wins.
-		flow, ok := h.oauth.consume(body.State, session.ID, providerID)
+		// Reserve, save, then finish: of two concurrent approved polls only one
+		// saves, and a save that persisted nothing leaves the attempt open so the
+		// token already issued upstream is not lost.
+		flow, ok := h.oauth.reserve(body.State, session.ID, providerID)
 		if !ok {
 			writeError(w, http.StatusBadRequest, "oauth_state_invalid", "this sign-in attempt expired or was already used; start again")
 			return
 		}
-		if saved, ok := h.saveOAuthConnection(w, r, providerID, flow, poll.secret); ok {
+		saved, persisted, ok := h.saveOAuthConnection(w, r, providerID, flow, poll.secret)
+		if persisted {
+			h.oauth.finish(body.State)
+		} else {
+			h.oauth.release(body.State)
+		}
+		if ok {
 			writeJSON(w, http.StatusOK, map[string]any{"status": "connected", "connection": saved})
 		}
 	case "denied":
@@ -450,26 +511,27 @@ func (h *Handler) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request) 
 
 // saveOAuthConnection persists a completed sign-in as a new enabled connection,
 // last in routing order, and answers the request. Shared by both flows.
-func (h *Handler) saveOAuthConnection(w http.ResponseWriter, r *http.Request, providerID string, flow oauthFlow, secret credentials.Secret) (map[string]any, bool) {
+func (h *Handler) saveOAuthConnection(w http.ResponseWriter, r *http.Request, providerID string, flow oauthFlow, secret credentials.Secret) (saved map[string]any, persisted, ok bool) {
 	node, err := h.builtinNode(r.Context(), providerID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "connection_save_failed", "provider connection could not be saved")
-		return nil, false
+		return nil, persisted, false
 	}
 	// New connections go last in routing order, as the manual form does.
 	existing, err := h.opts.Credentials.ListConnections(r.Context(), providerID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "connection_save_failed", "provider connection could not be saved")
-		return nil, false
+		return nil, persisted, false
 	}
 	priority := len(existing)
 	connection, err := h.opts.Credentials.PutConnection(r.Context(), credentials.Connection{NodeID: node.ID, Name: flow.name, AuthKind: credentials.AuthOAuth, Identity: flow.identity, Secret: secret, Enabled: true, Priority: priority})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
-		return nil, false
+		return nil, persisted, false
 	}
 	// PutConnection returns the metadata as given; the registry's exchanger lookup
 	// keys on the provider.
+	persisted = true
 	connection.ProviderID = node.ProviderID
 	if h.opts.CredentialRegistry != nil {
 		h.opts.CredentialRegistry.Register(connection, nil)
@@ -477,10 +539,10 @@ func (h *Handler) saveOAuthConnection(w http.ResponseWriter, r *http.Request, pr
 	if h.opts.PoolBindings != nil {
 		if _, err := h.opts.PoolBindings.RefreshPoolBindings(r.Context()); err != nil {
 			writeError(w, http.StatusInternalServerError, "connection_publish_failed", "connection saved but runtime proxy bindings could not be refreshed")
-			return nil, false
+			return nil, persisted, false
 		}
 	}
-	return connectionJSON(connection), true
+	return connectionJSON(connection), true, true
 }
 
 // parseOAuthInput accepts what the operator can copy: a bare code, Claude's

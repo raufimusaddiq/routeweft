@@ -17,6 +17,8 @@ type Props = { onUnauthorized: () => void }
 // Providers that offer browser sign-in; the rest keep the paste fields.
 const OAUTH_LABELS: Record<string, string> = { claude: 'Claude', codex: 'Codex' }
 const DEVICE_LABELS: Record<string, string> = { kilocode: 'Kilo Code' }
+// Consecutive transient poll failures tolerated before the panel gives up.
+const DEVICE_POLL_RETRIES = 5
 type DeviceFlow = { state: string; userCode: string; verificationUrl: string; intervalSeconds: number }
 const OAUTH_HINTS: Record<OAuthFlow['completion'], string> = {
   code: 'Sign in on the provider page, then copy the code it shows and paste it below.',
@@ -92,23 +94,31 @@ export function Providers({ onUnauthorized }: Props) {
   useEffect(() => {
     if (!deviceFlow) return
     let cancelled = false
+    let failures = 0
     const flow = deviceFlow
+    const delay = Math.max(flow.intervalSeconds, 2) * 1000
     const timer = window.setTimeout(async function poll() {
       if (cancelled) return
       try {
         const result = await send(`/oauth/${encodeURIComponent(selected)}/poll`, 'POST', { state: flow.state }) as { status: string }
         if (cancelled) return
+        failures = 0
         if (result.status === 'connected') {
           setDeviceFlow(null); setAccountOpen(false); setAccount({ name: '', identity: '', authKind: '', accessToken: '', refreshToken: '', cookie: '' })
           setNotice('Provider connection saved.'); await load(); setReload(value => value + 1)
           return
         }
-        window.setTimeout(poll, Math.max(flow.intervalSeconds, 2) * 1000)
+        window.setTimeout(poll, delay)
       } catch (cause) {
         if (cancelled) return
+        // The server keeps the attempt open on oauth_poll_failed (and a dropped
+        // request never reached it), so retry those; anything else ended it.
+        const code = cause instanceof RequestError ? (cause.body as { error?: { code?: string } } | null)?.error?.code : undefined
+        const transient = code === 'oauth_poll_failed' || cause instanceof TypeError
+        if (transient && ++failures < DEVICE_POLL_RETRIES) { window.setTimeout(poll, delay); return }
         setDeviceFlow(null); setError(cause instanceof Error ? cause.message : 'Sign-in failed.')
       }
-    }, Math.max(flow.intervalSeconds, 2) * 1000)
+    }, delay)
     return () => { cancelled = true; window.clearTimeout(timer) }
   }, [deviceFlow, selected, load])
   useEffect(() => () => { modelProbeController.current?.abort(); usageAbort.current?.abort() }, [])

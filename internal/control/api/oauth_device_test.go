@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -27,6 +28,8 @@ type deviceUpstream struct {
 	pollBody   string
 	polls      int
 	pollErr    bool
+	// expiresIn is the code lifetime Kilo reports, in seconds (default 600).
+	expiresIn int
 }
 
 func (d *deviceUpstream) Do(request *http.Request) (*http.Response, error) {
@@ -39,7 +42,11 @@ func (d *deviceUpstream) Do(request *http.Request) (*http.Response, error) {
 		if d.initStatus != 0 {
 			return respond(d.initStatus, "upstream-secret-text")
 		}
-		return respond(200, `{"code":"`+deviceTestCode+`","verificationUrl":"https://kilo.ai/device-auth?code=`+deviceTestCode+`","expiresIn":600}`)
+		expires := d.expiresIn
+		if expires == 0 {
+			expires = 600
+		}
+		return respond(200, `{"code":"`+deviceTestCode+`","verificationUrl":"https://kilo.ai/device-auth?code=`+deviceTestCode+`","expiresIn":`+strconv.Itoa(expires)+`}`)
 	}
 	d.polls++
 	if d.pollErr {
@@ -118,14 +125,17 @@ func TestOAuthDeviceStartRequiresSessionAndDeviceProvider(t *testing.T) {
 	}
 }
 
-func TestOAuthDeviceStartShowsCodeButKeepsDeviceCodeServerSide(t *testing.T) {
+// Kilo uses one code for both roles, so the operator is shown it. What must hold
+// is that the browser's handle is an opaque state and that the code never comes
+// back in a poll response (TestOAuthDevicePollIsThrottledAndStaysPending).
+func TestOAuthDeviceStartUsesOpaqueState(t *testing.T) {
 	h, mux, _, cookie, _ := newDeviceAPI(t, &deviceUpstream{})
 	started := startDevice(t, mux, cookie)
 	if started.UserCode != deviceTestCode || started.VerificationURL != "https://kilo.ai/device-auth?code="+deviceTestCode || started.IntervalSeconds != 3 {
 		t.Fatalf("started=%+v", started)
 	}
-	if started.State == deviceTestCode || h.oauth.pending[started.State].deviceCode != deviceTestCode {
-		t.Fatal("state must be opaque and the device code must stay server-side")
+	if started.State == deviceTestCode || strings.Contains(started.State, deviceTestCode) || h.oauth.pending[started.State].deviceCode != deviceTestCode {
+		t.Fatal("the browser handle must be an opaque state, not the code")
 	}
 }
 
@@ -146,7 +156,7 @@ func TestOAuthDevicePollIsThrottledAndStaysPending(t *testing.T) {
 		t.Fatalf("early poll status=%d body=%s upstream polls=%d", recorder.Code, recorder.Body.String(), upstream.pollCount())
 	}
 	clock.now = clock.now.Add(3 * time.Second)
-	if recorder := pollDevice(t, mux, cookie, started.State); recorder.Code != 200 || !strings.Contains(recorder.Body.String(), `"pending"`) || upstream.pollCount() != 1 {
+	if recorder := pollDevice(t, mux, cookie, started.State); recorder.Code != 200 || !strings.Contains(recorder.Body.String(), `"pending"`) || strings.Contains(recorder.Body.String(), deviceTestCode) || upstream.pollCount() != 1 {
 		t.Fatalf("poll status=%d body=%s upstream polls=%d", recorder.Code, recorder.Body.String(), upstream.pollCount())
 	}
 	// A burst right after is throttled again.
@@ -260,5 +270,100 @@ func TestOAuthDeviceConcurrentApprovalSavesOneConnection(t *testing.T) {
 	wg.Wait()
 	if connections, _ := creds.ListConnections(context.Background(), "kilocode"); len(connections) != 1 {
 		t.Fatalf("concurrent approval saved %d connections", len(connections))
+	}
+}
+
+// The attempt must not outlive the code the provider issued.
+func TestOAuthDeviceAttemptExpiresWithTheProvidersCode(t *testing.T) {
+	upstream := &deviceUpstream{pollStatus: http.StatusAccepted, expiresIn: 60}
+	_, mux, _, cookie, clock := newDeviceAPI(t, upstream)
+	started := startDevice(t, mux, cookie)
+	clock.now = clock.now.Add(59 * time.Second)
+	if recorder := pollDevice(t, mux, cookie, started.State); recorder.Code != http.StatusOK || upstream.pollCount() != 1 {
+		t.Fatalf("poll inside the code lifetime status=%d polls=%d", recorder.Code, upstream.pollCount())
+	}
+	clock.now = clock.now.Add(2 * time.Second)
+	if recorder := pollDevice(t, mux, cookie, started.State); recorder.Code != http.StatusBadRequest || upstream.pollCount() != 1 {
+		t.Fatalf("poll after the code expired status=%d polls=%d", recorder.Code, upstream.pollCount())
+	}
+}
+
+func TestOAuthDeviceExpiryNeverExceedsFlowTTL(t *testing.T) {
+	_, mux, _, cookie, clock := newDeviceAPI(t, &deviceUpstream{pollStatus: http.StatusAccepted, expiresIn: 86400})
+	started := startDevice(t, mux, cookie)
+	clock.now = clock.now.Add(oauthFlowTTL + time.Second)
+	if recorder := pollDevice(t, mux, cookie, started.State); recorder.Code != http.StatusBadRequest {
+		t.Fatalf("a long-lived code must not extend the flow past %v: status=%d", oauthFlowTTL, recorder.Code)
+	}
+}
+
+// A save that persisted nothing must not burn an attempt whose token was already
+// issued upstream; the operator's next poll saves it.
+func TestOAuthDeviceSaveFailureKeepsAttemptOpen(t *testing.T) {
+	upstream := &deviceUpstream{pollStatus: 200, pollBody: `{"status":"approved","token":"` + deviceTestToken + `"}`}
+	h, mux, creds, cookie, clock := newDeviceAPI(t, upstream)
+	started := startDevice(t, mux, cookie)
+	clock.now = clock.now.Add(3 * time.Second)
+	// An existing connection with the same stable identity makes the save fail.
+	node, err := h.builtinNode(context.Background(), "kilocode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clash, err := creds.PutConnection(context.Background(), credentials.Connection{NodeID: node.ID, Name: "Existing", AuthKind: credentials.AuthOAuth, Identity: "work@example.test", Secret: credentials.Secret{AccessToken: "other"}, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recorder := pollDevice(t, mux, cookie, started.State); recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "connection_save_failed") {
+		t.Fatalf("save failure status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if flow, kept := h.oauth.pending[started.State]; !kept || flow.completing {
+		t.Fatal("a failed save must leave the attempt pending and reopened")
+	}
+	if err := creds.DeleteConnection(context.Background(), clash.ID); err != nil {
+		t.Fatal(err)
+	}
+	clock.now = clock.now.Add(3 * time.Second)
+	if recorder := pollDevice(t, mux, cookie, started.State); recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"connected"`) {
+		t.Fatalf("retry after save failure status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if connections, _ := creds.ListConnections(context.Background(), "kilocode"); len(connections) != 1 || connections[0].Name != "Work" {
+		t.Fatalf("retry left connections %+v", connections)
+	}
+}
+
+func TestOAuthFlowsReserveIsExclusive(t *testing.T) {
+	flows := newOAuthFlows()
+	state, _, ok := flows.begin(oauthFlow{sessionID: "s", provider: "kilocode", deviceCode: "c"})
+	if !ok {
+		t.Fatal("begin failed")
+	}
+	if _, ok := flows.reserve(state, "other", "kilocode"); ok {
+		t.Fatal("a foreign session reserved the attempt")
+	}
+	if _, ok := flows.reserve(state, "s", "kilocode"); !ok {
+		t.Fatal("owner could not reserve")
+	}
+	if _, ok := flows.reserve(state, "s", "kilocode"); ok {
+		t.Fatal("a second reservation succeeded while the first was saving")
+	}
+	flows.release(state)
+	if _, ok := flows.reserve(state, "s", "kilocode"); !ok {
+		t.Fatal("release did not reopen the attempt")
+	}
+	flows.finish(state)
+	if _, ok := flows.reserve(state, "s", "kilocode"); ok {
+		t.Fatal("a finished attempt was reserved")
+	}
+}
+
+func TestOAuthUnsupportedMessageNamesTheFlow(t *testing.T) {
+	_, mux, _, cookie, _ := newDeviceAPI(t, &deviceUpstream{})
+	device := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/claude/device", `{"name":"a","identity":"b"}`)
+	browser := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/kilocode/start", `{"name":"a","identity":"b"}`)
+	if !strings.Contains(device.Body.String(), "device sign-in") || strings.Contains(device.Body.String(), "browser") {
+		t.Fatalf("device endpoint message: %s", device.Body.String())
+	}
+	if !strings.Contains(browser.Body.String(), "browser sign-in") {
+		t.Fatalf("browser endpoint message: %s", browser.Body.String())
 	}
 }
