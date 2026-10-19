@@ -139,7 +139,7 @@ func OAuthSpecialized() []Spec {
 			"claude-haiku-4.5", "claude-opus-4.5", "claude-sonnet-4.5", "claude-sonnet-4.6", "claude-opus-4.6", "claude-opus-4.7",
 			"gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "grok-code-fast-1", "oswe-vscode-prime", "goldeneye-free-auto",
 		}},
-		{ID: "gitlab", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://gitlab.com", ModelCatalog: CatalogStatic},
+		{ID: "gitlab", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://gitlab.com", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "api/v4/chat/completions"}, ModelCatalog: CatalogStatic},
 		{ID: "iflow", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://apis.iflow.cn/v1", ModelCatalog: CatalogStatic, StaticModels: []string{
 			"qwen3-coder-plus", "qwen3-max", "qwen3-vl-plus", "qwen3-max-preview", "qwen3-235b", "qwen3-235b-a22b-instruct",
 			"qwen3-235b-a22b-thinking-2507", "qwen3-32b", "kimi-k2", "deepseek-v3.2", "deepseek-v3.1", "deepseek-v3", "deepseek-r1", "glm-4.7",
@@ -158,15 +158,15 @@ func OAuthSpecialized() []Spec {
 		}, ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
 			"mimo-x-pro-preview", "mimo-x-flash-preview", "mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-omni", "mimo-v2-flash",
 		}},
-		{ID: "cline", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://api.cline.bot", ModelCatalog: CatalogStatic, StaticModels: []string{
+		{ID: "cline", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://api.cline.bot", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "api/v1/chat/completions"}, DiscoveryPath: "api/v1/models", ModelCatalog: CatalogStatic, StaticModels: []string{
 			"anthropic/claude-opus-4.7", "anthropic/claude-sonnet-4.6", "anthropic/claude-opus-4.6", "openai/gpt-5.3-codex", "openai/gpt-5.4",
 			"google/gemini-3.1-pro-preview", "google/gemini-3.1-flash-lite-preview", "kwaipilot/kat-coder-pro",
 		}},
-		{ID: "clinepass", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.cline.bot", ModelCatalog: CatalogStatic, StaticModels: []string{
+		{ID: "clinepass", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.cline.bot", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "api/v1/chat/completions"}, DiscoveryPath: "api/v1/models", ModelCatalog: CatalogStatic, StaticModels: []string{
 			"cline-pass/glm-5.2", "cline-pass/kimi-k2.7-code", "cline-pass/kimi-k2.6", "cline-pass/deepseek-v4-pro", "cline-pass/deepseek-v4-flash",
 			"cline-pass/mimo-v2.5", "cline-pass/mimo-v2.5-pro", "cline-pass/minimax-m3", "cline-pass/qwen3.7-max", "cline-pass/qwen3.7-plus",
 		}},
-		{ID: "kilocode", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://api.kilo.ai/api", DiscoveryPath: "gateway/models", ModelCatalog: CatalogDynamic, PassthroughModels: true},
+		{ID: "kilocode", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://api.kilo.ai/api", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "openrouter/chat/completions"}, DiscoveryPath: "gateway/models", ModelCatalog: CatalogDynamic, PassthroughModels: true},
 		{ID: "codebuddy-cn", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://copilot.tencent.com/v2", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
 			"glm-5.2", "glm-5.1", "glm-5v-turbo", "minimax-m3", "kimi-k2.7", "kimi-k2.6", "hy3", "hy4-preview", "glm-5.3", "glm-5.3-flash",
 			"kimi-k3-1", "deepseek-v4-pro", "deepseek-v4.1-flash",
@@ -198,8 +198,8 @@ func APIGateways() []Spec {
 // operator policy at request time.
 func LocalAndNoAuth() []Spec {
 	return []Spec{
-		{ID: "mimo-free", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, DefaultBaseURL: "https://api.xiaomimimo.com/api/free-ai/openai/chat", ModelCatalog: CatalogDynamic, PassthroughModels: true},
-		{ID: "mmf", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, DefaultBaseURL: "https://api.xiaomimimo.com/api/free-ai/openai/chat", ModelCatalog: CatalogStatic},
+		{ID: "mimo-free", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, DefaultBaseURL: "https://api.xiaomimimo.com", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "api/free-ai/openai/chat"}, ModelCatalog: CatalogDynamic, PassthroughModels: true},
+		{ID: "mmf", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, DefaultBaseURL: "https://api.xiaomimimo.com", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "api/free-ai/openai/chat"}, ModelCatalog: CatalogStatic},
 		{ID: "opencode", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, DefaultBaseURL: "https://opencode.ai", ModelCatalog: CatalogDynamic, PassthroughModels: true},
 		{ID: "ollama", Transports: []Protocol{TransportOllama}, Auth: AuthAPIKey, DefaultBaseURL: "https://ollama.com", ModelCatalog: CatalogStatic},
 		{ID: "ollama-local", Transports: []Protocol{TransportOllama}, Auth: AuthNone, DefaultBaseURL: "http://localhost:11434", ModelCatalog: CatalogStatic},
@@ -213,11 +213,11 @@ func LocalAndNoAuth() []Spec {
 // the provider origin, and per-transport endpoints live in provider modules.
 func MultiTransport() []Spec {
 	return []Spec{
-		{ID: "deepseek", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.deepseek.com", ModelCatalog: CatalogStatic, ReportsUsage: true, Quirks: []Quirk{QuirkCacheControl}},
-		{ID: "glm", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.z.ai", ModelCatalog: CatalogStatic, ReportsUsage: true},
+		{ID: "deepseek", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.deepseek.com", TransportEndpoints: map[Protocol]string{TransportAnthropic: "anthropic/v1/messages"}, ModelCatalog: CatalogStatic, ReportsUsage: true, Quirks: []Quirk{QuirkCacheControl}},
+		{ID: "glm", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.z.ai", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "api/coding/paas/v4/chat/completions", TransportAnthropic: "api/anthropic/v1/messages"}, ModelCatalog: CatalogStatic, ReportsUsage: true},
 		{ID: "glm-cn", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://open.bigmodel.cn/api/coding/paas/v4", ModelCatalog: CatalogStatic, ReportsUsage: true},
-		{ID: "minimax", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.minimax.io", ModelCatalog: CatalogStatic, ReportsUsage: true},
-		{ID: "minimax-cn", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.minimaxi.com", ModelCatalog: CatalogStatic, ReportsUsage: true},
+		{ID: "minimax", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.minimax.io", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "v1/chat/completions", TransportAnthropic: "anthropic/v1/messages"}, ModelCatalog: CatalogStatic, ReportsUsage: true},
+		{ID: "minimax-cn", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.minimaxi.com", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "v1/chat/completions", TransportAnthropic: "anthropic/v1/messages"}, ModelCatalog: CatalogStatic, ReportsUsage: true},
 		{ID: "xiaomi-tokenplan", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://token-plan-sgp.xiaomimimo.com/v1", ModelCatalog: CatalogStatic},
 	}
 }

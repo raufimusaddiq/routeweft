@@ -234,3 +234,36 @@ func TestV6KeyAccessUpgradeKeepsExistingKeysUnrestricted(t *testing.T) {
 		t.Fatalf("existing key became restricted=%d allow=%s; upgrade must not narrow access", restricted, allow)
 	}
 }
+
+func TestV8MimoFreeBaseURLUpgrade(t *testing.T) {
+	ctx := context.Background()
+	s, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "routeweft.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := NewRunner(s.DB(), v1, v2, v3, v4, v5, v6, v7).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	const old = "https://api.xiaomimimo.com/api/free-ai/openai/chat"
+	for _, row := range [][3]string{
+		{"n1", "mimo-free", old},
+		{"n2", "mmf", old},
+		{"n3", "mmf", "https://proxy.example.test/mimo"},
+		{"n4", "openai", old},
+	} {
+		if _, err := s.DB().ExecContext(ctx, `INSERT INTO provider_nodes(id,kind,provider_id,name,base_url) VALUES(?, 'builtin', ?, ?, ?)`, row[0], row[1], row[0], row[2]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := NewRunner(s.DB()).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"n1": "https://api.xiaomimimo.com", "n2": "https://api.xiaomimimo.com", "n3": "https://proxy.example.test/mimo", "n4": old}
+	for id, base := range want {
+		var got string
+		if err := s.DB().QueryRowContext(ctx, "SELECT base_url FROM provider_nodes WHERE id=?", id).Scan(&got); err != nil || got != base {
+			t.Fatalf("node %s base_url %q, want %q (%v)", id, got, base, err)
+		}
+	}
+}

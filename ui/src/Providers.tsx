@@ -95,12 +95,14 @@ export function Providers({ onUnauthorized }: Props) {
     if (!deviceFlow) return
     let cancelled = false
     let failures = 0
+    // Cancel and unmount end the in-flight poll request, not just the next tick.
+    const controller = new AbortController()
     const flow = deviceFlow
     const delay = Math.max(flow.intervalSeconds, 2) * 1000
     const timer = window.setTimeout(async function poll() {
       if (cancelled) return
       try {
-        const result = await send(`/oauth/${encodeURIComponent(selected)}/poll`, 'POST', { state: flow.state }) as { status: string }
+        const result = await send(`/oauth/${encodeURIComponent(selected)}/poll`, 'POST', { state: flow.state }, controller.signal) as { status: string }
         if (cancelled) return
         failures = 0
         if (result.status === 'connected') {
@@ -110,7 +112,8 @@ export function Providers({ onUnauthorized }: Props) {
         }
         window.setTimeout(poll, delay)
       } catch (cause) {
-        if (cancelled) return
+        // An abort is the operator ending the sign-in, not a failure to report.
+        if (cancelled || (cause instanceof DOMException && cause.name === 'AbortError')) return
         // The server keeps the attempt open on oauth_poll_failed (and a dropped
         // request never reached it), so retry those; anything else ended it.
         const code = cause instanceof RequestError ? (cause.body as { error?: { code?: string } } | null)?.error?.code : undefined
@@ -119,7 +122,7 @@ export function Providers({ onUnauthorized }: Props) {
         setDeviceFlow(null); setError(cause instanceof Error ? cause.message : 'Sign-in failed.')
       }
     }, delay)
-    return () => { cancelled = true; window.clearTimeout(timer) }
+    return () => { cancelled = true; window.clearTimeout(timer); controller.abort() }
   }, [deviceFlow, selected, load])
   useEffect(() => () => { modelProbeController.current?.abort(); usageAbort.current?.abort() }, [])
 

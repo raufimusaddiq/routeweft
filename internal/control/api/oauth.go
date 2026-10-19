@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -156,23 +157,38 @@ func (f *oauthFlows) claimPoll(state, sessionID, provider string, interval time.
 	return flow, true, false
 }
 
-// reserve takes the exclusive right to save an approved attempt. It fails for an
-// unknown, expired, foreign or already-completing state. The attempt stays
-// pending until finish, so a failed save does not lose a token that was already
-// issued upstream; release hands the attempt back for another poll.
-func (f *oauthFlows) reserve(state, sessionID, provider string) (oauthFlow, bool) {
+// reserveResult says why reserve did or did not take the attempt.
+type reserveResult int
+
+const (
+	reserveTaken reserveResult = iota
+	// reserveBusy: another poll is saving this attempt right now.
+	reserveBusy
+	// reserveInvalid: unknown, expired or not this session's or provider's.
+	reserveInvalid
+)
+
+// reserve takes the exclusive right to save an approved attempt. It reports
+// reserveInvalid for an unknown, expired or foreign state and reserveBusy for an
+// attempt another poll is already completing. The attempt stays pending until
+// finish, so a failed save does not lose a token that was already issued
+// upstream; release hands the attempt back for another poll.
+func (f *oauthFlows) reserve(state, sessionID, provider string) (oauthFlow, reserveResult) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	flow, ok := f.pending[state]
-	if !ok || flow.completing || !f.now().Before(flow.expiresAt) {
-		return oauthFlow{}, false
+	if !ok || !f.now().Before(flow.expiresAt) {
+		return oauthFlow{}, reserveInvalid
 	}
 	if subtle.ConstantTimeCompare([]byte(flow.sessionID), []byte(sessionID)) != 1 || flow.provider != provider {
-		return oauthFlow{}, false
+		return oauthFlow{}, reserveInvalid
+	}
+	if flow.completing {
+		return oauthFlow{}, reserveBusy
 	}
 	flow.completing = true
 	f.pending[state] = flow
-	return flow, true
+	return flow, reserveTaken
 }
 
 // release reopens a reserved attempt after a save that persisted nothing.
@@ -429,6 +445,10 @@ func (h *Handler) handleOAuthDeviceStart(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	device, err := provider.device.request(r.Context(), h.opts.OAuthClient)
+	if errors.Is(err, kilocode.ErrRateLimited) {
+		writeError(w, http.StatusTooManyRequests, "oauth_rate_limited", "the provider has too many pending sign-ins; wait a few minutes and try again")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "oauth_start_failed", "the provider did not start a sign-in; try again shortly")
 		return
@@ -484,8 +504,14 @@ func (h *Handler) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request) 
 		// Reserve, save, then finish: of two concurrent approved polls only one
 		// saves, and a save that persisted nothing leaves the attempt open so the
 		// token already issued upstream is not lost.
-		flow, ok := h.oauth.reserve(body.State, session.ID, providerID)
-		if !ok {
+		flow, reserved := h.oauth.reserve(body.State, session.ID, providerID)
+		if reserved == reserveBusy {
+			// Lost the race to a poll that is saving this same approval; the
+			// dashboard keeps polling and sees the connection.
+			writeJSON(w, http.StatusOK, map[string]any{"status": "pending"})
+			return
+		}
+		if reserved != reserveTaken {
 			writeError(w, http.StatusBadRequest, "oauth_state_invalid", "this sign-in attempt expired or was already used; start again")
 			return
 		}
