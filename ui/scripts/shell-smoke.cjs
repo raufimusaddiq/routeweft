@@ -22,6 +22,7 @@ const { join } = require('node:path');
         await page.setViewportSize({ width, height: 900 });
         await page.mouse.move(width - 1, 1);
         await page.evaluate(() => document.fonts.ready);
+        await page.waitForTimeout(260); // let hover/theme transitions and the 120ms entry settle
         const checks = await page.evaluate(() => {
           const canvas = document.createElement('canvas');
           canvas.width = canvas.height = 1;
@@ -56,12 +57,14 @@ const { join } = require('node:path');
             return ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomLeftRadius', 'borderBottomRightRadius'].filter(key => style[key].split(' ').some(value => parseFloat(value) > 2)).map(key => `${element.className}${pseudo}: ${key}=${style[key]}`);
           }));
           const states = ['--danger', '--success', '--warning', '--info'].map(token => ({ token, ratio: ratio(rgba(getComputedStyle(document.documentElement).getPropertyValue(token)), background(document.body)) }));
+          const sizes = [...new Set(elements.filter(visible).filter(element => [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim())).map(element => getComputedStyle(element).fontSize))].sort((a, b) => parseFloat(a) - parseFloat(b));
+          const accents = [...document.querySelectorAll('.accent-surface')].filter(visible).length;
           const active = document.querySelector('.nav-link-active');
           const marker = getComputedStyle(active, '::before');
           return {
             resolvedTheme: document.documentElement.dataset.theme,
             overflow: document.documentElement.scrollWidth - innerWidth,
-            lowContrast, radii, states,
+            lowContrast, radii, states, sizes, accents,
             active: { width: marker.width, color: marker.backgroundColor, weight: getComputedStyle(active).fontWeight, inactiveWeight: getComputedStyle(document.querySelector('.nav-link:not(.nav-link-active)')).fontWeight },
           };
         });
@@ -70,13 +73,17 @@ const { join } = require('node:path');
         assert.deepEqual(checks.radii, [], `${view}/${theme}/${width}: rounded shell`);
         assert.deepEqual(checks.lowContrast, [], `${view}/${theme}/${width}: low contrast`);
         assert.ok(checks.states.every(state => state.ratio >= 4.5), JSON.stringify(checks.states));
+        assert.deepEqual(checks.sizes, ['10px', '12px', '28px'], `${view}/${theme}/${width}: type sizes`);
+        assert.equal(checks.accents, 1, `${view}/${theme}/${width}: exactly one accent surface`);
         assert.equal(checks.active.width, '1px');
         assert.notEqual(checks.active.color, 'rgba(0, 0, 0, 0)');
         assert.ok(Number(checks.active.weight) > Number(checks.active.inactiveWeight));
         if (width === 1440) {
           await page.locator('.brand').focus();
           await page.keyboard.press('Tab');
-          checks.focus = await page.locator('.nav-link').first().evaluate(element => ({ focused: document.activeElement === element, visible: element.matches(':focus-visible'), style: getComputedStyle(element).outlineStyle, width: getComputedStyle(element).outlineWidth, color: getComputedStyle(element).outlineColor }));
+          checks.focus = await page.locator('.nav-link').first().evaluate(element => ({ focused: document.activeElement === element, visible: element.matches(':focus-visible'), style: getComputedStyle(element).outlineStyle, width: getComputedStyle(element).outlineWidth, color: getComputedStyle(element).outlineColor, offset: getComputedStyle(element).outlineOffset, token: getComputedStyle(document.documentElement).getPropertyValue('--focus').trim() }));
+          assert.equal(checks.focus.offset, '2px');
+          assert.notEqual(checks.focus.color, 'rgb(32, 36, 43)', 'focus ring is the accent colour, not the ink');
           assert.equal(checks.focus.focused, true);
           assert.equal(checks.focus.visible, true);
           assert.equal(checks.focus.style, 'solid');
@@ -123,6 +130,8 @@ const { join } = require('node:path');
   let adapterEnabled = false;
   let systemOneModelAdded = false;
   let usageSummaryCalls = 0;
+  let usageGate = null;
+  let usageMode = 'ok';
   let quotaRefreshCalls = 0;
   let usagePeriod = '7d';
   let systemOneProbeCalls = 0;
@@ -213,6 +222,9 @@ const { join } = require('node:path');
   }
   if (url.pathname === '/admin/v1/usage/summary' && method === 'GET') {
     usageSummaryCalls += 1;
+    if (usageGate) await usageGate;
+    if (usageMode === 'error') return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Usage store is unavailable. Check the database volume.' } }) });
+    if (usageMode === 'empty') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ period: url.searchParams.get('period'), since: '', totals: { requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, errors: 0 }, series: [], providers: [], models: [], statuses: [] }) });
     usagePeriod = url.searchParams.get('period');
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
       period: usagePeriod, since: '2026-09-18T00:00:00.000Z',
@@ -530,7 +542,20 @@ const { join } = require('node:path');
   report.systemOneProbeCalls = systemOneProbeCalls;
   report.systemOneProbeTransport = systemOneProbeTransport;
   // Usage & request details (PRD 13, PRD-OBS-001/002).
+  let releaseUsage;
+  usageGate = new Promise(resolve => { releaseUsage = resolve; });
   await page.click('a[href="#usage"]');
+  await page.waitForSelector('.usage-content .skeleton-page');
+  report.skeleton = await page.evaluate(() => ({
+    busy: document.querySelector('.usage-content').getAttribute('aria-busy'),
+    blocks: document.querySelectorAll('.usage-content .skeleton').length,
+    label: document.querySelector('.skeleton-page').getAttribute('aria-label'),
+    spinner: document.querySelectorAll('.spinner, [role="progressbar"]').length,
+    animation: getComputedStyle(document.querySelector('.usage-content .skeleton')).animationName,
+  }));
+  await page.screenshot({ path: join(artifacts, 'usage-skeleton-1440.png') });
+  usageGate = null;
+  releaseUsage();
   await page.waitForSelector('.usage-content');
   await page.waitForSelector('.usage-chart');
   report.usageMetrics = await page.locator('.usage-metrics .metric-value').allTextContents();
@@ -539,6 +564,27 @@ const { join } = require('node:path');
   report.usageProviderRows = await page.locator('.breakdown-row').count();
   report.usageEventRows = await page.locator('.usage-event').count();
   report.usagePeriod = usagePeriod;
+  // Focus, error and empty states (#102).
+  await page.locator('#usage-period').focus();
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
+  report.focusRing = await page.evaluate(() => { const el = document.activeElement, style = getComputedStyle(el); return { id: el.id, style: style.outlineStyle, width: style.outlineWidth, offset: style.outlineOffset, color: style.outlineColor, token: getComputedStyle(document.documentElement).getPropertyValue('--focus').trim() }; });
+  await page.screenshot({ path: join(artifacts, 'usage-focus-1440.png'), clip: { x: 208, y: 120, width: 1000, height: 160 } });
+  usageMode = 'error';
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await page.waitForSelector('.usage-content .page-error');
+  report.usageError = await page.evaluate(() => { const el = document.querySelector('.usage-content .page-error'); const style = getComputedStyle(el); return { text: el.textContent, leftWidth: style.borderLeftWidth, leftColor: style.borderLeftColor, retry: !!el.querySelector('button') }; });
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: join(artifacts, 'usage-error-1440.png') });
+  usageMode = 'empty';
+  await page.locator('.usage-content .page-error button').click();
+  await page.waitForSelector('.usage-content .empty-state');
+  report.usageEmpty = await page.evaluate(() => ({ boxes: document.querySelectorAll('.usage-content .empty-state').length, action: !!document.querySelector('.usage-chart-panel .empty-state button'), border: getComputedStyle(document.querySelector('.empty-state')).borderTopStyle }));
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: join(artifacts, 'usage-empty-1440.png') });
+  usageMode = 'ok';
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await page.waitForSelector('.usage-chart');
   await page.selectOption('#usage-period', '24h');
   await page.waitForFunction(() => document.querySelector('.usage-toolbar .count-label').textContent.includes('since'));
   report.usagePeriodAfterChange = usagePeriod;
@@ -784,6 +830,19 @@ const { join } = require('node:path');
     animation: getComputedStyle(document.querySelector('.usage-bar') || document.body).animationDuration,
   }));
   await page.emulateMedia({ reducedMotion: 'no-preference' });
+  // Every page: three type sizes, one accent surface (#102).
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  report.pageSizes = {};
+  for (const href of await page.locator('nav a.nav-link').evaluateAll(links => links.map(link => link.getAttribute('href')))) {
+    await page.evaluate(target => { location.hash = target; }, href);
+    await page.waitForTimeout(500);
+    report.pageSizes[href] = await page.evaluate(() => {
+      const visible = element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden';
+      const sizes = [...new Set([...document.querySelectorAll('.workspace *, .sidebar *')].filter(visible).filter(element => [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim())).map(element => getComputedStyle(element).fontSize))].sort((a, b) => parseFloat(a) - parseFloat(b));
+      return { sizes, accents: [...document.querySelectorAll('.accent-surface')].filter(visible).length };
+    });
+  }
   console.log(JSON.stringify(report, null, 2));
   assert.deepEqual(report.overviewMetrics, ['Ready', '2', '1', '1,200']);
   assert.equal(report.signInPrompt, 'Sign in to Routeweft');
@@ -869,6 +928,23 @@ const { join } = require('node:path');
   assert.equal(report.usageMetrics[1], '12,000');
   assert.equal(report.usageMetrics[2], '4,500');
   assert.equal(report.usageMetrics[3], '420 ms');
+  assert.equal(report.focusRing.style, 'solid');
+  assert.equal(report.focusRing.width, '2px');
+  assert.equal(report.focusRing.offset, '2px');
+  assert.notEqual(report.focusRing.color, 'rgba(0, 0, 0, 0)');
+  assert.match(report.usageError.text, /Usage store is unavailable/);
+  assert.equal(report.usageError.leftWidth, '3px');
+  assert.equal(report.usageError.retry, true);
+  assert.equal(report.usageEmpty.action, true);
+  assert.equal(report.usageEmpty.border, 'solid');
+  for (const [href, result] of Object.entries(report.pageSizes)) {
+    assert.deepEqual(result.sizes, ['10px', '12px', '28px'], `${href}: type sizes`);
+    assert.equal(result.accents, 1, `${href}: one accent surface`);
+  }
+  assert.equal(report.skeleton.busy, 'true');
+  assert.ok(report.skeleton.blocks >= 10, 'skeleton mirrors the content shape');
+  assert.equal(report.skeleton.spinner, 0);
+  assert.equal(report.skeleton.animation, 'pulse');
   assert.equal(report.usageBars, 2);
   assert.equal(report.usageProviderRows, 5);
   assert.equal(report.usageEventRows, 1);

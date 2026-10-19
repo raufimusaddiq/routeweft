@@ -95,7 +95,7 @@ export function SystemOne({ onUnauthorized }: Props) {
         {providerModels.length === 0 ? <p className="empty-keys">No models configured for this provider.</p> : providerModels.map(model => <div className="model-row" key={model.id}><code>{model.id}</code><span>{model.name || '—'}</span><span className={`state-tag${model.disabled ? ' state-warn' : ''}`}>{model.disabled ? 'Disabled' : 'Available'}</span></div>)}
       </section>
 
-      <section className="detail-panel" aria-labelledby="systemone-run-title">
+      <section className="detail-panel accent-surface" aria-labelledby="systemone-run-title">
         <div className="section-heading"><div><h2 id="systemone-run-title">Typed request workflow</h2><p>Runs a bounded System One/Jev request through the provider connection.</p></div></div>
         <div className="systemone-run">
           <label>Model<select aria-label="Typed request model" value={modelID} onChange={event => setModelID(event.target.value)}><option value="">Choose a model</option>{providerModels.filter(model => !model.disabled).map(model => <option key={model.id} value={model.id}>{model.id}</option>)}</select></label>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { ErrorNotice, MetricsSkeleton, Skeleton, SkeletonRows, Sparkline } from './kit'
 
 type Summary = {
   runtime: { health: string; version: string; commit: string; configRevision: number; snapshotVersion: number }
@@ -22,12 +23,13 @@ function when(value: string) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
-function Metric({ label, value, note, icon }: { label: string; value: string; note: string; icon: string }) {
+function Metric({ label, value, note, trend, accent }: { label: string; value: string; note: string; trend?: number[]; accent?: boolean }) {
   return (
-    <section className="metric" aria-label={label}>
-      <div className="metric-label"><span className="material-symbols" aria-hidden="true">{icon}</span>{label}</div>
+    <section className={`metric${accent ? ' accent-surface' : ''}`} aria-label={label}>
+      <div className="metric-label">{label}</div>
       <p className="metric-value">{value}</p>
       <p className="metric-note">{note}</p>
+      {trend && <Sparkline values={trend} label={`${label} per day`} />}
     </section>
   )
 }
@@ -37,6 +39,15 @@ export function Overview({ onUnauthorized }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [updatedAt, setUpdatedAt] = useState('')
+  const [trend, setTrend] = useState<number[]>([])
+
+  // The trend is decoration for the request count; a failure here must not fail the page.
+  const loadTrend = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const usage = await fetch('/admin/v1/usage/summary?period=7d', { credentials: 'same-origin', signal })
+      if (usage.ok) setTrend(((await usage.json()) as { series?: { requests: number }[] }).series?.map(day => day.requests) ?? [])
+    } catch { /* keep the previous trend */ }
+  }, [])
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
@@ -51,13 +62,14 @@ export function Overview({ onUnauthorized }: Props) {
       const value = await response.json() as Summary
       setSummary(value)
       setUpdatedAt(new Date().toLocaleTimeString())
+      void loadTrend(signal)
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === 'AbortError') return
       setError(cause instanceof Error ? cause.message : 'Overview is temporarily unavailable. Try again.')
     } finally {
       if (!signal?.aborted) setLoading(false)
     }
-  }, [onUnauthorized])
+  }, [onUnauthorized, loadTrend])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -65,16 +77,15 @@ export function Overview({ onUnauthorized }: Props) {
     return () => controller.abort()
   }, [load])
 
-  if (loading && !summary) return <p className="page-status" role="status">Loading overview…</p>
-  if (error && !summary) {
+  if (loading && !summary) {
     return (
-      <section className="page-error" role="alert">
-        <span className="material-symbols" aria-hidden="true">error</span>
-        <p>{error}</p>
-        <button className="button-secondary" type="button" onClick={() => void load()}>Retry</button>
-      </section>
+      <div className="overview-content skeleton-page" role="status" aria-label="Loading overview">
+        <MetricsSkeleton />
+        <div className="detail-grid">{[0, 1, 2].map(index => <section className="detail-panel" key={index}><Skeleton width="40%" height={10} /><SkeletonRows rows={3} columns={2} /></section>)}</div>
+      </div>
     )
   }
+  if (error && !summary) return <ErrorNotice message={error} onRetry={() => void load()} />
   if (!summary) return null
 
   const ready = summary.runtime.health === 'ready'
@@ -83,29 +94,23 @@ export function Overview({ onUnauthorized }: Props) {
       <div className="overview-toolbar">
         <p className="updated-at" aria-live="polite">Updated {updatedAt}</p>
         <button className="button-secondary refresh-button" type="button" disabled={loading} onClick={() => void load()}>
-          <span className="material-symbols" aria-hidden="true">refresh</span>
           Refresh
         </button>
       </div>
       {error && (
-        <section className="page-error refresh-error" role="alert">
-          <span className="material-symbols" aria-hidden="true">error</span>
-          <p>{error}</p>
-          <button className="button-secondary" type="button" disabled={loading} onClick={() => void load()}>Retry</button>
-        </section>
+        <ErrorNotice className="refresh-error" message={error} busy={loading} onRetry={() => void load()} />
       )}
 
       <section className="metrics-grid" aria-label="Gateway summary">
-        <Metric label="Gateway" value={ready ? 'Ready' : 'Not ready'} note={`Version ${summary.runtime.version || 'unknown'}`} icon="dns" />
-        <Metric label="Enabled connections" value={count(summary.providers.enabledConnections)} note={`${count(summary.providers.nodes)} provider nodes · ${count(summary.providers.catalog)} in catalog`} icon="hub" />
-        <Metric label="Active API keys" value={count(summary.apiKeys.active)} note="Enabled and unpaused" icon="key" />
-        <Metric label="Requests recorded" value={count(summary.traffic.requests)} note={`${count(summary.traffic.active)} active now`} icon="monitoring" />
+        <Metric accent label="Gateway" value={ready ? 'Ready' : 'Not ready'} note={`Version ${summary.runtime.version || 'unknown'}`} />
+        <Metric label="Enabled connections" value={count(summary.providers.enabledConnections)} note={`${count(summary.providers.nodes)} provider nodes · ${count(summary.providers.catalog)} in catalog`} />
+        <Metric label="Active API keys" value={count(summary.apiKeys.active)} note="Enabled and unpaused" />
+        <Metric label="Requests recorded" value={count(summary.traffic.requests)} note={`${count(summary.traffic.active)} active now`} trend={trend} />
       </section>
 
       {(summary.traffic.errors > 0 || summary.telemetry.degraded) && (
         <section className="actionable-alert" aria-labelledby="actionable-title">
-          <span className="material-symbols" aria-hidden="true">warning</span>
-          <div>
+                    <div>
             <h2 id="actionable-title">Needs attention</h2>
             {summary.traffic.errors > 0 && (
               <p>{count(summary.traffic.errors)} failed requests recorded. <a href="#usage">Review Usage</a>.</p>

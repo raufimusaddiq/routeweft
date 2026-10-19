@@ -222,7 +222,7 @@ export function EndpointAndKey({ onUnauthorized }: Props) {
       {error && <p className="auth-error" role="alert">{error}</p>}
       {notice && <p className="inline-notice" role="status">{notice}</p>}
 
-      <section className="detail-panel endpoint-panel" aria-labelledby="endpoint-title">
+      <section className="detail-panel endpoint-panel accent-surface" aria-labelledby="endpoint-title">
         <div className="panel-heading"><h2 id="endpoint-title">Base endpoint</h2><span className="state-tag">OpenAI-compatible</span></div>
         <p className="endpoint-intro">Use this URL with OpenAI-compatible clients. Provider and protocol-specific paths are listed below.</p>
         <div className="copy-field"><code>{baseURL}</code><button className="button-secondary" type="button" onClick={() => void copyText(baseURL, 'endpoint')}>{copyState === 'endpoint' ? 'Copied' : 'Copy URL'}</button></div>
