@@ -1,0 +1,26 @@
+{
+  "id": "openai-chat-nonstreaming",
+  "protocol": "openai-chat",
+  "kind": "non-streaming",
+  "description": "OpenAI Chat Completions with an unknown forward-compatible field that must survive native paths.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer fixture-client-key"
+    },
+    "body": "{\"model\":\"gpt-4o-mini\",\"messages\":[{\"role\":\"system\",\"content\":\"You are a terse assistant.\"},{\"role\":\"user\",\"content\":\"Say hi.\"}],\"temperature\":0.2,\"max_tokens\":16,\"future_routeweft_field\":{\"nested\":[1,2,3]}}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"id\":\"chatcmpl-fixture-1\",\"object\":\"chat.completion\",\"created\":1735689600,\"model\":\"gpt-4o-mini\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hi.\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":2,\"total_tokens\":14},\"system_fingerprint\":\"fp_fixture\"}"
+  },
+  "usage": {
+    "inputTokens": 12,
+    "outputTokens": 2
+  }
+}

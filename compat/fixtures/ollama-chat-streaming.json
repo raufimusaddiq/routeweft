@@ -1,0 +1,26 @@
+{
+  "id": "ollama-chat-streaming",
+  "protocol": "ollama",
+  "kind": "streaming",
+  "description": "Ollama newline-delimited JSON stream with a final done record.",
+  "request": {
+    "method": "POST",
+    "path": "/api/chat",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"model\":\"llama3.2\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hi.\"}],\"stream\":true}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/x-ndjson"
+    },
+    "body": "{\"model\":\"llama3.2\",\"message\":{\"role\":\"assistant\",\"content\":\"Hi\"},\"done\":false}\n{\"model\":\"llama3.2\",\"message\":{\"role\":\"assistant\",\"content\":\".\"},\"done\":false}\n{\"model\":\"llama3.2\",\"done\":true,\"prompt_eval_count\":8,\"eval_count\":2}\n"
+  },
+  "usage": {
+    "inputTokens": 8,
+    "outputTokens": 2
+  },
+  "terminal": "\"done\":true"
+}

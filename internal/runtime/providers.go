@@ -1,0 +1,248 @@
+package runtime
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/providers/cloudflare"
+	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
+	"github.com/raufimusaddiq/routeweft/internal/routing"
+)
+
+type servingProvider struct {
+	node      credentials.Node
+	endpoints map[registry.Protocol]string
+	account   routing.Account
+	name      string
+	accountID string
+}
+
+func compileProviders(config credentials.Configuration) (map[string]servingProvider, error) {
+	specs := make(map[string]registry.Spec)
+	for _, spec := range registry.Builtins() {
+		specs[spec.ID] = spec
+	}
+	nodes := make(map[string]credentials.Node)
+	result := make(map[string]servingProvider)
+	for _, node := range config.Clone().Nodes {
+		if node.ID == "" || node.ProviderID == "" {
+			return nil, fmt.Errorf("provider node id and identity are required")
+		}
+		if _, exists := nodes[node.ID]; exists {
+			return nil, fmt.Errorf("duplicate provider node %q", node.ID)
+		}
+		if spec, ok := specs[node.ProviderID]; ok && node.Kind == credentials.NodeBuiltin {
+			if node.BaseURL == "" {
+				node.BaseURL = spec.DefaultBaseURL
+			}
+			if len(node.Transports) == 0 {
+				for _, protocol := range spec.Transports {
+					node.Transports = append(node.Transports, string(protocol))
+				}
+			}
+		}
+		nodes[node.ID] = node
+	}
+	for _, connection := range config.Connections {
+		node, ok := nodes[connection.NodeID]
+		if !ok {
+			return nil, fmt.Errorf("connection %q references an unknown provider node", connection.ID)
+		}
+		if _, exists := result[connection.ID]; exists {
+			return nil, fmt.Errorf("duplicate connection %q", connection.ID)
+		}
+		endpoints := map[registry.Protocol]string(nil)
+		if node.Kind == credentials.NodeBuiltin {
+			endpoints = specs[node.ProviderID].TransportEndpoints
+		}
+		result[connection.ID] = servingProvider{node: node, endpoints: endpoints, account: routing.Account{ID: connection.ID, Enabled: connection.Enabled, Priority: connection.Priority}, name: connection.Name, accountID: connection.AccountID}
+	}
+	return result, nil
+}
+
+// UpdateProviders uses the same compile/commit/publish lock as other config.
+func (m *Manager) UpdateProviders(ctx context.Context, change func(*credentials.Configuration) error, persist func(*sql.Tx) error) error {
+	_, err := m.update(ctx, func(candidate *Candidate) error {
+		if err := change(&candidate.Providers); err != nil {
+			return err
+		}
+		candidate.PoolBindings = make(map[string]string)
+		for _, connection := range candidate.Providers.Connections {
+			if connection.ProxyPoolID != "" {
+				candidate.PoolBindings[connection.ID] = connection.ProxyPoolID
+			}
+		}
+		return nil
+	}, persist)
+	return err
+}
+
+// ServingModel resolves aliases and qualified IDs. Ambiguous bare IDs are not
+// silently sent to a provider chosen by map iteration order.
+func (s *RuntimeSnapshot) ServingModel(requested string) (Model, bool) {
+	if target, ok := s.aliases[requested]; ok {
+		return s.ResolveModel(target.ProviderID, target.ModelID)
+	}
+	if provider, model, ok := strings.Cut(requested, "/"); ok {
+		if resolved, known := s.ResolveModel(provider, model); known {
+			return resolved, true
+		}
+	}
+	found := s.bareModels[requested]
+	if found.ProviderID == "" {
+		return Model{}, false
+	}
+	return s.ResolveModel(found.ProviderID, found.ModelID)
+}
+
+// ProbeModel keeps native account IDs ahead of aliases, including disabled targets.
+func (s *RuntimeSnapshot) ProbeModel(provider, requested string) (string, error) {
+	target := ModelRef{ProviderID: provider, ModelID: requested}
+	if _, native := s.models[modelKey(provider, requested)]; !native {
+		if prefix, id, qualified := strings.Cut(requested, "/"); qualified && prefix == provider {
+			_, known := s.models[modelKey(provider, id)]
+			_, alias := s.aliases[id]
+			if known || alias {
+				target.ModelID = id
+			}
+		}
+		if _, native := s.models[modelKey(provider, target.ModelID)]; !native {
+			if alias, ok := s.aliases[target.ModelID]; ok {
+				target = alias
+			}
+		}
+	}
+	if target.ProviderID != provider {
+		return "", fmt.Errorf("model resolves to a different provider")
+	}
+	if _, disabled := s.disabledModels[modelKey(target.ProviderID, target.ModelID)]; disabled {
+		return "", fmt.Errorf("model is disabled")
+	}
+	return target.ModelID, nil
+}
+
+func (s *RuntimeSnapshot) ProviderCandidates(requested string) ([]routing.Account, bool) {
+	model, ok := s.ServingModel(requested)
+	if !ok {
+		return nil, false
+	}
+	return append([]routing.Account(nil), s.providerAccounts[model.ProviderID]...), true
+}
+
+// ModelKind derives typed catalog membership without changing durable model metadata.
+func (s *RuntimeSnapshot) ModelKind(model Model) string {
+	if model.Source == "alias" {
+		if resolved, ok := s.ResolveModel(model.ProviderID, model.ID); ok {
+			model = resolved
+		}
+	}
+	if model.ProviderID == "typesafe" || (model.ProviderID == "cloudflare-ai" && (model.ID == cloudflare.Clef || model.ID == cloudflare.ClefFlash)) {
+		return string(registry.TransportSystemOne)
+	}
+	for _, node := range s.providerConfig.Nodes {
+		if node.ProviderID == model.ProviderID && len(node.Transports) == 1 && node.Transports[0] == string(registry.TransportSystemOne) {
+			return string(registry.TransportSystemOne)
+		}
+	}
+	if model.Kind != "" {
+		return model.Kind
+	}
+	return "llm"
+}
+
+func (s *RuntimeSnapshot) AccountProvider(requested, account, source string, canTranslate func(string, string) bool) (routing.ProviderRef, bool) {
+	model, ok := s.ServingModel(requested)
+	if !ok {
+		return routing.ProviderRef{}, false
+	}
+	config, ok := s.providers[account]
+	if !ok || config.node.ProviderID != model.ProviderID || !config.account.Enabled || len(config.node.Transports) == 0 || config.node.BaseURL == "" {
+		return routing.ProviderRef{}, false
+	}
+	protocol := config.node.Transports[0]
+	if source != "" {
+		if slices.Contains(config.node.Transports, source) {
+			protocol = source
+		} else {
+			protocol = ""
+			for _, target := range config.node.Transports {
+				if canTranslate != nil && canTranslate(source, target) {
+					protocol = target
+					break
+				}
+			}
+			if protocol == "" {
+				return routing.ProviderRef{}, false
+			}
+		}
+	}
+	endpoint := config.endpoints[registry.Protocol(protocol)]
+	if config.node.Kind == credentials.NodeBuiltin && model.ProviderID == "cloudflare-ai" {
+		var valid bool
+		endpoint, valid = cloudflare.Endpoint(protocol, config.accountID, model.ID)
+		if !valid {
+			return routing.ProviderRef{}, false
+		}
+	}
+	return routing.ProviderRef{ProviderID: model.ProviderID, ConnectionID: account, BaseURL: config.node.BaseURL, Protocol: protocol, UpstreamModel: model.ID, Endpoint: endpoint}, true
+}
+
+func (s *RuntimeSnapshot) compileServingIndexes() {
+	s.providerAccounts = make(map[string][]routing.Account)
+	ordered := make([]servingProvider, 0, len(s.providers))
+	for _, provider := range s.providers {
+		ordered = append(ordered, provider)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].account.Priority != ordered[j].account.Priority {
+			return ordered[i].account.Priority < ordered[j].account.Priority
+		}
+		if ordered[i].name != ordered[j].name {
+			return ordered[i].name < ordered[j].name
+		}
+		return ordered[i].account.ID < ordered[j].account.ID
+	})
+	for _, provider := range ordered {
+		s.providerAccounts[provider.node.ProviderID] = append(s.providerAccounts[provider.node.ProviderID], provider.account)
+	}
+	s.bareModels = make(map[string]ModelRef)
+	for _, model := range s.models {
+		if _, disabled := s.disabledModels[modelKey(model.ProviderID, model.ID)]; disabled {
+			continue
+		}
+		if _, exists := s.bareModels[model.ID]; exists {
+			s.bareModels[model.ID] = ModelRef{}
+		} else {
+			s.bareModels[model.ID] = ModelRef{ProviderID: model.ProviderID, ModelID: model.ID}
+		}
+	}
+	s.providerStrategy, _ = routing.ParseStrategy(s.settings["providerStrategy"])
+	if s.providerStrategy == "" {
+		s.providerStrategy = routing.StrategyFillFirst
+	}
+	var overrides map[string]string
+	json.Unmarshal([]byte(s.settings["providerStrategies"]), &overrides)
+	s.providerStrategies = make(map[string]routing.Strategy)
+	for provider, raw := range overrides {
+		if strategy, err := routing.ParseStrategy(raw); err == nil {
+			s.providerStrategies[provider] = strategy
+		}
+	}
+	if value, err := strconv.ParseUint(strings.TrimSpace(s.settings["stickyRoundRobinLimit"]), 10, 64); err == nil {
+		s.providerStickyLimit = routing.StickyRotations(value)
+	}
+}
+
+func (s *RuntimeSnapshot) ProviderStrategy() routing.Strategy { return s.providerStrategy }
+func (s *RuntimeSnapshot) ProviderStrategyOverride(provider string) (routing.Strategy, bool) {
+	strategy, ok := s.providerStrategies[provider]
+	return strategy, ok
+}
+func (s *RuntimeSnapshot) ProviderStickyLimit() uint64 { return s.providerStickyLimit }

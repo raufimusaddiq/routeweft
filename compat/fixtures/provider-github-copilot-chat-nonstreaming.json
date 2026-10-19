@@ -1,0 +1,28 @@
+{
+  "id": "provider-github-copilot-chat-nonstreaming",
+  "protocol": "openai-chat",
+  "kind": "non-streaming",
+  "description": "GitHub Copilot native Chat with the VS Code chat fingerprint headers required on the Copilot endpoint.",
+  "request": {
+    "method": "POST",
+    "path": "/chat/completions",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer fixture-provider-credential",
+      "copilot-integration-id": "vscode-chat",
+      "editor-version": "vscode/1.110.0"
+    },
+    "body": "{\"model\":\"gpt-5.4\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hi.\"}],\"max_tokens\":16}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"id\":\"chatcmpl-copilot-fixture\",\"object\":\"chat.completion\",\"created\":1735689600,\"model\":\"gpt-5.4\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hi.\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2,\"total_tokens\":12}}"
+  },
+  "usage": {
+    "inputTokens": 10,
+    "outputTokens": 2
+  }
+}

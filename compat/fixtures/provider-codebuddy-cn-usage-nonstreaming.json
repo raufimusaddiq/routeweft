@@ -1,0 +1,27 @@
+{
+  "id": "provider-codebuddy-cn-usage-nonstreaming",
+  "protocol": "openai-chat",
+  "kind": "non-streaming",
+  "description": "CodeBuddy CN unified gateway Chat with usage accounting on the provider-specific completion path.",
+  "request": {
+    "method": "POST",
+    "path": "/v2/chat/completions",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer fixture-provider-credential",
+      "user-agent": "CLI/2.108.1 CodeBuddy/2.108.1"
+    },
+    "body": "{\"model\":\"glm-5.2\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hi.\"}],\"max_tokens\":16}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"id\":\"chatcmpl-codebuddy-fixture\",\"object\":\"chat.completion\",\"created\":1735689600,\"model\":\"glm-5.2\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hi.\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":2,\"total_tokens\":9}}"
+  },
+  "usage": {
+    "inputTokens": 7,
+    "outputTokens": 2
+  }
+}

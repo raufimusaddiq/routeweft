@@ -1,0 +1,23 @@
+{
+  "id": "openai-chat-cancellation",
+  "protocol": "openai-chat",
+  "kind": "cancellation",
+  "description": "Stream emits a partial chunk then disconnects; ingress cancellation must cancel upstream work.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer fixture-client-key"
+    },
+    "body": "{\"model\":\"gpt-4o-mini\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"Long synthetic response.\"}]}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/event-stream",
+      "connection": "keep-alive"
+    },
+    "body": "data: {\"id\":\"chatcmpl-fixture-cancel\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "id": "gemini-generate-content",
+  "protocol": "gemini",
+  "kind": "non-streaming",
+  "description": "Gemini GenerateContent preserves candidate role, finish reason, and usage metadata.",
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-2.5-flash:generateContent",
+    "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "fixture-gemini-key"
+    },
+    "body": "{\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"Say hi.\"}]}],\"generationConfig\":{\"maxOutputTokens\":16,\"temperature\":0.2}}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hi.\"}]},\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":8,\"candidatesTokenCount\":2,\"totalTokenCount\":10},\"modelVersion\":\"gemini-2.5-flash\"}"
+  },
+  "usage": {
+    "inputTokens": 8,
+    "outputTokens": 2
+  }
+}

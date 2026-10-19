@@ -1,0 +1,75 @@
+event: response.created
+data: {"response":{"created_at":1735689602,"id":"resp_chat_fixture","model":"vendor/model","object":"response","output":[],"status":"in_progress"},"sequence_number":1,"type":"response.created"}
+
+event: response.in_progress
+data: {"response":{"created_at":1735689602,"id":"resp_chat_fixture","model":"vendor/model","object":"response","output":[],"status":"in_progress"},"sequence_number":2,"type":"response.in_progress"}
+
+event: response.output_item.added
+data: {"item":{"id":"item_resp_chat_fixture_0","summary":[],"type":"reasoning"},"output_index":0,"sequence_number":3,"type":"response.output_item.added"}
+
+event: response.reasoning_summary_part.added
+data: {"item_id":"item_resp_chat_fixture_0","output_index":0,"part":{"text":"","type":"summary_text"},"sequence_number":4,"summary_index":0,"type":"response.reasoning_summary_part.added"}
+
+event: response.reasoning_summary_text.delta
+data: {"delta":"Thought","item_id":"item_resp_chat_fixture_0","output_index":0,"sequence_number":5,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+event: response.output_item.added
+data: {"item":{"content":[{"text":"","type":"output_text"}],"id":"item_resp_chat_fixture_1","role":"assistant","status":"in_progress","type":"message"},"output_index":1,"sequence_number":6,"type":"response.output_item.added"}
+
+event: response.content_part.added
+data: {"content_index":0,"item_id":"item_resp_chat_fixture_1","output_index":1,"part":{"text":"","type":"output_text"},"sequence_number":7,"type":"response.content_part.added"}
+
+event: response.output_text.delta
+data: {"content_index":0,"delta":"An","item_id":"item_resp_chat_fixture_1","output_index":1,"sequence_number":8,"type":"response.output_text.delta"}
+
+event: response.output_text.delta
+data: {"content_index":0,"delta":"swer","item_id":"item_resp_chat_fixture_1","output_index":1,"sequence_number":9,"type":"response.output_text.delta"}
+
+event: response.output_item.added
+data: {"item":{"arguments":"","call_id":"call_1","id":"item_resp_chat_fixture_2","name":"lookup","status":"in_progress","type":"function_call"},"output_index":2,"sequence_number":10,"type":"response.output_item.added"}
+
+event: response.function_call_arguments.delta
+data: {"delta":"{\"city\":","item_id":"item_resp_chat_fixture_2","output_index":2,"sequence_number":11,"type":"response.function_call_arguments.delta"}
+
+event: response.output_item.added
+data: {"item":{"call_id":"call_2","id":"item_resp_chat_fixture_3","input":"","name":"exec","status":"in_progress","type":"custom_tool_call"},"output_index":3,"sequence_number":12,"type":"response.output_item.added"}
+
+event: response.function_call_arguments.delta
+data: {"delta":"\"Oslo\"}","item_id":"item_resp_chat_fixture_2","output_index":2,"sequence_number":13,"type":"response.function_call_arguments.delta"}
+
+event: response.reasoning_summary_text.done
+data: {"item_id":"item_resp_chat_fixture_0","output_index":0,"sequence_number":14,"summary_index":0,"text":"Thought","type":"response.reasoning_summary_text.done"}
+
+event: response.reasoning_summary_part.done
+data: {"item_id":"item_resp_chat_fixture_0","output_index":0,"part":{"text":"Thought","type":"summary_text"},"sequence_number":15,"summary_index":0,"type":"response.reasoning_summary_part.done"}
+
+event: response.output_item.done
+data: {"item":{"id":"item_resp_chat_fixture_0","summary":[{"text":"Thought","type":"summary_text"}],"type":"reasoning"},"output_index":0,"sequence_number":16,"type":"response.output_item.done"}
+
+event: response.output_text.done
+data: {"content_index":0,"item_id":"item_resp_chat_fixture_1","output_index":1,"sequence_number":17,"text":"Answer","type":"response.output_text.done"}
+
+event: response.content_part.done
+data: {"content_index":0,"item_id":"item_resp_chat_fixture_1","output_index":1,"part":{"text":"Answer","type":"output_text"},"sequence_number":18,"type":"response.content_part.done"}
+
+event: response.output_item.done
+data: {"item":{"content":[{"text":"Answer","type":"output_text"}],"id":"item_resp_chat_fixture_1","role":"assistant","status":"completed","type":"message"},"output_index":1,"sequence_number":19,"type":"response.output_item.done"}
+
+event: response.function_call_arguments.done
+data: {"arguments":"{\"city\":\"Oslo\"}","item_id":"item_resp_chat_fixture_2","output_index":2,"sequence_number":20,"type":"response.function_call_arguments.done"}
+
+event: response.output_item.done
+data: {"item":{"arguments":"{\"city\":\"Oslo\"}","call_id":"call_1","id":"item_resp_chat_fixture_2","name":"lookup","status":"completed","type":"function_call"},"output_index":2,"sequence_number":21,"type":"response.output_item.done"}
+
+event: response.custom_tool_call_input.delta
+data: {"delta":"echo hello","item_id":"item_resp_chat_fixture_3","output_index":3,"sequence_number":22,"type":"response.custom_tool_call_input.delta"}
+
+event: response.custom_tool_call_input.done
+data: {"input":"echo hello","item_id":"item_resp_chat_fixture_3","output_index":3,"sequence_number":23,"type":"response.custom_tool_call_input.done"}
+
+event: response.output_item.done
+data: {"item":{"call_id":"call_2","id":"item_resp_chat_fixture_3","input":"echo hello","name":"exec","status":"completed","type":"custom_tool_call"},"output_index":3,"sequence_number":24,"type":"response.output_item.done"}
+
+event: response.completed
+data: {"response":{"created_at":1735689602,"error":null,"id":"resp_chat_fixture","model":"vendor/model","object":"response","output":[{"id":"item_resp_chat_fixture_0","summary":[{"text":"Thought","type":"summary_text"}],"type":"reasoning"},{"content":[{"text":"Answer","type":"output_text"}],"id":"item_resp_chat_fixture_1","role":"assistant","status":"completed","type":"message"},{"arguments":"{\"city\":\"Oslo\"}","call_id":"call_1","id":"item_resp_chat_fixture_2","name":"lookup","status":"completed","type":"function_call"},{"call_id":"call_2","id":"item_resp_chat_fixture_3","input":"echo hello","name":"exec","status":"completed","type":"custom_tool_call"}],"status":"completed","usage":{"input_tokens":31,"input_tokens_details":{"cached_tokens":8},"output_tokens":18,"output_tokens_details":{"reasoning_tokens":4},"total_tokens":49}},"sequence_number":25,"type":"response.completed"}
+

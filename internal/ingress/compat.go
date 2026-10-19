@@ -1,0 +1,438 @@
+package ingress
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	geminiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/gemini"
+	ollamaadapter "github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
+	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
+	systemoneadapter "github.com/raufimusaddiq/routeweft/internal/protocol/systemone"
+	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
+	"github.com/raufimusaddiq/routeweft/internal/routing"
+	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
+)
+
+// dispatch resolves the requested model, builds one bounded plan, selects the
+// native or translated mode, and relays the upstream response with cancellation
+// and incremental streaming (SPEC §8-§9). nativeBody/nativeHeaders run only on
+// the native path; translated is the cross-protocol hook for later adapters.
+func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, source, model string, native nativeSpec, translated translateHook, stream bool) {
+	started := time.Now()
+	snapshot, err := h.snapshot.Load()
+	if err != nil {
+		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
+		return
+	}
+	response, provider, err := h.dispatchAttempts(r, snapshot, model, source, false, func(provider routing.ProviderRef) (ChatTranslation, error) {
+		plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: source, Provider: provider})
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		if !plan.NativePath() {
+			if translated != nil {
+				return translated(plan.TargetProtocol)
+			}
+			return ChatTranslation{}, fmt.Errorf("no %s translator registered for target protocol %q", source, plan.TargetProtocol)
+		}
+		endpoint := native.endpoint
+		if provider.Endpoint != "" {
+			endpoint = provider.Endpoint
+		}
+		body, err := native.body(provider.UpstreamModel)
+		var headers http.Header
+		if native.headers != nil {
+			headers = native.headers(provider)
+		}
+		return ChatTranslation{Endpoint: endpoint, Body: body, Headers: headers}, err
+	})
+	if err != nil {
+		h.dispatchError(w, r, err)
+		return
+	}
+	defer response.Body.Close()
+	if source == systemoneadapter.Protocol {
+		stream = strings.EqualFold(strings.TrimSpace(strings.SplitN(response.Header.Get("Content-Type"), ";", 2)[0]), "text/event-stream")
+	}
+	copyResponseHeaders(w.Header(), response.Header)
+	w.WriteHeader(response.StatusCode)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		_, _ = io.Copy(w, response.Body)
+		h.emitOutcome(r, provider, response.StatusCode, stream, promptcache.Usage{}, started)
+		return
+	}
+	if stream {
+		if h.opts.OnRequestComplete != nil {
+			scanner := &usageScanner{family: provider.Protocol}
+			response.Body = struct {
+				io.Reader
+				io.Closer
+			}{Reader: io.TeeReader(response.Body, scanner), Closer: response.Body}
+			relayErr := h.copyNativeSSE(w, r, response)
+			usage, _ := scanner.usage()
+			if !scanner.reportsUsage(relayErr == nil && r.Context().Err() == nil) {
+				usage = promptcache.Usage{}
+			}
+			h.emitOutcome(r, provider, response.StatusCode, true, usage, started)
+			return
+		}
+		h.copyNativeSSE(w, r, response)
+		return
+	}
+	if h.opts.OnRequestComplete != nil {
+		responseBody, readErr := io.ReadAll(response.Body)
+		usage := promptcache.Usage{}
+		if readErr == nil {
+			if parsed, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
+				usage = parsed
+			}
+		}
+		_, _ = w.Write(responseBody)
+		h.emitOutcome(r, provider, response.StatusCode, false, usage, started)
+		return
+	}
+	_, _ = io.Copy(w, response.Body)
+}
+
+// nativeSpec describes one protocol's native endpoint, body encoder and
+// provider-credential headers.
+type nativeSpec struct {
+	endpoint string
+	body     func(upstreamModel string) ([]byte, error)
+	headers  func(routing.ProviderRef) http.Header
+}
+
+// translateHook adapts one protocol's translator to the shared dispatcher.
+type translateHook func(target string) (ChatTranslation, error)
+
+// readBody enforces the configured request-body limit (PRD-API-005).
+func (h *Handler) readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, h.opts.MaxBodyBytes))
+	if err == nil {
+		return body, true
+	}
+	var limitErr *http.MaxBytesError
+	if errors.As(err, &limitErr) {
+		h.writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds configured limit")
+	} else if r.Context().Err() == nil {
+		h.writeError(w, http.StatusBadRequest, "request_read_failed", "request body could not be read")
+	}
+	return nil, false
+}
+
+// geminiHeaders uses Gemini API-key auth for the provider credential.
+func geminiHeaders(provider routing.ProviderRef) http.Header {
+	headers := http.Header{}
+	if provider.APIToken != "" {
+		headers.Set("X-Goog-Api-Key", provider.APIToken)
+	}
+	return headers
+}
+
+func (h *Handler) handleGeminiModels(w http.ResponseWriter, r *http.Request) {
+	if !h.authorize(w, r) {
+		return
+	}
+	snapshot, err := h.snapshot.Load()
+	if err != nil {
+		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
+		return
+	}
+	models := make([]map[string]any, 0)
+	allowed := accessFilter(r, snapshot)
+	for _, model := range snapshot.Models() {
+		id := model.ProviderID + "/" + model.ID
+		if model.Source == "alias" {
+			id = model.ID
+		}
+		if !allowed(id) {
+			continue
+		}
+		models = append(models, map[string]any{
+			"name":                       "models/" + model.ID,
+			"displayName":                model.Name,
+			"supportedGenerationMethods": []string{"generateContent", "streamGenerateContent"},
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"models": models})
+}
+
+func (h *Handler) handleGeminiRoute(w http.ResponseWriter, r *http.Request) {
+	if !h.authorize(w, r) {
+		return
+	}
+	rest := r.PathValue("rest")
+	model, method, ok := strings.Cut(rest, ":")
+	if !ok || strings.Contains(model, "/") || model == "" || (method != "generateContent" && method != "streamGenerateContent") {
+		h.writeError(w, http.StatusNotFound, "route_not_found", "Gemini model method is not supported")
+		return
+	}
+	stream := method == "streamGenerateContent"
+	body, ok := h.readBody(w, r)
+	if !ok {
+		return
+	}
+	request, err := geminiadapter.ParseRequest(model, stream, body)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	native := nativeSpec{
+		endpoint: "v1beta/models/" + model + ":" + method,
+		body:     func(string) ([]byte, error) { return request.MarshalBody("") },
+		headers:  geminiHeaders,
+	}
+	h.dispatch(w, r, geminiadapter.Protocol, request.Model, native, geminiTranslate(h.opts.TranslateGemini, request), stream)
+}
+
+func geminiTranslate(translator GeminiTranslator, request *geminiadapter.Request) translateHook {
+	if translator == nil {
+		return nil
+	}
+	return func(target string) (ChatTranslation, error) { return translator(request, target) }
+}
+
+func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
+	if !h.authorize(w, r) {
+		return
+	}
+	body, ok := h.readBody(w, r)
+	if !ok {
+		return
+	}
+	request, err := openaiadapter.ParseChatRequest(body)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	snapshot, err := h.snapshot.Load()
+	if err != nil {
+		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
+		return
+	}
+	started := time.Now()
+	response, provider, err := h.dispatchAttempts(r, snapshot, request.Model, ollamaadapter.Protocol, false, func(provider routing.ProviderRef) (ChatTranslation, error) {
+		if provider.Protocol != ollamaadapter.Protocol {
+			if h.opts.TranslateChat == nil {
+				return ChatTranslation{}, fmt.Errorf("no Chat-to-provider translator registered")
+			}
+			return h.opts.TranslateChat(request, provider.Protocol)
+		}
+		body, err := request.MarshalBody(provider.UpstreamModel)
+		endpoint := "api/chat"
+		if provider.Endpoint != "" {
+			endpoint = provider.Endpoint
+		}
+		return ChatTranslation{Endpoint: endpoint, Body: body, Headers: openAIProviderHeaders(provider)}, err
+	})
+	if err != nil {
+		h.dispatchError(w, r, err)
+		return
+	}
+	defer response.Body.Close()
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.WriteHeader(response.StatusCode)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		_, _ = io.Copy(w, response.Body)
+		h.emitOutcome(r, provider, response.StatusCode, request.Stream, promptcache.Usage{}, started)
+		return
+	}
+	if request.Stream {
+		if provider.Protocol != ollamaadapter.Protocol {
+			h.copyOllamaStream(w, r, response, request.Model)
+			h.emitOutcome(r, provider, response.StatusCode, true, promptcache.Usage{}, started)
+			return
+		}
+		if h.opts.OnRequestComplete != nil {
+			usage := h.copyOllamaNativeStream(w, r, response, provider)
+			h.emitOutcome(r, provider, response.StatusCode, true, usage, started)
+			return
+		}
+		h.copyNativeSSE(w, r, response)
+		return
+	}
+	if h.opts.OnRequestComplete != nil {
+		responseBody, readErr := io.ReadAll(response.Body)
+		usage := promptcache.Usage{}
+		if readErr == nil {
+			if parsed, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
+				usage = parsed
+			}
+		}
+		_, _ = w.Write(responseBody)
+		h.emitOutcome(r, provider, response.StatusCode, false, usage, started)
+		return
+	}
+	_, _ = io.Copy(w, response.Body)
+}
+
+// copyOllamaNativeStream relays a native Ollama ndjson stream byte-for-byte
+// while extracting usage from each line. Ollama reports prompt_eval_count and
+// eval_count on the final {"done":true} object (PRD §13), so the last complete
+// object wins and a cancelled stream reports nothing. It returns the usage it
+// observed so the caller can publish one accounting record.
+func (h *Handler) copyOllamaNativeStream(w http.ResponseWriter, r *http.Request, response *http.Response, provider routing.ProviderRef) promptcache.Usage {
+	flusher, canFlush := w.(http.Flusher)
+	reader := bufio.NewReaderSize(response.Body, 32*1024)
+	var pending []byte
+	usage := promptcache.Usage{}
+	for {
+		if r.Context().Err() != nil {
+			return promptcache.Usage{}
+		}
+		line, err := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			if _, writeErr := w.Write(line); writeErr != nil {
+				return promptcache.Usage{}
+			}
+			if canFlush {
+				flusher.Flush()
+			}
+			pending = append(pending, line...)
+			for {
+				index := bytes.IndexByte(pending, '\n')
+				if index < 0 {
+					break
+				}
+				if parsed, ok := shared.ParseUsage(provider.Protocol, bytes.TrimSpace(pending[:index])); ok {
+					usage = parsed
+				}
+				pending = pending[index+1:]
+			}
+		}
+		if err != nil {
+			if len(pending) > 0 {
+				if parsed, ok := shared.ParseUsage(provider.Protocol, bytes.TrimSpace(pending)); ok {
+					usage = parsed
+				}
+			}
+			return usage
+		}
+	}
+}
+
+func (h *Handler) copyOllamaStream(w http.ResponseWriter, r *http.Request, response *http.Response, model string) {
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	flusher, canFlush := w.(http.Flusher)
+	reader := bufio.NewReaderSize(response.Body, 32*1024)
+	writeLine := func(payload map[string]any) {
+		_ = json.NewEncoder(w).Encode(payload)
+		if canFlush {
+			flusher.Flush()
+		}
+	}
+	for {
+		if r.Context().Err() != nil {
+			return
+		}
+		payload, ok := nextSSEData(reader)
+		if !ok {
+			return
+		}
+		if payload == "[DONE]" {
+			break
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+				FinishReason *string `json:"finish_reason"`
+			} `json:"choices"`
+		}
+		if json.Unmarshal([]byte(payload), &chunk) != nil || len(chunk.Choices) == 0 {
+			continue
+		}
+		choice := chunk.Choices[0]
+		if choice.Delta.Content != "" {
+			writeLine(map[string]any{"model": model, "message": map[string]string{"role": "assistant", "content": choice.Delta.Content}, "done": false})
+		}
+		if choice.FinishReason != nil {
+			break
+		}
+	}
+	writeLine(map[string]any{"model": model, "message": map[string]string{"role": "assistant", "content": ""}, "done": true})
+}
+
+func (h *Handler) handleSystemOne(w http.ResponseWriter, r *http.Request) {
+	if !h.authorize(w, r) {
+		return
+	}
+	body, ok := h.readBody(w, r)
+	if !ok {
+		return
+	}
+	request, err := systemoneadapter.ParseRequest(body)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	// System One providers configure the full typed endpoint as their base URL
+	// (for example https://api.typesafe.ai/v1/systemone), so Routeweft posts to
+	// that URL verbatim rather than appending a path (PRD §6 typesafe).
+	native := nativeSpec{
+		endpoint: "",
+		body:     func(upstream string) ([]byte, error) { return request.MarshalBody(upstream) },
+		headers:  openAIProviderHeaders,
+	}
+	h.dispatch(w, r, systemoneadapter.Protocol, strings.TrimSpace(request.Model), native, systemoneTranslate(h.opts.TranslateSystemOne, request), false)
+}
+
+func systemoneTranslate(translator SystemOneTranslator, request *systemoneadapter.Request) translateHook {
+	if translator == nil {
+		return nil
+	}
+	return func(target string) (ChatTranslation, error) { return translator(request, target) }
+}
+
+// copyNativeSSE relays native compatibility streams without decoding the
+// body, preserving client-disconnect cancellation and incremental flushing.
+func (h *Handler) copyNativeSSE(w http.ResponseWriter, r *http.Request, response *http.Response) error {
+	flusher, canFlush := w.(http.Flusher)
+	buffer := make([]byte, 32*1024)
+	for {
+		if r.Context().Err() != nil {
+			return r.Context().Err()
+		}
+		n, err := response.Body.Read(buffer)
+		if n > 0 {
+			if _, writeErr := w.Write(buffer[:n]); writeErr != nil {
+				return writeErr
+			}
+			if canFlush {
+				flusher.Flush()
+			}
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		}
+	}
+}
+
+// nextSSEData returns the next SSE data payload, skipping comments, event names
+// and blank separators. It reports false when the stream ends.
+func nextSSEData(reader *bufio.Reader) (string, bool) {
+	for {
+		line, err := reader.ReadString('\n')
+		if line == "" && err != nil {
+			return "", false
+		}
+		trimmed := strings.TrimRight(line, "\r\n")
+		if data, ok := strings.CutPrefix(trimmed, "data:"); ok {
+			return strings.TrimSpace(data), true
+		}
+		if err != nil {
+			return "", false
+		}
+	}
+}

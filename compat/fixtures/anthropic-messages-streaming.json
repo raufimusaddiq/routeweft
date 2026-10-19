@@ -1,0 +1,29 @@
+{
+  "id": "anthropic-messages-streaming",
+  "protocol": "anthropic-messages",
+  "kind": "streaming",
+  "description": "Anthropic Messages SSE stream ending with message_stop exactly once.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/messages",
+    "headers": {
+      "content-type": "application/json",
+      "x-api-key": "fixture-anthropic-key",
+      "anthropic-version": "2023-06-01"
+    },
+    "body": "{\"model\":\"claude-3-5-sonnet-latest\",\"max_tokens\":32,\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"Say one word.\"}]}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache"
+    },
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture_2\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-3-5-sonnet-latest\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":9,\"output_tokens\":1}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Word\"}}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+  },
+  "usage": {
+    "inputTokens": 9,
+    "outputTokens": 2
+  },
+  "terminal": "event: message_stop"
+}

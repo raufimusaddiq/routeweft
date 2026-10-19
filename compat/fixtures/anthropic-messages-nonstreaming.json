@@ -1,0 +1,30 @@
+{
+  "id": "anthropic-messages-nonstreaming",
+  "protocol": "anthropic-messages",
+  "kind": "non-streaming",
+  "description": "Anthropic Messages with prompt-cache control, thinking, and tool-use blocks.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/messages",
+    "headers": {
+      "content-type": "application/json",
+      "x-api-key": "fixture-anthropic-key",
+      "anthropic-version": "2023-06-01",
+      "anthropic-beta": "prompt-caching-2024-07-31"
+    },
+    "body": "{\"model\":\"claude-3-5-sonnet-latest\",\"max_tokens\":128,\"system\":[{\"type\":\"text\",\"text\":\"You call tools.\",\"cache_control\":{\"type\":\"ephemeral\"}}],\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Get the time.\",\"cache_control\":{\"type\":\"ephemeral\"}}]}],\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":1024},\"tools\":[{\"name\":\"get_time\",\"description\":\"Return current time.\",\"input_schema\":{\"type\":\"object\",\"properties\":{}}}]}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"id\":\"msg_fixture_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-3-5-sonnet-latest\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"The user wants the current time, so I should call get_time.\",\"signature\":\"fixture-signature\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"get_time\",\"input\":{}}],\"stop_reason\":\"tool_use\",\"stop_sequence\":null,\"usage\":{\"input_tokens\":44,\"output_tokens\":22,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":38}}"
+  },
+  "usage": {
+    "inputTokens": 44,
+    "outputTokens": 22,
+    "cacheReadTokens": 38,
+    "cacheCreateTokens": 0
+  }
+}

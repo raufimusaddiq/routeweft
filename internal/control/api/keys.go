@@ -1,0 +1,185 @@
+package api
+
+import (
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/raufimusaddiq/routeweft/internal/auth"
+	"github.com/raufimusaddiq/routeweft/internal/runtime"
+)
+
+func (h *Handler) handleCreateKey(w http.ResponseWriter, r *http.Request) {
+	if h.opts.Keys == nil {
+		writeError(w, http.StatusServiceUnavailable, "keys_unavailable", "API key management is not configured")
+		return
+	}
+	var body struct {
+		Name   string     `json:"name"`
+		Access *keyAccess `json:"access"`
+	}
+	if !decodeJSON(w, r, maxKeyBody, &body) {
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "invalid_key", "API key name is required")
+		return
+	}
+	restricted, allow := false, []string(nil)
+	if body.Access != nil {
+		var ok bool
+		if allow, ok = h.checkAccess(w, body.Access); !ok {
+			return
+		}
+		restricted = *body.Access.Restricted
+	}
+	entry, secret, err := h.opts.Keys.CreateAPIKeyWithAccess(r.Context(), name, restricted, allow)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "key_create_failed", "API key could not be created")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"key":    keyJSON(entry),
+		"secret": secret, "configRevision": h.activeConfigRevision(),
+	})
+}
+
+func (h *Handler) handlePatchKey(w http.ResponseWriter, r *http.Request) {
+	if h.opts.Keys == nil {
+		writeError(w, http.StatusServiceUnavailable, "keys_unavailable", "API key management is not configured")
+		return
+	}
+	var body struct {
+		Paused *bool      `json:"paused"`
+		Access *keyAccess `json:"access"`
+	}
+	if !decodeJSON(w, r, maxKeyBody, &body) {
+		return
+	}
+	if body.Paused == nil && body.Access == nil {
+		writeError(w, http.StatusBadRequest, "invalid_key", "paused or access is required")
+		return
+	}
+	id := r.PathValue("id")
+	var policy *runtime.KeyAccess
+	if body.Access != nil {
+		allow, ok := h.checkAccess(w, body.Access)
+		if !ok {
+			return
+		}
+		policy = &runtime.KeyAccess{Restricted: *body.Access.Restricted, Allow: allow}
+	}
+	// Pause and access change together or not at all.
+	if err := h.opts.Keys.UpdateAPIKey(r.Context(), id, body.Paused, policy); err != nil {
+		h.keyMutationError(w, err, "API key could not be updated")
+		return
+	}
+	stored, ok := h.storedKey(id)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "key_update_failed", "updated API key could not be read back")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"key": stored, "configRevision": h.activeConfigRevision()})
+}
+
+// keyAccess is the admin-API form of a key's model/Combo allowlist.
+//
+// Restricted is a pointer so an omitted field is rejected: treating "missing"
+// as false would let an allowlist edit silently turn a key unrestricted.
+type keyAccess struct {
+	Restricted *bool    `json:"restricted"`
+	Allow      []string `json:"allow"`
+}
+
+// maxKeyBody fits the largest legal allowlist (MaxAllowEntries x MaxAllowLength
+// plus JSON quoting) with headroom.
+const maxKeyBody = 512 << 10
+
+func accessJSON(restricted bool, allow []string) map[string]any {
+	if allow == nil {
+		allow = []string{}
+	}
+	return map[string]any{"restricted": restricted, "allow": allow}
+}
+
+// checkAccess validates an access object and normalizes its allowlist. An
+// unrestricted key keeps no list, and sending one alongside restricted:false is
+// rejected as ambiguous rather than guessed at.
+func (h *Handler) checkAccess(w http.ResponseWriter, access *keyAccess) ([]string, bool) {
+	if access.Restricted == nil {
+		writeError(w, http.StatusBadRequest, "invalid_access", "access.restricted is required")
+		return nil, false
+	}
+	if !*access.Restricted {
+		if len(access.Allow) > 0 {
+			writeError(w, http.StatusBadRequest, "invalid_access", "allow must be empty when restricted is false")
+			return nil, false
+		}
+		return nil, true
+	}
+	allow, err := auth.NormalizeAllow(access.Allow)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_access", err.Error())
+		return nil, false
+	}
+	return allow, true
+}
+
+func (h *Handler) keyMutationError(w http.ResponseWriter, err error, message string) {
+	if errors.Is(err, runtime.ErrAPIKeyNotFound) {
+		writeError(w, http.StatusNotFound, "key_not_found", "API key was not found")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "key_update_failed", message)
+}
+
+func (h *Handler) handleDeleteKey(w http.ResponseWriter, r *http.Request) {
+	if h.opts.Keys == nil {
+		writeError(w, http.StatusServiceUnavailable, "keys_unavailable", "API key management is not configured")
+		return
+	}
+	if err := h.opts.Keys.DeleteAPIKey(r.Context(), r.PathValue("id")); err != nil {
+		if errors.Is(err, runtime.ErrAPIKeyNotFound) {
+			writeError(w, http.StatusNotFound, "key_not_found", "API key was not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "key_delete_failed", "API key could not be revoked")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": r.PathValue("id"), "revoked": true, "configRevision": h.activeConfigRevision()})
+}
+
+func (h *Handler) activeConfigRevision() uint64 {
+	if h.opts.Runtime == nil {
+		return 0
+	}
+	snapshot, err := h.opts.Runtime.Load()
+	if err != nil {
+		return 0
+	}
+	return snapshot.ConfigRevision()
+}
+
+// keyJSON is the single admin shape of a key, shared by create and update.
+func keyJSON(entry auth.Entry) map[string]any {
+	return map[string]any{"id": entry.ID, "name": entry.Name, "prefix": entry.Prefix, "enabled": !entry.Disabled, "paused": entry.Paused, "access": accessJSON(entry.Restricted, entry.Allow)}
+}
+
+// storedKey reads a key back from the published snapshot, so a response shows
+// what the store holds (after normalization), not what the request said.
+func (h *Handler) storedKey(id string) (map[string]any, bool) {
+	if h.opts.Runtime == nil {
+		return nil, false
+	}
+	snapshot, err := h.opts.Runtime.Load()
+	if err != nil {
+		return nil, false
+	}
+	for _, entry := range snapshot.APIKeys().Records() {
+		if entry.ID == id {
+			return keyJSON(entry), true
+		}
+	}
+	return nil, false
+}
