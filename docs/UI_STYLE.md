@@ -108,6 +108,17 @@ selects, text inputs and navigation retain 44px minimum targets. Keep
 Escape/backdrop dismissal, focus return and all aria attributes. No horizontal
 page overflow at 320px or wider.
 
+## 4a. The mark
+
+The Routeweft mark is a plain weave: three warp threads and three weft threads, each going over, under, over. It is the
+only ornament in the chrome. `ui/public/mark.svg` is the single hand-written drawing (32 x 32, even-unit edges so it lands
+on whole pixels at 16px, no letters). `ui/src/Mark.tsx` inlines it so it inherits colour: the threads use `currentColor`
+and one thread uses `var(--mark-accent, currentColor)`; `.brand-mark` sets `color: var(--text-main)` and
+`--mark-accent: var(--live)`, so light and dark need no second asset. It sits at 20px beside the wordmark in the sidebar
+and in the phone header. `ui/public/favicon.svg` is the same drawing with literal colours (a favicon cannot read the
+page's CSS variables) and a `prefers-color-scheme: dark` block; `favicon-32.png` and `apple-touch-icon.png` (180px) are
+rendered from it on the light ground. `ui/index.html` carries two `theme-color` tags, light `#f4f4f2` and dark `#0c0e11`.
+
 ## 5. Layout components
 
 Implemented in `ui/src/editorial.tsx` and `ui/src/style.css`.
@@ -196,7 +207,8 @@ No API paths, state logic, workflows or nav definitions change for visual work.
 1. `npm run typecheck`, `npm test`, `npm run build`, `npm run smoke` pass.
 2. `rg -n 'gradient|backdrop-filter|box-shadow' ui/src`: zero matches. Radius
    token values are only 0/2px.
-3. `git diff origin/main -- ui/src/main.tsx`: empty.
+3. `git diff origin/main -- ui/src/main.tsx` is empty, except for the brand mark (#105): the import of `Mark` and the two
+   `<Mark />` slots in the sidebar and the phone header.
 4. Smoke asserts, on every page: only the sizes 11/12/16/28px (24px for statements
    on a phone), exactly one accent surface, no horizontal overflow, text contrast,
    no computed shell radius above 2px, the 2px focus ring with 2px offset, the

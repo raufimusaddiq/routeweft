@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { Combos } from './Combos'
 import { ConsoleLog } from './ConsoleLog'
 import { EndpointAndKey } from './EndpointAndKey'
+import { Mark } from './Mark'
 import { Overview } from './Overview'
 import { Providers } from './Providers'
 import { Quota } from './Quota'
@@ -150,7 +151,7 @@ function App() {
       {drawerOpen && <button className="drawer-backdrop" type="button" tabIndex={-1} aria-label="Close navigation" onClick={() => closeDrawer()} />}
       <aside className={`sidebar${drawerOpen ? ' sidebar-open' : ''}`}>
         <a className="brand" href="#overview" aria-label="Routeweft overview" onClick={closeDrawer}>
-          <span className="brand-mark" aria-hidden="true">R</span>
+          <Mark />
           <span className="brand-copy"><strong>Routeweft</strong><small>CONTROL PLANE</small></span>
         </a>
         <nav id="primary-navigation" aria-label="Primary navigation">
@@ -187,7 +188,7 @@ function App() {
       </aside>
       <main id="main-content" className="workspace" tabIndex={-1}>
         <header className="mobile-header">
-          <span className="brand-mark" aria-hidden="true">R</span>
+          <Mark />
           <span>Routeweft</span>
         </header>
         <div className="workspace-inner">
