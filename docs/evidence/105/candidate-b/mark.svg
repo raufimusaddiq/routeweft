@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Routeweft mark">
+  <title>Routeweft, candidate B: routes drawn together</title>
+  <!-- Three routes run in from the left, are drawn together into one tight bundle, and fan out again on the right:
+       a divergence that re-joins. One weft bar (--mark-accent, else currentColor) ties the bundle at its narrowest
+       point. Threads are 4 units wide with 2-unit gaps, so they land on whole pixels at 16px. -->
+  <g fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="butt" stroke-linejoin="miter">
+    <path d="M2 4H6L12 10H20L26 4H30"/>
+    <path d="M2 16H30"/>
+    <path d="M2 28H6L12 22H20L26 28H30"/>
+  </g>
+  <rect x="14" y="2" width="4" height="28" style="fill:var(--mark-accent,currentColor)"/>
+</svg>

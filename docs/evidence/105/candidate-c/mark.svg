@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Routeweft mark">
+  <title>Routeweft, candidate C: two threads braided</title>
+  <!-- Two threads run left to right, cross, spread apart, and cross again: a divergence that re-joins, and each
+       crossing is a weave. The first crossing has the accent thread over; the second has the ink thread over.
+       The under thread is cut 1.5 units either side of the over thread. -->
+  <g fill="none" stroke-width="3.5" stroke-linecap="butt" stroke-linejoin="miter">
+    <path style="stroke:var(--mark-accent,currentColor)" d="M2 8L9 16L16 24L20.85 18.46M25.15 13.54L30 8"/>
+    <path stroke="currentColor" d="M2 24L6.85 18.46M11.15 13.54L16 8L23 16L30 24"/>
+  </g>
+</svg>

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Routeweft mark">
+  <title>Routeweft, candidate A: plain weave</title>
+  <!-- Three warp threads (currentColor) and three weft threads (--mark-accent, else currentColor) in a plain weave:
+       each thread goes over, under, over the ones that cross it. The thread underneath is cut 2 units either side
+       of the one on top, so the over-under reads without any line. All edges sit on even units, so they land on
+       whole pixels at 16px. -->
+  <g fill="currentColor">
+    <rect x="4" y="2" width="4" height="10"/>
+    <rect x="4" y="20" width="4" height="10"/>
+    <rect x="14" y="10" width="4" height="12"/>
+    <rect x="24" y="2" width="4" height="10"/>
+    <rect x="24" y="20" width="4" height="10"/>
+  </g>
+  <g style="fill:var(--mark-accent,currentColor)">
+    <rect x="10" y="4" width="12" height="4"/>
+    <rect x="2" y="14" width="10" height="4"/>
+    <rect x="20" y="14" width="10" height="4"/>
+    <rect x="10" y="24" width="12" height="4"/>
+  </g>
+</svg>
