@@ -278,6 +278,11 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .provider-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .provider-form-grid > label { display: grid; align-content: start; gap: 6px; color: var(--text-muted); font-size: var(--t-body); font-weight: 600; }
 .provider-form-grid .wide-field { grid-column: 1 / -1; }
+.oauth-panel { display: grid; gap: 10px; border: 1px solid var(--border); border-radius: var(--radius-flat); padding: 12px; }
+.oauth-panel p { margin: 0; color: var(--text-muted); font-size: var(--t-body); }
+.oauth-panel label { display: grid; gap: 6px; color: var(--text-muted); font-size: var(--t-body); font-weight: 600; }
+.oauth-panel a.button-secondary { justify-self: start; text-decoration: none; }
+.oauth-actions { display: flex; gap: 8px; }
 .provider-form-grid input, .provider-form-grid select { width: 100%; }
 .transport-options { display: flex; flex-wrap: wrap; grid-column: 1 / -1; gap: 10px 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-flat); padding: 9px 11px 11px; }
 .transport-options legend { padding: 0 5px; color: var(--text-muted); font-size: var(--t-body); }
