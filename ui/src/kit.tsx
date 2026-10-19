@@ -25,7 +25,7 @@ function useWidth(fallback: number) {
 }
 
 // Bar chart with axis, gridlines, peak label and a hover/keyboard readout. Plain SVG, no dependencies.
-export function BarChart({ points, unit, title }: { points: ChartPoint[]; unit: string; title: string }) {
+export function BarChart({ points, unit, title, shade, current, ghost, reference }: { points: ChartPoint[]; unit: string; title: string; shade?: (label: string) => boolean; current?: (index: number) => boolean; ghost?: (index: number) => number | null; reference?: { value: number; label: string } }) {
   const [ref, width] = useWidth(640)
   const [active, setActive] = useState<number | null>(null)
   if (points.length === 0) return null
@@ -33,7 +33,7 @@ export function BarChart({ points, unit, title }: { points: ChartPoint[]; unit: 
   const margin = { top: 20, right: 8, bottom: 24, left: 44 }
   const innerWidth = Math.max(1, width - margin.left - margin.right)
   const innerHeight = height - margin.top - margin.bottom
-  const max = Math.max(1, ...points.map(point => point.value))
+  const max = Math.max(1, ...points.map(point => point.value), ...(ghost ? points.map((_, index) => ghost(index) ?? 0) : []))
   const step = niceStep(max / 3)
   const top = Math.ceil(max / step) * step
   const ticks: number[] = []
@@ -62,6 +62,7 @@ export function BarChart({ points, unit, title }: { points: ChartPoint[]; unit: 
       <span>{active === null ? 'Peak' : points[shown].label}</span>
       <strong>{numberFormat.format(points[shown].value)} {unit}</strong>
       {active === null && <span>{points[peak].label}</span>}
+      {active !== null && ghost && ghost(active) ? <span className="chart-vs">{points[active].value >= (ghost(active) as number) ? '↑' : '↓'} {Math.abs(((points[active].value - (ghost(active) as number)) / (ghost(active) as number)) * 100).toFixed(1)}% vs 7 days before ({numberFormat.format(ghost(active) as number)})</span> : null}
     </div>
     <div className="chart-focus" tabIndex={0} role="group" aria-label={`${title}. Use left and right arrow keys to read each day.`} onKeyDown={onKey} onBlur={() => setActive(null)}>
       <svg className="chart-svg" width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true" onPointerMove={onPointer} onPointerLeave={() => setActive(null)}>
@@ -71,11 +72,14 @@ export function BarChart({ points, unit, title }: { points: ChartPoint[]; unit: 
             <text className="chart-tick" x={margin.left - 8} y={y(tick) + 3} textAnchor="end">{numberFormat.format(tick)}</text>
           </g>)}
         </g>
+        {shade && points.map((point, index) => shade(point.label) && <rect key={`s${point.label}`} className="chart-band" x={x(index) - band / 2} y={margin.top} width={band} height={innerHeight} />)}
         {active !== null && <line className="chart-cursor" x1={x(active)} x2={x(active)} y1={margin.top} y2={margin.top + innerHeight} />}
         {points.map((point, index) => {
           const barHeight = Math.max(point.value > 0 ? 2 : 0, (point.value / top) * innerHeight)
-          return <rect key={point.label} className={`usage-bar${index === (active ?? peak) ? ' usage-bar-active' : ''}`} x={x(index) - barWidth / 2} y={margin.top + innerHeight - barHeight} width={barWidth} height={barHeight} />
+          return <rect key={point.label} className={`usage-bar${current?.(index) ? ' usage-bar-cur' : ''}${index === (active ?? peak) ? ' usage-bar-active' : ''}`} x={x(index) - barWidth / 2} y={margin.top + innerHeight - barHeight} width={barWidth} height={barHeight} />
         })}
+        {ghost && points.map((point, index) => { const g = ghost(index); if (g === null) return null; return <line key={`g${point.label}`} className="chart-ghost" x1={x(index) - barWidth / 2} x2={x(index) + barWidth / 2} y1={y(g)} y2={y(g)} /> })}
+        {reference && <line className="chart-ref" x1={margin.left} x2={width - margin.right} y1={y(reference.value)} y2={y(reference.value)} />}
         {active === null && <text className="chart-peak" x={x(peak)} y={y(points[peak].value) - 6} textAnchor="middle">{numberFormat.format(points[peak].value)}</text>}
         {points.map((point, index) => index % labelEvery === 0 && <text key={point.label} className="chart-tick" x={x(index)} y={height - 6} textAnchor="middle">{point.short}</text>)}
       </svg>
@@ -83,7 +87,7 @@ export function BarChart({ points, unit, title }: { points: ChartPoint[]; unit: 
     <table className="sr-only">
       <caption>{title}</caption>
       <thead><tr><th>Day</th><th>{unit}</th></tr></thead>
-      <tbody>{points.map(point => <tr key={point.label}><td>{point.label}</td><td>{numberFormat.format(point.value)}</td></tr>)}</tbody>
+      <tbody>{points.map(point => <tr key={point.label}><td>{point.label}</td><td className="num">{numberFormat.format(point.value)}</td></tr>)}</tbody>
     </table>
   </figure>
 }
@@ -129,8 +133,13 @@ export function SkeletonRows({ rows, columns = 4 }: { rows: number; columns?: nu
   return <div className="skeleton-rows" aria-hidden="true">{Array.from({ length: rows }, (_, row) => <div className="skeleton-row" key={row}>{Array.from({ length: columns }, (_, column) => <Skeleton key={column} width={column === 0 ? '18%' : `${12 + ((row * 7 + column * 11) % 18)}%`} />)}</div>)}</div>
 }
 
-export function MetricsSkeleton({ count = 4 }: { count?: number }) {
-  return <div className="metrics-grid skeleton-block" aria-hidden="true">{Array.from({ length: count }, (_, index) => <div className="metric" key={index}><Skeleton width="45%" height={10} /><Skeleton width="62%" height={28} /><Skeleton width="80%" height={10} /></div>)}</div>
+// Loading shape of an editorial page: the lead (headline and its line), a figure, and table rows.
+export function EditorialSkeleton() {
+  return <div className="skeleton-page" aria-hidden="true">
+    <div className="ed-row gap-s"><div className="ed-main"><Skeleton width="62%" height={28} /><Skeleton width="48%" height={16} /></div><div className="ed-margin"><Skeleton width="100%" height={112} /></div></div>
+    <div className="ed-row gap-s"><div className="ed-main"><Skeleton width="30%" height={16} /><Skeleton width="100%" height={200} /></div><div className="ed-margin"><Skeleton width="100%" height={160} /></div></div>
+    <div className="ed-row gap-s"><div className="ed-main"><Skeleton width="30%" height={16} /><SkeletonRows rows={6} columns={4} /></div></div>
+  </div>
 }
 
 export function EmptyState({ reason, children }: { reason: string; children?: ReactNode }) {

@@ -1,26 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { BarChart, EmptyState, ErrorNotice, MetricsSkeleton, Skeleton, SkeletonRows, Sparkline, StackedBar } from './kit'
+import { useCallback, useEffect, useState } from 'react'
+import { BarChart, EditorialSkeleton, EmptyState, ErrorNotice, Sparkline, StackedBar } from './kit'
 import { statusTone } from './chartMath'
+import { Caption, ErrCell, Fact, Main, Margin, Row, Statement, Status } from './editorial'
+import { badRate, clock, compact, delta, num, outlier, pct, priorWeek, rate, statusClass, sum, type Summary, type UsageEvent } from './format'
 
-type Totals = { requests: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; errors: number; avgDurationMs?: number; avgTtftMs?: number }
-type Day = { day: string; requests: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
-type Breakdown = { key: string; requests: number; inputTokens: number; outputTokens: number; errors: number }
-type Summary = { period: string; since: string; totals: Totals; series: Day[]; providers: Breakdown[]; models: Breakdown[]; statuses: Breakdown[] }
-type UsageEvent = { id: number; requestId: string; status: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; createdAt: string; providerId?: string; modelId?: string; connectionId?: string; apiKeyId?: string; durationMs?: number; ttftMs?: number }
 type Props = { onUnauthorized: () => void }
 
 const periods = [['24h', 'Last 24 hours'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['all', 'All time']]
-const numberFormat = new Intl.NumberFormat()
-
-// Total tokens (input + output). Authoritative cost lives in the pricing overrides.
-function totalTokens(totals: Totals) {
-  const tokens = totals.inputTokens + totals.outputTokens
-  return numberFormat.format(tokens)
-}
-
-function bar(value: number, max: number) {
-  return max <= 0 ? 0 : Math.max(2, Math.round((value / max) * 100))
-}
+const words: Record<string, string> = { '24h': '24 hours', '7d': '7 days', '30d': '30 days', all: 'recorded history' }
 
 async function responseError(response: Response, fallback: string) {
   try { return ((await response.json()) as { error?: { message?: string } }).error?.message || fallback } catch { return fallback }
@@ -54,76 +41,126 @@ export function Usage({ onUnauthorized }: Props) {
 
   useEffect(() => { void load() }, [load])
 
-  const maxProvider = useMemo(() => Math.max(1, ...(summary?.providers.map(item => item.requests) || [1])), [summary])
-
   const first = loading && !summary
-  const series = summary?.series || []
+  const t = summary?.totals
+  const series = summary?.series ?? []
+  const n = series.length
+  const days = Math.max(1, period === '24h' ? 1 : period === '7d' ? 7 : period === '30d' ? 30 : n)
   const points = series.map(day => ({ label: day.day, short: day.day.slice(5), value: day.requests }))
-  const trend = {
-    requests: series.map(day => day.requests),
-    tokens: series.map(day => day.inputTokens + day.outputTokens),
-    cache: series.map(day => day.cacheReadTokens + day.cacheWriteTokens),
-  }
-  const totals = summary?.totals
+  const prior = priorWeek(series)
+  const ghost = (index: number) => (prior && index >= n - 7 ? series[index - 7].requests : null)
+  const tokens = t ? t.inputTokens + t.outputTokens : 0
+  const hit = t ? (t.cacheReadTokens / Math.max(1, t.inputTokens + t.cacheReadTokens)) * 100 : 0
+  const fleet = t ? rate(t.errors, t.requests) : 0
+  const topFail = summary ? summary.statuses.filter(item => !item.key.startsWith('2')).sort((a, b) => b.requests - a.requests)[0] : undefined
+  const worst = summary ? outlier(summary) : null
+  const topProvider = Math.max(1, ...(summary?.providers.map(item => item.requests) ?? [1]))
+  const lastWeek = prior ? sum(prior, 'requests') : undefined
+  const thisWeek = sum(series.slice(-7), 'requests')
 
   return <div className="usage-content" aria-busy={loading}>
-    <div className="usage-toolbar"><label htmlFor="usage-period">Time period</label><select id="usage-period" value={period} onChange={event => setPeriod(event.target.value)}>{periods.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><span className="count-label" role="status">{loading ? 'Loading…' : summary ? `${numberFormat.format(summary.totals.requests)} requests${summary.since ? ` since ${summary.since.slice(0, 10)}` : ''}` : ''}</span><button className="button-secondary" type="button" disabled={loading} onClick={() => void load()}>Refresh</button></div>
-    {error && <ErrorNotice className="auth-error" message={error} busy={loading} onRetry={() => void load()} />}
+    {first && !error && <div role="status" aria-label="Loading usage"><EditorialSkeleton /></div>}
+    {error && <ErrorNotice message={error} busy={loading} onRetry={() => void load()} />}
 
-    {first && !error && <div className="skeleton-page" role="status" aria-label="Loading usage">
-      <MetricsSkeleton />
-      <div className="usage-layout"><section className="detail-panel usage-chart-panel"><Skeleton width="30%" height={10} /><Skeleton width="100%" height={168} /></section><section className="detail-panel"><Skeleton width="30%" height={10} /><SkeletonRows rows={4} columns={3} /></section></div>
-      <section className="detail-panel"><Skeleton width="20%" height={10} /><SkeletonRows rows={6} columns={6} /></section>
-    </div>}
-
-    {summary && totals && <>
-      <div className="metrics-grid usage-metrics">
-        <section className="metric" aria-label="Requests"><div className="metric-label">Requests</div><p className="metric-value">{numberFormat.format(totals.requests)}</p><p className="metric-note">{numberFormat.format(totals.errors)} error{totals.errors === 1 ? '' : 's'}</p><Sparkline values={trend.requests} label="Requests per day" /></section>
-        <section className="metric" aria-label="Tokens"><div className="metric-label">Tokens</div><p className="metric-value">{totalTokens(totals)}</p><p className="metric-note">input {numberFormat.format(totals.inputTokens)} · output {numberFormat.format(totals.outputTokens)}</p><Sparkline values={trend.tokens} label="Tokens per day" /></section>
-        <section className="metric" aria-label="Cache tokens"><div className="metric-label">Cache tokens</div><p className="metric-value">{numberFormat.format(totals.cacheReadTokens + totals.cacheWriteTokens)}</p><p className="metric-note">read {numberFormat.format(totals.cacheReadTokens)} · write {numberFormat.format(totals.cacheWriteTokens)}</p><Sparkline values={trend.cache} label="Cache tokens per day" /></section>
-        <section className="metric" aria-label="Latency"><div className="metric-label">Latency</div><p className="metric-value">{totals.avgDurationMs !== undefined ? `${totals.avgDurationMs} ms` : '—'}</p><p className="metric-note">TTFT {totals.avgTtftMs !== undefined ? `${totals.avgTtftMs} ms` : '—'}</p></section>
+    <Row gap="s" label="Period">
+      <div className="ed-main">
+        {summary && t
+          ? <><p className="ed-headline"><strong>{compact(tokens)}</strong> tokens, <strong>{num(t.requests)}</strong> requests</p>
+            <p className="ed-subline">in the {period === 'all' ? words.all : `last ${words[period]}`}. {pct(hit, 0)} of input came from cache{t.avgDurationMs !== undefined ? <>; the average call took <span className="ed-nowrap">{num(t.avgDurationMs)} ms.</span></> : '.'}</p></>
+          : !first && <p className="ed-subline">No usage to show yet.</p>}
       </div>
+      <Margin>
+        <div className="ed-period usage-toolbar"><label htmlFor="usage-period" className="ed-label">Time period</label>
+          <select id="usage-period" value={period} onChange={event => setPeriod(event.target.value)}>{periods.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+          <span className="count-label" role="status">{loading ? 'Loading…' : summary ? `${num(summary.totals.requests)} requests${summary.since ? ` since ${summary.since.slice(0, 10)}` : ''}` : ''}</span>
+          <button className="button-secondary" type="button" disabled={loading} onClick={() => void load()}>Refresh</button></div>
+      </Margin>
+    </Row>
 
-      <div className="usage-layout">
-        <section className="detail-panel usage-chart-panel accent-surface" aria-labelledby="usage-history-title">
-          <div className="section-heading"><div><h2 id="usage-history-title">Daily history</h2><p>Requests per day across the selected period.</p></div></div>
+    {summary && t && <>
+      <Row gap="s" label="Requests per day">
+        <Main title="Requests per day">
           {points.length === 0
             ? <EmptyState reason="No attributed usage in this period.">{period !== 'all' && <button className="button-secondary" type="button" onClick={() => setPeriod('all')}>Show all time</button>}</EmptyState>
-            : <BarChart points={points} unit="requests" title="Requests per day" />}
-        </section>
+            : <figure className="ed-figure usage-chart-panel accent-surface ed-plate">
+              <BarChart points={points} unit="requests" title="Requests per day" current={prior ? (index => index >= n - 7) : undefined} ghost={prior ? ghost : undefined} reference={n > 1 ? { value: t.requests / days, label: `average ${num(t.requests / days)}` } : undefined} />
+              <figcaption><Caption kicker="Fig. 1">{prior ? `Cyan bars are the latest 7 days; each tick is the same day a week earlier. Dashed line: average ${num(t.requests / days)} a day.` : 'One bar per day.'}</Caption></figcaption>
+            </figure>}
+        </Main>
+        <Margin>
+          <dl className="ed-facts">
+            <Fact label="Requests" value={<>{num(t.requests)} <small>req</small></>} note={prior ? `${num(thisWeek)} in the latest 7 days, ${delta(thisWeek, lastWeek) === null ? 'no prior week' : `${(delta(thisWeek, lastWeek) ?? 0) >= 0 ? '↑' : '↓'} ${Math.abs(delta(thisWeek, lastWeek) ?? 0).toFixed(1)}% vs prior 7 d`}` : `avg ${num(t.requests / days)} a day`} />
+            <Fact label="Tokens" value={<>{compact(tokens)} <small>in + out</small></>} note={`input ${num(t.inputTokens)}, output ${num(t.outputTokens)}`} />
+            <Fact label="Cache" value={<>{pct(hit, 0)} <small>of input</small></>} note={`read ${num(t.cacheReadTokens)}, write ${num(t.cacheWriteTokens)}`} />
+            <Fact label="Latency" value={<>{t.avgDurationMs !== undefined ? num(t.avgDurationMs) : '—'} <small>ms avg</small></>} note={`TTFT ${t.avgTtftMs !== undefined ? `${num(t.avgTtftMs)} ms` : '—'}`} />
+          </dl>
+        </Margin>
+      </Row>
 
-        <section className="detail-panel" aria-labelledby="usage-status-title">
-          <div className="section-heading"><div><h2 id="usage-status-title">Status</h2><p>Response status distribution.</p></div></div>
-          {summary.statuses.length === 0 ? <EmptyState reason="No responses in this period." /> : <StackedBar title="Response status counts" segments={summary.statuses.map(item => ({ key: item.key, label: item.key, value: item.requests, tone: statusTone(item.key) }))} />}
-        </section>
+      {topFail && t.errors > 0 && <Statement>
+        <strong>{topFail.key}</strong> causes <strong>{Math.round((topFail.requests / Math.max(1, t.errors)) * 100)}%</strong> of failures.{worst && badRate(worst.errors, worst.requests, fleet) ? <> <span className="ed-quiet">{worst.key} is the weakest provider at {pct(worst.err)}.</span></> : null}
+      </Statement>}
 
-        <section className="detail-panel" aria-labelledby="usage-providers-title">
-          <div className="section-heading"><div><h2 id="usage-providers-title">Providers</h2><p>Requests and errors by provider.</p></div></div>
-          {summary.providers.length === 0 ? <EmptyState reason="No provider activity in this period." /> : <div className="breakdown-list">{summary.providers.map(item => <div className="breakdown-row" key={item.key}><code>{item.key}</code><span className="breakdown-track"><span className="breakdown-fill" style={{ width: `${bar(item.requests, maxProvider)}%` }} /></span><span className="breakdown-count">{item.requests}</span>{item.errors > 0 && <span className="state-tag state-warn">{item.errors} err</span>}</div>)}</div>}
-        </section>
+      <Row gap="s" label="Providers and models">
+        <Main title="Providers">
+          {summary.providers.length === 0
+            ? <EmptyState reason="No provider activity in this period." />
+            : <figure className="ed-figure">
+              <table className="ed-table prov-table"><thead><tr><th scope="col">Provider</th><th scope="col" className="num">Requests</th><th scope="col"><span className="sr-only">Share</span></th><th scope="col" className="num">Errors</th></tr></thead>
+                <tbody>{summary.providers.slice(0, 8).map(item => <tr key={item.key}>
+                  <td><Status tone={rate(item.errors, item.requests) > 8 ? 'bad' : rate(item.errors, item.requests) > 4 ? 'warn' : 'good'}><span className="ed-name">{item.key}</span></Status></td>
+                  <td className="num ed-big">{num(item.requests)}</td>
+                  <td className="share-cell"><span className="ed-bar"><span style={{ width: `${(item.requests / topProvider) * 100}%` }} /></span></td>
+                  <ErrCell errors={item.errors} requests={item.requests} bad={badRate(item.errors, item.requests, fleet)} />
+                </tr>)}</tbody></table>
+              <figcaption><Caption kicker="Table 1">By requests; the error bar scales to 10%.</Caption></figcaption>
+            </figure>}
+        </Main>
+        <Margin>
+          <h3 className="ed-h3">Models</h3>
+          {summary.models.length === 0
+            ? <p className="ed-now-note">No model activity in this period.</p>
+            : <ul className="ed-watch ed-models">{summary.models.slice(0, 6).map(model => <li key={model.key}><code>{model.key}</code><span className="num">{num(model.requests)} <small>req</small> · {compact(model.inputTokens + model.outputTokens)} <small>tok</small></span></li>)}</ul>}
+        </Margin>
+      </Row>
 
-        <section className="detail-panel" aria-labelledby="usage-models-title">
-          <div className="section-heading"><div><h2 id="usage-models-title">Models</h2><p>Top models by request count.</p></div></div>
-          {summary.models.length === 0 ? <EmptyState reason="No model activity in this period." /> : <div className="breakdown-list">{summary.models.map(item => <div className="breakdown-row" key={item.key}><code>{item.key}</code><span className="breakdown-count">{item.requests}</span><span className="count-label">{numberFormat.format(item.inputTokens + item.outputTokens)} tok</span></div>)}</div>}
-        </section>
-      </div>
+      <Row gap="l" label="Outcomes">
+        <Main title="Outcomes">
+          {summary.statuses.length === 0
+            ? <EmptyState reason="No responses in this period." />
+            : <figure className="ed-figure">
+              <StackedBar title="Response status counts" segments={summary.statuses.map(item => ({ key: item.key, label: item.key, value: item.requests, tone: statusTone(item.key) }))} />
+              <figcaption><Caption kicker="Fig. 2">Responses by status code.</Caption></figcaption>
+            </figure>}
+        </Main>
+        <Margin>
+          <dl className="ed-facts"><Fact label="Failed" value={pct(fleet)} note={`${num(t.errors)} of ${num(t.requests)} responses`} /></dl>
+        </Margin>
+      </Row>
     </>}
 
-    {!first && (!error || summary) && <section className="detail-panel usage-log" aria-labelledby="usage-log-title">
-      <div className="section-heading"><div><h2 id="usage-log-title">Recent requests</h2><p>Latest {events.length} usage events with provider/model/account attribution.</p></div></div>
-      {events.length === 0 ? <EmptyState reason="No requests recorded yet. Send a request through the gateway and it will appear here." /> : <div className="table-scroll"><table className="usage-table">
-        <thead><tr><th scope="col">Status</th><th scope="col">Provider / model</th><th scope="col" className="num">In</th><th scope="col" className="num">Out</th><th scope="col" className="num">Cache</th><th scope="col" className="num">Latency</th><th scope="col">Request</th><th scope="col">Time</th></tr></thead>
-        <tbody>{events.map(event => <tr className="usage-event" key={event.id}>
-          <td><span className={`state-tag${event.status >= 200 && event.status < 300 ? ' state-good' : ' state-warn'}`}>{event.status}</span></td>
-          <td className="technical-value">{event.providerId || '—'} / {event.modelId || '—'}</td>
-          <td className="num">{numberFormat.format(event.inputTokens)}</td>
-          <td className="num">{numberFormat.format(event.outputTokens)}</td>
-          <td className="num">{event.cacheReadTokens + event.cacheWriteTokens > 0 ? numberFormat.format(event.cacheReadTokens + event.cacheWriteTokens) : '—'}</td>
-          <td className="num">{event.durationMs !== undefined ? `${event.durationMs} ms` : '—'}{event.ttftMs !== undefined ? ` · ${event.ttftMs}` : ''}</td>
-          <td className="technical-value usage-event-id">{event.requestId}</td>
-          <td className="technical-value">{new Date(event.createdAt).toLocaleString()}</td>
-        </tr>)}</tbody>
-      </table></div>}
-    </section>}
+    {!first && (!error || summary) && <Row gap="m" label="Recent requests">
+      <Main title="Recent requests">
+        {events.length === 0
+          ? <EmptyState reason="No requests recorded yet. Send a request through the gateway and it will appear here." />
+          : <figure className="ed-figure">
+            <table className="ed-table usage-table log-table"><thead><tr><th scope="col">Route</th><th scope="col" className="num">Status</th><th scope="col" className="num">In</th><th scope="col" className="num">Out</th><th scope="col" className="num">Cache</th><th scope="col" className="num">Latency</th><th scope="col" className="num">Time</th></tr></thead>
+              <tbody>{events.slice(0, 9).map(event => <tr className="usage-event" key={event.id}>
+                <td className="log-route">{event.providerId || '—'} / {event.modelId || '—'}</td>
+                <td className="num log-status"><Status tone={statusClass(event.status)}>{event.status}</Status></td>
+                <td className="num log-tokens">{num(event.inputTokens)} in</td>
+                <td className="num log-out">{num(event.outputTokens)} out</td>
+                <td className="num log-cache">{event.cacheReadTokens + event.cacheWriteTokens > 0 ? `${num(event.cacheReadTokens + event.cacheWriteTokens)} cache` : '—'}</td>
+                <td className="num log-latency">{event.durationMs !== undefined ? `${event.durationMs} ms` : '—'}{event.ttftMs !== undefined ? ` · ${event.ttftMs}` : ''}</td>
+                <td className="num log-time">{new Date(event.createdAt).toLocaleString()}</td>
+              </tr>)}</tbody></table>
+            <figcaption><Caption kicker="Log">Latest {Math.min(9, events.length)} of {events.length}, newest first, with provider, model and latency.</Caption></figcaption>
+          </figure>}
+      </Main>
+      {summary && n > 1 && <Margin>
+        <figure className="ed-mini"><figcaption className="ed-label">Tokens per day</figcaption><Sparkline values={series.map(day => day.inputTokens + day.outputTokens)} label="Tokens per day" caption={`${compact(tokens / days)} /day`} /></figure>
+        <figure className="ed-mini"><figcaption className="ed-label">Cache tokens per day</figcaption><Sparkline values={series.map(day => day.cacheReadTokens + day.cacheWriteTokens)} label="Cache tokens per day" caption={`${pct(hit, 0)} hit`} /></figure>
+      </Margin>}
+    </Row>}
   </div>
 }
