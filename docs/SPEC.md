@@ -887,6 +887,30 @@ GET    /admin/v1/usage    bounded list; optional exact filters providerId, model
 DELETE /admin/v1/logs     clears the bounded console buffer -> {cleared}
 ```
 
+`GET /admin/v1/usage/hourly?period=7d` returns a flat, oldest-first hourly
+series from `usage_events` under the same admin session policy and filter grammar
+as the usage list. Supported periods are `24h`, `7d` (default), and `30d`, giving
+24, 168, or 720 buckets. `all` and unknown periods return `400 invalid_period`.
+There is no grouping parameter.
+
+The response is `{period, timezone: "UTC", since, until, series}`. `since` is
+inclusive and `until` is exclusive; both are RFC 3339 UTC hour boundaries. The
+window ends at the start of the current UTC hour, excluding the incomplete hour.
+Each series item is `{hour, requests, failed, tokens, queried, observed}`. `hour`
+is the UTC start timestamp; `failed` counts non-2xx requests; `tokens` sums input
+and output tokens without adding cache counters again. Failed requests contribute
+their recorded tokens too.
+
+Every hour in the period is present, including empty hours. `queried` indicates
+that the hour intersects the requested date filters; it is false for hours wholly
+excluded by those filters. Date filters retain their inclusive event semantics
+and can partially cover a bucket. `observed` is true only when at least one event
+matches all filters in that hour. Filled buckets have zero counts and
+`observed: false`; these are not request observations. Missing hours outside
+`[since, until)` were not queried. Database failures return an error rather than
+a zero-filled success. This series describes persisted telemetry, not a guarantee
+that no accounting was delayed or lost (SPEC section 21).
+
 Each usage event carries `apiKeyId`: the opaque id of the authenticated client
 key, resolved once at authorization, never the key or its prefix. It is empty
 when `requireApiKey` is false. Time-to-first-token, cost, and a metrics scrape

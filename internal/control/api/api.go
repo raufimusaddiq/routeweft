@@ -223,6 +223,7 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	}
 	mux.Handle("GET /admin/v1/models/disabled", h.requireSessionHandler(h.readModel("models/disabled")))
 	mux.HandleFunc("GET /admin/v1/usage/summary", h.requireSession(h.handleUsageSummary))
+	mux.HandleFunc("GET /admin/v1/usage/hourly", h.requireSession(h.handleUsageHourly))
 	mux.HandleFunc("POST /admin/v1/quota/refresh", h.requireSession(h.handleQuotaRefresh))
 	mux.Handle("GET /admin/v1/events", h.requireSessionHandler(http.HandlerFunc(h.handleEvents)))
 	mux.Handle("GET /admin/v1/logs", h.requireSessionHandler(http.HandlerFunc(h.handleLogs)))
