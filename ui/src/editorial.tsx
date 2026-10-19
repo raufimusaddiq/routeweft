@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react'
-import { pct, rate } from './format'
+import { pct, rate, type Tone } from './format'
 
 // Building blocks of the editorial layout: a main column, a 300px margin column beside it, captions under figures.
-export type Tone = 'good' | 'warn' | 'bad' | 'idle'
+export type { Tone }
 
 export function Dot({ tone }: { tone: Tone }) {
   return <i className={`dot dot-${tone}`} aria-hidden="true" />

@@ -44,10 +44,14 @@ export function clock(iso: string) {
   return `${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}`
 }
 
-export function statusClass(status: number): 'good' | 'warn' | 'bad' {
-  if (status >= 200 && status < 300) return 'good'
-  if (status >= 500) return 'bad'
-  return 'warn'
+// One classification for every status mark and chart segment: success, redirect (neutral), client error, server error.
+export type Tone = 'good' | 'warn' | 'bad' | 'idle'
+export function statusTone(status: number | string): Tone {
+  const code = typeof status === 'number' ? status : Number.parseInt(status, 10)
+  if (code >= 200 && code < 300) return 'good'
+  if (code >= 400 && code < 500) return 'warn'
+  if (code >= 500 && code < 600) return 'bad'
+  return 'idle'
 }
 
 export function sum(days: Day[], key: keyof Day) {
@@ -77,4 +81,30 @@ export function badRate(errors: number, requests: number, fleet: number) {
 
 export function isWeekend(day: string) {
   return [0, 6].includes(new Date(`${day}T12:00:00`).getDay())
+}
+
+// How much lighter weekend days run than weekdays, in percent. null when either group is empty or
+// weekdays have no traffic: a ratio needs both sides, so a young install shows a dash, not a claim.
+export function weekendLighter(series: Day[]) {
+  const weekend = series.filter(day => isWeekend(day.day))
+  const weekday = series.filter(day => !isWeekend(day.day))
+  if (weekend.length === 0 || weekday.length === 0) return null
+  const average = (rows: Day[]) => rows.reduce((total, day) => total + day.requests, 0) / rows.length
+  const base = average(weekday)
+  return base > 0 ? 100 - (average(weekend) / base) * 100 : null
+}
+
+// The provider mark and the error figure share one rule so they cannot disagree.
+export function providerTone(errors: number, requests: number, fleet: number): Tone {
+  return badRate(errors, requests, fleet) ? 'bad' : 'good'
+}
+
+// Width of a share bar in percent, safe when the largest value is zero.
+export function share(value: number, largest: number) {
+  return Math.min(100, (value / Math.max(1, largest)) * 100)
+}
+
+// The busiest providers by requests, regardless of how the list on screen is sorted.
+export function topByRequests<T extends { id: string; requests: number }>(rows: T[], count: number) {
+  return [...rows].sort((a, b) => b.requests - a.requests || a.id.localeCompare(b.id)).slice(0, count)
 }

@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { BarChart, EditorialSkeleton, EmptyState, ErrorNotice, Sparkline, StackedBar } from './kit'
-import { statusTone } from './chartMath'
 import { Caption, ErrCell, Fact, Main, Margin, Row, Statement, Status } from './editorial'
-import { badRate, clock, compact, delta, num, outlier, pct, priorWeek, rate, statusClass, sum, type Summary, type UsageEvent } from './format'
+import { badRate, compact, delta, num, outlier, pct, priorWeek, providerTone, rate, share, statusTone, sum, type Summary, type UsageEvent } from './format'
 
 type Props = { onUnauthorized: () => void }
 
@@ -108,9 +107,9 @@ export function Usage({ onUnauthorized }: Props) {
             : <figure className="ed-figure">
               <table className="ed-table prov-table"><thead><tr><th scope="col">Provider</th><th scope="col" className="num">Requests</th><th scope="col"><span className="sr-only">Share</span></th><th scope="col" className="num">Errors</th></tr></thead>
                 <tbody>{summary.providers.slice(0, 8).map(item => <tr key={item.key}>
-                  <td><Status tone={rate(item.errors, item.requests) > 8 ? 'bad' : rate(item.errors, item.requests) > 4 ? 'warn' : 'good'}><span className="ed-name">{item.key}</span></Status></td>
+                  <td><Status tone={providerTone(item.errors, item.requests, fleet)}><span className="ed-name">{item.key}</span></Status></td>
                   <td className="num ed-big">{num(item.requests)}</td>
-                  <td className="share-cell"><span className="ed-bar"><span style={{ width: `${(item.requests / topProvider) * 100}%` }} /></span></td>
+                  <td className="share-cell"><span className="ed-bar"><span style={{ width: `${share(item.requests, topProvider)}%` }} /></span></td>
                   <ErrCell errors={item.errors} requests={item.requests} bad={badRate(item.errors, item.requests, fleet)} />
                 </tr>)}</tbody></table>
               <figcaption><Caption kicker="Table 1">By requests; the error bar scales to 10%.</Caption></figcaption>
@@ -147,7 +146,7 @@ export function Usage({ onUnauthorized }: Props) {
             <table className="ed-table usage-table log-table"><thead><tr><th scope="col">Route</th><th scope="col" className="num">Status</th><th scope="col" className="num">In</th><th scope="col" className="num">Out</th><th scope="col" className="num">Cache</th><th scope="col" className="num">Latency</th><th scope="col" className="num">Time</th></tr></thead>
               <tbody>{events.slice(0, 9).map(event => <tr className="usage-event" key={event.id}>
                 <td className="log-route">{event.providerId || '—'} / {event.modelId || '—'}</td>
-                <td className="num log-status"><Status tone={statusClass(event.status)}>{event.status}</Status></td>
+                <td className="num log-status"><Status tone={statusTone(event.status)}>{event.status}</Status></td>
                 <td className="num log-tokens">{num(event.inputTokens)} in</td>
                 <td className="num log-out">{num(event.outputTokens)} out</td>
                 <td className="num log-cache">{event.cacheReadTokens + event.cacheWriteTokens > 0 ? `${num(event.cacheReadTokens + event.cacheWriteTokens)} cache` : '—'}</td>

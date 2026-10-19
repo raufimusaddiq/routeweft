@@ -118,7 +118,9 @@ Implemented in `ui/src/editorial.tsx` and `ui/src/style.css`.
   kicker in 600, then text); **Statement** (28px, with the action it drives).
 - **Two separator weights do different jobs:** a 2px ink rule opens a section,
   margin list or table head; 1px `--border-subtle` rules separate rows.
-- **Status is never colour alone:** an 8px square (`.dot`) beside the word.
+- **Status is never colour alone:** an 8px square (`.dot`) beside the word. One
+  classification serves every mark: HTTP 2xx good, 3xx neutral, 4xx warn, 5xx bad.
+  A provider's square is red under the same rule as its error figure (below).
 - **Accent surface** (`.accent-surface`): exactly one per page, marking the most
   important live thing (Overview: the live card; Usage: the daily chart plate;
   Providers: the provider summary banner; other pages: their toolbar or primary

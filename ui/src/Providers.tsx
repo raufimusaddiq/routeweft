@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 're
 import { fetchAll, PAGE_SIZE, Pager, usePagedList } from './ProviderPaging'
 import { EmptyState, ErrorNotice, SkeletonRows } from './kit'
 import { Dot, Statement, Status, type Tone } from './editorial'
-import { badRate, num, outlier, pct, rate, type Summary } from './format'
+import { badRate, num, outlier, pct, rate, topByRequests, type Summary } from './format'
 
 type Provider = { id: string; transports: string[]; auth: string; authModes: string[]; defaultBaseURL?: string; modelCatalog: string; passthroughModels: boolean; staticModels?: string[]; reportsUsage: boolean; configuredNodes: number; enabledAccounts: number }
 type Node = { id: string; kind: string; providerId: string; name: string; prefix?: string; baseUrl?: string; transports: string[] }
@@ -114,7 +114,8 @@ export function Providers({ onUnauthorized }: Props) {
   const catalogue = rows.filter(row => row.provider.enabledAccounts === 0 && row.total === 0).sort((a, b) => a.provider.id.localeCompare(b.provider.id))
   const peak = Math.max(1, ...inService.map(row => row.requests))
   const monthRequests = Math.max(1, usage?.totals.requests ?? 1)
-  const topTwo = inService.slice(0, 2)
+  // The concentration statement is about traffic, not about how the list is sorted.
+  const topTwo = topByRequests(inService.map(row => ({ id: row.provider.id, requests: row.requests })), 2)
   const topShare = (topTwo.reduce((total, row) => total + row.requests, 0) / monthRequests) * 100
   const tone = (row: typeof rows[number]): Tone => row.total === 0 && row.provider.enabledAccounts === 0 ? 'idle' : row.provider.enabledAccounts === 0 ? 'bad' : row.provider.enabledAccounts < row.total || badRate(row.errors, row.requests, fleet) ? 'warn' : 'good'
   const attention = inService.filter(row => tone(row) === 'warn' || tone(row) === 'bad')
@@ -235,7 +236,7 @@ export function Providers({ onUnauthorized }: Props) {
       <p className="ed-headline"><strong>{num(inService.length)}</strong> of {num(providers.length)} providers carry traffic</p>
       <p className="ed-subline">{attention.length > 0 ? <><Dot tone="bad" /> <strong>{attention.map(row => row.provider.id).join(', ')}</strong> {attention.length === 1 ? 'needs' : 'need'} a look.</> : loading ? 'Loading providers…' : 'Every connected provider is enabled and within the fleet error rate.'}</p>
     </section>
-    {usage && topTwo.length === 2 && topShare > 0 && <Statement><strong>{topTwo.map(row => row.provider.id).join(' and ')}</strong> carry <strong>{Math.round(topShare)}%</strong> of the month's traffic.</Statement>}
+    {usage && topTwo.length === 2 && topShare > 0 && <Statement><strong>{topTwo.map(row => row.id).join(' and ')}</strong> carry <strong>{Math.round(topShare)}%</strong> of the month's traffic.</Statement>}
 
     <div className="providers-toolbar gap-s"><label htmlFor="provider-filter">Find provider</label><input id="provider-filter" value={filter} onChange={event => setFilter(event.target.value)} placeholder="Name or transport" /><span className="count-label">{loading ? 'Loading…' : `${providers.length} providers`}</span>
       <div className="provider-sort" role="group" aria-label="Sort providers"><span className="ed-label">Sort by</span>{(['traffic', 'name', 'accounts'] as const).map(key => <button key={key} type="button" aria-pressed={sort === key} className={`ed-link${sort === key ? ' ed-link-on' : ''}`} onClick={() => setSort(key)}>{key === 'traffic' ? '30 d traffic' : key === 'name' ? 'Name' : 'Accounts'}</button>)}</div>

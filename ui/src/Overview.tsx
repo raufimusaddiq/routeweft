@@ -1,8 +1,7 @@
 import { BarChart, EditorialSkeleton, ErrorNotice, StackedBar } from './kit'
-import { statusTone } from './chartMath'
 import { useOverviewData } from './data'
 import { Caption, Dot, ErrCell, Fact, Main, Margin, Row, Statement, Status } from './editorial'
-import { ago, badRate, clock, delta, isWeekend, num, outlier, pct, priorWeek, rate, statusClass, sum } from './format'
+import { ago, badRate, clock, delta, isWeekend, num, outlier, pct, priorWeek, providerTone, rate, share, statusTone, sum, weekendLighter } from './format'
 
 type Props = { onUnauthorized: () => void }
 
@@ -44,8 +43,7 @@ export function Overview({ onUnauthorized }: Props) {
   const err30 = m ? rate(m.errors, m.requests) : 0
   const average = m && n ? m.requests / n : 0
   const peak = n ? series.reduce((best, day) => (day.requests > best.requests ? day : best), series[0]) : null
-  const weekdayAvg = (rows: typeof series) => rows.reduce((total, day) => total + day.requests, 0) / Math.max(1, rows.length)
-  const lighter = n ? 100 - (weekdayAvg(series.filter(day => isWeekend(day.day))) / Math.max(1, weekdayAvg(series.filter(day => !isWeekend(day.day))))) * 100 : 0
+  const lighter = weekendLighter(series)
   const ghost = (index: number) => (prior && index >= n - 7 ? series[index - 7].requests : null)
   const failures = week ? week.statuses.filter(item => !item.key.startsWith('2')).sort((a, b) => b.requests - a.requests) : []
   const shown = events.slice(0, 7)
@@ -83,7 +81,7 @@ export function Overview({ onUnauthorized }: Props) {
         <dl className="ed-facts">
           <Fact label="This week" value={<>{num(t.requests)} <small>req</small></>} note={up !== null ? `${up >= 0 ? '↑' : '↓'} ${Math.abs(up).toFixed(1)}% vs prior 7 d (${num(lastWeek ?? 0)})` : `${num(thisWeek)} in the latest 7 days`} />
           <Fact label="Busiest day" value={<>{num(peak.requests)} <small>req</small></>} note={`${peak.day.slice(5)}, ${Math.round((peak.requests / Math.max(1, average) - 1) * 100)}% above the 30-day average`} />
-          <Fact label="Weekends" value={<>{Math.round(lighter)}% <small>lighter</small></>} note={`than weekdays, ${n} days`} />
+          <Fact label="Weekends" value={lighter === null ? '—' : <>{Math.abs(Math.round(lighter))}% <small>{lighter >= 0 ? 'lighter' : 'heavier'}</small></>} note={lighter === null ? 'needs weekday and weekend days' : `than weekdays, ${n} days`} />
         </dl>
       </Margin>
     </Row>}
@@ -97,9 +95,9 @@ export function Overview({ onUnauthorized }: Props) {
         <figure className="ed-figure">
           <table className="ed-table prov-table"><thead><tr><th scope="col">Provider</th><th scope="col" className="num">Requests</th><th scope="col"><span className="sr-only">Share</span></th><th scope="col" className="num">Errors</th></tr></thead>
             <tbody>{week.providers.slice(0, 8).map(item => <tr key={item.key}>
-              <td><Status tone={rate(item.errors, item.requests) > 8 ? 'bad' : rate(item.errors, item.requests) > 4 ? 'warn' : 'good'}><span className="ed-name">{item.key}</span></Status></td>
+              <td><Status tone={providerTone(item.errors, item.requests, fleet)}><span className="ed-name">{item.key}</span></Status></td>
               <td className="num ed-big">{num(item.requests)}</td>
-              <td className="share-cell"><span className="ed-bar"><span style={{ width: `${(item.requests / week.providers[0].requests) * 100}%` }} /></span></td>
+              <td className="share-cell"><span className="ed-bar"><span style={{ width: `${share(item.requests, week.providers[0].requests)}%` }} /></span></td>
               <ErrCell errors={item.errors} requests={item.requests} bad={badRate(item.errors, item.requests, fleet)} />
             </tr>)}</tbody></table>
           <figcaption><Caption kicker="Table 1">Last 7 days by requests. The error bar scales to 10%; red where a provider is more than 1.5× the fleet rate.</Caption></figcaption>
@@ -140,7 +138,7 @@ export function Overview({ onUnauthorized }: Props) {
           {shown.length === 0
             ? <p className="ed-now-note">No requests recorded yet. Send a request through the gateway and it will appear here.</p>
             : <table className="ed-table log-table"><thead><tr><th scope="col">Route</th><th scope="col" className="num">Status</th><th scope="col" className="num">Tokens in / out</th><th scope="col" className="num">Latency</th><th scope="col" className="num">Time</th></tr></thead>
-              <tbody>{shown.map(event => <tr key={event.id}><td className="log-route">{event.providerId} / {event.modelId}</td><td className="num log-status"><Status tone={statusClass(event.status)}>{event.status}</Status></td><td className="num log-tokens">{num(event.inputTokens)} / {num(event.outputTokens)}</td><td className="num log-latency">{event.durationMs ?? 0} ms</td><td className="num log-time">{clock(event.createdAt)}</td></tr>)}</tbody></table>}
+              <tbody>{shown.map(event => <tr key={event.id}><td className="log-route">{event.providerId} / {event.modelId}</td><td className="num log-status"><Status tone={statusTone(event.status)}>{event.status}</Status></td><td className="num log-tokens">{num(event.inputTokens)} / {num(event.outputTokens)}</td><td className="num log-latency">{event.durationMs ?? 0} ms</td><td className="num log-time">{clock(event.createdAt)}</td></tr>)}</tbody></table>}
           <figcaption><Caption kicker="Log">Newest first, {num(overview.traffic.requests)} requests recorded in all.</Caption></figcaption>
         </figure>
       </Main>

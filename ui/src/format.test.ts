@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ago, badRate, compact, delta, isWeekend, outlier, pct, priorWeek, rate, statusClass, type Summary } from './format.ts'
+import { ago, badRate, compact, delta, isWeekend, outlier, pct, priorWeek, providerTone, rate, share, statusTone, topByRequests, weekendLighter, type Day, type Summary } from './format.ts'
 
 test('compact keeps small numbers exact and abbreviates large ones', () => {
   assert.equal(compact(950), '950')
@@ -28,10 +28,13 @@ test('ago reads in seconds, minutes, hours and days', () => {
   assert.equal(ago('not a date', now), 'unknown')
 })
 
-test('statusClass separates success, client and server failures', () => {
-  assert.equal(statusClass(200), 'good')
-  assert.equal(statusClass(429), 'warn')
-  assert.equal(statusClass(503), 'bad')
+test('statusTone is one classification: success, redirect neutral, client warn, server bad', () => {
+  assert.equal(statusTone(200), 'good')
+  assert.equal(statusTone('204'), 'good')
+  assert.equal(statusTone(302), 'idle')
+  assert.equal(statusTone(429), 'warn')
+  assert.equal(statusTone('503'), 'bad')
+  assert.equal(statusTone('weird'), 'idle')
 })
 
 test('priorWeek needs two full weeks of days', () => {
@@ -66,4 +69,37 @@ test('badRate flags only clear outliers with enough traffic', () => {
 test('isWeekend reads the calendar day, not the timezone', () => {
   assert.equal(isWeekend('2026-10-17'), true)
   assert.equal(isWeekend('2026-10-19'), false)
+})
+
+const day = (date: string, requests: number): Day => ({ day: date, requests, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 })
+
+test('weekendLighter is a ratio of two groups, so it needs both', () => {
+  // 2026-10-17 and 18 are Saturday and Sunday; 19 and 20 are Monday and Tuesday
+  assert.equal(weekendLighter([day('2026-10-19', 100), day('2026-10-20', 100)]), null)
+  assert.equal(weekendLighter([day('2026-10-17', 50), day('2026-10-18', 50)]), null)
+  assert.equal(weekendLighter([day('2026-10-17', 0), day('2026-10-19', 0)]), null)
+  assert.equal(weekendLighter([day('2026-10-17', 50), day('2026-10-18', 50), day('2026-10-19', 100), day('2026-10-20', 100)]), 50)
+  assert.equal(weekendLighter([day('2026-10-17', 150), day('2026-10-19', 100)]), -50)
+})
+
+test('providerTone follows the same rule as the error figure', () => {
+  assert.equal(providerTone(1, 2, 3), 'good')
+  assert.equal(providerTone(14, 200, 3), 'bad')
+  assert.equal(providerTone(6, 200, 3), 'good')
+})
+
+test('share never divides by zero or exceeds 100', () => {
+  assert.equal(share(0, 0), 0)
+  assert.equal(share(5, 0), 100)
+  assert.equal(share(50, 200), 25)
+})
+
+test('topByRequests ignores the display order of the list', () => {
+  const rows = [{ id: 'gemini', requests: 868 }, { id: 'openai', requests: 2816 }, { id: 'anthropic', requests: 2403 }, { id: 'cohere', requests: 46 }]
+  const byName = [...rows].sort((a, b) => a.id.localeCompare(b.id))
+  const byAccounts = [...rows].reverse()
+  assert.deepEqual(topByRequests(rows, 2).map(row => row.id), ['openai', 'anthropic'])
+  assert.deepEqual(topByRequests(byName, 2).map(row => row.id), ['openai', 'anthropic'])
+  assert.deepEqual(topByRequests(byAccounts, 2).map(row => row.id), ['openai', 'anthropic'])
+  assert.deepEqual(topByRequests([{ id: 'b', requests: 5 }, { id: 'a', requests: 5 }], 1).map(row => row.id), ['a'])
 })

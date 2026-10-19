@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
 
-import { niceStep, type Tone } from './chartMath'
+import { niceStep } from './chartMath'
+import type { Tone } from './format'
 
 const numberFormat = new Intl.NumberFormat()
 
