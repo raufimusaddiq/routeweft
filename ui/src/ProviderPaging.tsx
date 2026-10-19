@@ -5,10 +5,10 @@ export const PAGE_SIZE = 25
 type Page<T> = { items: T[]; page: number; total: number }
 
 /** Fetches every page of a bounded admin list (provider catalog, nodes, pools). */
-export async function fetchAll<T>(resource: string, onUnauthorized: () => void, query = ''): Promise<T[] | null> {
+export async function fetchAll<T>(resource: string, onUnauthorized: () => void, query = '', signal?: AbortSignal): Promise<T[] | null> {
   const items: T[] = []
   for (let page = 1; page <= 1000; page += 1) {
-    const response = await fetch(`/admin/v1/${resource}?${query ? `${query}&` : ''}page=${page}&pageSize=100`, { credentials: 'same-origin' })
+    const response = await fetch(`/admin/v1/${resource}?${query ? `${query}&` : ''}page=${page}&pageSize=100`, { credentials: 'same-origin', signal })
     if (response.status === 401) { onUnauthorized(); return null }
     if (!response.ok) throw new Error(`Could not load ${resource}.`)
     const body = await response.json() as Page<T>

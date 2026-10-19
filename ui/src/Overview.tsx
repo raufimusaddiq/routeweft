@@ -1,7 +1,7 @@
 import { BarChart, EditorialSkeleton, ErrorNotice, StackedBar } from './kit'
 import { useOverviewData } from './data'
 import { Caption, Dot, ErrCell, Fact, Main, Margin, Row, Statement, Status } from './editorial'
-import { ago, badRate, clock, delta, isWeekend, num, outlier, pct, priorWeek, providerTone, rate, share, statusTone, sum, weekendLighter } from './format'
+import { ago, badRate, clock, delta, isWeekend, num, outlier, pct, priorWeek, failureStatuses, providerTone, rate, share, statusTone, sum, weekendLighter } from './format'
 
 type Props = { onUnauthorized: () => void }
 
@@ -45,7 +45,8 @@ export function Overview({ onUnauthorized }: Props) {
   const peak = n ? series.reduce((best, day) => (day.requests > best.requests ? day : best), series[0]) : null
   const lighter = weekendLighter(series)
   const ghost = (index: number) => (prior && index >= n - 7 ? series[index - 7].requests : null)
-  const failures = week ? week.statuses.filter(item => !item.key.startsWith('2')).sort((a, b) => b.requests - a.requests) : []
+  const failures = week ? failureStatuses(week.statuses) : []
+  const failureTotal = failures.reduce((total, item) => total + item.requests, 0)
   const shown = events.slice(0, 7)
   const slow = [...shown].sort((a, b) => (b.durationMs ?? 0) - (a.durationMs ?? 0))[0]
   const fast = [...shown].sort((a, b) => (a.durationMs ?? 0) - (b.durationMs ?? 0))[0]
@@ -81,7 +82,7 @@ export function Overview({ onUnauthorized }: Props) {
         <dl className="ed-facts">
           <Fact label="This week" value={<>{num(t.requests)} <small>req</small></>} note={up !== null ? `${up >= 0 ? '↑' : '↓'} ${Math.abs(up).toFixed(1)}% vs prior 7 d (${num(lastWeek ?? 0)})` : `${num(thisWeek)} in the latest 7 days`} />
           <Fact label="Busiest day" value={<>{num(peak.requests)} <small>req</small></>} note={`${peak.day.slice(5)}, ${Math.round((peak.requests / Math.max(1, average) - 1) * 100)}% above the 30-day average`} />
-          <Fact label="Weekends" value={lighter === null ? '—' : <>{Math.abs(Math.round(lighter))}% <small>{lighter >= 0 ? 'lighter' : 'heavier'}</small></>} note={lighter === null ? 'needs weekday and weekend days' : `than weekdays, ${n} days`} />
+          <Fact label="Weekends" value={lighter === null || Math.abs(lighter) < 1 ? '—' : <>{Math.abs(Math.round(lighter))}% <small>{lighter >= 0 ? 'lighter' : 'heavier'}</small></>} note={lighter === null ? 'needs weekday and weekend days' : Math.abs(lighter) < 1 ? 'about the same as weekdays' : `than weekdays, ${n} days`} />
         </dl>
       </Margin>
     </Row>}
@@ -122,7 +123,7 @@ export function Overview({ onUnauthorized }: Props) {
       <Margin>
         <dl className="ed-facts">
           <Fact label="Succeeded" value={pct(100 - err)} note={`${num(t.requests - t.errors)} of ${num(t.requests)} responses`} />
-          {failures[0] && <Fact label="Largest failure" value={failures[0].key} note={`${num(failures[0].requests)} of ${num(t.errors)} failures (${Math.round((failures[0].requests / Math.max(1, t.errors)) * 100)}%)`} />}
+          {failures[0] && <Fact label="Largest failure" value={failures[0].key} note={`${num(failures[0].requests)} of ${num(failureTotal)} failures (${Math.round((failures[0].requests / Math.max(1, failureTotal)) * 100)}%)`} />}
         </dl>
       </Margin>
     </Row>}

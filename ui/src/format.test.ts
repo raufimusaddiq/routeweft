@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ago, badRate, compact, delta, isWeekend, outlier, pct, priorWeek, providerTone, rate, share, statusTone, topByRequests, weekendLighter, type Day, type Summary } from './format.ts'
+import { ago, badRate, compact, delta, isWeekend, outlier, pct, priorWeek, providerTone, rate, failureStatuses, share, statusTone, topByRequests, weekendLighter, type Day, type Summary } from './format.ts'
 
 test('compact keeps small numbers exact and abbreviates large ones', () => {
   assert.equal(compact(950), '950')
@@ -102,4 +102,9 @@ test('topByRequests ignores the display order of the list', () => {
   assert.deepEqual(topByRequests(byName, 2).map(row => row.id), ['openai', 'anthropic'])
   assert.deepEqual(topByRequests(byAccounts, 2).map(row => row.id), ['openai', 'anthropic'])
   assert.deepEqual(topByRequests([{ id: 'b', requests: 5 }, { id: 'a', requests: 5 }], 1).map(row => row.id), ['a'])
+})
+
+test('failureStatuses counts client and server errors, not redirects', () => {
+  const rows = [{ key: '200', requests: 900 }, { key: '302', requests: 50 }, { key: '429', requests: 30 }, { key: '503', requests: 20 }]
+  assert.deepEqual(failureStatuses(rows).map(row => row.key), ['429', '503'])
 })

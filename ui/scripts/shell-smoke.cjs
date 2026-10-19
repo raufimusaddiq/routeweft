@@ -58,13 +58,14 @@ const { join } = require('node:path');
           }));
           const states = ['--danger', '--success', '--warning', '--info'].map(token => ({ token, ratio: ratio(rgba(getComputedStyle(document.documentElement).getPropertyValue(token)), background(document.body)) }));
           const sizes = [...new Set(elements.filter(visible).filter(element => [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim())).map(element => getComputedStyle(element).fontSize))].sort((a, b) => parseFloat(a) - parseFloat(b));
+          const eleven = elements.filter(visible).filter(element => [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim()) && getComputedStyle(element).fontSize === '11px' && !element.closest('svg, .sparkline-caption')).map(element => element.tagName + '.' + element.className);
           const accents = [...document.querySelectorAll('.accent-surface')].filter(visible).length;
           const active = document.querySelector('.nav-link-active');
           const marker = getComputedStyle(active, '::before');
           return {
             resolvedTheme: document.documentElement.dataset.theme,
             overflow: document.documentElement.scrollWidth - innerWidth,
-            lowContrast, radii, states, sizes, accents,
+            lowContrast, radii, states, sizes, eleven, accents,
             active: { width: marker.width, color: marker.backgroundColor, weight: getComputedStyle(active).fontWeight, inactiveWeight: getComputedStyle(document.querySelector('.nav-link:not(.nav-link-active)')).fontWeight },
           };
         });
@@ -76,6 +77,7 @@ const { join } = require('node:path');
         const allowedSizes = width < 700 ? ['11px', '12px', '16px', '24px', '28px'] : ['11px', '12px', '16px', '28px'];
         assert.ok(checks.sizes.every(size => allowedSizes.includes(size)), `${view}/${theme}/${width}: type sizes ${checks.sizes}`);
         assert.ok(checks.sizes.includes('12px') && checks.sizes.includes('28px'), `${view}/${theme}/${width}: scale ${checks.sizes}`);
+        assert.deepEqual(checks.eleven, [], `${view}/${theme}/${width}: 11px is reserved for chart axis text`);
         assert.equal(checks.accents, 1, `${view}/${theme}/${width}: exactly one accent surface`);
         assert.equal(checks.active.width, '2px');
         assert.notEqual(checks.active.color, 'rgba(0, 0, 0, 0)');
@@ -438,6 +440,7 @@ const { join } = require('node:path');
   report.focusAfterDesktopNav = await page.evaluate(() => ({ className: document.activeElement.className, visibility: getComputedStyle(document.activeElement).visibility, display: getComputedStyle(document.activeElement).display }));
   await page.waitForSelector('.provider-option');
   report.providerCards = await page.locator('.provider-option').count();
+  report.providerPageSummary = await page.locator('.providers-content').innerText().then(text => text.split('\n').filter(line => /providers carry traffic|carry \d+% of the month/.test(line)));
   await page.locator('.provider-option', { hasText: 'openai' }).first().click();
   await page.waitForSelector('.connection-row');
   report.connectionRows = await page.locator('.connection-row').count();
@@ -471,6 +474,7 @@ const { join } = require('node:path');
   assert.match(report.modelProbeGuidance, /10-minute batch limit/);
   await page.fill('#provider-filter', 'openrouter');
   report.filteredCards = await page.locator('.provider-option').count();
+  report.providerPageSummaryFiltered = await page.locator('.providers-content').innerText().then(text => text.split('\n').filter(line => /providers carry traffic|carry \d+% of the month/.test(line)));
   await page.fill('#provider-filter', '');
   await page.click('.providers-content .provider-details .connection-row .button-secondary');
   await page.waitForFunction(() => document.querySelector('.providers-content .connection-row .state-tag').textContent === 'Disabled');
@@ -903,6 +907,8 @@ const { join } = require('node:path');
   assert.equal(report.providerDetail, 'openai');
   assert.equal(report.modelRows, 1);
   assert.equal(report.filteredCards, 1);
+  assert.deepEqual(report.providerPageSummaryFiltered, report.providerPageSummary, 'headline and concentration must not follow the Find box');
+  assert.ok(report.providerPageSummary.length >= 1);
   assert.equal(report.providerPatches, 1);
   assert.equal(report.providerDisabledLabel, 'Disabled');
   assert.match(report.comboEmpty, /No Combos yet/);

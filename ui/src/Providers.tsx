@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 're
 import { fetchAll, PAGE_SIZE, Pager, usePagedList } from './ProviderPaging'
 import { EmptyState, ErrorNotice, SkeletonRows } from './kit'
 import { Dot, Statement, Status, type Tone } from './editorial'
-import { badRate, num, outlier, pct, rate, topByRequests, type Summary } from './format'
+import { badRate, num, outlier, pct, rate, share, topByRequests, type Summary } from './format'
 
 type Provider = { id: string; transports: string[]; auth: string; authModes: string[]; defaultBaseURL?: string; modelCatalog: string; passthroughModels: boolean; staticModels?: string[]; reportsUsage: boolean; configuredNodes: number; enabledAccounts: number }
 type Node = { id: string; kind: string; providerId: string; name: string; prefix?: string; baseUrl?: string; transports: string[] }
@@ -104,21 +104,25 @@ export function Providers({ onUnauthorized }: Props) {
 
   const traffic = useMemo(() => new Map((usage?.providers ?? []).map(item => [item.key, item])), [usage])
   const fleet = usage ? rate(usage.totals.errors, usage.totals.requests) : 0
-  const rows = useMemo(() => visibleProviders.map(provider => {
+  // Page-level numbers (headline, concentration, attention) come from every provider; only the list below follows the filter.
+  const allRows = useMemo(() => providers.map(provider => {
     const stats = traffic.get(provider.id)
     const total = connections.filter(connection => connection.providerId === provider.id).length
     return { provider, requests: stats?.requests ?? 0, errors: stats?.errors ?? 0, total }
-  }), [visibleProviders, traffic, connections])
+  }), [providers, traffic, connections])
+  const visibleIds = useMemo(() => new Set(visibleProviders.map(provider => provider.id)), [visibleProviders])
+  const rows = useMemo(() => allRows.filter(row => visibleIds.has(row.provider.id)), [allRows, visibleIds])
   const order = (a: typeof rows[number], b: typeof rows[number]) => sort === 'name' ? a.provider.id.localeCompare(b.provider.id) : sort === 'accounts' ? b.total - a.total || a.provider.id.localeCompare(b.provider.id) : b.requests - a.requests || a.provider.id.localeCompare(b.provider.id)
-  const inService = rows.filter(row => row.provider.enabledAccounts > 0 || row.total > 0).sort(order)
-  const catalogue = rows.filter(row => row.provider.enabledAccounts === 0 && row.total === 0).sort((a, b) => a.provider.id.localeCompare(b.provider.id))
-  const peak = Math.max(1, ...inService.map(row => row.requests))
+  const connected = (row: typeof rows[number]) => row.provider.enabledAccounts > 0 || row.total > 0
+  const inServiceAll = allRows.filter(connected)
+  const inService = rows.filter(connected).sort(order)
+  const catalogue = rows.filter(row => !connected(row)).sort((a, b) => a.provider.id.localeCompare(b.provider.id))
+  const peak = Math.max(1, ...inServiceAll.map(row => row.requests))
   const monthRequests = Math.max(1, usage?.totals.requests ?? 1)
-  // The concentration statement is about traffic, not about how the list is sorted.
-  const topTwo = topByRequests(inService.map(row => ({ id: row.provider.id, requests: row.requests })), 2)
+  const topTwo = topByRequests(inServiceAll.map(row => ({ id: row.provider.id, requests: row.requests })), 2)
   const topShare = (topTwo.reduce((total, row) => total + row.requests, 0) / monthRequests) * 100
   const tone = (row: typeof rows[number]): Tone => row.total === 0 && row.provider.enabledAccounts === 0 ? 'idle' : row.provider.enabledAccounts === 0 ? 'bad' : row.provider.enabledAccounts < row.total || badRate(row.errors, row.requests, fleet) ? 'warn' : 'good'
-  const attention = inService.filter(row => tone(row) === 'warn' || tone(row) === 'bad')
+  const attention = inServiceAll.filter(row => tone(row) === 'warn' || tone(row) === 'bad')
   const worst = usage ? outlier(usage) : null
 
   async function send(path: string, method: string, body?: unknown, signal?: AbortSignal) {
@@ -225,7 +229,7 @@ export function Providers({ onUnauthorized }: Props) {
     return <button className={`provider-option${selected === row.provider.id ? ' provider-option-selected' : ''}`} type="button" key={row.provider.id} onClick={() => { setSelected(row.provider.id); setAccountOpen(false); setConnectionPage(1); setSeedPage(1) }}>
       <Status tone={tone(row)}><strong>{row.provider.id}</strong></Status>
       <span className="provider-option-meta">{row.provider.authModes.join(' / ') || row.provider.auth} · {row.provider.transports.length} transport{row.provider.transports.length === 1 ? '' : 's'}{row.total ? ` · ${row.provider.enabledAccounts}/${row.total} on` : ''}</span>
-      <span className="ed-bar" aria-hidden="true"><span style={{ width: `${(row.requests / peak) * 100}%` }} /></span>
+      <span className="ed-bar" aria-hidden="true"><span style={{ width: `${share(row.requests, peak)}%` }} /></span>
       <span className="provider-option-fig">{row.requests ? num(row.requests) : '—'}</span>
       <span className={`provider-option-err${bad ? ' err-text-bad' : ''}`}>{row.requests ? pct(rate(row.errors, row.requests)) : row.total ? '0.0%' : 'no account'}</span>
     </button>
@@ -233,8 +237,8 @@ export function Providers({ onUnauthorized }: Props) {
 
   return <div className="providers-content" aria-busy={loading}>
     <section className="ed-banner accent-surface" aria-label="Provider summary">
-      <p className="ed-headline"><strong>{num(inService.length)}</strong> of {num(providers.length)} providers carry traffic</p>
-      <p className="ed-subline">{attention.length > 0 ? <><Dot tone="bad" /> <strong>{attention.map(row => row.provider.id).join(', ')}</strong> {attention.length === 1 ? 'needs' : 'need'} a look.</> : loading ? 'Loading providers…' : 'Every connected provider is enabled and within the fleet error rate.'}</p>
+      <p className="ed-headline"><strong>{num(inServiceAll.length)}</strong> of {num(providers.length)} providers carry traffic</p>
+      <p className="ed-subline">{attention.length > 0 ? <><Dot tone={attention.some(row => tone(row) === 'bad') ? 'bad' : 'warn'} /> <strong>{attention.map(row => row.provider.id).join(', ')}</strong> {attention.length === 1 ? 'needs' : 'need'} a look.</> : loading ? 'Loading providers…' : 'Every connected provider is enabled and within the fleet error rate.'}</p>
     </section>
     {usage && topTwo.length === 2 && topShare > 0 && <Statement><strong>{topTwo.map(row => row.id).join(' and ')}</strong> carry <strong>{Math.round(topShare)}%</strong> of the month's traffic.</Statement>}
 

@@ -53,7 +53,7 @@ export function useOverviewData(onUnauthorized: () => void): OverviewData {
         optional<Summary>('/admin/v1/usage/summary?period=7d', signal, onUnauthorized),
         optional<Summary>('/admin/v1/usage/summary?period=30d', signal, onUnauthorized),
         optional<{ items: UsageEvent[] }>('/admin/v1/usage?page=1&pageSize=50', signal, onUnauthorized),
-        fetchAll<Connection>('connections', onUnauthorized).catch(() => null),
+        fetchAll<Connection>('connections', onUnauthorized, '', signal).catch(() => null),
       ])
       if (signal.aborted) return
       setState(current => ({ ...current, week: week ?? current.week, month: month ?? current.month, events: events?.items ?? current.events, connections: connections ?? current.connections }))

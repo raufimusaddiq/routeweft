@@ -108,3 +108,8 @@ export function share(value: number, largest: number) {
 export function topByRequests<T extends { id: string; requests: number }>(rows: T[], count: number) {
   return [...rows].sort((a, b) => b.requests - a.requests || a.id.localeCompare(b.id)).slice(0, count)
 }
+
+// Responses that count as failures: the same classification the status marks use (client and server errors).
+export function failureStatuses<T extends { key: string; requests: number }>(statuses: T[]) {
+  return statuses.filter(item => { const tone = statusTone(item.key); return tone === 'warn' || tone === 'bad' }).sort((a, b) => b.requests - a.requests)
+}

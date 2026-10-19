@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { BarChart, EditorialSkeleton, EmptyState, ErrorNotice, Sparkline, StackedBar } from './kit'
 import { Caption, ErrCell, Fact, Main, Margin, Row, Statement, Status } from './editorial'
-import { badRate, compact, delta, num, outlier, pct, priorWeek, providerTone, rate, share, statusTone, sum, type Summary, type UsageEvent } from './format'
+import { badRate, compact, delta, num, outlier, pct, priorWeek, failureStatuses, providerTone, rate, share, statusTone, sum, type Summary, type UsageEvent } from './format'
 
 type Props = { onUnauthorized: () => void }
 
@@ -51,7 +51,9 @@ export function Usage({ onUnauthorized }: Props) {
   const tokens = t ? t.inputTokens + t.outputTokens : 0
   const hit = t ? (t.cacheReadTokens / Math.max(1, t.inputTokens + t.cacheReadTokens)) * 100 : 0
   const fleet = t ? rate(t.errors, t.requests) : 0
-  const topFail = summary ? summary.statuses.filter(item => !item.key.startsWith('2')).sort((a, b) => b.requests - a.requests)[0] : undefined
+  const failures = summary ? failureStatuses(summary.statuses) : []
+  const topFail = failures[0]
+  const failureTotal = failures.reduce((total, item) => total + item.requests, 0)
   const worst = summary ? outlier(summary) : null
   const topProvider = Math.max(1, ...(summary?.providers.map(item => item.requests) ?? [1]))
   const lastWeek = prior ? sum(prior, 'requests') : undefined
@@ -96,8 +98,8 @@ export function Usage({ onUnauthorized }: Props) {
         </Margin>
       </Row>
 
-      {topFail && t.errors > 0 && <Statement>
-        <strong>{topFail.key}</strong> causes <strong>{Math.round((topFail.requests / Math.max(1, t.errors)) * 100)}%</strong> of failures.{worst && badRate(worst.errors, worst.requests, fleet) ? <> <span className="ed-quiet">{worst.key} is the weakest provider at {pct(worst.err)}.</span></> : null}
+      {topFail && failureTotal > 0 && <Statement>
+        <strong>{topFail.key}</strong> causes <strong>{Math.round((topFail.requests / failureTotal) * 100)}%</strong> of failures.{worst && badRate(worst.errors, worst.requests, fleet) ? <> <span className="ed-quiet">{worst.key} is the weakest provider at {pct(worst.err)}.</span></> : null}
       </Statement>}
 
       <Row gap="s" label="Providers and models">
