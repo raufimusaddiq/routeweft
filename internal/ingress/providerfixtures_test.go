@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -117,13 +118,16 @@ func TestGitHubCopilotChatSendsFingerprint(t *testing.T) {
 	}
 }
 
-// TestClineEnvelopeFixtureReachesUpstream asserts the cline referer/title
-// headers are applied; envelope unwrapping is a later provider-module slice.
-func TestClineEnvelopeFixtureReachesUpstream(t *testing.T) {
+// TestClineEnvelopeFixtureIsUnwrappedAndAccounted replays the recorded Cline
+// gateway exchange: the client receives the bare OpenAI body, the full
+// clineHeaders set reaches upstream, and usage is read from data.usage.
+func TestClineEnvelopeFixtureIsUnwrappedAndAccounted(t *testing.T) {
 	exchange := compatFixture(t, fixtures.OpenAIChat, "provider-cline-envelope-nonstreaming")
 	server := providerFixtureServerFor(t, fixtures.OpenAIChat, "provider-cline-envelope-nonstreaming")
+	var outcome RequestOutcome
 	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true,
-		ProviderResolver: providerResolver("cline", openaiadapter.ChatProtocol, server.URL(), "api/v1/chat/completions"),
+		ProviderResolver:  providerResolver("cline", openaiadapter.ChatProtocol, server.URL(), "api/v1/chat/completions"),
+		OnRequestComplete: func(got RequestOutcome) { outcome = got },
 	})
 	recorder := httptest.NewRecorder()
 	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(exchange.Request.Body)))
@@ -131,12 +135,102 @@ func TestClineEnvelopeFixtureReachesUpstream(t *testing.T) {
 		t.Fatalf("cline status %d", recorder.Code)
 	}
 	seen := server.Requests()
-	if len(seen) != 1 || seen[0].Path != "/api/v1/chat/completions" || seen[0].Headers.Get("X-Title") != "Cline" || seen[0].Headers.Get("HTTP-Referer") != "https://cline.bot" {
+	if len(seen) != 1 || seen[0].Path != "/api/v1/chat/completions" {
 		t.Fatalf("cline upstream %+v", seen)
 	}
-	// The recorded envelope body is forwarded verbatim on the native path.
-	if recorder.Body.String() != exchange.Response.Body {
-		t.Fatalf("cline body %s", recorder.Body.String())
+	for name, want := range map[string]string{"X-Title": "Cline", "HTTP-Referer": "https://cline.bot", "X-Client-Type": "routeweft", "X-Is-Multiroot": "false", "Authorization": "Bearer provider-credential"} {
+		if got := seen[0].Headers.Get(name); got != want {
+			t.Errorf("cline upstream %s=%q want %q", name, got, want)
+		}
+	}
+	for _, name := range []string{"User-Agent", "X-Platform", "X-Platform-Version", "X-Client-Version", "X-Core-Version"} {
+		if seen[0].Headers.Get(name) == "" {
+			t.Errorf("cline upstream %s missing", name)
+		}
+	}
+	var envelope struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(exchange.Response.Body), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Body.String() != string(envelope.Data) {
+		t.Fatalf("cline body not unwrapped: %s", recorder.Body.String())
+	}
+	if outcome.InputTokens != int64(exchange.Usage.InputTokens) || outcome.OutputTokens != int64(exchange.Usage.OutputTokens) || outcome.InputTokens == 0 {
+		t.Fatalf("usage %+v, want %+v from data.usage", outcome, exchange.Usage)
+	}
+}
+
+// clineUpstream serves one scripted body per request and records the headers.
+func clineUpstream(t *testing.T, contentType, body string, status int) (*httptest.Server, *http.Header) {
+	t.Helper()
+	var seen http.Header
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Clone()
+		w.Header().Set("Content-Type", contentType)
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+	return server, &seen
+}
+
+func clineChat(t *testing.T, providerID, token string, upstream *httptest.Server, request string) *httptest.ResponseRecorder {
+	t.Helper()
+	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true,
+		ProviderResolver: func(*runtime.RuntimeSnapshot, string) (routing.ProviderRef, bool) {
+			return routing.ProviderRef{ProviderID: providerID, Protocol: openaiadapter.ChatProtocol, BaseURL: upstream.URL, Endpoint: "api/v1/chat/completions", APIToken: token}, true
+		},
+	})
+	recorder := httptest.NewRecorder()
+	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(request)))
+	return recorder
+}
+
+const clineRequest = `{"model":"m","messages":[{"role":"user","content":"hi"}]}`
+
+// The credential prefix follows the token's shape: a WorkOS JWT is prefixed, a
+// ClinePass clp_ key is verbatim (prefixing it makes Cline answer 401), and an
+// existing workos: prefix is kept.
+func TestClineAuthorizationPrefixReachesUpstream(t *testing.T) {
+	const jwt = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ0ZXN0In0.sanitized-signature"
+	for _, tc := range []struct{ provider, token, want string }{
+		{"cline", jwt, "Bearer workos:" + jwt},
+		{"clinepass", "clp_sanitized-key", "Bearer clp_sanitized-key"},
+		{"cline", "WorkOS:already-prefixed", "Bearer WorkOS:already-prefixed"},
+	} {
+		upstream, seen := clineUpstream(t, "application/json", `{"id":"x","choices":[]}`, 200)
+		if recorder := clineChat(t, tc.provider, tc.token, upstream, clineRequest); recorder.Code != 200 {
+			t.Fatalf("%s status %d", tc.provider, recorder.Code)
+		}
+		if got := seen.Get("Authorization"); got != tc.want {
+			t.Errorf("%s token %q: Authorization=%q want %q", tc.provider, tc.token, got, tc.want)
+		}
+	}
+}
+
+// Only the non-stream success envelope is unwrapped: the error envelope, a bare
+// body and a stream pass through untouched.
+func TestClineEnvelopeOnlyUnwrapsNonStreamSuccess(t *testing.T) {
+	errorEnvelope := `{"success":false,"error":"bad"}`
+	bare := `{"id":"x","object":"chat.completion","choices":[]}`
+	sse := "data: {\"success\":true,\"data\":{\"id\":\"x\"}}\n\ndata: [DONE]\n\n"
+	for _, tc := range []struct{ name, contentType, body, request string }{
+		{"error envelope", "application/json", errorEnvelope, clineRequest},
+		{"bare body", "application/json", bare, clineRequest},
+		{"stream", "text/event-stream", sse, `{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}]}`},
+	} {
+		upstream, _ := clineUpstream(t, tc.contentType, tc.body, 200)
+		recorder := clineChat(t, "cline", "clp_sanitized-key", upstream, tc.request)
+		if recorder.Code != 200 || recorder.Body.String() != tc.body {
+			t.Errorf("%s: status %d body %q, want body unchanged %q", tc.name, recorder.Code, recorder.Body.String(), tc.body)
+		}
+	}
+	// A non-2xx response is never unwrapped, even when shaped like the envelope.
+	upstream, _ := clineUpstream(t, "application/json", `{"success":true,"data":{"id":"x"}}`, 500)
+	if recorder := clineChat(t, "cline", "clp_sanitized-key", upstream, clineRequest); recorder.Code != 500 || !strings.Contains(recorder.Body.String(), `"success"`) {
+		t.Errorf("error status body %q", recorder.Body.String())
 	}
 }
 
@@ -204,5 +298,27 @@ func TestProviderFixturesCoverExpectedShapes(t *testing.T) {
 		if present[id] != protocol {
 			t.Errorf("fixture %s missing or wrong protocol (got %q)", id, present[id])
 		}
+	}
+}
+
+// A Responses client reaches Cline through the Chat hub; the envelope is removed
+// before translation and usage, as the reference does before any consumer.
+func TestClineEnvelopeIsUnwrappedBeforeResponsesTranslation(t *testing.T) {
+	body := `{"success":true,"data":{"id":"c1","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"Hi."},"finish_reason":"stop"}],"usage":{"prompt_tokens":11,"completion_tokens":2,"total_tokens":13}}}`
+	upstream, _ := clineUpstream(t, "application/json", body, 200)
+	var outcome RequestOutcome
+	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, TranslateResponses: TranslateResponses,
+		ProviderResolver: func(*runtime.RuntimeSnapshot, string) (routing.ProviderRef, bool) {
+			return routing.ProviderRef{ProviderID: "cline", Protocol: openaiadapter.ChatProtocol, BaseURL: upstream.URL, Endpoint: "api/v1/chat/completions", APIToken: "clp_sanitized-key"}, true
+		},
+		OnRequestComplete: func(got RequestOutcome) { outcome = got },
+	})
+	recorder := httptest.NewRecorder()
+	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"m","input":"hi"}`)))
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "Hi.") {
+		t.Fatalf("status %d body %s", recorder.Code, recorder.Body.String())
+	}
+	if outcome.InputTokens != 11 || outcome.OutputTokens != 2 {
+		t.Fatalf("usage %+v, want 11/2 from data.usage", outcome)
 	}
 }

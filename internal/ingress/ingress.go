@@ -23,6 +23,7 @@ import (
 	systemoneadapter "github.com/raufimusaddiq/routeweft/internal/protocol/systemone"
 	anthropicprovider "github.com/raufimusaddiq/routeweft/internal/providers/anthropic"
 	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
+	clineprovider "github.com/raufimusaddiq/routeweft/internal/providers/cline"
 	codexprovider "github.com/raufimusaddiq/routeweft/internal/providers/codex"
 	"github.com/raufimusaddiq/routeweft/internal/providers/oauthheaders"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
@@ -388,6 +389,13 @@ func openAIProviderHeaders(provider routing.ProviderRef) http.Header {
 	}
 	for name, value := range oauthheaders.Headers(provider.ProviderID) {
 		headers.Set(name, value)
+	}
+	if clineprovider.Applies(provider.ProviderID) {
+		// The full clineHeaders set replaces the plain bearer credential: a WorkOS
+		// JWT is sent as `Bearer workos:<jwt>`, any other token verbatim.
+		for name, value := range clineprovider.Headers(provider.APIToken) {
+			headers.Set(name, value)
+		}
 	}
 	return headers
 }

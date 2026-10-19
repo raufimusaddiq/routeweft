@@ -8,6 +8,7 @@ import (
 	"time"
 
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
+	clineprovider "github.com/raufimusaddiq/routeweft/internal/providers/cline"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
@@ -122,6 +123,10 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 		h.writeOpenAITranslation(w, r, response, provider, translation, stream, started)
 		return
 	}
+	if !stream && response.StatusCode >= 200 && response.StatusCode < 300 && clineprovider.Applies(provider.ProviderID) {
+		h.writeClineEnvelope(w, r, response, provider, started)
+		return
+	}
 	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -138,6 +143,27 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 		return
 	}
 	io.Copy(w, response.Body)
+}
+
+// writeClineEnvelope relays a non-stream Cline response with the gateway's
+// {"success":true,"data":{...}} envelope removed, so the client gets a bare
+// OpenAI body and usage is read from data.usage (the reference unwraps before
+// any consumer reads choices or usage). Streams never reach here.
+func (h *Handler) writeClineEnvelope(w http.ResponseWriter, r *http.Request, response *http.Response, provider routing.ProviderRef, started time.Time) {
+	body, err := io.ReadAll(io.LimitReader(response.Body, openaiadapter.MaxTranslatedResponseBytes+1))
+	if r.Context().Err() != nil {
+		return
+	}
+	if err != nil || len(body) > openaiadapter.MaxTranslatedResponseBytes {
+		h.writeError(w, 502, "upstream_response_invalid", "upstream response could not be read")
+		return
+	}
+	body, _ = clineprovider.UnwrapEnvelope(body)
+	copyResponseHeaders(w.Header(), response.Header)
+	w.WriteHeader(response.StatusCode)
+	_, _ = w.Write(body)
+	usage, _ := shared.ParseUsage(provider.Protocol, body)
+	h.emitOutcome(r, provider, response.StatusCode, false, usage, started)
 }
 
 func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request, response *http.Response, provider routing.ProviderRef, translation ChatTranslation, stream bool, started time.Time) {
@@ -172,6 +198,9 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 	if err != nil || len(body) > openaiadapter.MaxTranslatedResponseBytes {
 		h.writeError(w, 502, "upstream_response_invalid", "upstream response could not be translated")
 		return
+	}
+	if clineprovider.Applies(provider.ProviderID) {
+		body, _ = clineprovider.UnwrapEnvelope(body)
 	}
 	translated, err := translation.Response(body)
 	if err != nil {
