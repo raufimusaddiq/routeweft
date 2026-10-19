@@ -22,7 +22,7 @@ This document records binding architecture/build choices so implementation agent
 | BDR-012 | Token savers + final-body cache anchoring | Accepted |
 | BDR-013 | Bounded async telemetry with protected critical accounting | Accepted |
 | BDR-014 | Versioned `/admin/v1` control API | Accepted |
-| BDR-015 | LiteRouter visual language, Routeweft-owned UI implementation | Accepted |
+| BDR-015 | Routeweft-owned graphite-rule visual language and static UI | Accepted |
 | BDR-016 | No standalone media product surfaces | Accepted |
 | BDR-017 | One application writer per SQLite DB | Accepted |
 | BDR-018 | Default listen port 21128 | Accepted |
@@ -184,9 +184,18 @@ The UI is a consumer, not an alternate owner of business logic.
 
 ## BDR-015 — UI visual contract
 
-Routeweft follows the LiteRouter current operator-console visual language captured in `docs/UI_STYLE.md`, but the implementation is Routeweft-owned and static.
+Owner decision #98 (2026-10-19) supersedes the LiteRouter v1 visual reference.
+Routeweft owns both its visual language and its static UI implementation.
 
-The reference commit when frozen is `2ffb7922954112b30425cd487d686758e519397e`.
+`docs/UI_STYLE.md` defines the graphite rule: cool neutral flat surfaces,
+ink-on-paper primary actions, ruled sections instead of cards, 0/2px geometry,
+geometric sans prose, monospace operational values and restrained motion.
+Color carries state only. Light, dark, system, keyboard access and WCAG AA
+contrast remain required.
+
+LiteRouter remains a behavioral reference, not a visual acceptance criterion.
+Navigation groups/items/order/labels/icons/hashes and operator workflows stay
+unchanged. This decision authorizes no API, backend or product-scope change.
 
 ## BDR-016 — Media boundary
 

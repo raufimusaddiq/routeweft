@@ -2,347 +2,171 @@
 
 Status: **Normative for frontend work**
 
-Reference visual snapshot: LiteRouter main `2ffb7922954112b30425cd487d686758e519397e`.
-
-Routeweft follows this visual language but implements it independently with React + TypeScript + Vite.
-
-## 1. Design statement
-
-**Neutral instrument panel; color carries state, not decoration.**
-
-The UI should feel like an operational console:
-
-- calm;
-- dense without being cramped;
-- clear hierarchy;
-- low visual noise;
-- predictable controls;
-- readable numeric/status information.
-
-Avoid a generic AI-dashboard look.
-
-Do not use decorative blue/purple gradients, glassmorphism everywhere, oversized marketing cards, or ornamental glow as default control-plane styling.
-
-## 2. Typography
-
-Primary sans:
-
-```text
-IBM Plex Sans
-fallback: ui-sans-serif, system-ui
-```
-
-Monospace:
-
-```text
-JetBrains Mono
-fallback: ui-monospace, SFMono-Regular, Menlo, Consolas
-```
-
-Use monospace for:
-
-- model IDs;
-- provider/model route names;
-- API-key fragments;
-- request IDs;
-- technical values where alignment improves scanning.
-
-Material Symbols Outlined is the primary icon vocabulary.
-
-## 3. Core color tokens
-
-### Light
-
-```css
---brand-50:  #f4f4f2;
---brand-100: #e8e8e5;
---brand-200: #d3d3cf;
---brand-300: #b5b5b0;
---brand-400: #8d8d88;
---brand-500: #292a2d;
---brand-600: #202125;
---brand-700: #17181b;
---brand-800: #101114;
---brand-900: #090a0c;
-
---bg:        #f4f4f1;
---bg-alt:    #e9e9e5;
---surface:   #fbfbf9;
---surface-2: #eeeeeb;
---surface-3: #deded9;
---sidebar:   #ececea;
-
---border:        #d8d6cd;
---border-subtle: #e5e3db;
-
---text-main:   #202225;
---text-muted:  #6d6d68;
---text-subtle: #96968f;
-```
-
-### Dark
-
-```css
---brand-500: #e9e9e5;
---brand-600: #f4f4f0;
-
---bg:        #121314;
---bg-alt:    #18191a;
---surface:   #1b1c1e;
---surface-2: #232426;
---surface-3: #303135;
---sidebar:   #1a1b1d;
-
---border:        #37383b;
---border-subtle: #292a2d;
-
---text-main:   #f1f0ec;
---text-muted:  #a3a29c;
---text-subtle: #74746f;
-```
-
-### Status
-
-```css
---danger-light:  #cf222e;
---danger-dark:   #ef4444;
---success-light: #10B981;
---success-dark:  #22c55e;
---warning-light: #F59E0B;
---warning-dark:  #fbbf24;
---info-light:    #3B82F6;
---info-dark:     #60a5fa;
-```
-
-Do not turn status colors into page chrome.
-
-## 4. App shell
-
-Desktop:
-
-- full viewport;
-- max outer width: 1920px;
-- left sidebar width: 15.5rem;
-- main content scrolls independently;
-- content max width: 110rem;
-- main horizontal padding: 1rem mobile, 1.75rem small desktop, 3rem large desktop;
-- vertical workspace padding: roughly 1.75rem mobile / 2.5rem large.
-
-Mobile:
-
-- sidebar becomes drawer;
-- dark translucent backdrop;
-- touch targets >= 44px where practical;
-- no horizontal page overflow.
-
-## 5. Sidebar
-
-Groups:
-
-**Operate**
-- Overview
-- Endpoint & Key
-- Providers
-
-**Route**
-- Combo & Capability Adapter
-- System One
-
-**Observe**
-- Usage
-- Quota Tracker
-- Token Saver
-
-**System**
-- Console Log
-- Settings
-
-Style:
-
-- sidebar background uses `--sidebar`;
-- subtle right border;
-- compact section kickers: ~10px, uppercase, high tracking;
-- active row: primary text + ~10% primary background + narrow left active rail;
-- inactive row: muted text, subtle hover surface;
-- nav row minimum height ~44px;
-- icons ~18px;
-- brand/control-plane mark ~40px square with 10px radius.
-
-## 6. Page heading
-
-Use a reusable PageIntro equivalent.
-
-Eyebrow:
-
-- 11px;
-- uppercase;
-- font-weight 700;
-- tracking ~0.14em;
-- muted/primary-neutral.
-
-Title:
-
-- 30px mobile / 36px larger;
-- semibold;
-- line-height ~1.05;
-- tracking around -0.06em;
-- max width around 4xl.
-
-Description:
-
-- 14px;
-- line-height ~24px;
-- muted;
-- max width ~2xl.
-
-Page intro ends with a subtle bottom border and approximately 24px bottom padding.
-
-## 7. Cards
-
-Base card:
-
-- `surface` background;
-- 1px/ring subtle border;
-- 10px radius;
-- minimal soft shadow;
-- padding scale: 12 / 16 / 24 / 32px.
-
-Avoid large floating-shadow cards by default.
-
-Elevated card is reserved for:
-
-- modal-like emphasis;
-- selected/critical interactive panel;
-- meaningful visual layering.
-
-List rows use separators and subtle surface hover.
-
-## 8. Buttons
-
-Variants:
-
-- primary;
-- secondary;
-- outline;
-- ghost;
-- danger;
-- success.
-
-Primary remains neutral brand, not a bright gradient.
-
-Sizes:
-
-- small: min-height 36px;
-- medium: min-height 40px;
-- large: ~44px.
-
-Behavior:
-
-- semibold;
-- 8–12px corner radius depending on size;
-- active press scale around 0.98;
-- visible focus outline;
-- disabled cursor/opacity;
-- spinner/icon ~18px.
-
-## 9. Forms
-
-- labels are concise and close to control;
-- inputs use surface/background tokens;
-- focus uses primary outline/ring;
-- destructive controls are visually separated;
-- secrets are masked by default;
-- inline validation is preferred over toast-only validation;
-- large JSON/raw payload editors use monospace.
-
-## 10. Tables and operational lists
-
-Prefer:
-
-- sticky or clear headers where helpful;
-- tabular numeric figures;
-- stable alignment;
-- subdued row separators;
-- explicit empty/loading/error states;
-- compact filters;
-- pagination instead of unbounded rendering.
-
-Avoid decorative zebra striping unless it demonstrably improves readability.
-
-## 11. Metrics
-
-Metrics use:
-
-- tabular numerals;
-- tight negative tracking for large values;
-- status color only when value meaning warrants it;
-- no arbitrary gradient KPI tiles.
-
-Overview should become useful from one read-model request rather than many sequential browser joins.
-
-## 12. Toasts
-
-Toast palette:
-
-- success: green tint;
-- error: red tint;
-- warning: warning tint;
-- info: blue tint.
-
-Use compact text and clear dismiss behavior.
-
-Toasts do not replace persistent error state for a failed page/resource.
-
-## 13. Theme behavior
-
-Support:
-
-- light;
-- dark;
-- system.
-
-Theme selection must apply before first meaningful paint to avoid a light/dark flash.
-
-Native select controls must respect dark color scheme.
-
-## 14. Motion
-
-Default transitions: ~150–250ms.
-
-Mobile drawer may use a slower spring-like easing.
-
-Respect `prefers-reduced-motion`.
-
-Avoid continuous decorative animations.
-
-Operational live-state animation should be restrained and only communicate activity.
-
-## 15. Accessibility
-
-Required:
-
-- keyboard navigation;
-- visible focus;
-- skip-to-content;
-- semantic labels for icon-only actions;
-- adequate contrast;
-- reduced motion;
-- `aria-live` for relevant async notifications;
-- no information conveyed solely by color.
-
-## 16. UI implementation rules
-
-- create reusable primitives before page-local one-offs;
-- tokens are semantic, not page-specific;
-- do not hardcode random colors/radii across components;
-- prefer server read models that reduce browser fan-out;
-- use TanStack Query for server state;
-- use local store only for UI state/preferences;
-- do not expose provider credentials to browser code;
-- do not add a Next runtime.
-
-## 17. Visual acceptance
-
-A new Routeweft page is visually acceptable when it could sit next to the current LiteRouter dashboard without looking like a different design system, while all branding/text identifies Routeweft.
-
-Similarity is intentional at the design-language level; implementation code remains Routeweft-owned.
+## 1. Graphite Rule
+
+Owner decision #98 (2026-10-19) supersedes the LiteRouter v1 visual reference
+and similarity acceptance rule. Routeweft owns its visual language and static
+React + TypeScript + Vite implementation (SPEC section 23, BDR-003/015).
+PRD sections 14-15 still govern navigation and operator workflows.
+
+An instrument for routing operators: cool graphite, ink-on-paper actions,
+square edges, hairlines and typographic hierarchy. Color communicates danger,
+success, warning or information only. Flat fills only. No gradients, blur,
+glass, shadows, glow, decorative color or marketing-scale hero cards.
+
+Design read: operator console, ENERGY 1 / RHYTHM 2 / MOTION 1.
+Ink contrast is the deliberate accent; the rule is the repeated identity motif.
+Summary registers, detail rows and operational lists vary composition according
+to the task, not a template. Whitespace separates sections, not floating cards.
+
+## 2. Tokens
+
+`ui/src/style.css` is the executable token source.
+
+| Token | Light | Dark |
+| --- | --- | --- |
+| `--ink` | `#20242b` | `#eef1f5` |
+| `--ink-hover` | `#383e47` | `#d0d6df` |
+| `--paper`, `--bg`, `--surface` | `#f7f8fa` | `#171a20` |
+| `--sidebar` | `#f0f2f5` | `#1c2027` |
+| `--surface-2` | `#e9ecf0` | `#252b34` |
+| `--surface-3` | `#d7dce3` | `#39414d` |
+| `--border` | `#7b838f` | `#778291` |
+| `--border-subtle` | `#c6ccd4` | `#3d4653` |
+| `--text-main` | `#20242b` | `#eef1f5` |
+| `--text-muted`, `--text-subtle` | `#505965` | `#b1bbc8` |
+| `--danger` | `#ae2337` | `#ff91a0` |
+| `--success` | `#12633e` | `#7bd6a4` |
+| `--warning` | `#795000` | `#efc36b` |
+| `--info` | `#205d94` | `#8dbff2` |
+
+Control boundaries use `--border` for non-text contrast. Structural separators
+use `--border-subtle`; they are never the sole identifier of a control.
+State chips use state-colored text and borders, with explicit labels.
+Notices may mix a state tint into the surface; never rely on color alone.
+
+| Geometry / spacing | Value |
+| --- | --- |
+| `--radius-flat` | `0` |
+| `--radius-control` | `2px`, buttons and small chips only |
+| `--rail-width` | `13rem` |
+| `--control-height` | `28px` desktop |
+| `--row-height` | `32px` minimum for single-line rows |
+| `--space-1/2/3/4/6/8` | `4/8/12/16/24/32px` |
+| `--motion` | `120ms` maximum |
+
+Panels, inputs, tables, selected rows and navigation have zero radius.
+Wrapped rows grow with their content; fixed heights must not clip labels.
+
+## 3. Typography
+
+- Prose/headings: **Outfit**, a geometric sans with compact forms for operator
+  labels, not marketing-scale typography. Fallback: `ui-sans-serif, system-ui,
+  sans-serif`.
+- Numeric/technical content: **JetBrains Mono**, retained for unambiguous IDs
+  and stable alignment. Fallback: `ui-monospace, monospace`.
+- Numbers, IDs, keys, timestamps and status tokens use mono, including metric
+  notes, detail values, counts, chart labels and pagination.
+- Tabular numerals inherit throughout the application.
+- Labels: 10-11px, uppercase, tracking approximately `0.08em`.
+- Values: approximately 28px, tight tracking. Page titles: 28px desktop / 24px
+  mobile, weight 500, tracking `-0.035em`.
+- Descriptions remain readable sans prose, not terminal output.
+
+Fonts load through the existing Google Fonts stylesheet in `ui/index.html`;
+fallbacks must remain usable without that service. Material Symbols Outlined
+remains the action vocabulary. Navigation icon definitions and accessible
+semantics remain intact, but glyphs are visually hidden in the text-only rail.
+The existing letter tile and unmeasured service status dot are hidden; the
+product name serves as the brand mark.
+
+## 4. Shell and Navigation
+
+Desktop: fixed 13rem rail, 1px right rule, workspace offset by the rail.
+Content maximum width 110rem; desktop insets 28px vertical / 32px horizontal.
+
+Keep groups, order, labels, icons and generated hashes byte-identical:
+
+| Group | Items, in order |
+| --- | --- |
+| Operate | Overview; Endpoint & Key; Providers |
+| Route | Combo & Capability Adapter; System One |
+| Observe | Usage; Quota Tracker; Token Saver |
+| System | Console Log; Settings |
+
+Active navigation: 1px ink left rule, weight 600 versus inactive 400.
+No active background pill. Neutral hover fill is allowed. Keep `aria-current`.
+
+At 900px, summary/detail grids reduce columns and provider/Combo layouts stack.
+At 700px, the existing drawer replaces the fixed rail; content becomes one
+column. Mobile insets are 16px. Buttons, selects, text inputs and navigation
+retain 44px minimum targets; checkbox/radio labels provide their hit area.
+Keep Escape/backdrop dismissal, focus return and all aria attributes.
+Visibility changes immediately; only opacity and 1px translation animate.
+No off-screen slide or horizontal page overflow at 320px or wider.
+
+## 5. Ruled Sections, Not Cards
+
+There is no card primitive. Retain semantic sections without enclosing rounded
+borders or separate elevated surfaces.
+
+- Section heading/label row, 1px bottom rule, then content.
+- Content and tables are full-bleed to section edges.
+- Metrics form one ruled register with internal dividers, not separate tiles.
+- Provider selection is a continuous ruled list; selection uses an ink edge
+  and neutral fill. Preserve underlying button behavior.
+- Tables collapse borders, use hairline row separators, never zebra stripes.
+- Preserve explicit errors, secrets and destructive confirmations.
+- Preserve loading, empty, stale-data, error and retry states.
+
+## 6. Controls and Accessibility
+
+Primary actions: paper-colored text on an ink fill, dark solid in light mode
+and light solid in dark mode. Never blue. Secondary actions use neutral
+boundaries; danger uses its state token. Disabled controls remain visibly
+disabled. Active press moves down at most 1px.
+
+Inputs/selects have square corners, readable labels and explicit boundaries.
+Keep secrets masked, inline validation and native control semantics.
+Do not reorder focusable markup or alter event handlers during visual work.
+
+Every control has a visible 2px ink focus outline, 2px offset, both themes.
+Keep skip-to-content, landmarks, labels, `aria-live`, focus order and reduced
+motion. Focus must not be clipped by scroll regions.
+Normal text and state colors require WCAG AA 4.5:1; control boundaries and
+focus require 3:1 against adjacent surfaces. No color-only feedback.
+
+## 7. Themes and Motion
+
+Ship light, dark and system. Preserve the pre-paint theme resolver and persisted
+preference. System follows OS changes; native controls respect `color-scheme`.
+Dark action hover must not become dark-on-dark.
+
+Transitions affect opacity and translation only, never scale or spring.
+Maximum 120ms; no continuous decorative animation. Reduced motion uses
+effectively immediate transitions and disables repeated animation.
+
+## 8. Acceptance and Evidence
+
+Routeweft must look distinct from LiteRouter v1. Similarity is not acceptance.
+Ticket #98 governs visuals; parity gaps from #77 remain separate.
+No API paths, fetching, state logic, workflows or nav definitions change.
+
+1. `npm run typecheck`, `npm test`, `npm run build`, `npm run smoke` pass.
+2. `rg -n 'gradient|backdrop-filter|box-shadow' ui/src/style.css`: zero matches.
+   Radius token values are only 0/2px.
+3. `git diff 10ce866 -- ui/src/main.tsx`: empty, proving the entire navigation
+   definition, hash generation and shell behavior remain unchanged.
+4. Smoke asserts first-link keyboard focus, active ink marker/weight, and no
+   computed shell radius above 2px, including pseudo-elements. Do not weaken
+   existing workflow assertions.
+5. Overview, Usage and Providers screenshots: 1440px and 390px, light and dark,
+   plus system evidence. Identify sanitized smoke fixtures, never claim
+   production traffic.
+6. Check contrast, overflow, browser errors, drawer dismissal/focus return,
+   persistence, OS-theme changes and reduced motion. Record checks not run.
+
+`ROUTEWEFT_SMOKE_ARTIFACTS` selects the screenshot/report directory (default
+`/tmp/routeweft-98-evidence`). Smoke reuses existing control-API fixtures;
+Chromium and `playwright-core` are required, as documented in
+`ui/scripts/smoke.sh`.

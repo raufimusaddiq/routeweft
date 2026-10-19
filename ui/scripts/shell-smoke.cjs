@@ -1,12 +1,98 @@
 
 const { chromium } = require('playwright-core');
 const assert = require('node:assert/strict');
+const { mkdirSync, writeFileSync } = require('node:fs');
+const { join } = require('node:path');
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.ROUTEWEFT_SMOKE_CHROME || '/root/.cache/ms-playwright/chromium-1148/chrome-linux/chrome', args: ['--no-sandbox'] });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:4173' });
   const errors = [];
   const report = {};
+  const artifacts = process.env.ROUTEWEFT_SMOKE_ARTIFACTS || '/tmp/routeweft-98-evidence';
+  mkdirSync(artifacts, { recursive: true });
+  report.visualChecks = [];
+  async function captureVisuals(view) {
+    const savedTheme = await page.locator('#theme-select').inputValue();
+    for (const theme of ['light', 'dark', 'system']) {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.selectOption('#theme-select', theme);
+      if (theme === 'system') await page.emulateMedia({ colorScheme: 'dark' });
+      for (const width of theme === 'system' ? [1440] : [1440, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.mouse.move(width - 1, 1);
+        await page.evaluate(() => document.fonts.ready);
+        const checks = await page.evaluate(() => {
+          const canvas = document.createElement('canvas');
+          canvas.width = canvas.height = 1;
+          const context = canvas.getContext('2d', { willReadFrequently: true });
+          const rgba = value => {
+            context.clearRect(0, 0, 1, 1);
+            context.fillStyle = value;
+            context.fillRect(0, 0, 1, 1);
+            return [...context.getImageData(0, 0, 1, 1).data];
+          };
+          const luminance = rgb => rgb.slice(0, 3).map(value => {
+            const c = value / 255;
+            return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+          }).reduce((sum, c, index) => sum + c * [0.2126, 0.7152, 0.0722][index], 0);
+          const ratio = (a, b) => {
+            const x = luminance(a), y = luminance(b);
+            return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+          };
+          const background = element => {
+            const layers = [];
+            for (let node = element; node; node = node.parentElement) layers.push(rgba(getComputedStyle(node).backgroundColor));
+            return layers.reverse().reduce((base, color) => color.slice(0, 3).map((c, i) => c * color[3] / 255 + base[i] * (1 - color[3] / 255)), [255, 255, 255]);
+          };
+          const elements = [...document.querySelectorAll('.app-shell, .app-shell *')];
+          const visible = element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden';
+          const lowContrast = elements.filter(visible).filter(element => !element.disabled && [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim())).flatMap(element => {
+            const value = ratio(rgba(getComputedStyle(element).color), background(element));
+            return value < 4.5 ? [{ element: element.className, ratio: value }] : [];
+          });
+          const radii = elements.flatMap(element => ['', '::before', '::after'].flatMap(pseudo => {
+            const style = getComputedStyle(element, pseudo || null);
+            return ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomLeftRadius', 'borderBottomRightRadius'].filter(key => style[key].split(' ').some(value => parseFloat(value) > 2)).map(key => `${element.className}${pseudo}: ${key}=${style[key]}`);
+          }));
+          const states = ['--danger', '--success', '--warning', '--info'].map(token => ({ token, ratio: ratio(rgba(getComputedStyle(document.documentElement).getPropertyValue(token)), background(document.body)) }));
+          const active = document.querySelector('.nav-link-active');
+          const marker = getComputedStyle(active, '::before');
+          return {
+            resolvedTheme: document.documentElement.dataset.theme,
+            overflow: document.documentElement.scrollWidth - innerWidth,
+            lowContrast, radii, states,
+            active: { width: marker.width, color: marker.backgroundColor, weight: getComputedStyle(active).fontWeight, inactiveWeight: getComputedStyle(document.querySelector('.nav-link:not(.nav-link-active)')).fontWeight },
+          };
+        });
+        assert.equal(checks.resolvedTheme, theme === 'system' ? 'dark' : theme);
+        assert.equal(checks.overflow, 0, `${view}/${theme}/${width}: horizontal overflow`);
+        assert.deepEqual(checks.radii, [], `${view}/${theme}/${width}: rounded shell`);
+        assert.deepEqual(checks.lowContrast, [], `${view}/${theme}/${width}: low contrast`);
+        assert.ok(checks.states.every(state => state.ratio >= 4.5), JSON.stringify(checks.states));
+        assert.equal(checks.active.width, '1px');
+        assert.notEqual(checks.active.color, 'rgba(0, 0, 0, 0)');
+        assert.ok(Number(checks.active.weight) > Number(checks.active.inactiveWeight));
+        if (width === 1440) {
+          await page.locator('.brand').focus();
+          await page.keyboard.press('Tab');
+          checks.focus = await page.locator('.nav-link').first().evaluate(element => ({ focused: document.activeElement === element, visible: element.matches(':focus-visible'), style: getComputedStyle(element).outlineStyle, width: getComputedStyle(element).outlineWidth, color: getComputedStyle(element).outlineColor }));
+          assert.equal(checks.focus.focused, true);
+          assert.equal(checks.focus.visible, true);
+          assert.equal(checks.focus.style, 'solid');
+          assert.equal(checks.focus.width, '2px');
+          assert.notEqual(checks.focus.color, 'rgba(0, 0, 0, 0)');
+          await page.locator('.nav-link').first().evaluate(element => element.blur());
+        }
+        const screenshot = `${view}-${theme}-${width}.png`;
+        await page.screenshot({ path: join(artifacts, screenshot), fullPage: true });
+        report.visualChecks.push({ view, theme, width, screenshot, ...checks });
+      }
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.selectOption('#theme-select', savedTheme);
+    await page.emulateMedia({ colorScheme: 'light' });
+  }
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));
   // Stub the control API so the smoke run needs no server or credentials.
   const overviewPayload = {
@@ -249,6 +335,7 @@ const assert = require('node:assert/strict');
   report.signOutLabel = await page.locator('.sign-out').textContent();
   report.monospaceValue = await page.locator('.technical-value').first().evaluate(el => getComputedStyle(el).fontFamily);
   report.overviewScroll = await page.evaluate(() => document.documentElement.scrollWidth + '/' + document.documentElement.clientWidth);
+  await captureVisuals('overview');
   await page.click('.refresh-button');
   await page.waitForSelector('.refresh-error');
   report.refreshError = await page.locator('.refresh-error').innerText();
@@ -333,14 +420,15 @@ const assert = require('node:assert/strict');
   report.pageAfterNav = await page.locator('#page-title').textContent();
   report.ariaCurrent = await page.locator('a[href="#providers"]').getAttribute('aria-current');
   report.focusAfterDesktopNav = await page.evaluate(() => ({ className: document.activeElement.className, visibility: getComputedStyle(document.activeElement).visibility, display: getComputedStyle(document.activeElement).display }));
-  await page.waitForSelector('.provider-card');
-  report.providerCards = await page.locator('.provider-card').count();
-  await page.locator('.provider-card', { hasText: 'openai' }).first().click();
+  await page.waitForSelector('.provider-option');
+  report.providerCards = await page.locator('.provider-option').count();
+  await page.locator('.provider-option', { hasText: 'openai' }).first().click();
   await page.waitForSelector('.connection-row');
   report.connectionRows = await page.locator('.connection-row').count();
   report.providerDetail = await page.locator('.provider-summary h2').textContent();
   report.modelRows = await page.locator('.model-row').count();
   report.modelProbeGuidance = await page.locator('.model-test-form .count-label').textContent();
+  await captureVisuals('providers');
   report.modelProbeResults = [];
   for (const status of [200, 504, 408, 400]) {
     modelProbeStatus = status;
@@ -366,7 +454,7 @@ const assert = require('node:assert/strict');
   assert.equal(report.modelProbeCancelError, 'Model test canceled.');
   assert.match(report.modelProbeGuidance, /10-minute batch limit/);
   await page.fill('#provider-filter', 'openrouter');
-  report.filteredCards = await page.locator('.provider-card').count();
+  report.filteredCards = await page.locator('.provider-option').count();
   await page.fill('#provider-filter', '');
   await page.click('.providers-content .provider-details .connection-row .button-secondary');
   await page.waitForFunction(() => document.querySelector('.providers-content .connection-row .state-tag').textContent === 'Disabled');
@@ -418,11 +506,11 @@ const assert = require('node:assert/strict');
   report.putCallsAfterCancel = comboPutCalls;
   await page.fill('.combo-form-grid input', 'daily');
   await page.click('.combo-form .button-ghost');
-  report.adapterCards = await page.locator('.adapter-card').count();
-  report.adapterInitial = await page.locator('.adapter-card').first().locator('small').textContent();
-  await page.locator('.adapter-card').first().locator('.adapter-header .button-secondary').click();
-  await page.waitForFunction(() => document.querySelector('.adapter-card small').textContent.includes('empty pool is a no-op'));
-  report.adapterAfterEnable = await page.locator('.adapter-card').first().locator('small').textContent();
+  report.adapterCards = await page.locator('.adapter-section').count();
+  report.adapterInitial = await page.locator('.adapter-section').first().locator('small').textContent();
+  await page.locator('.adapter-section').first().locator('.adapter-header .button-secondary').click();
+  await page.waitForFunction(() => document.querySelector('.adapter-section small').textContent.includes('empty pool is a no-op'));
+  report.adapterAfterEnable = await page.locator('.adapter-section').first().locator('small').textContent();
   report.adapterEnabled = adapterEnabled;
   // System One typed request workflow (PRD 11, PRD-API-001).
   await page.click('a[href="#system-one"]');
@@ -446,6 +534,7 @@ const assert = require('node:assert/strict');
   await page.waitForSelector('.usage-content');
   await page.waitForSelector('.usage-chart');
   report.usageMetrics = await page.locator('.usage-metrics .metric-value').allTextContents();
+  await captureVisuals('usage');
   report.usageBars = await page.locator('.usage-bar').count();
   report.usageProviderRows = await page.locator('.breakdown-row').count();
   report.usageEventRows = await page.locator('.usage-event').count();
@@ -668,13 +757,14 @@ const assert = require('node:assert/strict');
     const skipLink = document.querySelector('.skip-link');
     const skipLinkVisibleOnFocus = (() => {
       if (!skipLink) return false;
-      const before = getComputedStyle(skipLink).transform;
       skipLink.focus();
-      skipLink.classList.add('smoke-focus');
-      const after = getComputedStyle(skipLink).transform;
+      const bounds = skipLink.getBoundingClientRect();
+      const style = getComputedStyle(skipLink);
       const focused = document.activeElement === skipLink;
+      const visible = bounds.top >= 0 && bounds.bottom <= innerHeight && bounds.left >= 0 && bounds.right <= innerWidth;
+      const outlined = style.outlineStyle === 'solid' && parseFloat(style.outlineWidth) >= 2;
       skipLink.blur();
-      return focused && (before !== after || getComputedStyle(skipLink).outlineStyle !== 'none');
+      return focused && visible && outlined;
     })();
     return {
       unlabeledButtons,
@@ -737,7 +827,7 @@ const assert = require('node:assert/strict');
   assert.equal(report.overviewScroll, '1440/1440');
   assert.equal(report.navCount, 10);
   assert.deepEqual(report.groups, ['Operate', 'Route', 'Observe', 'System']);
-  assert.equal(report.sidebarWidth, 248);
+  assert.equal(report.sidebarWidth, 208);
   assert.equal(report.themeDark, 'dark');
   assert.equal(report.pageAfterNav, 'Providers');
   assert.equal(report.ariaCurrent, 'page');
@@ -847,5 +937,6 @@ const assert = require('node:assert/strict');
   assert.equal(parseFloat(report.reducedMotion.buttonDuration) <= 0.001, true);
   assert.equal(parseFloat(report.reducedMotion.animation) <= 0.001, true);
   assert.deepEqual(report.errors, []);
+  writeFileSync(join(artifacts, 'shell-report.json'), JSON.stringify(report, null, 2) + '\n');
   await browser.close();
 })().catch(e => { console.error('FAIL', e); process.exit(1); });
