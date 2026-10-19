@@ -1,7 +1,7 @@
 import { BarChart, EditorialSkeleton, ErrorNotice, StackedBar } from './kit'
 import { useOverviewData } from './data'
 import { Caption, Dot, ErrCell, Fact, Main, Margin, Row, Statement, Status } from './editorial'
-import { ago, badRate, clock, delta, denseDays, isWeekend, num, outlier, pct, priorWeek, failureStatuses, providerTone, rate, share, statusTone, sum, utcDay, weekendLighter } from './format'
+import { ago, badRate, clock, isWeekend, num, outlier, pct, failureStatuses, latestWeekTotal, largest, observeSeries, observedAverage, sameDayLastWeek, weekOverWeek, providerTone, rate, share, statusTone, utcDay, weekendLighter } from './format'
 
 type Props = { onUnauthorized: () => void }
 
@@ -32,28 +32,28 @@ export function Overview({ onUnauthorized }: Props) {
   if (overview.telemetry.degraded) attention.push({ key: 'telemetry', tone: 'warn', title: 'Usage telemetry', text: 'Degraded: some accounting may be delayed or incomplete.' })
   if (overview.traffic.errors > 0 && !flagged) attention.push({ key: 'failed', tone: 'warn', title: 'Failed requests', text: `${num(overview.traffic.errors)} recorded.` })
 
-  // The API omits days without attributed 2xx traffic; fill them so every window below is a calendar window.
-  const series = month && month.series.length > 0 ? denseDays(month.series, 30, utcDay()) : []
+  // The drawn window is zero-filled for a continuous axis; every comparison below sees only observed days (see observeSeries).
+  const observed = observeSeries(month?.series ?? [], 30, utcDay())
+  const series = observed.drawn
   const n = series.length
   const points = series.map(day => ({ label: day.day, short: day.day.slice(5), value: day.requests }))
-  const prior = priorWeek(series)
-  const thisWeek = sum(series.slice(-7), 'requests')
-  const lastWeek = prior ? sum(prior, 'requests') : undefined
-  // Both sides come from the daily rollup (attributed 2xx), so the percentage compares like with like.
-  const up = t ? delta(thisWeek, lastWeek) : null
+  const thisWeek = latestWeekTotal(observed)
+  const wow = weekOverWeek(observed)
+  const lastWeek = wow?.lastWeek
+  // Both sides come from the daily rollup (attributed 2xx) and from fully observed weeks, so the percentage compares like with like.
+  const up = t && wow ? wow.change : null
   const m = month?.totals
   const err30 = m ? rate(m.errors, m.requests) : 0
-  const peak = n ? series.reduce((best, day) => (day.requests > best.requests ? day : best), series[0]) : null
-  // Zero-filled days before the first recorded day are not observations: the average and the weekend ratio start there.
-  const firstRecorded = month?.series[0]?.day
-  const observed = firstRecorded ? series.filter(day => day.day >= firstRecorded) : series
-  const average = observed.length > 0 ? sum(observed, 'requests') / observed.length : 0
-  const averageLabel = observed.length < n ? `average over the ${observed.length} recorded days` : '30-day average'
-  const lighter = firstRecorded ? weekendLighter(observed) : null
+  const recordedDays = observed.days.length
+  const peak = recordedDays > 0 ? observed.days.reduce((best, day) => (day.requests > best.requests ? day : best), observed.days[0]) : null
+  const average = observedAverage(observed)
+  const averageLabel = recordedDays < n ? `average over the ${recordedDays} recorded days` : '30-day average'
+  const lighter = weekendLighter(observed)
   // The headline count and its percentage come from the same population: successful requests in the daily rollup.
   const likeForLike = up !== null
-  const ghost = (index: number) => (prior && index >= n - 7 ? series[index - 7].requests : null)
+  const ghost = sameDayLastWeek(observed)
   const failures = week ? failureStatuses(week.statuses) : []
+  const topRequests = week ? largest(week.providers.map(provider => provider.requests)) : 0
   const shown = events.slice(0, 7)
   const slow = [...shown].sort((a, b) => (b.durationMs ?? 0) - (a.durationMs ?? 0))[0]
   const fast = [...shown].sort((a, b) => (a.durationMs ?? 0) - (b.durationMs ?? 0))[0]
@@ -82,14 +82,14 @@ export function Overview({ onUnauthorized }: Props) {
       <Main title="Requests per day">
         <figure className="ed-figure">
           <BarChart points={points} unit="requests" title="Requests per day, 30 days" shade={isWeekend} current={index => index >= n - 7} ghost={ghost} reference={{ value: average }} />
-          <figcaption><Caption kicker="Fig. 1">Last 30 days. Cyan bars are this week; each white tick is the same day a week earlier. The dashed line is the {averageLabel} of successful requests ({num(average)} a day), weekends shaded.</Caption></figcaption>
+          <figcaption><Caption kicker="Fig. 1">Last 30 days. Cyan bars are this week; {wow ? 'each white tick is the same day a week earlier. ' : 'ticks for the week before appear once two full weeks are recorded. '}The dashed line is the {averageLabel} of successful requests ({num(average)} a day), weekends shaded.</Caption></figcaption>
         </figure>
       </Main>
       <Margin>
         <dl className="ed-facts">
           <Fact label="This week" value={<>{num(likeForLike ? thisWeek : t.requests)} <small>req</small></>} note={up !== null ? `${up >= 0 ? '↑' : '↓'} ${Math.abs(up).toFixed(1)}% vs prior 7 d, successful requests (${num(thisWeek)} vs ${num(lastWeek ?? 0)})` : `${num(thisWeek)} successful of ${num(t.requests)} requests in the latest 7 days`} />
           <Fact label="Busiest day" value={<>{num(peak.requests)} <small>req</small></>} note={`${peak.day.slice(5)}, ${Math.round((peak.requests / Math.max(1, average) - 1) * 100)}% above the ${averageLabel}`} />
-          <Fact label="Weekends" value={lighter === null || Math.abs(lighter) < 1 ? '—' : <>{Math.abs(Math.round(lighter))}% <small>{lighter >= 0 ? 'lighter' : 'heavier'}</small></>} note={lighter === null ? 'needs weekday and weekend days' : Math.abs(lighter) < 1 ? 'about the same as weekdays' : `than weekdays, ${n} days`} />
+          <Fact label="Weekends" value={lighter === null || Math.abs(lighter) < 1 ? '—' : <>{Math.abs(Math.round(lighter))}% <small>{lighter >= 0 ? 'lighter' : 'heavier'}</small></>} note={lighter === null ? 'needs weekday and weekend days' : Math.abs(lighter) < 1 ? 'about the same as weekdays' : `than weekdays, ${recordedDays} days`} />
         </dl>
       </Margin>
     </Row>}
@@ -105,7 +105,7 @@ export function Overview({ onUnauthorized }: Props) {
             <tbody>{week.providers.slice(0, 8).map(item => <tr key={item.key}>
               <td><Status tone={providerTone(item.errors, item.requests, fleet)}><span className="ed-name">{item.key}</span></Status></td>
               <td className="num ed-big">{num(item.requests)}</td>
-              <td className="share-cell"><span className="ed-bar"><span style={{ width: `${share(item.requests, week.providers[0].requests)}%` }} /></span></td>
+              <td className="share-cell"><span className="ed-bar"><span style={{ width: `${share(item.requests, topRequests)}%` }} /></span></td>
               <ErrCell errors={item.errors} requests={item.requests} bad={badRate(item.errors, item.requests, fleet)} />
             </tr>)}</tbody></table>
           <figcaption><Caption kicker="Table 1">Last 7 days by requests. The error bar scales to 10%; red where a provider is more than 1.5× the fleet rate.</Caption></figcaption>

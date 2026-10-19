@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 're
 import { fetchAll, PAGE_SIZE, Pager, usePagedList } from './ProviderPaging'
 import { EmptyState, ErrorNotice, SkeletonRows } from './kit'
 import { Dot, Statement, Status, type Tone } from './editorial'
-import { badRate, num, outlier, pct, rate, share, topByRequests, type Summary } from './format'
+import { badRate, num, largest, outlier, pct, rate, share, topByRequests, type Summary } from './format'
 
 type Provider = { id: string; transports: string[]; auth: string; authModes: string[]; defaultBaseURL?: string; modelCatalog: string; passthroughModels: boolean; staticModels?: string[]; reportsUsage: boolean; configuredNodes: number; enabledAccounts: number }
 type Node = { id: string; kind: string; providerId: string; name: string; prefix?: string; baseUrl?: string; transports: string[] }
@@ -121,7 +121,7 @@ export function Providers({ onUnauthorized }: Props) {
   const inServiceAll = allRows.filter(connected)
   const inService = rows.filter(connected).sort(order)
   const catalogue = rows.filter(row => !connected(row)).sort((a, b) => a.provider.id.localeCompare(b.provider.id))
-  const peak = Math.max(1, ...inServiceAll.map(row => row.requests))
+  const peak = largest(inServiceAll.map(row => row.requests))
   const monthRequests = Math.max(1, usage?.totals.requests ?? 1)
   const topTwo = topByRequests(inServiceAll.map(row => ({ id: row.provider.id, requests: row.requests })), 2)
   const topShare = (topTwo.reduce((total, row) => total + row.requests, 0) / monthRequests) * 100

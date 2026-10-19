@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { BarChart, EditorialSkeleton, EmptyState, ErrorNotice, Sparkline, StackedBar } from './kit'
 import { Caption, ErrCell, Fact, Main, Margin, Row, Statement, Status } from './editorial'
-import { badRate, compact, delta, denseDays, num, outlier, pct, priorWeek, failureStatuses, periodDays, providerTone, rate, share, statusTone, sum, utcDay, type Summary, type UsageEvent } from './format'
+import { badRate, compact, num, outlier, pct, failureStatuses, largest, latestWeekTotal, observeSeries, observedAverage, periodDays, providerTone, rate, sameDayLastWeek, share, statusTone, utcDay, weekOverWeek, type Summary, type UsageEvent } from './format'
 
 type Props = { onUnauthorized: () => void }
 
@@ -18,52 +18,61 @@ export function Usage({ onUnauthorized }: Props) {
   const [events, setEvents] = useState<UsageEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const controller = useRef<AbortController | null>(null)
 
+  // Each load aborts the one before it, so the summary on screen always belongs to the period that is selected.
   const load = useCallback(async () => {
+    controller.current?.abort()
+    const abort = new AbortController()
+    controller.current = abort
+    const { signal } = abort
     setLoading(true)
     setError('')
     try {
       const responses = await Promise.all([
-        fetch(`/admin/v1/usage/summary?period=${period}`, { credentials: 'same-origin' }),
-        fetch('/admin/v1/usage?page=1&pageSize=50', { credentials: 'same-origin' }),
+        fetch(`/admin/v1/usage/summary?period=${period}`, { credentials: 'same-origin', signal }),
+        fetch('/admin/v1/usage?page=1&pageSize=50', { credentials: 'same-origin', signal }),
       ])
+      if (signal.aborted) return
       if (responses.some(response => response.status === 401)) { onUnauthorized(); return }
       const failed = responses.find(response => !response.ok)
       if (failed) throw new Error(await responseError(failed, 'Could not load usage.'))
       const [summaryData, eventData] = await Promise.all(responses.map(response => response.json())) as [Summary, { items: UsageEvent[] }]
+      if (signal.aborted) return
       setSummary(summaryData)
       setEvents(eventData.items)
     } catch (cause) {
+      if (signal.aborted || (cause instanceof DOMException && cause.name === 'AbortError')) return
       setError(cause instanceof Error ? cause.message : 'Could not load usage.')
-    } finally { setLoading(false) }
+    } finally { if (!signal.aborted) setLoading(false) }
   }, [period, onUnauthorized])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => { void load(); return () => controller.current?.abort() }, [load])
 
   const first = loading && !summary
   const t = summary?.totals
-  // Days without attributed 2xx traffic are absent from the API series; fill them so windows and averages are calendar-based.
+  // The drawn window is zero-filled for a continuous axis; every comparison below sees only observed days (see observeSeries).
   const raw = summary?.series ?? []
-  const series = period !== '24h' && raw.length > 0 ? denseDays(raw, periodDays(period, raw, utcDay()), utcDay()) : raw
+  const observed = observeSeries(raw, period === '24h' ? 2 : periodDays(period, raw, utcDay()), utcDay())
+  const series = observed.drawn
   const n = series.length
-  // Zero-filled days before the first recorded day are not observations, so averages start there.
-  const firstRaw = raw[0]?.day
-  const observed = firstRaw ? series.filter(day => day.day >= firstRaw) : series
-  const days = Math.max(1, period === '24h' ? 1 : observed.length || (period === '7d' ? 7 : 30))
-  const dailyAverage = observed.length > 0 ? sum(observed, 'requests') / observed.length : 0
-  const averageNote = observed.length < n ? ` over the ${observed.length} recorded days` : ''
+  const recordedDays = observed.days.length
+  const days = Math.max(1, period === '24h' ? 1 : recordedDays || (period === '7d' ? 7 : 30))
+  const dailyAverage = observedAverage(observed)
+  const averageNote = recordedDays < n ? ` over the ${recordedDays} recorded days` : ''
   const points = series.map(day => ({ label: day.day, short: day.day.slice(5), value: day.requests }))
-  const prior = priorWeek(series)
-  const ghost = (index: number) => (prior && index >= n - 7 ? series[index - 7].requests : null)
+  const wow = weekOverWeek(observed)
+  const ghost = sameDayLastWeek(observed)
+  const thisWeek = latestWeekTotal(observed)
+  // "The latest 7 days" is only a true label when the window has 7 days and is not the 24-hour period.
+  const showWeek = period !== '24h' && n >= 7
   const tokens = t ? t.inputTokens + t.outputTokens : 0
   const hit = t ? (t.cacheReadTokens / Math.max(1, t.inputTokens + t.cacheReadTokens)) * 100 : 0
   const fleet = t ? rate(t.errors, t.requests) : 0
   const failures = summary ? failureStatuses(summary.statuses) : []
   const topFail = failures[0]
   const worst = summary ? outlier(summary) : null
-  const topProvider = Math.max(1, ...(summary?.providers.map(item => item.requests) ?? [1]))
-  const lastWeek = prior ? sum(prior, 'requests') : undefined
-  const thisWeek = sum(series.slice(-7), 'requests')
+  const topProvider = largest(summary?.providers.map(item => item.requests) ?? [])
 
   return <div className="usage-content" aria-busy={loading}>
     {first && !error && <div role="status" aria-label="Loading usage"><EditorialSkeleton /></div>}
@@ -90,13 +99,13 @@ export function Usage({ onUnauthorized }: Props) {
           {points.length === 0
             ? <EmptyState reason="No attributed usage in this period.">{period !== 'all' && <button className="button-secondary" type="button" onClick={() => setPeriod('all')}>Show all time</button>}</EmptyState>
             : <figure className="ed-figure usage-chart-panel accent-surface ed-plate">
-              <BarChart points={points} unit="requests" title="Requests per day" current={prior ? (index => index >= n - 7) : undefined} ghost={prior ? ghost : undefined} reference={n > 1 ? { value: dailyAverage } : undefined} />
-              <figcaption><Caption kicker="Fig. 1">{prior ? `Cyan bars are the latest 7 days; each tick is the same day a week earlier. Dashed line: average ${num(dailyAverage)} successful requests a day${averageNote}.` : 'One bar per day.'}</Caption></figcaption>
+              <BarChart points={points} unit="requests" title="Requests per day" current={wow ? (index => index >= n - 7) : undefined} ghost={wow ? ghost : undefined} reference={n > 1 ? { value: dailyAverage } : undefined} />
+              <figcaption><Caption kicker="Fig. 1">{wow ? `Cyan bars are the latest 7 days; each tick is the same day a week earlier. Dashed line: average ${num(dailyAverage)} successful requests a day${averageNote}.` : 'One bar per day.'}</Caption></figcaption>
             </figure>}
         </Main>
         <Margin>
           <dl className="ed-facts">
-            <Fact label="Requests" value={<>{num(t.requests)} <small>req</small></>} note={prior ? `${num(thisWeek)} successful in the latest 7 days, ${delta(thisWeek, lastWeek) === null ? 'no prior week' : `${(delta(thisWeek, lastWeek) ?? 0) >= 0 ? '↑' : '↓'} ${Math.abs(delta(thisWeek, lastWeek) ?? 0).toFixed(1)}% vs prior 7 d`}` : `avg ${num(t.requests / days)} a day`} />
+            <Fact label="Requests" value={<>{num(t.requests)} <small>req</small></>} note={wow ? `${num(wow.thisWeek)} successful in the latest 7 days, ${wow.change === null ? 'no prior week' : `${wow.change >= 0 ? '↑' : '↓'} ${Math.abs(wow.change).toFixed(1)}% vs prior 7 d`}` : showWeek ? `${num(thisWeek)} successful in the latest 7 days, ${num(t.requests / days)} requests a day on average` : `avg ${num(t.requests / days)} a day`} />
             <Fact label="Tokens" value={<>{compact(tokens)} <small>in + out</small></>} note={`input ${num(t.inputTokens)}, output ${num(t.outputTokens)}`} />
             <Fact label="Cache" value={<>{pct(hit, 0)} <small>of input</small></>} note={`read ${num(t.cacheReadTokens)}, write ${num(t.cacheWriteTokens)}`} />
             <Fact label="Latency" value={<>{t.avgDurationMs !== undefined ? num(t.avgDurationMs) : '—'} <small>ms avg</small></>} note={`TTFT ${t.avgTtftMs !== undefined ? `${num(t.avgTtftMs)} ms` : '—'}`} />
