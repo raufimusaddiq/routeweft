@@ -152,6 +152,8 @@ const { join } = require('node:path');
   let restoreChecks = 0;
   let restoreActivations = 0;
   let logRequests = 0;
+  let streamURLs = [];
+  let streamMode = 'ok';
   let lastLogURL = '';
   const logs = Array.from({ length: 51 }, (_, index) => {
     const id = 51 - index;
@@ -249,6 +251,13 @@ const { join } = require('node:path');
   }
   if (url.pathname.startsWith('/admin/v1/usage/requests/') && method === 'GET') {
     return route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: { code: 'request_not_found', message: 'no usage or detail is stored for this request id' } }) });
+  }
+  if (url.pathname === '/admin/v1/usage/stream' && method === 'GET') {
+    streamURLs.push(url.search);
+    if (streamMode === 'full') return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'stream_limit', message: 'too many live usage streams' } }) });
+    // A finite body: the long retry keeps the browser from reconnecting during the check.
+    const live = { requestId: 'req-live-1', providerId: 'openai', modelId: 'gpt-5', status: 200, durationMs: 120, inputTokens: 7, outputTokens: 3, createdAt: new Date().toISOString() };
+    return route.fulfill({ status: 200, contentType: 'text/event-stream', body: `retry: 600000\n: connected\n\nid: 1\nevent: request.completed\ndata: ${JSON.stringify(live)}\n\n` });
   }
   if (url.pathname === '/admin/v1/usage' && method === 'GET') {
     lastUsageURL = url.search;
@@ -637,13 +646,33 @@ const { join } = require('node:path');
   report.tabs = await page.getByRole('tab').allInnerTexts();
   await page.getByRole('tab', { name: 'Requests' }).click();
   await page.waitForSelector('.log-table tbody tr');
-  report.usageEventRows = await page.locator('.log-table tbody tr').count();
+  report.usageEventRows = await page.locator('.log-table tbody tr:not(.log-row-live)').count();
   report.logsURL = lastUsageURL;
+  // Live view: a request that finishes while the log is open is appended without a refresh, marked live, and scoped by the log's filters.
+  await page.waitForSelector('.log-row-live');
+  report.liveRow = await page.locator('.log-row-live').first().innerText();
+  report.liveStreamURL = streamURLs[0];
+  report.liveStatus = await page.locator('.live-bar [role=status]').innerText();
   await page.getByLabel('Provider').fill('openai');
   await page.getByLabel('Status').fill('200');
   const filtered = page.waitForResponse(response => response.url().includes('providerId=openai'));
   await page.getByRole('button', { name: 'Apply filters' }).click(); await filtered;
   report.logsFilteredURL = lastUsageURL;
+  for (let waited = 0; !streamURLs.some(query => query.includes('providerId=openai')) && waited < 5000; waited += 25) await page.waitForTimeout(25);
+  report.liveFilteredStreamURL = streamURLs.find(query => query.includes('providerId=openai'));
+  await page.getByRole('button', { name: 'Pause live view' }).click();
+  await page.locator('.live-bar [role=status]', { hasText: 'Paused' }).waitFor();
+  report.livePausedStatus = await page.locator('.live-bar [role=status]').innerText();
+  const streamCallsWhenPaused = streamURLs.length;
+  streamMode = 'full';
+  await page.getByRole('button', { name: 'Resume live view' }).click();
+  await page.getByRole('button', { name: 'Reconnect' }).waitFor();
+  await page.locator('.live-bar [role=status]', { hasText: 'Stream closed' }).waitFor();
+  report.liveClosedStatus = await page.locator('.live-bar [role=status]').innerText();
+  report.liveReconnectedAfterPause = streamURLs.length - streamCallsWhenPaused;
+  streamMode = 'ok';
+  await page.getByRole('button', { name: 'Reconnect' }).click();
+  await page.waitForSelector('.log-row-live');
   await page.getByRole('button', { name: 'Open details for request req-abc' }).click();
   await page.waitForSelector('.usage-content .ed-facts');
   report.detailTabSelected = await page.getByRole('tab', { name: 'Request details' }).getAttribute('aria-selected');
@@ -1064,6 +1093,15 @@ const { join } = require('node:path');
   assert.match(report.logEmptyState, /No logs match/);
   assert.match(report.lastLogURL, /query=not-found/);
   assert.equal(report.logRequests, 5);
+  assert.match(report.liveRow, /req-live-1/);
+  assert.match(report.liveRow, /openai \/ gpt-5/);
+  assert.match(report.liveRow, /7 \/ 3/);
+  assert.doesNotMatch(report.liveStreamURL, /providerId/);
+  assert.match(report.liveFilteredStreamURL, /providerId=openai/);
+  assert.match(report.liveFilteredStreamURL, /status=200/);
+  assert.equal(report.livePausedStatus, 'Paused');
+  assert.equal(report.liveClosedStatus, 'Stream closed');
+  assert.equal(report.liveReconnectedAfterPause, 1);
   assert.equal(report.dashboardLoginState, 'Required');
   assert.equal(report.providerStrategy, 'round-robin');
   assert.equal(report.requireApiKeyAfterToggle, 'true');

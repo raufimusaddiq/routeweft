@@ -911,6 +911,30 @@ payload redacted again on read; otherwise `detail` is `null`. An id with neither
 `404 request_not_found`. Nothing in the gateway currently enqueues request details,
 so `detail` is null until diagnostics capture is wired.
 
+`GET /admin/v1/usage/stream` is a session-authenticated `text/event-stream` of
+completed requests for the Usage requests tab. It accepts the usage list's filter
+grammar (same validation, same `400 invalid_filter`) and delivers only events that
+match it. Each frame is `event: request.completed` with `data` limited to
+`requestId, providerId, modelId, connectionId, apiKeyId, status, durationMs,
+inputTokens, outputTokens, createdAt`: a subset of what `GET /admin/v1/usage`
+already returns, never a body, prompt or credential. A client-cancelled request is
+not recorded and is not published. It is a separate channel from `/admin/v1/events`
+(see PARITY D09) so that per-request volume and per-subscriber filtering cannot evict
+configuration-invalidation subscribers. Delivery contract:
+
+- The publisher is the ingress completion hook. `Publish` never waits on a consumer:
+  one short mutex, one non-blocking send per subscriber, and no work at all with no
+  subscribers.
+- Each subscriber has a 64-event buffer. A subscriber that fills it is removed, its
+  stream ends, and `EventSource` reconnects; the UI reloads recorded history on every
+  (re)connect and deduplicates by `requestId`. Events are never silently dropped
+  for a connected client, and there is no `Last-Event-ID` replay.
+- At most 32 concurrent streams; the next is `503 stream_limit` with `Retry-After`.
+  Connects, disconnects and rejections are logged with the subscriber count.
+- A `: heartbeat` comment every 25 s; every frame write has a 5 s deadline, so a
+  client that stops reading frees its handler. A revoked or expired session ends the
+  stream at the next event or heartbeat.
+
 `GET /admin/v1/usage/hourly?period=7d` returns a flat, oldest-first hourly
 series from `usage_events` under the same admin session policy and filter grammar
 as the usage list. Supported periods are `24h`, `7d` (default), and `30d`, giving
