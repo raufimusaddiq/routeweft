@@ -378,3 +378,44 @@ func TestProviderMutationDoesNotResurrectDeletedProxyBinding(t *testing.T) {
 		t.Fatal("provider update resurrected deleted proxy binding")
 	}
 }
+
+// A snapshot must hand the dispatcher the per-transport endpoint of a provider
+// whose upstream path differs from the shared default, so base + endpoint is the
+// URL the oracle's registry declares (internal/parity TestEveryOracleTransportURLMatches).
+func TestSnapshotCarriesTransportEndpointsForPathDriftProviders(t *testing.T) {
+	m, s := providerStore(t)
+	ctx := context.Background()
+	cases := []struct{ provider, model, source, endpoint string }{
+		{"kilocode", "anthropic/claude-sonnet-4-20250514", "openai-chat", "openrouter/chat/completions"},
+		{"cline", "anthropic/claude-opus-4.7", "openai-chat", "api/v1/chat/completions"},
+		{"clinepass", "cline-pass/glm-5.2", "openai-chat", "api/v1/chat/completions"},
+		{"mimo-free", "mimo-auto", "openai-chat", "api/free-ai/openai/chat"},
+		{"mmf", "mimo-auto", "openai-chat", "api/free-ai/openai/chat"},
+		{"deepseek", "deepseek-chat", "anthropic-messages", "anthropic/v1/messages"},
+		{"deepseek", "deepseek-chat", "openai-chat", ""},
+	}
+	seen := map[string]bool{}
+	for _, tc := range cases {
+		if err := m.PutModel(ctx, Model{ProviderID: tc.provider, ID: tc.model, Kind: "llm"}); err != nil {
+			t.Fatal(err)
+		}
+		if seen[tc.provider] {
+			continue
+		}
+		seen[tc.provider] = true
+		node, err := s.PutNode(ctx, credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: tc.provider, Name: tc.provider})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.PutConnection(ctx, credentials.Connection{ID: tc.provider, NodeID: node.ID, Name: tc.provider, Identity: tc.provider, AuthKind: credentials.AuthNone, Enabled: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, _ := m.Load()
+	for _, tc := range cases {
+		got, ok := snapshot.AccountProvider(tc.provider+"/"+tc.model, tc.provider, tc.source, nil)
+		if !ok || got.Protocol != tc.source || got.Endpoint != tc.endpoint {
+			t.Fatalf("%s %s: provider=%+v ok=%v, want endpoint %q", tc.provider, tc.source, got, ok, tc.endpoint)
+		}
+	}
+}

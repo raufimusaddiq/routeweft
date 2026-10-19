@@ -742,7 +742,7 @@ No credential is sent to browser code.
 
 The providers' registered redirect URIs never point at Routeweft, so the operator hands the result back from the authenticated dashboard rather than receiving a browser redirect.
 
-Pending state is process-local, expires after 10 minutes, is bound to the admin session that started it and to the provider, and is single-use even when the exchange fails. A state that is unknown, expired, replayed or owned by another session returns the same `oauth_state_invalid` error, and a foreign session does not consume the owner's attempt. Responses carry fixed messages only: no provider text, code, verifier or token.
+Pending state is process-local, expires after 10 minutes, is bound to the admin session that started it and to the provider, and is single-use even when the exchange fails. A state that is unknown, expired, replayed or owned by another session returns the same `oauth_state_invalid` error, and a foreign session does not consume the owner's attempt. A device-authorization start the provider rate-limits (Kilo: too many pending authorizations) returns HTTP 429 `oauth_rate_limited`, distinct from `oauth_start_failed`. A device poll that loses the save reservation to a concurrent poll of the same approved attempt answers `{"status":"pending"}`; a state that is gone keeps `oauth_state_invalid`. Responses carry fixed messages only: no provider text, code, verifier or token.
 
 OAuth connections that hold a refresh token (Claude, Codex) are registered with a refresh exchanger by the credential registry, so every registration path (sign-in, manual entry, startup load) refreshes through the same singleflight and durable commit.
 
@@ -1391,6 +1391,14 @@ silently deleting aliases/Combos. A removed seed override exposes the built-in
 seed again. Deleted catalog entries cannot revive from orphaned durable rows.
 Main's v6 API-key access policies remain unchanged. Older binaries reject schema
 v7; rollback requires the pre-upgrade backup.
+
+Schema v8 is a data-only step: it rewrites a built-in `mimo-free` or `mmf` node
+whose `base_url` is exactly the old default
+`https://api.xiaomimimo.com/api/free-ai/openai/chat` to
+`https://api.xiaomimimo.com`; the path now lives in the provider's Chat
+`TransportEndpoints` entry, matching the pinned registry URL. Rows with any other
+base URL (operator overrides) and every other provider are untouched. Older
+binaries reject schema v8; rollback requires the pre-upgrade backup.
 
 ## 34. Public compatibility details
 

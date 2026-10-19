@@ -30,6 +30,9 @@ type deviceUpstream struct {
 	pollErr    bool
 	// expiresIn is the code lifetime Kilo reports, in seconds (default 600).
 	expiresIn int
+	// onPoll runs inside a poll request, between the handler's claim and its
+	// reservation, so a test can stage a concurrent winner deterministically.
+	onPoll func()
 }
 
 func (d *deviceUpstream) Do(request *http.Request) (*http.Response, error) {
@@ -49,6 +52,9 @@ func (d *deviceUpstream) Do(request *http.Request) (*http.Response, error) {
 		return respond(200, `{"code":"`+deviceTestCode+`","verificationUrl":"https://kilo.ai/device-auth?code=`+deviceTestCode+`","expiresIn":`+strconv.Itoa(expires)+`}`)
 	}
 	d.polls++
+	if d.onPoll != nil {
+		d.onPoll()
+	}
 	if d.pollErr {
 		return nil, io.ErrUnexpectedEOF
 	}
@@ -337,22 +343,69 @@ func TestOAuthFlowsReserveIsExclusive(t *testing.T) {
 	if !ok {
 		t.Fatal("begin failed")
 	}
-	if _, ok := flows.reserve(state, "other", "kilocode"); ok {
-		t.Fatal("a foreign session reserved the attempt")
+	if _, got := flows.reserve(state, "other", "kilocode"); got != reserveInvalid {
+		t.Fatalf("a foreign session got %v, want invalid", got)
 	}
-	if _, ok := flows.reserve(state, "s", "kilocode"); !ok {
+	if _, got := flows.reserve("unknown", "s", "kilocode"); got != reserveInvalid {
+		t.Fatalf("an unknown state got %v, want invalid", got)
+	}
+	if _, got := flows.reserve(state, "s", "kilocode"); got != reserveTaken {
 		t.Fatal("owner could not reserve")
 	}
-	if _, ok := flows.reserve(state, "s", "kilocode"); ok {
-		t.Fatal("a second reservation succeeded while the first was saving")
+	if _, got := flows.reserve(state, "s", "kilocode"); got != reserveBusy {
+		t.Fatalf("a second reservation got %v while the first was saving, want busy", got)
+	}
+	if _, got := flows.reserve(state, "other", "kilocode"); got != reserveInvalid {
+		t.Fatalf("a foreign session saw %v for a busy attempt, want invalid", got)
 	}
 	flows.release(state)
-	if _, ok := flows.reserve(state, "s", "kilocode"); !ok {
+	if _, got := flows.reserve(state, "s", "kilocode"); got != reserveTaken {
 		t.Fatal("release did not reopen the attempt")
 	}
 	flows.finish(state)
-	if _, ok := flows.reserve(state, "s", "kilocode"); ok {
-		t.Fatal("a finished attempt was reserved")
+	if _, got := flows.reserve(state, "s", "kilocode"); got != reserveInvalid {
+		t.Fatalf("a finished attempt got %v, want invalid", got)
+	}
+}
+
+// A poll that loses the reservation to a concurrent save answers pending, not a
+// terminal 400, while a state that is genuinely gone keeps the 400.
+func TestOAuthDevicePollLoserIsPendingAndUnknownStateIsInvalid(t *testing.T) {
+	upstream := &deviceUpstream{pollStatus: 200, pollBody: `{"status":"approved","token":"` + deviceTestToken + `"}`}
+	h, mux, _, cookie, clock := newDeviceAPI(t, upstream)
+	started := startDevice(t, mux, cookie)
+	clock.now = clock.now.Add(3 * time.Second)
+	upstream.onPoll = func() {
+		h.oauth.mu.Lock()
+		flow := h.oauth.pending[started.State]
+		flow.completing = true
+		h.oauth.pending[started.State] = flow
+		h.oauth.mu.Unlock()
+	}
+	recorder := pollDevice(t, mux, cookie, started.State)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"pending"`) {
+		t.Fatalf("loser status=%d body=%s, want 200 pending", recorder.Code, recorder.Body.String())
+	}
+	upstream.onPoll = func() { h.oauth.finish(started.State) }
+	h.oauth.mu.Lock()
+	flow := h.oauth.pending[started.State]
+	flow.completing, flow.nextPoll = false, time.Time{}
+	h.oauth.pending[started.State] = flow
+	h.oauth.mu.Unlock()
+	recorder = pollDevice(t, mux, cookie, started.State)
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "oauth_state_invalid") {
+		t.Fatalf("gone state status=%d body=%s, want 400 oauth_state_invalid", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestOAuthDeviceStartRateLimitedIsDistinct429(t *testing.T) {
+	_, mux, _, cookie, _ := newDeviceAPI(t, &deviceUpstream{initStatus: 429})
+	recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/kilocode/device", `{"name":"Work","identity":"work@example.test"}`)
+	if recorder.Code != http.StatusTooManyRequests || !strings.Contains(recorder.Body.String(), "oauth_rate_limited") {
+		t.Fatalf("status=%d body=%s, want 429 oauth_rate_limited", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "upstream-secret-text") {
+		t.Fatal("upstream body leaked")
 	}
 }
 
