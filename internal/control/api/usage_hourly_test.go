@@ -26,6 +26,8 @@ func TestUsageHourly(t *testing.T) {
 	second := event(base.Add(time.Hour), 302)
 	other := event(base.Add(10*time.Minute), 500)
 	other.ProviderID, other.ModelID, other.ConnectionID, other.APIKeyID = "anthropic", "claude", "c2", "key-b"
+	abandoned := event(base.Add(5*time.Minute), 200)
+	abandoned.Termination = "client_abandoned"
 	utcDay := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
 	offsetAt, err := time.Parse(time.RFC3339, utcDay+"T19:15:00+07:00")
 	if err != nil {
@@ -44,6 +46,7 @@ func TestUsageHourly(t *testing.T) {
 		{"hour boundary", "period=7d", []telemetry.Event{first, second}, map[string][3]int64{base.Format(time.RFC3339): {1, 0, 15}, base.Add(time.Hour).Format(time.RFC3339): {1, 1, 15}}},
 		{"provider and model", "providerId=openai&modelId=gpt-5", []telemetry.Event{first, second, other}, map[string][3]int64{base.Format(time.RFC3339): {1, 0, 15}, base.Add(time.Hour).Format(time.RFC3339): {1, 1, 15}}},
 		{"connection and key and status", "connectionId=c2&apiKeyId=key-b&status=500", []telemetry.Event{first, other}, map[string][3]int64{base.Format(time.RFC3339): {1, 1, 15}}},
+		{"abandoned adds tokens but no request", "period=7d", []telemetry.Event{first, abandoned}, map[string][3]int64{base.Format(time.RFC3339): {1, 0, 30}}},
 		{"filter without matches", "providerId=nobody", []telemetry.Event{first}, nil},
 		{"SQL injection is inert", "providerId=" + url.QueryEscape("openai' OR '1'='1"), []telemetry.Event{first}, nil},
 		{"UTC instant from offset zone", "period=7d", []telemetry.Event{offset}, map[string][3]int64{utcDay + "T12:00:00Z": {1, 0, 15}}},

@@ -63,14 +63,15 @@ func (h *Handler) handleUsageSummary(w http.ResponseWriter, r *http.Request) {
 		args = append(args, since)
 	}
 	totals := map[string]any{"requests": int64(0), "inputTokens": int64(0), "outputTokens": int64(0), "cacheReadTokens": int64(0), "cacheWriteTokens": int64(0), "errors": int64(0)}
-	row := h.opts.DB.QueryRowContext(ctx, "SELECT COUNT(*),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cache_read_tokens),0),COALESCE(SUM(cache_write_tokens),0),COALESCE(SUM(CASE WHEN status < 200 OR status >= 300 THEN 1 ELSE 0 END),0),COALESCE(SUM(duration_ms),0),COALESCE(SUM(ttft_ms),0),COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN ttft_ms IS NOT NULL THEN 1 ELSE 0 END),0) FROM usage_events"+where, args...)
-	var requests, input, output, cacheRead, cacheWrite, errors, durationSum, ttftSum, timed, ttftCount int64
-	if err := row.Scan(&requests, &input, &output, &cacheRead, &cacheWrite, &errors, &durationSum, &ttftSum, &timed, &ttftCount); err != nil {
+	row := h.opts.DB.QueryRowContext(ctx, "SELECT COALESCE(SUM(CASE WHEN termination = '' THEN 1 ELSE 0 END),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cache_read_tokens),0),COALESCE(SUM(cache_write_tokens),0),COALESCE(SUM(CASE WHEN termination = '' AND (status < 200 OR status >= 300) THEN 1 ELSE 0 END),0),COALESCE(SUM(duration_ms),0),COALESCE(SUM(ttft_ms),0),COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN ttft_ms IS NOT NULL THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN termination <> '' THEN 1 ELSE 0 END),0) FROM usage_events"+where, args...)
+	var requests, input, output, cacheRead, cacheWrite, errors, durationSum, ttftSum, timed, ttftCount, terminated int64
+	if err := row.Scan(&requests, &input, &output, &cacheRead, &cacheWrite, &errors, &durationSum, &ttftSum, &timed, &ttftCount, &terminated); err != nil {
 		writeError(w, http.StatusInternalServerError, "read_failed", "could not load usage totals")
 		return
 	}
 	totals["requests"], totals["inputTokens"], totals["outputTokens"] = requests, input, output
 	totals["cacheReadTokens"], totals["cacheWriteTokens"], totals["errors"] = cacheRead, cacheWrite, errors
+	totals["terminated"] = terminated
 	if timed > 0 {
 		totals["avgDurationMs"] = durationSum / timed
 	}
@@ -142,7 +143,7 @@ func (h *Handler) usageDailySeries(ctx context.Context, since string) ([]map[str
 // usageBreakdown groups by one expression. Null/empty keys are labelled so the
 // UI can show unattributed requests without hiding them.
 func (h *Handler) usageBreakdown(ctx context.Context, expression, where string, args []any) ([]map[string]any, error) {
-	query := "SELECT COALESCE(NULLIF(" + expression + ",''),'(unattributed)') AS k,COUNT(*),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(CASE WHEN status < 200 OR status >= 300 THEN 1 ELSE 0 END),0) FROM usage_events" + where + " GROUP BY k ORDER BY COUNT(*) DESC, k LIMIT 50"
+	query := "SELECT COALESCE(NULLIF(" + expression + ",''),'(unattributed)') AS k,COALESCE(SUM(CASE WHEN termination = '' THEN 1 ELSE 0 END),0) AS n,COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(CASE WHEN termination = '' AND (status < 200 OR status >= 300) THEN 1 ELSE 0 END),0) FROM usage_events" + where + " GROUP BY k ORDER BY n DESC, k LIMIT 50"
 	rows, err := h.opts.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err

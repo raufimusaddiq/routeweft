@@ -121,8 +121,8 @@ func (h *Handler) overview(w http.ResponseWriter, r *http.Request) error {
 		{&nodes, "SELECT COUNT(*) FROM provider_nodes"},
 		{&connections, "SELECT COUNT(*) FROM provider_connections WHERE enabled=1"},
 		{&keys, "SELECT COUNT(*) FROM api_keys WHERE enabled=1 AND paused=0"},
-		{&requests, "SELECT COUNT(*) FROM usage_events"},
-		{&failed, "SELECT COUNT(*) FROM usage_events WHERE status >= 400"},
+		{&requests, "SELECT COUNT(*) FROM usage_events WHERE termination = ''"},
+		{&failed, "SELECT COUNT(*) FROM usage_events WHERE termination = '' AND status >= 400"},
 	}
 	for _, query := range queries {
 		if err := h.opts.DB.QueryRowContext(r.Context(), query.query).Scan(query.dst); err != nil {

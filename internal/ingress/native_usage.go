@@ -57,11 +57,11 @@ func (h *Handler) relayNative(w http.ResponseWriter, r *http.Request, response *
 	}
 	termination := ""
 	switch {
-	case tw.failed:
-		termination = TerminationClientAbandoned
-	case !complete && r.Context().Err() != nil:
-		// The client left. The upstream kept generating and was billed, so the
-		// request is recorded with whatever usage had arrived.
+	case tw.failed || r.Context().Err() != nil:
+		// The client left, however far the relay got: the context is the
+		// authority, not a read error that a fast upstream may never produce.
+		// The upstream kept generating and was billed, so the request is
+		// recorded with whatever usage had arrived.
 		termination = TerminationClientAbandoned
 	case !complete:
 		termination = TerminationUpstreamTruncated

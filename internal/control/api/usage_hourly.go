@@ -61,7 +61,7 @@ func (h *Handler) handleUsageHourly(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.opts.DB.QueryContext(r.Context(), `SELECT strftime('%Y-%m-%dT%H:00:00Z',created_at) AS hour,
-		COUNT(*),COALESCE(SUM(CASE WHEN status < 200 OR status >= 300 THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN termination = '' THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN termination = '' AND (status < 200 OR status >= 300) THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(input_tokens + output_tokens),0)
 		FROM usage_events`+where+` GROUP BY hour ORDER BY hour`, args...)
 	if err != nil {
