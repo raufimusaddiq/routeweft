@@ -28,6 +28,7 @@ jobs:
       - run: node compat/parity/inventory.mjs
       - run: go test -race ./internal/app -run TestPinnedSystemOneDifferential -count=1
       - run: go test -race ./internal/security ./internal/ingress ./internal/providers/shared
+      - run: go test -race ./internal/parity ./internal/protocol/hub -count=1
 
   go:
     runs-on: ubuntu-latest

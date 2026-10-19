@@ -90,7 +90,7 @@ Prefer the cheapest correct path:
 
 1. native passthrough when safe;
 2. native normalization when transforms require parsing;
-3. canonical translation only when source/target protocols differ.
+3. translation through the OpenAI Chat hub (BDR-025) only when source/target protocols differ.
 
 Do not decode/re-encode streamed chunks unnecessarily.
 
