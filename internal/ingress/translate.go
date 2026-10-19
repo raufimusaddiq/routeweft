@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/raufimusaddiq/routeweft/internal/protocol/hub"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 )
 
 // CanTranslate declares the implemented protocol pairs, independent of providers.
 func CanTranslate(source, target string) bool {
-	return source == openai.ChatProtocol && target == openai.ResponsesProtocol ||
-		source == openai.ResponsesProtocol && target == openai.ChatProtocol
+	return source != target && hub.CanTranslate(source, target)
 }
 
 func (h *Handler) translationAvailable(source, target string, compact bool) bool {

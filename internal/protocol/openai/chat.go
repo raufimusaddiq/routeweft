@@ -1,5 +1,5 @@
 // Package openai owns OpenAI wire adapters. PR 7 delivers the Chat
-// Completions adapter: native passthrough first, canonical translation hooks
+// Completions adapter: native passthrough first, hub translation hooks
 // for later provider PRs (SPEC sections 9-10, PRD-API-005/007).
 package openai
 
