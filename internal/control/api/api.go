@@ -187,6 +187,8 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.Handle("DELETE /admin/v1/connections/{id}", h.requireSessionHandler(http.HandlerFunc(h.handleDeleteConnection)))
 	mux.Handle("POST /admin/v1/oauth/{provider}/start", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthStart)))
 	mux.Handle("POST /admin/v1/oauth/{provider}/callback", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthCallback)))
+	mux.Handle("POST /admin/v1/oauth/{provider}/device", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthDeviceStart)))
+	mux.Handle("POST /admin/v1/oauth/{provider}/poll", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthDevicePoll)))
 	mux.Handle("POST /admin/v1/connections/{id}/test", h.requireSessionHandler(http.HandlerFunc(h.handleTestConnection)))
 	mux.Handle("POST /admin/v1/connections/{id}/test-models", h.requireSessionHandler(http.HandlerFunc(h.handleTestModels)))
 	mux.Handle("POST /admin/v1/connections/{id}/discover", h.requireSessionHandler(http.HandlerFunc(h.handleDiscoverModels)))

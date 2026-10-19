@@ -16,6 +16,8 @@ type Props = { onUnauthorized: () => void }
 
 // Providers that offer browser sign-in; the rest keep the paste fields.
 const OAUTH_LABELS: Record<string, string> = { claude: 'Claude', codex: 'Codex' }
+const DEVICE_LABELS: Record<string, string> = { kilocode: 'Kilo Code' }
+type DeviceFlow = { state: string; userCode: string; verificationUrl: string; intervalSeconds: number }
 const OAUTH_HINTS: Record<OAuthFlow['completion'], string> = {
   code: 'Sign in on the provider page, then copy the code it shows and paste it below.',
   'redirect-url': 'Sign in on the provider page. Your browser then goes to an address on localhost that will not load; copy that full address from the address bar and paste it below.',
@@ -50,6 +52,7 @@ export function Providers({ onUnauthorized }: Props) {
   const [account, setAccount] = useState({ name: '', identity: '', authKind: '', accessToken: '', refreshToken: '', cookie: '' })
   const [oauthFlow, setOauthFlow] = useState<OAuthFlow | null>(null)
   const [oauthInput, setOauthInput] = useState('')
+  const [deviceFlow, setDeviceFlow] = useState<DeviceFlow | null>(null)
   const [manual, setManual] = useState({ id: '', name: '', contextWindow: '', capabilities: '' })
   const [alias, setAlias] = useState('')
   const [aliasTarget, setAliasTarget] = useState('')
@@ -84,6 +87,30 @@ export function Providers({ onUnauthorized }: Props) {
   }, [onUnauthorized])
 
   useEffect(() => { void load() }, [load])
+  // Device sign-in: the operator approves on the provider's page; poll until the
+  // server reports the attempt ended. The server also throttles polling.
+  useEffect(() => {
+    if (!deviceFlow) return
+    let cancelled = false
+    const flow = deviceFlow
+    const timer = window.setTimeout(async function poll() {
+      if (cancelled) return
+      try {
+        const result = await send(`/oauth/${encodeURIComponent(selected)}/poll`, 'POST', { state: flow.state }) as { status: string }
+        if (cancelled) return
+        if (result.status === 'connected') {
+          setDeviceFlow(null); setAccountOpen(false); setAccount({ name: '', identity: '', authKind: '', accessToken: '', refreshToken: '', cookie: '' })
+          setNotice('Provider connection saved.'); await load(); setReload(value => value + 1)
+          return
+        }
+        window.setTimeout(poll, Math.max(flow.intervalSeconds, 2) * 1000)
+      } catch (cause) {
+        if (cancelled) return
+        setDeviceFlow(null); setError(cause instanceof Error ? cause.message : 'Sign-in failed.')
+      }
+    }, Math.max(flow.intervalSeconds, 2) * 1000)
+    return () => { cancelled = true; window.clearTimeout(timer) }
+  }, [deviceFlow, selected, load])
   useEffect(() => () => { modelProbeController.current?.abort(); usageAbort.current?.abort() }, [])
 
   const selectedProvider = providers.find(provider => provider.id === selected)
@@ -186,6 +213,13 @@ export function Providers({ onUnauthorized }: Props) {
     })
   }
 
+  async function startDevice() {
+    if (!selectedProvider || !account.name.trim() || !account.identity.trim()) return
+    await action('device-start', '', async () => {
+      setDeviceFlow(await send(`/oauth/${encodeURIComponent(selected)}/device`, 'POST', { name: account.name, identity: account.identity }) as DeviceFlow)
+    })
+  }
+
   async function finishOAuth() {
     if (!oauthFlow || !oauthInput.trim()) return
     // The attempt is single-use: it ends here whether or not the provider accepts the code.
@@ -260,7 +294,7 @@ export function Providers({ onUnauthorized }: Props) {
 
   const option = (row: typeof rows[number]) => {
     const bad = row.requests > 0 && badRate(row.errors, row.requests, fleet)
-    return <button className={`provider-option${selected === row.provider.id ? ' provider-option-selected' : ''}`} type="button" key={row.provider.id} onClick={() => { setSelected(row.provider.id); setAccountOpen(false); setOauthFlow(null); setOauthInput(''); setConnectionPage(1); setSeedPage(1) }}>
+    return <button className={`provider-option${selected === row.provider.id ? ' provider-option-selected' : ''}`} type="button" key={row.provider.id} onClick={() => { setSelected(row.provider.id); setAccountOpen(false); setOauthFlow(null); setOauthInput(''); setDeviceFlow(null); setConnectionPage(1); setSeedPage(1) }}>
       <Status tone={tone(row)}><strong>{row.provider.id}</strong></Status>
       <span className="provider-option-meta">{row.provider.authModes.join(' / ') || row.provider.auth} · {row.provider.transports.length} transport{row.provider.transports.length === 1 ? '' : 's'}{row.total ? ` · ${row.provider.enabledAccounts}/${row.total} on` : ''}</span>
       <span className="ed-bar" aria-hidden="true"><span style={{ width: `${share(row.requests, peak)}%` }} /></span>
@@ -301,6 +335,11 @@ export function Providers({ onUnauthorized }: Props) {
       </div>
 
       {accountOpen && <form className="detail-panel provider-form" onSubmit={event => void createAccount(event)}><div className="section-heading"><div><h3>New connection</h3><p>Credential material stays server-side and is sealed at rest.</p></div><button className="button-ghost" type="button" onClick={() => { setAccountOpen(false); setOauthFlow(null); setOauthInput('') }}>Close</button></div><div className="provider-form-grid"><label>Account name<input required value={account.name} onChange={event => setAccount({ ...account, name: event.target.value })} /></label><label>Stable account identity<input required value={account.identity} onChange={event => setAccount({ ...account, identity: event.target.value })} /></label><label>Authentication<select value={account.authKind} onChange={event => { setOauthFlow(null); setOauthInput(''); setAccount({ ...account, authKind: event.target.value }) }}>{(selectedProvider.authModes.length ? selectedProvider.authModes : [selectedProvider.auth]).map(mode => <option key={mode} value={mode}>{mode}</option>)}</select></label>
+        {account.authKind === 'oauth' && DEVICE_LABELS[selected] && <div className="wide-field oauth-panel" role="group" aria-label={`Sign in with ${DEVICE_LABELS[selected]}`}>
+          {!deviceFlow ? <><p>Sign in with the provider instead of copying tokens by hand. Enter an account name and identity first.</p><div><button className="button-primary" type="button" disabled={busy !== '' || !account.name.trim() || !account.identity.trim()} onClick={() => void startDevice()}>{busy === 'device-start' ? 'Starting…' : `Sign in with ${DEVICE_LABELS[selected]}`}</button></div></>
+            : <><p>Open the page below and confirm this code. This dashboard finishes the connection on its own once you approve.</p><p><code className="technical-value" aria-label="Device code">{deviceFlow.userCode}</code></p><div className="oauth-actions"><a className="button-secondary" href={deviceFlow.verificationUrl} target="_blank" rel="noopener noreferrer">Open {DEVICE_LABELS[selected]} sign-in page</a><button className="button-ghost" type="button" onClick={() => setDeviceFlow(null)}>Cancel</button></div><p role="status">Waiting for approval…</p></>}
+          <p>Or paste tokens manually below.</p>
+        </div>}
         {account.authKind === 'oauth' && OAUTH_LABELS[selected] && <div className="wide-field oauth-panel" role="group" aria-label={`Sign in with ${OAUTH_LABELS[selected]}`}>
           {!oauthFlow ? <><p>Sign in with the provider instead of copying tokens by hand. Enter an account name and identity first.</p><div><button className="button-primary" type="button" disabled={busy !== '' || !account.name.trim() || !account.identity.trim()} onClick={() => void startOAuth()}>{busy === 'oauth-start' ? 'Starting…' : `Sign in with ${OAUTH_LABELS[selected]}`}</button></div></>
             : <><p>{OAUTH_HINTS[oauthFlow.completion]}</p><div><a className="button-secondary" href={oauthFlow.authorizeUrl} target="_blank" rel="noopener noreferrer">Open {OAUTH_LABELS[selected]} sign-in page</a></div>
