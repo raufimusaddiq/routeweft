@@ -109,7 +109,14 @@ export function topByRequests<T extends { id: string; requests: number }>(rows: 
   return [...rows].sort((a, b) => b.requests - a.requests || a.id.localeCompare(b.id)).slice(0, count)
 }
 
-// Responses that count as failures: the same classification the status marks use (client and server errors).
+// A failure is any response that is not a 2xx, exactly the API's definition of `errors`
+// (internal/control/api/usage_summary.go: status < 200 OR status >= 300), so class breakdowns and the totals agree.
+// Redirects therefore count as failures here even though their mark is neutral (see statusTone).
+export function isFailure(status: number | string) {
+  const code = typeof status === 'number' ? status : Number.parseInt(status, 10)
+  return !(code >= 200 && code < 300)
+}
+
 export function failureStatuses<T extends { key: string; requests: number }>(statuses: T[]) {
-  return statuses.filter(item => { const tone = statusTone(item.key); return tone === 'warn' || tone === 'bad' }).sort((a, b) => b.requests - a.requests)
+  return statuses.filter(item => isFailure(item.key)).sort((a, b) => b.requests - a.requests)
 }

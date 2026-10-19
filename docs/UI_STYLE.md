@@ -121,6 +121,10 @@ Implemented in `ui/src/editorial.tsx` and `ui/src/style.css`.
 - **Status is never colour alone:** an 8px square (`.dot`) beside the word. One
   classification serves every mark: HTTP 2xx good, 3xx idle (a hollow square), 4xx warn, 5xx bad.
   A provider's square is red under the same rule as its error figure (below).
+  A *failure* is any response that is not a 2xx, the API's own definition of
+  `errors` (`usage_summary.go`), so "failed", "Succeeded" and "Largest failure"
+  always agree; redirects count in those totals though their mark is neutral.
+  The rule lives in `isFailure()` in `ui/src/format.ts`.
 - **Accent surface** (`.accent-surface`): exactly one per page, marking the most
   important live thing (Overview: the live card; Usage: the daily chart plate;
   Providers: the provider summary banner; other pages: their toolbar or primary

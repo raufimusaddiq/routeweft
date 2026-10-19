@@ -45,6 +45,7 @@ export function Providers({ onUnauthorized }: Props) {
   const [aliasTarget, setAliasTarget] = useState('')
   const [price, setPrice] = useState({ modelId: '', input: '', output: '', cacheRead: '', cacheWrite: '' })
   const modelProbeController = useRef<AbortController | null>(null)
+  const usageAbort = useRef<AbortController | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -62,7 +63,10 @@ export function Providers({ onUnauthorized }: Props) {
       setProviders([...loadedProviders, ...genericProviders])
       setProxyPools(loadedPools)
       // Traffic and error rates enrich the list; the catalog works without them.
-      void fetch('/admin/v1/usage/summary?period=30d', { credentials: 'same-origin' }).then(response => (response.ok ? response.json() : null)).then(value => setUsage(value as Summary | null)).catch(() => setUsage(null))
+      usageAbort.current?.abort()
+      const usageController = new AbortController()
+      usageAbort.current = usageController
+      void fetch('/admin/v1/usage/summary?period=30d', { credentials: 'same-origin', signal: usageController.signal }).then(response => (response.ok ? response.json() : null)).then(value => { if (!usageController.signal.aborted) setUsage(value as Summary | null) }).catch(() => { if (!usageController.signal.aborted) setUsage(null) })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not load Providers.')
       setLoadFailed(true)
@@ -70,7 +74,7 @@ export function Providers({ onUnauthorized }: Props) {
   }, [onUnauthorized])
 
   useEffect(() => { void load() }, [load])
-  useEffect(() => () => modelProbeController.current?.abort(), [])
+  useEffect(() => () => { modelProbeController.current?.abort(); usageAbort.current?.abort() }, [])
 
   const selectedProvider = providers.find(provider => provider.id === selected)
   const selectedNode = nodes.find(node => node.kind === 'generic' && node.providerId === selected)

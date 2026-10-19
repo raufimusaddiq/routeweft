@@ -46,7 +46,6 @@ export function Overview({ onUnauthorized }: Props) {
   const lighter = weekendLighter(series)
   const ghost = (index: number) => (prior && index >= n - 7 ? series[index - 7].requests : null)
   const failures = week ? failureStatuses(week.statuses) : []
-  const failureTotal = failures.reduce((total, item) => total + item.requests, 0)
   const shown = events.slice(0, 7)
   const slow = [...shown].sort((a, b) => (b.durationMs ?? 0) - (a.durationMs ?? 0))[0]
   const fast = [...shown].sort((a, b) => (a.durationMs ?? 0) - (b.durationMs ?? 0))[0]
@@ -74,7 +73,7 @@ export function Overview({ onUnauthorized }: Props) {
     {n > 0 && t && m && peak && <Row gap="s" label="Requests per day">
       <Main title="Requests per day">
         <figure className="ed-figure">
-          <BarChart points={points} unit="requests" title="Requests per day, 30 days" shade={isWeekend} current={index => index >= n - 7} ghost={ghost} reference={{ value: average, label: `30-day average ${num(average)}` }} />
+          <BarChart points={points} unit="requests" title="Requests per day, 30 days" shade={isWeekend} current={index => index >= n - 7} ghost={ghost} reference={{ value: average }} />
           <figcaption><Caption kicker="Fig. 1">Last 30 days. Cyan bars are this week; each white tick is the same day a week earlier. The dashed line is the 30-day average ({num(average)}), weekends shaded.</Caption></figcaption>
         </figure>
       </Main>
@@ -117,13 +116,13 @@ export function Overview({ onUnauthorized }: Props) {
       <Main title="Outcomes">
         <figure className="ed-figure">
           <StackedBar title="Response status counts" segments={week.statuses.map(item => ({ key: item.key, label: item.key, value: item.requests, tone: statusTone(item.key) }))} />
-          <figcaption><Caption kicker="Fig. 2">Responses in the last 7 days by status code.</Caption></figcaption>
+          <figcaption><Caption kicker="Fig. 2">Responses in the last 7 days by status code. A failure is any response that is not a 2xx, redirects included.</Caption></figcaption>
         </figure>
       </Main>
       <Margin>
         <dl className="ed-facts">
           <Fact label="Succeeded" value={pct(100 - err)} note={`${num(t.requests - t.errors)} of ${num(t.requests)} responses`} />
-          {failures[0] && <Fact label="Largest failure" value={failures[0].key} note={`${num(failures[0].requests)} of ${num(failureTotal)} failures (${Math.round((failures[0].requests / Math.max(1, failureTotal)) * 100)}%)`} />}
+          {failures[0] && <Fact label="Largest failure" value={failures[0].key} note={`${num(failures[0].requests)} of ${num(t.errors)} failures (${Math.round((failures[0].requests / Math.max(1, t.errors)) * 100)}%)`} />}
         </dl>
       </Margin>
     </Row>}

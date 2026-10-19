@@ -58,7 +58,7 @@ const { join } = require('node:path');
           }));
           const states = ['--danger', '--success', '--warning', '--info'].map(token => ({ token, ratio: ratio(rgba(getComputedStyle(document.documentElement).getPropertyValue(token)), background(document.body)) }));
           const sizes = [...new Set(elements.filter(visible).filter(element => [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim())).map(element => getComputedStyle(element).fontSize))].sort((a, b) => parseFloat(a) - parseFloat(b));
-          const eleven = elements.filter(visible).filter(element => [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim()) && getComputedStyle(element).fontSize === '11px' && !element.closest('svg, .sparkline-caption')).map(element => element.tagName + '.' + element.className);
+          const eleven = elements.filter(visible).filter(element => [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim()) && getComputedStyle(element).fontSize === '11px' && !element.closest('svg')).map(element => element.tagName + '.' + element.className);
           const accents = [...document.querySelectorAll('.accent-surface')].filter(visible).length;
           const active = document.querySelector('.nav-link-active');
           const marker = getComputedStyle(active, '::before');

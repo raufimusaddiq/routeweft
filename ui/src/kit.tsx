@@ -26,7 +26,7 @@ function useWidth(fallback: number) {
 }
 
 // Bar chart with axis, gridlines, peak label and a hover/keyboard readout. Plain SVG, no dependencies.
-export function BarChart({ points, unit, title, shade, current, ghost, reference }: { points: ChartPoint[]; unit: string; title: string; shade?: (label: string) => boolean; current?: (index: number) => boolean; ghost?: (index: number) => number | null; reference?: { value: number; label: string } }) {
+export function BarChart({ points, unit, title, shade, current, ghost, reference }: { points: ChartPoint[]; unit: string; title: string; shade?: (label: string) => boolean; current?: (index: number) => boolean; ghost?: (index: number) => number | null; reference?: { value: number } }) {
   const [ref, width] = useWidth(640)
   const [active, setActive] = useState<number | null>(null)
   if (points.length === 0) return null

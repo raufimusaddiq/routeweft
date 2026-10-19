@@ -53,7 +53,6 @@ export function Usage({ onUnauthorized }: Props) {
   const fleet = t ? rate(t.errors, t.requests) : 0
   const failures = summary ? failureStatuses(summary.statuses) : []
   const topFail = failures[0]
-  const failureTotal = failures.reduce((total, item) => total + item.requests, 0)
   const worst = summary ? outlier(summary) : null
   const topProvider = Math.max(1, ...(summary?.providers.map(item => item.requests) ?? [1]))
   const lastWeek = prior ? sum(prior, 'requests') : undefined
@@ -84,7 +83,7 @@ export function Usage({ onUnauthorized }: Props) {
           {points.length === 0
             ? <EmptyState reason="No attributed usage in this period.">{period !== 'all' && <button className="button-secondary" type="button" onClick={() => setPeriod('all')}>Show all time</button>}</EmptyState>
             : <figure className="ed-figure usage-chart-panel accent-surface ed-plate">
-              <BarChart points={points} unit="requests" title="Requests per day" current={prior ? (index => index >= n - 7) : undefined} ghost={prior ? ghost : undefined} reference={n > 1 ? { value: t.requests / days, label: `average ${num(t.requests / days)}` } : undefined} />
+              <BarChart points={points} unit="requests" title="Requests per day" current={prior ? (index => index >= n - 7) : undefined} ghost={prior ? ghost : undefined} reference={n > 1 ? { value: t.requests / days } : undefined} />
               <figcaption><Caption kicker="Fig. 1">{prior ? `Cyan bars are the latest 7 days; each tick is the same day a week earlier. Dashed line: average ${num(t.requests / days)} a day.` : 'One bar per day.'}</Caption></figcaption>
             </figure>}
         </Main>
@@ -98,8 +97,8 @@ export function Usage({ onUnauthorized }: Props) {
         </Margin>
       </Row>
 
-      {topFail && failureTotal > 0 && <Statement>
-        <strong>{topFail.key}</strong> causes <strong>{Math.round((topFail.requests / failureTotal) * 100)}%</strong> of failures.{worst && badRate(worst.errors, worst.requests, fleet) ? <> <span className="ed-quiet">{worst.key} is the weakest provider at {pct(worst.err)}.</span></> : null}
+      {topFail && t.errors > 0 && <Statement>
+        <strong>{topFail.key}</strong> causes <strong>{Math.round((topFail.requests / Math.max(1, t.errors)) * 100)}%</strong> of failures.{worst && badRate(worst.errors, worst.requests, fleet) ? <> <span className="ed-quiet">{worst.key} is the weakest provider at {pct(worst.err)}.</span></> : null}
       </Statement>}
 
       <Row gap="s" label="Providers and models">
@@ -131,7 +130,7 @@ export function Usage({ onUnauthorized }: Props) {
             ? <EmptyState reason="No responses in this period." />
             : <figure className="ed-figure">
               <StackedBar title="Response status counts" segments={summary.statuses.map(item => ({ key: item.key, label: item.key, value: item.requests, tone: statusTone(item.key) }))} />
-              <figcaption><Caption kicker="Fig. 2">Responses by status code.</Caption></figcaption>
+              <figcaption><Caption kicker="Fig. 2">Responses by status code. A failure is any response that is not a 2xx, redirects included.</Caption></figcaption>
             </figure>}
         </Main>
         <Margin>

@@ -651,7 +651,7 @@ tbody tr:hover { background: var(--surface-2); }
 .page-error.auth-error { display: flex; align-items: center; }
 .page-error.auth-error p { flex: 1; margin: 0; }
 tr.usage-event { display: table-row; }
-.sparkline-caption { position: absolute; right: 0; bottom: -16px; color: var(--text-muted); font-family: var(--font-mono); font-size: var(--t-label); }
+.sparkline-caption { position: absolute; right: 0; bottom: -16px; color: var(--text-muted); font-family: var(--font-mono); font-size: var(--t-body); }
 .sparkline { margin-bottom: 16px; }
 
 /* ---- Editorial layer (direction B): a main column and a 300px margin column; labels in sentence case; gaps 40 / 72 / 120 ---- */

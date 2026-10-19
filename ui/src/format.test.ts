@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ago, badRate, compact, delta, isWeekend, outlier, pct, priorWeek, providerTone, rate, failureStatuses, share, statusTone, topByRequests, weekendLighter, type Day, type Summary } from './format.ts'
+import { ago, badRate, compact, delta, isWeekend, outlier, pct, priorWeek, providerTone, rate, failureStatuses, isFailure, share, statusTone, topByRequests, weekendLighter, type Day, type Summary } from './format.ts'
 
 test('compact keeps small numbers exact and abbreviates large ones', () => {
   assert.equal(compact(950), '950')
@@ -104,7 +104,14 @@ test('topByRequests ignores the display order of the list', () => {
   assert.deepEqual(topByRequests([{ id: 'b', requests: 5 }, { id: 'a', requests: 5 }], 1).map(row => row.id), ['a'])
 })
 
-test('failureStatuses counts client and server errors, not redirects', () => {
+test('a failure is any non-2xx response, the same set the API counts as errors', () => {
   const rows = [{ key: '200', requests: 900 }, { key: '302', requests: 50 }, { key: '429', requests: 30 }, { key: '503', requests: 20 }]
-  assert.deepEqual(failureStatuses(rows).map(row => row.key), ['429', '503'])
+  const failures = failureStatuses(rows)
+  assert.deepEqual(failures.map(row => row.key), ['302', '429', '503'])
+  const failed = failures.reduce((total, row) => total + row.requests, 0)
+  assert.equal(failed, 100)
+  assert.equal(100 - (failed / 1000) * 100, 90)
+  assert.equal(isFailure(204), false)
+  assert.equal(isFailure('199'), true)
+  assert.equal(isFailure(302), true)
 })
