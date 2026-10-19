@@ -231,7 +231,8 @@ func (a *App) initialize(ctx context.Context) error {
 				RequestID: outcome.RequestID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
 				ConnectionID: outcome.ConnectionID, APIKeyID: outcome.APIKeyID, Status: outcome.Status,
 				DurationMS: outcome.Duration.Milliseconds(), InputTokens: outcome.InputTokens,
-				OutputTokens: outcome.OutputTokens, CreatedAt: time.Now().UTC(),
+				OutputTokens: outcome.OutputTokens, Termination: outcome.Termination, UsageUnobserved: outcome.UsageUnobserved,
+				CreatedAt: time.Now().UTC(),
 			})
 			usage.Record(telemetry.Event{
 				Class:        telemetry.Critical,
@@ -246,6 +247,7 @@ func (a *App) initialize(ctx context.Context) error {
 				CacheRead:    outcome.CacheRead,
 				CacheWrite:   outcome.CacheWrite,
 				DurationMS:   outcome.Duration.Milliseconds(),
+				Termination:  outcome.Termination, UsageUnobserved: outcome.UsageUnobserved,
 			})
 		},
 	})

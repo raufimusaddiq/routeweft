@@ -815,6 +815,19 @@ Under queue pressure:
 
 Normal success path still does not synchronously write SQLite.
 
+### 21.1 Native OpenAI Chat and Responses accounting
+
+A successful native Chat or Responses request produces exactly one usage record. Usage is read by a tee on the relayed bytes (a streaming scanner for SSE, a bounded capture of the top-level `usage` object for a JSON body); the response is never buffered to be measured, and the client receives the upstream bytes unchanged.
+
+The record carries the upstream's reported figures. Input, output and cache counts are never summed into a total or reconciled against `total_tokens`. `reasoning_tokens` is already part of the upstream's output count and is not recorded separately until #119 defines its representation.
+
+A record says what is known and what is not:
+
+- `usage_observed = 0` means the upstream never reported usage (an abandoned stream that ended before the usage chunk, a Chat stream without `stream_options.include_usage`, a body with no `usage`). The token columns then hold no measurement and readers must not treat them as measured zero; the admin API omits the counts for such a row.
+- `termination` is empty for a request that ran to its end, `client_abandoned` when the client went away mid-flight, and `upstream_truncated` when the upstream stream ended without its terminal event.
+
+An abandoned stream is still recorded, because the upstream kept generating and was billed. Whatever usage had arrived is kept.
+
 ## 22. Admin/control API
 
 All new UI-facing control APIs are versioned under:

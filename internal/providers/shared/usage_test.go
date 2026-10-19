@@ -70,3 +70,26 @@ func TestParseUsageReportsAbsentUsage(t *testing.T) {
 		}
 	}
 }
+
+func TestParseUsageNestedResponsesReadsCachedTokens(t *testing.T) {
+	body := `{"type":"response.completed","response":{"usage":{"input_tokens":80,"output_tokens":9,"input_tokens_details":{"cached_tokens":48}}}}`
+	got, ok := ParseUsage(FamilyOpenAIResponses, []byte(body))
+	if !ok || got.InputTokens != 80 || got.OutputTokens != 9 || got.CacheReadTokens != 48 {
+		t.Fatalf("usage=%+v ok=%v", got, ok)
+	}
+}
+
+// The upstream's own figures are emitted as reported. total_tokens disagrees
+// with its parts here on purpose and must change nothing; reasoning_tokens is
+// already inside the reported output and is not read separately (see #119).
+func TestParseUsageEmitsReportedFiguresWithoutReconciling(t *testing.T) {
+	for _, body := range []string{
+		`{"usage":{"prompt_tokens":100,"completion_tokens":30,"total_tokens":999,"completion_tokens_details":{"reasoning_tokens":25}}}`,
+		`{"response":{"usage":{"input_tokens":100,"output_tokens":30,"total_tokens":999,"output_tokens_details":{"reasoning_tokens":25}}}}`,
+	} {
+		got, ok := ParseUsage(FamilyOpenAIResponses, []byte(body))
+		if !ok || got.InputTokens != 100 || got.OutputTokens != 30 || got.CacheReadTokens != 0 {
+			t.Fatalf("body=%s usage=%+v ok=%v", body, got, ok)
+		}
+	}
+}

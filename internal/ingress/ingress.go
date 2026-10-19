@@ -91,7 +91,22 @@ type RequestOutcome struct {
 	CacheWrite   int64
 	Duration     time.Duration
 	Stream       bool
+	// Termination is empty for a request that ran to its natural end. Otherwise
+	// it says why not: TerminationClientAbandoned when the client went away
+	// mid-flight (the upstream was still billed), TerminationUpstreamTruncated
+	// when the upstream ended without its terminal event.
+	Termination string
+	// UsageUnobserved means the upstream never reported usage for this request
+	// (an abandoned stream that ended before the usage chunk, or an upstream
+	// that omits it). The token fields then hold no measurement: zero is not
+	// "measured zero". It is false on every path that predates this field.
+	UsageUnobserved bool
 }
+
+const (
+	TerminationClientAbandoned   = "client_abandoned"
+	TerminationUpstreamTruncated = "upstream_truncated"
+)
 
 // attribution carries the authenticated key id from authorize to the completion
 // record without re-running key lookup, so a key revoked mid-request is still
@@ -170,10 +185,16 @@ func (h *Handler) clientFor(provider routing.ProviderRef) *http.Client {
 // and the client did not cancel. requestID is the correlation id the app
 // middleware assigned and echoed on the request.
 func (h *Handler) emitOutcome(r *http.Request, provider routing.ProviderRef, status int, stream bool, usage promptcache.Usage, started time.Time) {
-	if h.opts.OnRequestComplete == nil {
+	if r != nil && r.Context().Err() != nil {
 		return
 	}
-	if r != nil && r.Context().Err() != nil {
+	h.publishOutcome(r, provider, status, stream, usage, started, "", false)
+}
+
+// publishOutcome builds and publishes one record without the cancellation
+// guard, so a request the client abandoned can still be accounted for.
+func (h *Handler) publishOutcome(r *http.Request, provider routing.ProviderRef, status int, stream bool, usage promptcache.Usage, started time.Time, termination string, unobserved bool) {
+	if h.opts.OnRequestComplete == nil {
 		return
 	}
 	requestID := ""
@@ -190,19 +211,24 @@ func (h *Handler) emitOutcome(r *http.Request, provider routing.ProviderRef, sta
 			apiKeyID = *id
 		}
 	}
+	if unobserved {
+		usage = promptcache.Usage{}
+	}
 	h.opts.OnRequestComplete(RequestOutcome{
-		APIKeyID:     apiKeyID,
-		RequestID:    requestID,
-		ProviderID:   provider.ProviderID,
-		ModelID:      provider.UpstreamModel,
-		ConnectionID: provider.ConnectionID,
-		Status:       status,
-		InputTokens:  usage.InputTokens,
-		OutputTokens: usage.OutputTokens,
-		CacheRead:    usage.CacheReadTokens,
-		CacheWrite:   usage.CacheWriteTokens,
-		Duration:     duration,
-		Stream:       stream,
+		APIKeyID:        apiKeyID,
+		RequestID:       requestID,
+		ProviderID:      provider.ProviderID,
+		ModelID:         provider.UpstreamModel,
+		ConnectionID:    provider.ConnectionID,
+		Status:          status,
+		InputTokens:     usage.InputTokens,
+		OutputTokens:    usage.OutputTokens,
+		CacheRead:       usage.CacheReadTokens,
+		CacheWrite:      usage.CacheWriteTokens,
+		Duration:        duration,
+		Stream:          stream,
+		Termination:     termination,
+		UsageUnobserved: unobserved,
 	})
 }
 
@@ -638,7 +664,13 @@ func streamTerminalEvent(family, eventType string) bool {
 	if family == shared.FamilyAnthropic {
 		return eventType == "message_stop"
 	}
-	return eventType == "response.completed" || eventType == "response.done"
+	switch eventType {
+	case "response.completed", "response.done", "response.incomplete", "response.failed":
+		// incomplete and failed are terminal Responses events and still report
+		// the usage the upstream billed.
+		return true
+	}
+	return false
 }
 
 // copyResponsesStream relays Responses SSE events incrementally. It holds one

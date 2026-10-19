@@ -134,15 +134,7 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 		h.emitOutcome(r, provider, response.StatusCode, stream, promptcache.Usage{}, started)
 		return
 	}
-	if stream {
-		if chat != nil {
-			h.copyStream(w, r, response)
-		} else {
-			h.copyResponsesStream(w, r, response)
-		}
-		return
-	}
-	io.Copy(w, response.Body)
+	h.relayNative(w, r, response, provider, source, stream, started)
 }
 
 // writeClineEnvelope relays a non-stream Cline response with the gateway's
