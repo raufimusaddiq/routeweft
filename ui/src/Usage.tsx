@@ -46,8 +46,12 @@ export function Usage({ onUnauthorized }: Props) {
   const raw = summary?.series ?? []
   const series = period !== '24h' && raw.length > 0 ? denseDays(raw, periodDays(period, raw, utcDay()), utcDay()) : raw
   const n = series.length
-  const days = Math.max(1, period === '24h' ? 1 : n || (period === '7d' ? 7 : 30))
-  const dailyAverage = n > 0 ? sum(series, 'requests') / n : 0
+  // Zero-filled days before the first recorded day are not observations, so averages start there.
+  const firstRaw = raw[0]?.day
+  const observed = firstRaw ? series.filter(day => day.day >= firstRaw) : series
+  const days = Math.max(1, period === '24h' ? 1 : observed.length || (period === '7d' ? 7 : 30))
+  const dailyAverage = observed.length > 0 ? sum(observed, 'requests') / observed.length : 0
+  const averageNote = observed.length < n ? ` over the ${observed.length} recorded days` : ''
   const points = series.map(day => ({ label: day.day, short: day.day.slice(5), value: day.requests }))
   const prior = priorWeek(series)
   const ghost = (index: number) => (prior && index >= n - 7 ? series[index - 7].requests : null)
@@ -87,7 +91,7 @@ export function Usage({ onUnauthorized }: Props) {
             ? <EmptyState reason="No attributed usage in this period.">{period !== 'all' && <button className="button-secondary" type="button" onClick={() => setPeriod('all')}>Show all time</button>}</EmptyState>
             : <figure className="ed-figure usage-chart-panel accent-surface ed-plate">
               <BarChart points={points} unit="requests" title="Requests per day" current={prior ? (index => index >= n - 7) : undefined} ghost={prior ? ghost : undefined} reference={n > 1 ? { value: dailyAverage } : undefined} />
-              <figcaption><Caption kicker="Fig. 1">{prior ? `Cyan bars are the latest 7 days; each tick is the same day a week earlier. Dashed line: average ${num(dailyAverage)} successful requests a day.` : 'One bar per day.'}</Caption></figcaption>
+              <figcaption><Caption kicker="Fig. 1">{prior ? `Cyan bars are the latest 7 days; each tick is the same day a week earlier. Dashed line: average ${num(dailyAverage)} successful requests a day${averageNote}.` : 'One bar per day.'}</Caption></figcaption>
             </figure>}
         </Main>
         <Margin>

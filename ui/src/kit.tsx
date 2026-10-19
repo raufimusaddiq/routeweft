@@ -58,7 +58,7 @@ export function BarChart({ points, unit, title, shade, current, ghost, reference
     else if (event.key === 'Escape') setActive(null)
   }
 
-  return <figure className="chart usage-chart" ref={ref}>
+  return <figure className="chart" ref={ref}>
     <div className="chart-readout" aria-live="polite" aria-atomic="true">
       <span>{active === null ? 'Peak' : points[shown].label}</span>
       <strong>{numberFormat.format(points[shown].value)} {unit}</strong>

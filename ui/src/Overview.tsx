@@ -43,11 +43,15 @@ export function Overview({ onUnauthorized }: Props) {
   const up = t ? delta(thisWeek, lastWeek) : null
   const m = month?.totals
   const err30 = m ? rate(m.errors, m.requests) : 0
-  const average = n ? sum(series, 'requests') / n : 0
   const peak = n ? series.reduce((best, day) => (day.requests > best.requests ? day : best), series[0]) : null
-  // Zero-filled days before the first recorded day are not observations, so the weekend ratio starts there.
+  // Zero-filled days before the first recorded day are not observations: the average and the weekend ratio start there.
   const firstRecorded = month?.series[0]?.day
-  const lighter = firstRecorded ? weekendLighter(series.filter(day => day.day >= firstRecorded)) : null
+  const observed = firstRecorded ? series.filter(day => day.day >= firstRecorded) : series
+  const average = observed.length > 0 ? sum(observed, 'requests') / observed.length : 0
+  const averageLabel = observed.length < n ? `average over the ${observed.length} recorded days` : '30-day average'
+  const lighter = firstRecorded ? weekendLighter(observed) : null
+  // The headline count and its percentage come from the same population: successful requests in the daily rollup.
+  const likeForLike = up !== null
   const ghost = (index: number) => (prior && index >= n - 7 ? series[index - 7].requests : null)
   const failures = week ? failureStatuses(week.statuses) : []
   const shown = events.slice(0, 7)
@@ -58,8 +62,8 @@ export function Overview({ onUnauthorized }: Props) {
     <Row gap="s" label="This week">
       <div className="ed-main">
         {t
-          ? <><p className="ed-headline"><strong>{num(t.requests)}</strong> requests this week{up !== null && <>, <strong>{up >= 0 ? '↑' : '↓'} {Math.abs(up).toFixed(1)}%</strong></>}</p>
-            <p className="ed-subline">{up !== null ? 'on the week before. ' : ''}{pct(err)} failed{m ? <>, {err <= err30 ? 'better' : 'worse'} than the <span className="ed-nowrap">30-day {pct(err30)}.</span></> : '.'}</p></>
+          ? <><p className="ed-headline"><strong>{num(likeForLike ? thisWeek : t.requests)}</strong> requests this week{up !== null && <>, <strong>{up >= 0 ? '↑' : '↓'} {Math.abs(up).toFixed(1)}%</strong></>}</p>
+            <p className="ed-subline">{up !== null ? 'on the week before, counting successful requests. ' : ''}{pct(err)} failed{m ? <>, {err <= err30 ? 'better' : 'worse'} than the <span className="ed-nowrap">30-day {pct(err30)}.</span></> : '.'}</p></>
           : <><p className="ed-headline"><strong>{num(overview.traffic.requests)}</strong> requests recorded</p>
             <p className="ed-subline">{num(overview.traffic.errors)} failed. Usage history is not available right now.</p></>}
       </div>
@@ -78,13 +82,13 @@ export function Overview({ onUnauthorized }: Props) {
       <Main title="Requests per day">
         <figure className="ed-figure">
           <BarChart points={points} unit="requests" title="Requests per day, 30 days" shade={isWeekend} current={index => index >= n - 7} ghost={ghost} reference={{ value: average }} />
-          <figcaption><Caption kicker="Fig. 1">Last 30 days. Cyan bars are this week; each white tick is the same day a week earlier. The dashed line is the 30-day average of successful requests ({num(average)} a day), weekends shaded.</Caption></figcaption>
+          <figcaption><Caption kicker="Fig. 1">Last 30 days. Cyan bars are this week; each white tick is the same day a week earlier. The dashed line is the {averageLabel} of successful requests ({num(average)} a day), weekends shaded.</Caption></figcaption>
         </figure>
       </Main>
       <Margin>
         <dl className="ed-facts">
-          <Fact label="This week" value={<>{num(t.requests)} <small>req</small></>} note={up !== null ? `${up >= 0 ? '↑' : '↓'} ${Math.abs(up).toFixed(1)}% vs prior 7 d, successful requests (${num(thisWeek)} vs ${num(lastWeek ?? 0)})` : `${num(thisWeek)} successful requests in the latest 7 days`} />
-          <Fact label="Busiest day" value={<>{num(peak.requests)} <small>req</small></>} note={`${peak.day.slice(5)}, ${Math.round((peak.requests / Math.max(1, average) - 1) * 100)}% above the 30-day average`} />
+          <Fact label="This week" value={<>{num(likeForLike ? thisWeek : t.requests)} <small>req</small></>} note={up !== null ? `${up >= 0 ? '↑' : '↓'} ${Math.abs(up).toFixed(1)}% vs prior 7 d, successful requests (${num(thisWeek)} vs ${num(lastWeek ?? 0)})` : `${num(thisWeek)} successful of ${num(t.requests)} requests in the latest 7 days`} />
+          <Fact label="Busiest day" value={<>{num(peak.requests)} <small>req</small></>} note={`${peak.day.slice(5)}, ${Math.round((peak.requests / Math.max(1, average) - 1) * 100)}% above the ${averageLabel}`} />
           <Fact label="Weekends" value={lighter === null || Math.abs(lighter) < 1 ? '—' : <>{Math.abs(Math.round(lighter))}% <small>{lighter >= 0 ? 'lighter' : 'heavier'}</small></>} note={lighter === null ? 'needs weekday and weekend days' : Math.abs(lighter) < 1 ? 'about the same as weekdays' : `than weekdays, ${n} days`} />
         </dl>
       </Margin>

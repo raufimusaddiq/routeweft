@@ -7,6 +7,10 @@ test('compact keeps small numbers exact and abbreviates large ones', () => {
   assert.equal(compact(12_345), '12k')
   assert.equal(compact(6_800_000), '6.8M')
   assert.equal(compact(21_000_000), '21M')
+  assert.equal(compact(999_499), '999k')
+  assert.equal(compact(999_500), '1.0M')
+  assert.equal(compact(999_999_999), '1.0B')
+  assert.equal(compact(-12_345), '−12k')
 })
 
 test('rate and delta never divide by zero', () => {

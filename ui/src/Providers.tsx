@@ -66,7 +66,7 @@ export function Providers({ onUnauthorized }: Props) {
       usageAbort.current?.abort()
       const usageController = new AbortController()
       usageAbort.current = usageController
-      void fetch('/admin/v1/usage/summary?period=30d', { credentials: 'same-origin', signal: usageController.signal }).then(response => (response.ok ? response.json() : null)).then(value => { if (!usageController.signal.aborted) setUsage(value as Summary | null) }).catch(() => { if (!usageController.signal.aborted) setUsage(null) })
+      void fetch('/admin/v1/usage/summary?period=30d', { credentials: 'same-origin', signal: usageController.signal }).then(response => { if (response.status === 401) { onUnauthorized(); return null } return response.ok ? response.json() : null }).then(value => { if (!usageController.signal.aborted) setUsage(value as Summary | null) }).catch(() => { if (!usageController.signal.aborted) setUsage(null) })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not load Providers.')
       setLoadFailed(true)

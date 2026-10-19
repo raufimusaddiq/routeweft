@@ -209,6 +209,6 @@ No API paths, state logic, workflows or nav definitions change for visual work.
    persistence, OS-theme changes and reduced motion. Record checks not run.
 
 `ROUTEWEFT_SMOKE_ARTIFACTS` selects the screenshot/report directory (default
-`/tmp/routeweft-98-evidence`). Smoke reuses existing control-API fixtures;
+`/tmp/routeweft-ui-evidence`). Smoke reuses existing control-API fixtures;
 Chromium and `playwright-core` are required, as documented in
 `ui/scripts/smoke.sh`.

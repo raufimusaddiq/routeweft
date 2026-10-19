@@ -11,10 +11,18 @@ export const num = (value: number) => numberFormat.format(Math.round(value))
 
 export function compact(value: number) {
   const abs = Math.abs(value)
-  if (abs >= 1e9) return `${(value / 1e9).toFixed(abs >= 1e10 ? 0 : 1)}B`
-  if (abs >= 1e6) return `${(value / 1e6).toFixed(abs >= 1e7 ? 0 : 1)}M`
-  if (abs >= 1e4) return `${(value / 1e3).toFixed(0)}k`
-  return numberFormat.format(Math.round(value))
+  if (abs < 1e4) return numberFormat.format(Math.round(value))
+  const units: [string, number][] = [['B', 1e9], ['M', 1e6], ['k', 1e3]]
+  const render = (suffix: string, divisor: number) => {
+    const scaled = abs / divisor
+    const text = scaled.toFixed(scaled >= 10 ? 0 : 1)
+    return { text, rounded: Number(text), suffix }
+  }
+  let index = units.findIndex(([, divisor]) => abs >= divisor)
+  let result = render(units[index][0], units[index][1])
+  // 999,500 rounds to 1000k: promote to the next unit instead of printing it.
+  if (result.rounded >= 1000 && index > 0) { index -= 1; result = render(units[index][0], units[index][1]) }
+  return `${value < 0 ? '−' : ''}${result.text}${result.suffix}`
 }
 
 export const pct = (value: number, digits = 1) => `${value.toFixed(digits)}%`
