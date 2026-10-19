@@ -68,7 +68,7 @@ Wrapped rows grow with their content; fixed heights must not clip labels.
 - Numbers, IDs, keys, timestamps and status tokens use mono, including metric
   notes, detail values, counts, chart labels and pagination.
 - Tabular numerals inherit throughout the application.
-- Labels: 10-11px, uppercase, tracking approximately `0.08em`.
+- Labels: 10px, uppercase, tracking approximately `0.12em`.
 - Values: approximately 28px, tight tracking. Page titles: 28px on every
   viewport, weight 600, tracking `-0.04em`. Each page uses exactly three computed
   font sizes: 28px (titles, values), 12px (body), 10px (labels, notes).

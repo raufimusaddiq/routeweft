@@ -1,16 +1,10 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
 
+import { niceStep, type Tone } from './chartMath'
+
 const numberFormat = new Intl.NumberFormat()
 
 export type ChartPoint = { label: string; short: string; value: number }
-
-// Round a step up to 1, 2 or 5 times a power of ten so gridlines land on readable numbers.
-function niceStep(raw: number) {
-  if (raw <= 1) return 1
-  const power = 10 ** Math.floor(Math.log10(raw))
-  const unit = raw / power
-  return (unit <= 1 ? 1 : unit <= 2 ? 2 : unit <= 5 ? 5 : 10) * power
-}
 
 function useWidth(fallback: number) {
   const ref = useRef<HTMLDivElement>(null)
@@ -18,7 +12,7 @@ function useWidth(fallback: number) {
   useEffect(() => {
     const node = ref.current
     if (!node) return
-    setWidth(Math.max(240, Math.floor(node.clientWidth)) || fallback)
+    setWidth(Math.max(240, Math.floor(node.clientWidth)))
     if (typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(entries => {
       const next = Math.floor(entries[0].contentRect.width)
@@ -34,6 +28,7 @@ function useWidth(fallback: number) {
 export function BarChart({ points, unit, title }: { points: ChartPoint[]; unit: string; title: string }) {
   const [ref, width] = useWidth(640)
   const [active, setActive] = useState<number | null>(null)
+  if (points.length === 0) return null
   const height = 200
   const margin = { top: 20, right: 8, bottom: 24, left: 44 }
   const innerWidth = Math.max(1, width - margin.left - margin.right)
@@ -63,7 +58,7 @@ export function BarChart({ points, unit, title }: { points: ChartPoint[]; unit: 
   }
 
   return <figure className="chart usage-chart" ref={ref}>
-    <div className="chart-readout" aria-hidden="true">
+    <div className="chart-readout" aria-live="polite" aria-atomic="true">
       <span>{active === null ? 'Peak' : points[shown].label}</span>
       <strong>{numberFormat.format(points[shown].value)} {unit}</strong>
       {active === null && <span>{points[peak].label}</span>}
@@ -94,7 +89,7 @@ export function BarChart({ points, unit, title }: { points: ChartPoint[]; unit: 
 }
 
 // Trend line for a metric card. Needs two or more points; otherwise it renders nothing rather than a fake line.
-export function Sparkline({ values, label }: { values: number[]; label: string }) {
+export function Sparkline({ values, label, caption }: { values: number[]; label: string; caption?: string }) {
   if (values.length < 2) return null
   const min = Math.min(...values)
   const range = Math.max(...values) - min
@@ -104,11 +99,12 @@ export function Sparkline({ values, label }: { values: number[]; label: string }
   return <div className="sparkline">
     <svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"><path d={path} vectorEffect="non-scaling-stroke" /></svg>
     <span className="sparkline-end" style={{ left: `${lastX}%`, top: `${(lastY / 24) * 100}%` }} aria-hidden="true" />
+    {caption && <span className="sparkline-caption">{caption}</span>}
     <span className="sr-only">{label} trend: {values.map(value => numberFormat.format(value)).join(', ')}</span>
   </div>
 }
 
-export type Segment = { key: string; label: string; value: number; tone: 'good' | 'neutral' | 'warn' | 'bad' }
+export type Segment = { key: string; label: string; value: number; tone: Tone }
 
 // Horizontal stacked bar plus a legend whose rows carry the label and count, so colour is never the only signal.
 export function StackedBar({ segments, title }: { segments: Segment[]; title: string }) {

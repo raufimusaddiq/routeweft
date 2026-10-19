@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { BarChart, EmptyState, ErrorNotice, MetricsSkeleton, Skeleton, SkeletonRows, Sparkline, StackedBar, type Segment } from './kit'
+import { BarChart, EmptyState, ErrorNotice, MetricsSkeleton, Skeleton, SkeletonRows, Sparkline, StackedBar } from './kit'
+import { statusTone } from './chartMath'
 
 type Totals = { requests: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; errors: number; avgDurationMs?: number; avgTtftMs?: number }
 type Day = { day: string; requests: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
@@ -15,13 +16,6 @@ const numberFormat = new Intl.NumberFormat()
 function totalTokens(totals: Totals) {
   const tokens = totals.inputTokens + totals.outputTokens
   return numberFormat.format(tokens)
-}
-
-function statusTone(key: string): Segment['tone'] {
-  if (key.startsWith('2')) return 'good'
-  if (key.startsWith('4')) return 'warn'
-  if (key.startsWith('5')) return 'bad'
-  return 'neutral'
 }
 
 function bar(value: number, max: number) {
@@ -115,7 +109,7 @@ export function Usage({ onUnauthorized }: Props) {
       </div>
     </>}
 
-    {!first && <section className="detail-panel usage-log" aria-labelledby="usage-log-title">
+    {!first && (!error || summary) && <section className="detail-panel usage-log" aria-labelledby="usage-log-title">
       <div className="section-heading"><div><h2 id="usage-log-title">Recent requests</h2><p>Latest {events.length} usage events with provider/model/account attribution.</p></div></div>
       {events.length === 0 ? <EmptyState reason="No requests recorded yet. Send a request through the gateway and it will appear here." /> : <div className="table-scroll"><table className="usage-table">
         <thead><tr><th scope="col">Status</th><th scope="col">Provider / model</th><th scope="col" className="num">In</th><th scope="col" className="num">Out</th><th scope="col" className="num">Cache</th><th scope="col" className="num">Latency</th><th scope="col">Request</th><th scope="col">Time</th></tr></thead>

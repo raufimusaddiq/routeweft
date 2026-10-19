@@ -29,7 +29,7 @@ function Metric({ label, value, note, trend, accent }: { label: string; value: s
       <div className="metric-label">{label}</div>
       <p className="metric-value">{value}</p>
       <p className="metric-note">{note}</p>
-      {trend && <Sparkline values={trend} label={`${label} per day`} />}
+      {trend && <Sparkline values={trend} label={`${label}, last 7 days, per day`} caption="Last 7 days" />}
     </section>
   )
 }
