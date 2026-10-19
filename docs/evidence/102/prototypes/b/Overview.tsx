@@ -33,8 +33,8 @@ export function Overview({ onUnauthorized }: { onUnauthorized: () => void }) {
   return <div className="overview-content b-overview" aria-busy={data.loading}>
     <div className="ed-lead">
       <p className="ed-headline">
-        <strong>{num(t.requests)}</strong> requests in the last 7 days, <strong>{up >= 0 ? '▲' : '▼'} {Math.abs(up).toFixed(1)}%</strong> on the week before.
-        {' '}<strong>{pct(err)}</strong> failed, {err <= err30 ? 'better' : 'worse'} than the 30-day <span className="ed-quiet">{pct(err30)}</span>.
+        <strong>{num(t.requests)}</strong> requests in the last 7 days, <strong>{up >= 0 ? '↑' : '↓'} {Math.abs(up).toFixed(1)}%</strong> on the week before.
+        {' '}<strong>{pct(err)}</strong> failed, {err <= err30 ? 'better' : 'worse'} than the <span className="ed-nowrap">30-day <span className="ed-quiet">{pct(err30)}</span></span>.
       </p>
       <section className="ed-now accent-surface" aria-label="Live now">
         <h3 className="tile-label"><Dot tone={ready ? 'good' : 'bad'} /> {ready ? 'Live' : 'Not ready'}</h3>
@@ -44,8 +44,8 @@ export function Overview({ onUnauthorized }: { onUnauthorized: () => void }) {
       </section>
     </div>
 
-    <Fig kicker="Fig. 1" title="Requests per day" caption={<>Last 30 days. Weekends run {Math.round(lighter)}% lighter than weekdays. Peak: <strong>{num(peak.requests)}</strong> on {peak.day.slice(5)}.</>}>
-      <BarChart points={points} unit="requests" title="Requests per day, 30 days" />
+    <Fig kicker="Fig. 1" title="Requests per day" caption={<>Last 30 days, weekends shaded. Weekends run {Math.round(lighter)}% lighter than weekdays. Peak: <strong>{num(peak.requests)}</strong> on {peak.day.slice(5)}.</>}>
+      <BarChart points={points} unit="requests" title="Requests per day, 30 days" shade={(label) => weekend(label)} />
     </Fig>
 
     <Fig kicker="Table 1" title="Where the traffic goes" caption={<>{top.key} carries {Math.round(topShare)}% of the week. {week.providers.filter(p => rate(p.errors, p.requests) > 5).map(p => p.key).join(', ') || 'No provider'} above 5% errors.</>}>
@@ -62,8 +62,8 @@ export function Overview({ onUnauthorized }: { onUnauthorized: () => void }) {
     </Fig>
 
     <Fig kicker="Log" title="Latest requests" caption={<>Newest first, of {num(overview.traffic.requests)} recorded.</>}>
-      <table className="ed-table"><thead><tr><th scope="col">Time</th><th scope="col">Status</th><th scope="col">Route</th><th scope="col" className="num">Tokens in / out</th><th scope="col" className="num">Latency</th></tr></thead>
-        <tbody>{events.slice(0, 7).map(e => <tr key={e.id}><td>{clock(e.createdAt)}</td><td><Status tone={statusClass(e.status)}>{e.status}</Status></td><td>{e.providerId} / {e.modelId}</td><td className="num">{num(e.inputTokens)} / {num(e.outputTokens)}</td><td className="num">{e.durationMs ?? 0} ms</td></tr>)}</tbody></table>
+      <div className="table-scroll"><table className="ed-table"><thead><tr><th scope="col">Time</th><th scope="col">Status</th><th scope="col">Route</th><th scope="col" className="num">Tokens in / out</th><th scope="col" className="num">Latency</th></tr></thead>
+        <tbody>{events.slice(0, 7).map(e => <tr key={e.id}><td>{clock(e.createdAt)}</td><td><Status tone={statusClass(e.status)}>{e.status}</Status></td><td>{e.providerId} / {e.modelId}</td><td className="num">{num(e.inputTokens)} / {num(e.outputTokens)}</td><td className="num">{e.durationMs ?? 0} ms</td></tr>)}</tbody></table></div>
     </Fig>
   </div>
 }

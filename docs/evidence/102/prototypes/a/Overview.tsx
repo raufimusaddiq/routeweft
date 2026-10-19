@@ -21,6 +21,7 @@ export function Overview({ onUnauthorized }: Props) {
   const prevHit = m ? (m.cacheReadTokens / Math.max(1, m.inputTokens + m.cacheReadTokens)) * 100 : null
   const tokens = t.inputTokens + t.outputTokens
   const ready = overview.runtime.health === 'ready'
+  const off = data.connections.filter(c => !c.enabled)
   const traffic = week.providers
   const top = Math.max(1, ...traffic.map(item => item.requests))
 
@@ -45,8 +46,8 @@ export function Overview({ onUnauthorized }: Props) {
       <Tile label="Cache hit" value={pct(hit, 0)} unit="of input">
         <Delta value={prevHit === null ? null : hit - prevHit} basis="vs 30 d" suffix=" pt" digits={1} />
       </Tile>
-      <Tile label="Connections" value={String(overview.providers.enabledConnections)} unit={`of ${data.connections.length} enabled`}>
-        <p className="tile-note">{overview.providers.nodes} provider nodes · {overview.apiKeys.active} API keys</p>
+      <Tile label="Connections" className={off.length ? 'tile-risk' : ''} value={String(overview.providers.enabledConnections)} unit={`of ${data.connections.length} enabled`}>
+        <p className="tile-note">{off.length ? `${off.length} disabled: ${off.map(c => c.providerId).join(', ')}` : `${overview.providers.nodes} provider nodes`} · {overview.apiKeys.active} API keys</p>
       </Tile>
     </div>
 

@@ -60,10 +60,10 @@ Wrapped rows grow with their content; fixed heights must not clip labels.
 
 ## 3. Typography
 
-- Prose/headings: **Outfit**, a geometric sans with compact forms for operator
-  labels, not marketing-scale typography. Fallback: `ui-sans-serif, system-ui,
-  sans-serif`.
-- Numeric/technical content: **JetBrains Mono**, retained for unambiguous IDs
+- Prose/headings/large figures: **Space Grotesk**, self-hosted (latin subset,
+  `ui/public/fonts/`, `font-display: swap`), not marketing-scale typography.
+  Fallback: `ui-sans-serif, system-ui, sans-serif`.
+- Numeric/technical content: **JetBrains Mono**, also self-hosted, retained for unambiguous IDs
   and stable alignment. Fallback: `ui-monospace, monospace`.
 - Numbers, IDs, keys, timestamps and status tokens use mono, including metric
   notes, detail values, counts, chart labels and pagination.

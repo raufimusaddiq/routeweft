@@ -101,3 +101,10 @@ h1 { font-size: var(--t-title); font-weight: 300; letter-spacing: -.03em; }
   .ed-row .ed-spec, .ed-row .ed-bar { display: none; }
   .table-scroll { margin-right: -16px; }
 }
+.chart-band { fill: var(--surface-2); }
+.accent-surface .chart-band { fill: var(--accent-raised); }
+.ed-headline { letter-spacing: -.02em; }
+.ed-headline strong { letter-spacing: -.025em; }
+h1 { font-weight: 300; }
+.ed-nowrap { white-space: nowrap; }
+@media (max-width: 700px) { .ed-sort { flex-wrap: wrap; } .ed-sort input { width: 100%; } }

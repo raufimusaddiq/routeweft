@@ -55,3 +55,7 @@
   .plist li code, .plist li span:last-child { display: none; }
 }
 @media (max-width: 700px) { .panel { overflow-x: auto; } }
+/* Space Grotesk carries the large figures; mono stays on labels, tables and technical values. */
+.tile-number, .ed-now-value, .ed-sheet-title, .c-head .pn-head h2 { font-family: var(--font-sans); font-weight: 500; letter-spacing: -.03em; }
+.tile-number { font-variant-numeric: tabular-nums; }
+h1 { letter-spacing: -.025em; }

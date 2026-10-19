@@ -93,3 +93,7 @@
 .b-grow .sparkline { flex: 1; min-height: 96px; }
 .b-hero .well { min-height: 0; }
 .hero-facts { margin-top: 0; }
+/* layer edge: a 1px lit top edge reads as the face of a raised layer, without shadow */
+.pn { border-top: 1px solid var(--raised); }
+.well { border-top: 1px solid var(--border-subtle); }
+.live { border-top: 0; }

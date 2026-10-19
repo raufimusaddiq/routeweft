@@ -1,0 +1,4 @@
+Space Grotesk (c) The Space Grotesk Project Authors (github.com/floriankarsten/space-grotesk)
+JetBrains Mono (c) The JetBrains Mono Project Authors (github.com/JetBrains/JetBrainsMono)
+Both are licensed under the SIL Open Font License, Version 1.1 (https://openfontlicense.org).
+Files are the Latin subsets (variable, woff2) as served by Google Fonts, self-hosted so the UI makes no third-party request for text fonts.

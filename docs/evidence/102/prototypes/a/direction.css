@@ -55,3 +55,8 @@ h1 { font-size: var(--t-title); font-weight: 500; }
 .providers-table td:first-child { width: 20%; }
 @media (max-width: 900px) { .strip, .strip-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .split, .split-even { grid-template-columns: minmax(0, 1fr); gap: 0; } .tile:nth-child(odd) { border-left: 0; } .tile { border-top: 1px solid var(--border-subtle); } }
 @media (max-width: 700px) { .tile, .tile:first-child { padding: 14px 12px; } .tile.accent-surface { grid-column: 1 / -1; } }
+/* instrument scale: a tick ruler under the heavy rule of the readout strip */
+.strip { position: relative; }
+.strip::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 6px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='6'%3E%3Cpath d='M.5 0V6' stroke='%23808a96' stroke-opacity='.55'/%3E%3C/svg%3E"); background-repeat: repeat-x; pointer-events: none; }
+.tile.accent-surface::before { content: none; }
+.tile-risk { border-left: 2px solid var(--danger); }
