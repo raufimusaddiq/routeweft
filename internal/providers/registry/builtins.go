@@ -120,8 +120,8 @@ func SpecializedWire() []Spec {
 // device/PAT/import helpers and provider-specific header hooks live in provider
 // modules and land in their own assigned slices.
 //
-// cline/clinepass share the cline.bot gateway endpoint and respond with the
-// cline envelope; xai/github/kimi/xiaomi-mimo are dual-auth (api-key+oauth) and
+// cline/clinepass share the cline.bot gateway endpoint; their credential prefix,
+// identity headers and non-stream envelope live in internal/providers/cline; xai/github/kimi/xiaomi-mimo are dual-auth (api-key+oauth) and
 // advertise both a native Chat and Responses/Messages transport where the
 // baseline matrix requires it. kilocode proxies the OpenRouter catalog, so its
 // arbitrary IDs stay routable.
