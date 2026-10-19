@@ -135,6 +135,9 @@ const { join } = require('node:path');
   let systemOneModelAdded = false;
   let usageSummaryCalls = 0;
   let usageGate = null;
+  // History length of the usage fixture: 2 days by default (the original fixture); a steady 100 a day with the latest 7 days at 140 otherwise.
+  let historyDays = 2;
+  const historySeries = () => historyDays === 2 ? null : Array.from({ length: historyDays }, (_, i) => { const date = new Date(Date.UTC(2026, 8, 25 - (historyDays - 1 - i))).toISOString().slice(0, 10); return { day: date, requests: i >= historyDays - 7 ? 140 : 100, inputTokens: 1000, outputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 0 }; });
   let usageMode = 'ok';
   let quotaRefreshCalls = 0;
   let usagePeriod = '7d';
@@ -233,7 +236,7 @@ const { join } = require('node:path');
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
       period: usagePeriod, since: '2026-09-18T00:00:00.000Z',
       totals: { requests: 120, inputTokens: 9000, outputTokens: 3000, cacheReadTokens: 4000, cacheWriteTokens: 500, errors: 3, avgDurationMs: 420, avgTtftMs: 90 },
-      series: [{ day: '2026-09-24', requests: 70, inputTokens: 5000, outputTokens: 1800, cacheReadTokens: 2000, cacheWriteTokens: 200 }, { day: '2026-09-25', requests: 50, inputTokens: 4000, outputTokens: 1200, cacheReadTokens: 2000, cacheWriteTokens: 300 }],
+      series: historySeries() || [{ day: '2026-09-24', requests: 70, inputTokens: 5000, outputTokens: 1800, cacheReadTokens: 2000, cacheWriteTokens: 200 }, { day: '2026-09-25', requests: 50, inputTokens: 4000, outputTokens: 1200, cacheReadTokens: 2000, cacheWriteTokens: 300 }],
       providers: [{ key: 'openai', requests: 100, inputTokens: 8000, outputTokens: 2800, errors: 2 }, { key: 'anthropic', requests: 20, inputTokens: 1000, outputTokens: 200, errors: 1 }],
       models: [{ key: 'openai/gpt-5', requests: 90, inputTokens: 7000, outputTokens: 2500, errors: 1 }],
       statuses: [{ key: '200', requests: 117, inputTokens: 9000, outputTokens: 3000, errors: 0 }, { key: '500', requests: 3, inputTokens: 0, outputTokens: 0, errors: 3 }],
@@ -366,6 +369,12 @@ const { join } = require('node:path');
   await page.click('.refresh-error button');
   await page.waitForFunction(() => !document.querySelector('.refresh-error'));
   report.overviewCallsAfterRetry = overviewCalls;
+  // A 10-day install makes no week-over-week claim; 30 days with the latest week at 140 against 100 a day claims exactly +40.0%.
+  const refreshOverview = async () => { const refreshed = page.waitForResponse(response => response.url().includes('usage/summary?period=30d')); await page.click('.refresh-button'); await refreshed; await page.waitForTimeout(400); };
+  const readOverviewHistory = () => page.evaluate(() => ({ headline: document.querySelector('.overview-content .ed-headline').innerText, weekFact: [...document.querySelectorAll('.ed-fact')].find(el => el.innerText.startsWith('This week')).innerText, ticks: document.querySelectorAll('.overview-content .chart-ghost').length }));
+  historyDays = 10; await refreshOverview(); report.tenDayInstall = await readOverviewHistory();
+  historyDays = 30; await refreshOverview(); report.thirtyDayInstall = await readOverviewHistory();
+  historyDays = 2; await refreshOverview();
   // Endpoint & Key workflow (PRD 14).
   await page.click('a[href="#endpoint-key"]');
   await page.waitForSelector('.endpoint-content');
@@ -429,6 +438,7 @@ const { join } = require('node:path');
   await page.click('a[href="#overview"]');
   await page.waitForSelector('.overview-content .ed-headline');
   await page.emulateMedia({ colorScheme: 'dark' });
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark'); // the media-query change is asynchronous
   report.navCount = await page.locator('nav a').count();
   report.groups = await page.locator('.nav-group h2').allTextContents();
   report.sidebarWidth = (await page.locator('.sidebar').boundingBox()).width;
@@ -863,6 +873,11 @@ const { join } = require('node:path');
   assert.ok(report.brandMark.svg && report.brandMark.rects >= 6 && report.brandMark.letters === 0, 'the mark is the drawn weave, not a letter');
   assert.deepEqual(report.headLinks.themeColors, ['(prefers-color-scheme: light)', '(prefers-color-scheme: dark)']);
   assert.deepEqual(report.headLinks.icons, ['/favicon.svg', '/favicon-32.png', '/apple-touch-icon.png']);
+  assert.doesNotMatch(report.tenDayInstall.headline, /[↑↓]|%/, 'ten recorded days cannot support a week-over-week percentage');
+  assert.match(report.tenDayInstall.weekFact, /successful of/);
+  assert.equal(report.tenDayInstall.ticks, 0, 'no ghost ticks without a fully observed week before');
+  assert.match(report.thirtyDayInstall.headline, /980 requests this week, ↑ 40\.0%/, 'hand arithmetic: 7 x 140 = 980 against 7 x 100 = 700');
+  assert.equal(report.thirtyDayInstall.ticks, 7);
   assert.match(report.overviewLive, /Live/);
   assert.match(report.weekendFact, /—/, 'a two-day fixture has no weekend days, so the ratio is a dash');
   assert.doesNotMatch(report.weekendFact, /lighter|heavier|%/);

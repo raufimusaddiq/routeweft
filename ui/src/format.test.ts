@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ago, badRate, compact, delta, isWeekend, outlier, pct, priorWeek, providerTone, rate, denseDays, failureStatuses, isFailure, periodDays, utcDay, share, statusTone, topByRequests, weekendLighter, type Day, type Summary } from './format.ts'
+import { ago, badRate, compact, delta, isWeekend, largest, latestWeekTotal, observeSeries, observedAverage, outlier, pct, providerTone, rate, failureStatuses, isFailure, periodDays, sameDayLastWeek, utcDay, share, statusTone, topByRequests, weekOverWeek, weekendLighter, type Day, type Summary } from './format.ts'
 
 test('compact keeps small numbers exact and abbreviates large ones', () => {
   assert.equal(compact(950), '950')
@@ -41,13 +41,6 @@ test('statusTone is one classification: success, redirect neutral, client warn, 
   assert.equal(statusTone('weird'), 'idle')
 })
 
-test('priorWeek needs two full weeks of days', () => {
-  const day = (n: number) => ({ day: `2026-10-${String(n).padStart(2, '0')}`, requests: n, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 })
-  assert.equal(priorWeek([1, 2, 3].map(day)), null)
-  const fourteen = Array.from({ length: 14 }, (_, i) => day(i + 1))
-  assert.deepEqual(priorWeek(fourteen)?.map(d => d.requests), [1, 2, 3, 4, 5, 6, 7])
-})
-
 test('outlier ignores low-traffic providers and reports the multiple of the fleet rate', () => {
   const summary: Summary = {
     period: '7d', since: '', series: [], models: [], statuses: [],
@@ -76,15 +69,6 @@ test('isWeekend reads the calendar day, not the timezone', () => {
 })
 
 const day = (date: string, requests: number): Day => ({ day: date, requests, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 })
-
-test('weekendLighter is a ratio of two groups, so it needs both', () => {
-  // 2026-10-17 and 18 are Saturday and Sunday; 19 and 20 are Monday and Tuesday
-  assert.equal(weekendLighter([day('2026-10-19', 100), day('2026-10-20', 100)]), null)
-  assert.equal(weekendLighter([day('2026-10-17', 50), day('2026-10-18', 50)]), null)
-  assert.equal(weekendLighter([day('2026-10-17', 0), day('2026-10-19', 0)]), null)
-  assert.equal(weekendLighter([day('2026-10-17', 50), day('2026-10-18', 50), day('2026-10-19', 100), day('2026-10-20', 100)]), 50)
-  assert.equal(weekendLighter([day('2026-10-17', 150), day('2026-10-19', 100)]), -50)
-})
 
 test('providerTone follows the same rule as the error figure', () => {
   assert.equal(providerTone(1, 2, 3), 'good')
@@ -120,21 +104,6 @@ test('a failure is any non-2xx response, the same set the API counts as errors',
   assert.equal(isFailure(302), true)
 })
 
-test('denseDays fills absent days with zeros so windows are calendar windows', () => {
-  const series = [day('2026-10-17', 40), day('2026-10-19', 60)]
-  const dense = denseDays(series, 5, '2026-10-19')
-  assert.deepEqual(dense.map(d => d.day), ['2026-10-15', '2026-10-16', '2026-10-17', '2026-10-18', '2026-10-19'])
-  assert.deepEqual(dense.map(d => d.requests), [0, 0, 40, 0, 60])
-  assert.equal(dense.reduce((total, d) => total + d.requests, 0) / dense.length, 20)
-  assert.equal(denseDays([], 3, '2026-10-19').length, 3)
-})
-
-test('denseDays keeps a day recorded after the end date instead of dropping it', () => {
-  const dense = denseDays([day('2026-10-20', 9)], 2, '2026-10-19')
-  assert.deepEqual(dense.map(d => d.day), ['2026-10-19', '2026-10-20'])
-  assert.equal(dense[1].requests, 9)
-})
-
 test('periodDays counts calendar days, including a quiet history for all time', () => {
   assert.equal(periodDays('24h', [], '2026-10-19'), 1)
   assert.equal(periodDays('7d', [], '2026-10-19'), 7)
@@ -142,4 +111,102 @@ test('periodDays counts calendar days, including a quiet history for all time', 
   assert.equal(periodDays('all', [day('2026-10-10', 5)], '2026-10-19'), 10)
   assert.equal(periodDays('all', [], '2026-10-19'), 1)
   assert.match(utcDay(new Date('2026-10-19T23:30:00Z')), /^2026-10-19$/)
+})
+
+// ---- observed days ----
+// 2026-10-19 is a Monday. `steady(first, today, n)` is a series that starts on `first` and records `n` requests every day to `today`.
+const TODAY = '2026-10-19'
+const shift = (date: string, offset: number) => { const d = new Date(`${date}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + offset); return d.toISOString().slice(0, 10) }
+const steady = (recordedDays: number, requests = 100, today = TODAY): Day[] => Array.from({ length: recordedDays }, (_, i) => day(shift(today, i - (recordedDays - 1)), requests))
+
+test('observeSeries: an empty series has nothing drawn and nothing observed', () => {
+  const observed = observeSeries([], 30, TODAY)
+  assert.equal(observed.drawn.length, 0)
+  assert.equal(observed.days.length, 0)
+  assert.equal(observed.firstRecorded, null)
+  assert.equal(observedAverage(observed), 0)
+  assert.equal(weekOverWeek(observed), null)
+  assert.equal(weekendLighter(observed), null)
+  assert.equal(sameDayLastWeek(observed)(29), null)
+})
+
+test('observeSeries: a series starting yesterday observes yesterday and today, and draws a full window', () => {
+  const observed = observeSeries([day(shift(TODAY, -1), 80)], 30, TODAY)
+  assert.equal(observed.drawn.length, 30)
+  assert.deepEqual(observed.days.map(d => d.day), [shift(TODAY, -1), TODAY])
+  assert.deepEqual(observed.days.map(d => d.requests), [80, 0])
+  assert.equal(observedAverage(observed), 40)
+  assert.equal(weekOverWeek(observed), null)
+})
+
+test('observeSeries: a series starting 40 days ago is observed across the whole 30-day window', () => {
+  const observed = observeSeries(steady(30), 30, TODAY)
+  assert.equal(observed.days.length, 30)
+  const longer = observeSeries([day(shift(TODAY, -40), 100), ...steady(30)], 30, TODAY)
+  assert.equal(longer.days.length, 30)
+  assert.equal(longer.firstRecorded, shift(TODAY, -40))
+})
+
+test('a 10-day install at a steady 100 a day makes no week-over-week claim', () => {
+  const observed = observeSeries(steady(10), 30, TODAY)
+  assert.equal(latestWeekTotal(observed), 700)        // a count: fine
+  assert.equal(observedAverage(observed), 100)        // 10 observed days, not 30 drawn
+  assert.equal(weekOverWeek(observed), null)          // the old code compared 700 with 300 and printed +133.3%
+  assert.equal(sameDayLastWeek(observed)(29), null)   // and drew white ticks at zero
+})
+
+test('week-over-week matches hand-computed arithmetic once two full weeks are observed', () => {
+  const series = steady(30).map((d, i) => (i >= 23 ? { ...d, requests: 140 } : d))   // last 7 days at 140, the week before at 100
+  const observed = observeSeries(series, 30, TODAY)
+  const wow = weekOverWeek(observed)
+  assert.deepEqual([wow?.thisWeek, wow?.lastWeek], [980, 700])
+  assert.equal(wow?.change?.toFixed(1), '40.0')
+  assert.equal(sameDayLastWeek(observed)(29), 100)    // today against the same day a week earlier
+  assert.equal(sameDayLastWeek(observed)(10), null)   // only the latest 7 days carry a tick
+})
+
+test('week-over-week needs exactly 14 observed days: 13 is a dash, 14 is a number', () => {
+  assert.equal(weekOverWeek(observeSeries(steady(13), 30, TODAY)), null)
+  assert.equal(weekOverWeek(observeSeries(steady(14), 30, TODAY))?.change, 0)
+})
+
+// The structural guard: a comparison may not depend on how many zero-filled days precede the first recorded day.
+// Drawing the same observed data in a 30-day and a 60-day window changes only the zero-filled prefix, so every
+// comparison must return the same answer. Any comparison that divides by `drawn.length` fails this for k < 30.
+test('no comparison depends on the length of the zero-filled window', () => {
+  for (let recorded = 1; recorded <= 40; recorded += 1) {
+    const series = steady(recorded).map((d, i) => ({ ...d, requests: 60 + ((i * 37) % 90) }))   // deterministic uneven traffic
+    const short = observeSeries(series, 30, TODAY)
+    // the average is the mean of the recorded values in the window, never diluted by zero-filled days before the first record
+    const inWindow = series.slice(-30)
+    const mean = inWindow.reduce((total, d) => total + d.requests, 0) / inWindow.length
+    assert.ok(Math.abs(observedAverage(short) - mean) < 1e-9, `average equals the mean of ${inWindow.length} recorded days`)
+    assert.equal(short.days.length, inWindow.length)
+    if (recorded > 30) continue
+    // while every recorded day fits in both windows, a longer window only adds zero-filled prefix and must change nothing
+    const long = observeSeries(series, 60, TODAY)
+    assert.equal(observedAverage(short), observedAverage(long), `average, ${recorded} recorded days`)
+    assert.equal(weekendLighter(short), weekendLighter(long), `weekend ratio, ${recorded} recorded days`)
+    assert.deepEqual(weekOverWeek(short), weekOverWeek(long), `week-over-week, ${recorded} recorded days`)
+    assert.equal(sameDayLastWeek(short)(29), sameDayLastWeek(long)(59), `ghost tick, ${recorded} recorded days`)
+  }
+})
+
+test('weekendLighter needs weekend and weekday days, and ignores days before the first record', () => {
+  // 2026-10-17 and 18 are Saturday and Sunday; 19 and 20 are Monday and Tuesday
+  assert.equal(weekendLighter(observeSeries([day('2026-10-19', 100), day('2026-10-20', 100)], 30, '2026-10-20')), null)
+  const mixed = [day('2026-10-17', 50), day('2026-10-18', 50), day('2026-10-19', 100), day('2026-10-20', 100)]
+  assert.equal(weekendLighter(observeSeries(mixed, 30, '2026-10-20')), 50)
+  assert.equal(weekendLighter(observeSeries([day('2026-10-17', 150), day('2026-10-19', 100)], 30, '2026-10-19')), 25)  // Sunday is an observed zero: weekend (150+0)/2 = 75 against weekday 100
+})
+
+test('observeSeries keeps a day recorded after today instead of dropping it', () => {
+  const observed = observeSeries([day('2026-10-20', 9)], 2, TODAY)
+  assert.deepEqual(observed.drawn.map(d => d.day), ['2026-10-19', '2026-10-20'])
+  assert.equal(observed.days.length, 1)
+})
+
+test('largest is the biggest value present, not the first', () => {
+  assert.equal(largest([]), 0)
+  assert.equal(largest([3, 9, 4]), 9)
 })

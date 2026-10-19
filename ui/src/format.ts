@@ -66,11 +66,6 @@ export function sum(days: Day[], key: keyof Day) {
   return days.reduce((total, day) => total + (day[key] as number), 0)
 }
 
-// The 7 days before the latest 7, from a daily series (the summary API has no date-range totals).
-export function priorWeek(series: Day[]): Day[] | null {
-  return series.length >= 14 ? series.slice(-14, -7) : null
-}
-
 // The provider furthest above the fleet error rate, ignoring providers with too little traffic to mean anything.
 export function outlier(summary: Summary, minRequests = 50) {
   const fleet = rate(summary.totals.errors, summary.totals.requests)
@@ -89,17 +84,6 @@ export function badRate(errors: number, requests: number, fleet: number) {
 
 export function isWeekend(day: string) {
   return [0, 6].includes(new Date(`${day}T12:00:00`).getDay())
-}
-
-// How much lighter weekend days run than weekdays, in percent. null when either group is empty or
-// weekdays have no traffic: a ratio needs both sides, so a young install shows a dash, not a claim.
-export function weekendLighter(series: Day[]) {
-  const weekend = series.filter(day => isWeekend(day.day))
-  const weekday = series.filter(day => !isWeekend(day.day))
-  if (weekend.length === 0 || weekday.length === 0) return null
-  const average = (rows: Day[]) => rows.reduce((total, day) => total + day.requests, 0) / rows.length
-  const base = average(weekday)
-  return base > 0 ? 100 - (average(weekend) / base) * 100 : null
 }
 
 // The provider mark and the error figure share one rule so they cannot disagree.
@@ -151,12 +135,79 @@ export function periodDays(period: string, series: Day[], today: string) {
   return Math.max(1, Math.round((last - first) / 86400000) + 1)
 }
 
-// `count` consecutive days ending on `endDay` (or on the latest recorded day, if that is later), zero-filled.
-export function denseDays(series: Day[], count: number, endDay: string): Day[] {
+// Internal: `count` consecutive days ending on `endDay` (or on the latest recorded day, if that is later), zero-filled.
+function denseDays(series: Day[], count: number, endDay: string): Day[] {
   const byDay = new Map(series.map(day => [day.day, day]))
   const latest = series.reduce((best, day) => (day.day > best ? day.day : best), endDay)
   return Array.from({ length: count }, (_, index) => {
     const day = shiftDay(latest, index - (count - 1))
     return byDay.get(day) ?? { day, requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }
   })
+}
+
+// ---- observed days ----
+// The API omits a day with no attributed 2xx traffic, so the series cannot tell "nothing happened" from "we were not
+// recording yet". Anything that COMPARES days (averages, week-over-week, ghost ticks, weekend ratios) must therefore see
+// only observed days: from the first recorded day on, where a missing day really is zero. This is the only way to
+// build an `Observed`, and every comparison below takes one and nothing else, so a comparison over zero-filled days
+// that predate the install cannot be written without the compiler objecting (see format.typecheck.ts).
+declare const observedBrand: unique symbol
+export type Observed = {
+  readonly [observedBrand]: true
+  /** A calendar window for DRAWING: zero-filled, so the axis is continuous. Never divide by its length. */
+  readonly drawn: readonly Day[]
+  /** The days at or after the first recorded day: the only days a comparison may use. */
+  readonly days: readonly Day[]
+  readonly firstRecorded: string | null
+}
+
+export function observeSeries(series: Day[], count: number, today: string): Observed {
+  const firstRecorded = series.reduce<string | null>((first, day) => (first === null || day.day < first ? day.day : first), null)
+  const drawn = series.length > 0 ? denseDays(series, count, today) : []
+  const days = firstRecorded === null ? [] : drawn.filter(day => day.day >= firstRecorded)
+  return { drawn, days, firstRecorded } as unknown as Observed
+}
+
+// Mean requests per observed day; 0 when nothing is observed.
+export function observedAverage(observed: Observed) {
+  return observed.days.length > 0 ? sum(observed.days as Day[], 'requests') / observed.days.length : 0
+}
+
+// Total over the latest 7 drawn days. A count, not a comparison, so zero-filled days are fine here.
+export function latestWeekTotal(observed: Observed) {
+  return sum(observed.drawn.slice(-7) as Day[], 'requests')
+}
+
+// Week-over-week needs two full observed weeks: the latest 14 drawn days must all be observed. Otherwise null,
+// and the caller falls back to a plain count.
+export function weekOverWeek(observed: Observed) {
+  if (observed.days.length < 14 || observed.drawn.length < 14) return null
+  const last14 = observed.drawn.slice(-14)
+  if (observed.firstRecorded === null || last14[0].day < observed.firstRecorded) return null
+  const lastWeek = sum(last14.slice(0, 7) as Day[], 'requests')
+  const thisWeek = sum(last14.slice(7) as Day[], 'requests')
+  return { thisWeek, lastWeek, change: delta(thisWeek, lastWeek) }
+}
+
+// The same day a week earlier, for the latest 7 drawn days; only when week-over-week itself is defined.
+export function sameDayLastWeek(observed: Observed): (index: number) => number | null {
+  const comparable = weekOverWeek(observed) !== null
+  const length = observed.drawn.length
+  return index => (comparable && index >= length - 7 ? observed.drawn[index - 7].requests : null)
+}
+
+// How much lighter weekend days run than weekdays, in percent. null unless the observed days include both kinds
+// and weekdays have traffic: a ratio needs both sides, so a young install shows a dash, not a claim.
+export function weekendLighter(observed: Observed) {
+  const weekend = observed.days.filter(day => isWeekend(day.day))
+  const weekday = observed.days.filter(day => !isWeekend(day.day))
+  if (weekend.length === 0 || weekday.length === 0) return null
+  const average = (rows: readonly Day[]) => rows.reduce((total, day) => total + day.requests, 0) / rows.length
+  const base = average(weekday)
+  return base > 0 ? 100 - (average(weekend) / base) * 100 : null
+}
+
+// One rule for every share bar: the baseline is the largest value actually present, never an assumed first row.
+export function largest(values: number[]) {
+  return values.reduce((best, value) => (value > best ? value : best), 0)
 }
