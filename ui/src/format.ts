@@ -178,12 +178,11 @@ export function latestWeekTotal(observed: Observed) {
   return sum(observed.drawn.slice(-7) as Day[], 'requests')
 }
 
-// Week-over-week needs two full observed weeks: the latest 14 drawn days must all be observed. Otherwise null,
-// and the caller falls back to a plain count.
+// Week-over-week needs two full observed weeks. `days` is the tail of `drawn` from the first recorded day, so
+// 14 observed days means the latest 14 drawn days are all observed. Otherwise null, and the caller falls back to a plain count.
 export function weekOverWeek(observed: Observed) {
-  if (observed.days.length < 14 || observed.drawn.length < 14) return null
+  if (observed.days.length < 14) return null
   const last14 = observed.drawn.slice(-14)
-  if (observed.firstRecorded === null || last14[0].day < observed.firstRecorded) return null
   const lastWeek = sum(last14.slice(0, 7) as Day[], 'requests')
   const thisWeek = sum(last14.slice(7) as Day[], 'requests')
   return { thisWeek, lastWeek, change: delta(thisWeek, lastWeek) }

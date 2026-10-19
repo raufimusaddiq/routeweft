@@ -137,6 +137,7 @@ const { join } = require('node:path');
   let usageGate = null;
   // History length of the usage fixture: 2 days by default (the original fixture); a steady 100 a day with the latest 7 days at 140 otherwise.
   let historyDays = 2;
+  const windowedHistory = () => { const all = historySeries(); return all && (usagePeriod === '7d' ? all.slice(-7) : usagePeriod === '24h' ? all.slice(-1) : all); };
   const historySeries = () => historyDays === 2 ? null : Array.from({ length: historyDays }, (_, i) => { const date = new Date(Date.UTC(2026, 8, 25 - (historyDays - 1 - i))).toISOString().slice(0, 10); return { day: date, requests: i >= historyDays - 7 ? 140 : 100, inputTokens: 1000, outputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 0 }; });
   let usageMode = 'ok';
   let quotaRefreshCalls = 0;
@@ -235,8 +236,8 @@ const { join } = require('node:path');
     usagePeriod = url.searchParams.get('period');
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
       period: usagePeriod, since: '2026-09-18T00:00:00.000Z',
-      totals: { requests: 120, inputTokens: 9000, outputTokens: 3000, cacheReadTokens: 4000, cacheWriteTokens: 500, errors: 3, avgDurationMs: 420, avgTtftMs: 90 },
-      series: historySeries() || [{ day: '2026-09-24', requests: 70, inputTokens: 5000, outputTokens: 1800, cacheReadTokens: 2000, cacheWriteTokens: 200 }, { day: '2026-09-25', requests: 50, inputTokens: 4000, outputTokens: 1200, cacheReadTokens: 2000, cacheWriteTokens: 300 }],
+      totals: { ...{ requests: 120, inputTokens: 9000, outputTokens: 3000, cacheReadTokens: 4000, cacheWriteTokens: 500, errors: 3, avgDurationMs: 420, avgTtftMs: 90 }, requests: windowedHistory() ? windowedHistory().reduce((total, entry) => total + entry.requests, 0) : 120 },
+      series: windowedHistory() || [{ day: '2026-09-24', requests: 70, inputTokens: 5000, outputTokens: 1800, cacheReadTokens: 2000, cacheWriteTokens: 200 }, { day: '2026-09-25', requests: 50, inputTokens: 4000, outputTokens: 1200, cacheReadTokens: 2000, cacheWriteTokens: 300 }],
       providers: [{ key: 'openai', requests: 100, inputTokens: 8000, outputTokens: 2800, errors: 2 }, { key: 'anthropic', requests: 20, inputTokens: 1000, outputTokens: 200, errors: 1 }],
       models: [{ key: 'openai/gpt-5', requests: 90, inputTokens: 7000, outputTokens: 2500, errors: 1 }],
       statuses: [{ key: '200', requests: 117, inputTokens: 9000, outputTokens: 3000, errors: 0 }, { key: '500', requests: 3, inputTokens: 0, outputTokens: 0, errors: 3 }],
@@ -608,7 +609,14 @@ const { join } = require('node:path');
   usageMode = 'ok';
   await page.getByRole('button', { name: 'Refresh' }).click();
   await page.waitForSelector('.usage-content .chart');
-  await page.selectOption('#usage-period', '24h');
+  // A window label must name the window it sums: 'all' on a 2-day history and the 24-hour period never say "latest 7 days".
+  const requestsNote = () => page.evaluate(() => [...document.querySelectorAll('.usage-content .ed-fact')].find(el => el.innerText.startsWith('Requests')).innerText);
+  const allLoaded = page.waitForResponse(response => response.url().includes('usage/summary?period=all'));
+  await page.selectOption('#usage-period', 'all'); await allLoaded; await page.waitForTimeout(300);
+  report.usageNoteAll = await requestsNote();
+  const dayLoaded = page.waitForResponse(response => response.url().includes('usage/summary?period=24h'));
+  await page.selectOption('#usage-period', '24h'); await dayLoaded; await page.waitForTimeout(300);
+  report.usageNote24h = await requestsNote();
   await page.waitForFunction(() => document.querySelector('.usage-toolbar .count-label').textContent.includes('since'));
   report.usagePeriodAfterChange = usagePeriod;
   report.usageSummaryCalls = usageSummaryCalls;
@@ -878,6 +886,10 @@ const { join } = require('node:path');
   assert.equal(report.tenDayInstall.ticks, 0, 'no ghost ticks without a fully observed week before');
   assert.match(report.thirtyDayInstall.headline, /980 requests this week, ↑ 40\.0%/, 'hand arithmetic: 7 x 140 = 980 against 7 x 100 = 700');
   assert.equal(report.thirtyDayInstall.ticks, 7);
+  assert.doesNotMatch(report.usageNote24h, /latest 7 days/, 'the 24-hour period must not claim a 7-day sum');
+  assert.match(report.usageNote24h, /a day/);
+  assert.doesNotMatch(report.usageNoteAll, /latest 7 days/, 'a 2-day history must not claim a 7-day sum');
+  assert.match(report.usageNoteAll, /a day/);
   assert.match(report.overviewLive, /Live/);
   assert.match(report.weekendFact, /—/, 'a two-day fixture has no weekend days, so the ratio is a dash');
   assert.doesNotMatch(report.weekendFact, /lighter|heavier|%/);

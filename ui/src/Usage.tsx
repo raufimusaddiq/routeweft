@@ -64,6 +64,8 @@ export function Usage({ onUnauthorized }: Props) {
   const wow = weekOverWeek(observed)
   const ghost = sameDayLastWeek(observed)
   const thisWeek = latestWeekTotal(observed)
+  // "The latest 7 days" is only a true label when the window has 7 days and is not the 24-hour period.
+  const showWeek = period !== '24h' && n >= 7
   const tokens = t ? t.inputTokens + t.outputTokens : 0
   const hit = t ? (t.cacheReadTokens / Math.max(1, t.inputTokens + t.cacheReadTokens)) * 100 : 0
   const fleet = t ? rate(t.errors, t.requests) : 0
@@ -103,7 +105,7 @@ export function Usage({ onUnauthorized }: Props) {
         </Main>
         <Margin>
           <dl className="ed-facts">
-            <Fact label="Requests" value={<>{num(t.requests)} <small>req</small></>} note={wow ? `${num(wow.thisWeek)} successful in the latest 7 days, ${wow.change === null ? 'no prior week' : `${wow.change >= 0 ? '↑' : '↓'} ${Math.abs(wow.change).toFixed(1)}% vs prior 7 d`}` : `${num(thisWeek)} successful in the latest 7 days, ${num(t.requests / days)} requests a day on average`} />
+            <Fact label="Requests" value={<>{num(t.requests)} <small>req</small></>} note={wow ? `${num(wow.thisWeek)} successful in the latest 7 days, ${wow.change === null ? 'no prior week' : `${wow.change >= 0 ? '↑' : '↓'} ${Math.abs(wow.change).toFixed(1)}% vs prior 7 d`}` : showWeek ? `${num(thisWeek)} successful in the latest 7 days, ${num(t.requests / days)} requests a day on average` : `avg ${num(t.requests / days)} a day`} />
             <Fact label="Tokens" value={<>{compact(tokens)} <small>in + out</small></>} note={`input ${num(t.inputTokens)}, output ${num(t.outputTokens)}`} />
             <Fact label="Cache" value={<>{pct(hit, 0)} <small>of input</small></>} note={`read ${num(t.cacheReadTokens)}, write ${num(t.cacheWriteTokens)}`} />
             <Fact label="Latency" value={<>{t.avgDurationMs !== undefined ? num(t.avgDurationMs) : '—'} <small>ms avg</small></>} note={`TTFT ${t.avgTtftMs !== undefined ? `${num(t.avgTtftMs)} ms` : '—'}`} />

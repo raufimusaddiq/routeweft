@@ -156,7 +156,8 @@ Implemented in `ui/src/editorial.tsx` and `ui/src/style.css`.
   period average, week-over-week, the same-day-last-week ticks, the weekend ratio, the busiest day against the average)
   goes through `observeSeries()` in `ui/src/format.ts`, which keeps only the days from the first recorded day on.
   Week-over-week and the ticks need 14 observed days; before that the page says "N successful of M requests" and draws
-  no ticks. The comparison helpers accept only that type, so passing them a raw series does not compile
+  no ticks. A window label names the window it sums: "the latest 7 days" appears only when the window has 7 days and is not
+  the 24-hour period, otherwise the page shows a per-day average. The comparison helpers accept only that type, so passing them a raw series does not compile
   (`ui/src/format.typecheck.ts` fails `npm run typecheck` if that changes), and a unit test checks that no result depends
   on the length of the zero-filled window.
 - **Share bars** all use one baseline, `largest()` of the values present, never the first row.
