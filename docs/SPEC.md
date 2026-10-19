@@ -736,6 +736,8 @@ The providers' registered redirect URIs never point at Routeweft, so the operato
 
 Pending state is process-local, expires after 10 minutes, is bound to the admin session that started it and to the provider, and is single-use even when the exchange fails. A state that is unknown, expired, replayed or owned by another session returns the same `oauth_state_invalid` error, and a foreign session does not consume the owner's attempt. Responses carry fixed messages only: no provider text, code, verifier or token.
 
+OAuth connections that hold a refresh token (Claude, Codex) are registered with a refresh exchanger by the credential registry, so every registration path (sign-in, manual entry, startup load) refreshes through the same singleflight and durable commit.
+
 ## 20. Transport pooling and proxying
 
 Use shared `http.Transport` instances keyed by material transport configuration, such as:

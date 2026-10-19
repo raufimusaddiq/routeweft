@@ -248,6 +248,12 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code, denied, pastedState := parseOAuthInput(body.Input)
+	if !denied && code == "" {
+		// Nothing usable was pasted. Refuse before consuming so the operator can
+		// paste again instead of restarting the single-use attempt.
+		writeError(w, http.StatusBadRequest, "oauth_code_missing", "no authorization code was found in what was pasted; check it and try again")
+		return
+	}
 	if pastedState != "" && subtle.ConstantTimeCompare([]byte(pastedState), []byte(body.State)) != 1 {
 		// Output from a different attempt: refuse without consuming this one.
 		writeError(w, http.StatusBadRequest, "oauth_state_invalid", "this sign-in attempt expired or was already used; start again")
@@ -262,10 +268,6 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "oauth_denied", "the provider did not approve the sign-in; start again")
 		return
 	}
-	if code == "" {
-		writeError(w, http.StatusBadRequest, "oauth_code_missing", "no authorization code was found in what was pasted; start again")
-		return
-	}
 	secret, err := provider.exchange(r.Context(), h.opts.OAuthClient, flow.verifier, code)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "oauth_exchange_failed", "the provider did not accept the authorization code; start again")
@@ -277,13 +279,20 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// New connections go last in routing order, as the manual form does.
-	existing, _ := h.opts.Credentials.ListConnections(r.Context(), providerID)
+	existing, err := h.opts.Credentials.ListConnections(r.Context(), providerID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "connection_save_failed", "provider connection could not be saved")
+		return
+	}
 	priority := len(existing)
 	connection, err := h.opts.Credentials.PutConnection(r.Context(), credentials.Connection{NodeID: node.ID, Name: flow.name, AuthKind: credentials.AuthOAuth, Identity: flow.identity, Secret: secret, Enabled: true, Priority: priority})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
 		return
 	}
+	// PutConnection returns the metadata as given; the registry's exchanger lookup
+	// keys on the provider.
+	connection.ProviderID = node.ProviderID
 	if h.opts.CredentialRegistry != nil {
 		h.opts.CredentialRegistry.Register(connection, nil)
 	}

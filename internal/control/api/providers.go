@@ -323,6 +323,7 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity, auth mode, and proxy pool")
 		return
 	}
+	connection.ProviderID = node.ProviderID
 	if h.opts.CredentialRegistry != nil {
 		h.opts.CredentialRegistry.Register(connection, nil)
 	}

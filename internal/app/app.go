@@ -26,6 +26,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/ingress"
 	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
 	"github.com/raufimusaddiq/routeweft/internal/providers/discovery"
+	"github.com/raufimusaddiq/routeweft/internal/providers/oauthrefresh"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/proxy"
 	quota "github.com/raufimusaddiq/routeweft/internal/quota"
@@ -322,6 +323,7 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 		return fmt.Errorf("initialize credential store: %w", err)
 	}
 	registry := credentials.NewRegistry(credentialStore, nil)
+	registry.SetExchangerResolver(oauthrefresh.Resolver(nil))
 	// The control plane shares this store/registry so provider CRUD publishes
 	// credentials to the same memory-first state inference reads (SPEC §19).
 	a.creds, a.credReg = credentialStore, registry

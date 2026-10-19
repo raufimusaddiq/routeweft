@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/raufimusaddiq/routeweft/internal/adminauth"
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/providers/oauthrefresh"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 )
 
@@ -350,5 +352,54 @@ func TestParseOAuthInput(t *testing.T) {
 		if code != tc.code || denied != tc.denied || state != tc.state {
 			t.Errorf("%s: got (%q,%v,%q) want (%q,%v,%q)", tc.name, code, denied, state, tc.code, tc.denied, tc.state)
 		}
+	}
+}
+
+func TestOAuthUnusablePasteDoesNotBurnTheAttempt(t *testing.T) {
+	exchange := &oauthExchange{body: tokenBody()}
+	_, mux, _, cookie := newOAuthAPI(t, exchange)
+	flow := startFlow(t, mux, cookie, "claude")
+	for _, paste := range []string{"abc\n123", "abc 123", strings.Repeat("a", oauthMaxInput+1)} {
+		recorder := callback(t, mux, cookie, "claude", flow.State, paste)
+		if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "oauth_code_missing") {
+			t.Fatalf("paste %q status=%d body=%s", paste, recorder.Code, recorder.Body.String())
+		}
+	}
+	if exchange.calls() != 0 {
+		t.Fatal("unusable paste reached the provider")
+	}
+	if recorder := callback(t, mux, cookie, "claude", flow.State, oauthTestCode); recorder.Code != http.StatusOK {
+		t.Fatalf("redeem after unusable pastes status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestOAuthGlobalPendingLimit(t *testing.T) {
+	h, mux, _, cookie := newOAuthAPI(t, &oauthExchange{body: tokenBody()})
+	for i := 0; i < oauthMaxPending; i++ {
+		if _, _, ok := h.oauth.begin(oauthFlow{sessionID: "other-" + strconv.Itoa(i), provider: "claude"}); !ok {
+			t.Fatalf("begin %d refused below the limit", i)
+		}
+	}
+	recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/claude/start", `{"name":"Work","identity":"work@example.test"}`)
+	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "oauth_busy") {
+		t.Fatalf("start at limit status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestOAuthSignInRefreshesThroughTheRegistry(t *testing.T) {
+	// expires_in inside the refresh lead makes the first read refresh at once.
+	exchange := &oauthExchange{body: `{"access_token":"` + oauthTestAccess + `","refresh_token":"` + oauthTestRefresh + `","expires_in":5}`}
+	h, mux, creds, cookie := newOAuthAPI(t, exchange)
+	h.opts.CredentialRegistry.SetExchangerResolver(oauthrefresh.Resolver(exchange))
+	flow := startFlow(t, mux, cookie, "claude")
+	if recorder := callback(t, mux, cookie, "claude", flow.State, oauthTestCode); recorder.Code != http.StatusOK {
+		t.Fatalf("callback status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	connections, _ := creds.ListConnections(context.Background(), "claude")
+	if _, err := h.opts.CredentialRegistry.Secret(context.Background(), connections[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if exchange.calls() != 2 || !strings.Contains(exchange.requests[1].body, "refresh_token") {
+		t.Fatalf("expired sign-in credential was not refreshed: %+v", exchange.requests)
 	}
 }
