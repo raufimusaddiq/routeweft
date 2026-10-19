@@ -1,12 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { BarChart, EditorialSkeleton, EmptyState, ErrorNotice, Sparkline, StackedBar } from './kit'
 import { Caption, ErrCell, Fact, Main, Margin, Row, Statement, Status } from './editorial'
-import { badRate, compact, num, outlier, pct, failureStatuses, largest, latestWeekTotal, observeSeries, observedAverage, periodDays, providerTone, rate, sameDayLastWeek, share, statusTone, utcDay, weekOverWeek, type Summary, type UsageEvent } from './format'
+import { RequestDetails } from './RequestDetails'
+import { UsageLogs } from './UsageLogs'
+import { badRate, compact, num, outlier, pct, failureStatuses, largest, latestWeekTotal, observeSeries, observedAverage, periodDays, providerTone, rate, sameDayLastWeek, share, statusTone, utcDay, weekOverWeek, type Summary } from './format'
 
 type Props = { onUnauthorized: () => void }
 
-const periods = [['24h', 'Last 24 hours'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['all', 'All time']]
-const words: Record<string, string> = { '24h': '24 hours', '7d': '7 days', '30d': '30 days', all: 'recorded history' }
+const periods = [['today', 'Today (UTC)'], ['24h', 'Last 24 hours'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['60d', 'Last 60 days'], ['all', 'All time']]
+// The window a headline sentence names. 'today' is the UTC calendar day, the one the daily series uses.
+const windowPhrase: Record<string, string> = { today: 'so far today (UTC)', '24h': 'in the last 24 hours', '7d': 'in the last 7 days', '30d': 'in the last 30 days', '60d': 'in the last 60 days', all: 'in the recorded history' }
+const tabs = [['overview', 'Overview'], ['logs', 'Requests'], ['details', 'Request details']] as const
+type Tab = (typeof tabs)[number][0]
 
 async function responseError(response: Response, fallback: string) {
   try { return ((await response.json()) as { error?: { message?: string } }).error?.message || fallback } catch { return fallback }
@@ -14,8 +19,9 @@ async function responseError(response: Response, fallback: string) {
 
 export function Usage({ onUnauthorized }: Props) {
   const [period, setPeriod] = useState('7d')
+  const [tab, setTab] = useState<Tab>('overview')
+  const [requestId, setRequestId] = useState('')
   const [summary, setSummary] = useState<Summary | null>(null)
-  const [events, setEvents] = useState<UsageEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const controller = useRef<AbortController | null>(null)
@@ -29,18 +35,13 @@ export function Usage({ onUnauthorized }: Props) {
     setLoading(true)
     setError('')
     try {
-      const responses = await Promise.all([
-        fetch(`/admin/v1/usage/summary?period=${period}`, { credentials: 'same-origin', signal }),
-        fetch('/admin/v1/usage?page=1&pageSize=50', { credentials: 'same-origin', signal }),
-      ])
+      const response = await fetch(`/admin/v1/usage/summary?period=${period}`, { credentials: 'same-origin', signal })
       if (signal.aborted) return
-      if (responses.some(response => response.status === 401)) { onUnauthorized(); return }
-      const failed = responses.find(response => !response.ok)
-      if (failed) throw new Error(await responseError(failed, 'Could not load usage.'))
-      const [summaryData, eventData] = await Promise.all(responses.map(response => response.json())) as [Summary, { items: UsageEvent[] }]
+      if (response.status === 401) { onUnauthorized(); return }
+      if (!response.ok) throw new Error(await responseError(response, 'Could not load usage.'))
+      const summaryData = await response.json() as Summary
       if (signal.aborted) return
       setSummary(summaryData)
-      setEvents(eventData.items)
     } catch (cause) {
       if (signal.aborted || (cause instanceof DOMException && cause.name === 'AbortError')) return
       setError(cause instanceof Error ? cause.message : 'Could not load usage.')
@@ -57,7 +58,7 @@ export function Usage({ onUnauthorized }: Props) {
   const series = observed.drawn
   const n = series.length
   const recordedDays = observed.days.length
-  const days = Math.max(1, period === '24h' ? 1 : recordedDays || (period === '7d' ? 7 : 30))
+  const days = Math.max(1, period === '24h' || period === 'today' ? 1 : recordedDays || periodDays(period, raw, utcDay()))
   const dailyAverage = observedAverage(observed)
   const averageNote = recordedDays < n ? ` over the ${recordedDays} recorded days` : ''
   const points = series.map(day => ({ label: day.day, short: day.day.slice(5), value: day.requests }))
@@ -65,7 +66,7 @@ export function Usage({ onUnauthorized }: Props) {
   const ghost = sameDayLastWeek(observed)
   const thisWeek = latestWeekTotal(observed)
   // "The latest 7 days" is only a true label when the window has 7 days and is not the 24-hour period.
-  const showWeek = period !== '24h' && n >= 7
+  const showWeek = period !== '24h' && period !== 'today' && n >= 7
   const tokens = t ? t.inputTokens + t.outputTokens : 0
   const hit = t ? (t.cacheReadTokens / Math.max(1, t.inputTokens + t.cacheReadTokens)) * 100 : 0
   const fleet = t ? rate(t.errors, t.requests) : 0
@@ -74,26 +75,47 @@ export function Usage({ onUnauthorized }: Props) {
   const worst = summary ? outlier(summary) : null
   const topProvider = largest(summary?.providers.map(item => item.requests) ?? [])
 
-  return <div className="usage-content" aria-busy={loading}>
-    {first && !error && <div role="status" aria-label="Loading usage"><EditorialSkeleton /></div>}
-    {error && <ErrorNotice message={error} busy={loading} onRetry={() => void load()} />}
+  const periodLabel = periods.find(([value]) => value === period)?.[1] ?? period
+  const openRequest = (id: string) => { setRequestId(id); setTab('details') }
+  // Roving tabindex: arrows, Home and End move between tabs, as the tabs pattern expects.
+  const onTabKey = (event: KeyboardEvent) => {
+    const index = tabs.findIndex(([value]) => value === tab)
+    const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : -1
+    if (next < 0) return
+    event.preventDefault()
+    setTab(tabs[next][0])
+    document.getElementById(`usage-tab-${tabs[next][0]}`)?.focus()
+  }
 
-    <Row gap="s" label="Period">
+  return <div className="usage-content" aria-busy={loading}>
+    <div className="usage-tabs" role="tablist" aria-label="Usage views" onKeyDown={onTabKey}>
+      {tabs.map(([value, label]) => <button key={value} id={`usage-tab-${value}`} className="usage-tab" type="button" role="tab" aria-selected={tab === value} aria-controls="usage-panel" tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)}>{label}</button>)}
+    </div>
+
+    <div id="usage-panel" role="tabpanel" aria-labelledby={`usage-tab-${tab}`}>
+    {tab !== 'details' && <Row gap="s" label="Period">
       <div className="ed-main">
-        {summary && t
+        {tab === 'overview' && (summary && t
           ? <><p className="ed-headline"><strong>{compact(tokens)}</strong> tokens, <strong>{num(t.requests)}</strong> requests</p>
-            <p className="ed-subline">in the {period === 'all' ? words.all : `last ${words[period]}`}. {pct(hit, 0)} of input came from cache{t.avgDurationMs !== undefined ? <>; the average call took <span className="ed-nowrap">{num(t.avgDurationMs)} ms.</span></> : '.'}</p></>
-          : !first && <p className="ed-subline">No usage to show yet.</p>}
+            <p className="ed-subline">{windowPhrase[period]}. {pct(hit, 0)} of input came from cache{t.avgDurationMs !== undefined ? <>; the average call took <span className="ed-nowrap">{num(t.avgDurationMs)} ms.</span></> : '.'}</p></>
+          : !first && !error && <p className="ed-subline">No usage to show yet.</p>)}
+        {tab === 'logs' && <p className="ed-subline">Every request in the window, newest first. Pick one to see what was recorded for it.</p>}
       </div>
       <Margin>
         <div className="ed-period usage-toolbar"><label htmlFor="usage-period" className="ed-label">Time period</label>
           <select id="usage-period" value={period} onChange={event => setPeriod(event.target.value)}>{periods.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-          <span className="count-label" role="status">{loading ? 'Loading…' : summary ? `${num(summary.totals.requests)} requests${summary.since ? ` since ${summary.since.slice(0, 10)}` : ''}` : ''}</span>
-          <button className="button-secondary" type="button" disabled={loading} onClick={() => void load()}>Refresh</button></div>
+          {tab === 'overview' && <><span className="count-label" role="status">{loading ? 'Loading…' : summary ? `${num(summary.totals.requests)} requests${summary.since ? ` since ${summary.since.slice(0, 10)}` : ''}` : ''}</span>
+          <button className="button-secondary" type="button" disabled={loading} onClick={() => void load()}>Refresh</button></>}</div>
       </Margin>
-    </Row>
+    </Row>}
 
-    {summary && t && <>
+    {tab === 'overview' && first && !error && <div role="status" aria-label="Loading usage"><EditorialSkeleton /></div>}
+    {tab === 'overview' && error && <ErrorNotice message={error} busy={loading} onRetry={() => void load()} />}
+
+    {tab === 'logs' && <UsageLogs period={period} periodLabel={periodLabel} onUnauthorized={onUnauthorized} onOpen={openRequest} />}
+    {tab === 'details' && <RequestDetails requestId={requestId} onSelect={setRequestId} onUnauthorized={onUnauthorized} />}
+
+    {tab === 'overview' && summary && t && <>
       <Row gap="s" label="Requests per day">
         <Main title="Requests per day">
           {points.length === 0
@@ -155,28 +177,16 @@ export function Usage({ onUnauthorized }: Props) {
       </Row>
     </>}
 
-    {!first && (!error || summary) && <Row gap="m" label="Recent requests">
-      <Main title="Recent requests">
-        {events.length === 0
-          ? <EmptyState reason="No requests recorded yet. Send a request through the gateway and it will appear here." />
-          : <figure className="ed-figure">
-            <table className="ed-table usage-table log-table"><thead><tr><th scope="col">Route</th><th scope="col" className="num">Status</th><th scope="col" className="num">In</th><th scope="col" className="num">Out</th><th scope="col" className="num">Cache</th><th scope="col" className="num">Latency</th><th scope="col" className="num">Time</th></tr></thead>
-              <tbody>{events.slice(0, 9).map(event => <tr className="usage-event" key={event.id}>
-                <td className="log-route">{event.providerId || '—'} / {event.modelId || '—'}</td>
-                <td className="num log-status"><Status tone={statusTone(event.status)}>{event.status}</Status></td>
-                <td className="num log-tokens">{num(event.inputTokens)} in</td>
-                <td className="num log-out">{num(event.outputTokens)} out</td>
-                <td className="num log-cache">{event.cacheReadTokens + event.cacheWriteTokens > 0 ? `${num(event.cacheReadTokens + event.cacheWriteTokens)} cache` : '—'}</td>
-                <td className="num log-latency">{event.durationMs !== undefined ? `${event.durationMs} ms` : '—'}{event.ttftMs !== undefined ? ` · ${event.ttftMs}` : ''}</td>
-                <td className="num log-time">{new Date(event.createdAt).toLocaleString()}</td>
-              </tr>)}</tbody></table>
-            <figcaption><Caption kicker="Log">Latest {Math.min(9, events.length)} of {events.length}, newest first, with provider, model and latency.</Caption></figcaption>
-          </figure>}
+    {tab === 'overview' && summary && n > 1 && <Row gap="m" label="Daily trend">
+      <Main title="Trend">
+        <figure className="ed-figure"><p className="ed-subline">{compact(tokens / days)} tokens and {pct(hit, 0)} cache hit a day, on average, over the {summary.period === 'all' ? 'recorded history' : periodLabel.toLowerCase()}.</p>
+          <figcaption><Caption kicker="Note">Individual requests are on the Requests tab.</Caption></figcaption></figure>
       </Main>
-      {summary && n > 1 && <Margin>
+      <Margin>
         <figure className="ed-mini"><figcaption className="ed-label">Tokens per day</figcaption><Sparkline values={series.map(day => day.inputTokens + day.outputTokens)} label="Tokens per day" caption={`${compact(tokens / days)} /day`} /></figure>
         <figure className="ed-mini"><figcaption className="ed-label">Cache tokens per day</figcaption><Sparkline values={series.map(day => day.cacheReadTokens + day.cacheWriteTokens)} label="Cache tokens per day" caption={`${pct(hit, 0)} hit`} /></figure>
-      </Margin>}
+      </Margin>
     </Row>}
+    </div>
   </div>
 }

@@ -61,6 +61,7 @@ func TestUsageFilters(t *testing.T) {
 		{"start", "startDate=" + url.QueryEscape("2026-10-03T00:00:00Z"), []string{"r4", "r3"}},
 		{"end inclusive", "endDate=" + url.QueryEscape("2026-10-02T10:00:00Z"), []string{"r2", "r1"}},
 		{"offset zone", "startDate=" + url.QueryEscape("2026-10-03T03:00:00+02:00") + "&endDate=" + url.QueryEscape("2026-10-03T23:00:00Z"), []string{"r3"}},
+		{"request id", "requestId=r3", []string{"r3"}},
 		{"no match", "providerId=nobody", nil},
 		{"injection is inert", "providerId=" + url.QueryEscape("openai' OR '1'='1"), nil},
 	}

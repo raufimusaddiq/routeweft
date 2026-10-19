@@ -841,3 +841,21 @@ h1 { font-size: var(--t-title); font-weight: 300; letter-spacing: -.025em; }
 
 /* section headings are 16px; 11px is reserved for chart axis text */
 .panel-heading h2, .section-heading h2, .section-heading h3 { color: var(--text-main); font-size: var(--t-lead); font-weight: 500; letter-spacing: -.01em; }
+
+/* Usage tabs, request filters and details. Flat: a hairline rail, the selected tab marked by an ink underline. */
+.usage-tabs { display: flex; flex-wrap: wrap; gap: 4px 20px; border-bottom: 1px solid var(--border-subtle); margin-bottom: 8px; }
+.usage-tab { min-height: var(--row-height); border: 0; border-bottom: 2px solid transparent; border-radius: var(--radius-flat); padding: 0 2px; color: var(--text-muted); background: transparent; font: inherit; font-size: var(--t-body); cursor: pointer; }
+.usage-tab:hover { color: var(--text-main); }
+.usage-tab[aria-selected="true"] { border-bottom-color: var(--ink); color: var(--text-main); font-weight: 600; }
+.log-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+.log-filter { display: grid; gap: 4px; flex: 1 1 130px; min-width: 0; }
+.log-filter-wide { flex-basis: 320px; }
+.log-filter input { min-width: 0; min-height: var(--control-height); border: 1px solid var(--border); border-radius: var(--radius-flat); padding: 0 10px; color: var(--text-main); background: var(--bg); font: inherit; font-size: var(--t-body); }
+.log-filter-actions { display: flex; gap: 8px; }
+.link-button { max-width: 100%; border: 0; padding: 0; overflow: hidden; color: var(--text-main); background: transparent; font-family: var(--font-mono); font-size: var(--t-body); text-align: left; text-decoration: underline; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.log-table td:first-child { max-width: 14ch; }
+.log-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 10px; border-top: 1px solid var(--border-subtle); padding-top: 12px; }
+.request-event + .request-event { margin-top: 24px; }
+.request-detail-json { max-height: 360px; max-width: 100%; margin: 12px 0 0; overflow: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-flat); padding: 10px; color: var(--text-main); background: var(--surface-2); font: var(--t-body)/1.5 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.request-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; }
+@media (max-width: 700px) { .request-facts { grid-template-columns: minmax(0, 1fr); } }

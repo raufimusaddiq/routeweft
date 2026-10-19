@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ago, badRate, compact, delta, isWeekend, largest, latestWeekTotal, observeSeries, observedAverage, outlier, pct, providerTone, rate, failureStatuses, isFailure, periodDays, sameDayLastWeek, utcDay, share, statusTone, topByRequests, weekOverWeek, weekendLighter, type Day, type Summary } from './format.ts'
+import { ago, badRate, compact, delta, isWeekend, largest, latestWeekTotal, observeSeries, observedAverage, outlier, pct, providerTone, rate, failureStatuses, isFailure, periodDays, periodStart, sameDayLastWeek, utcDay, share, statusTone, topByRequests, weekOverWeek, weekendLighter, type Day, type Summary } from './format.ts'
 
 test('compact keeps small numbers exact and abbreviates large ones', () => {
   assert.equal(compact(950), '950')
@@ -108,9 +108,19 @@ test('periodDays counts calendar days, including a quiet history for all time', 
   assert.equal(periodDays('24h', [], '2026-10-19'), 1)
   assert.equal(periodDays('7d', [], '2026-10-19'), 7)
   assert.equal(periodDays('30d', [], '2026-10-19'), 30)
+  assert.equal(periodDays('today', [], '2026-10-19'), 1)
+  assert.equal(periodDays('60d', [], '2026-10-19'), 60)
   assert.equal(periodDays('all', [day('2026-10-10', 5)], '2026-10-19'), 10)
   assert.equal(periodDays('all', [], '2026-10-19'), 1)
   assert.match(utcDay(new Date('2026-10-19T23:30:00Z')), /^2026-10-19$/)
+})
+
+test('periodStart matches the API windows: UTC midnight for today, rolling otherwise, none for all time', () => {
+  const now = new Date('2026-10-19T15:30:00Z')
+  assert.equal(periodStart('today', now), '2026-10-19T00:00:00.000Z')
+  assert.equal(periodStart('24h', now), '2026-10-18T15:30:00.000Z')
+  assert.equal(periodStart('60d', now), '2026-08-20T15:30:00.000Z')
+  assert.equal(periodStart('all', now), null)
 })
 
 // ---- observed days ----
