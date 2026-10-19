@@ -18,3 +18,14 @@ Delta arrows are `↑ ↓` (inside the latin subset) instead of `▲ ▼`.
 | C | Spatial | sticky live strip, tonal panels and wells | 1px lit top edge on each layer; hero facts row under the chart |
 
 Checked on every page: no text below 4.5:1 and no horizontal overflow at 390.
+
+## Round 4: direction B only (the owner's pick), reworked with design-taste-frontend
+
+`b/` and `prototypes/b/` are replaced; `a/` and `c/` are untouched. B now has a 300px margin column beside every figure carrying
+notes that belong to it, a second large statement per page drawn from the data (Overview: the provider failing at 2.4x the
+fleet rate; Usage: the largest failure class; Providers: traffic concentration), a prior-period comparison on the daily chart
+(cyan bars are this week, white ticks the same day a week earlier, dashed line the 30-day average), error rate with its own bar in
+the provider tables, and section gaps of 40 / 72 / 120px so sections group. Captions sit under their figure at every width.
+
+Inspector (`inspect.mjs --app`, 1440 / 768 / 390, light and dark): 0 FAIL, 2 to 3 WARN per page. Before the rework the same
+screen had 5 FAIL. Remaining WARNs are listed in the PR comment with the reason each is kept.

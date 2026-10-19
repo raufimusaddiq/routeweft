@@ -25,7 +25,7 @@ function useWidth(fallback: number) {
 }
 
 // Bar chart with axis, gridlines, peak label and a hover/keyboard readout. Plain SVG, no dependencies.
-export function BarChart({ points, unit, title, shade }: { points: ChartPoint[]; unit: string; title: string; shade?: (label: string) => boolean }) {
+export function BarChart({ points, unit, title, shade, current, ghost, reference }: { points: ChartPoint[]; unit: string; title: string; shade?: (label: string) => boolean; current?: (index: number) => boolean; ghost?: (index: number) => number | null; reference?: { value: number; label: string } }) {
   const [ref, width] = useWidth(640)
   const [active, setActive] = useState<number | null>(null)
   if (points.length === 0) return null
@@ -33,7 +33,7 @@ export function BarChart({ points, unit, title, shade }: { points: ChartPoint[];
   const margin = { top: 20, right: 8, bottom: 24, left: 44 }
   const innerWidth = Math.max(1, width - margin.left - margin.right)
   const innerHeight = height - margin.top - margin.bottom
-  const max = Math.max(1, ...points.map(point => point.value))
+  const max = Math.max(1, ...points.map(point => point.value), ...(ghost ? points.map((_, index) => ghost(index) ?? 0) : []))
   const step = niceStep(max / 3)
   const top = Math.ceil(max / step) * step
   const ticks: number[] = []
@@ -62,6 +62,7 @@ export function BarChart({ points, unit, title, shade }: { points: ChartPoint[];
       <span>{active === null ? 'Peak' : points[shown].label}</span>
       <strong>{numberFormat.format(points[shown].value)} {unit}</strong>
       {active === null && <span>{points[peak].label}</span>}
+      {active !== null && ghost && ghost(active) ? <span className="chart-vs">{points[active].value >= (ghost(active) as number) ? '↑' : '↓'} {Math.abs(((points[active].value - (ghost(active) as number)) / (ghost(active) as number)) * 100).toFixed(1)}% vs 7 days before ({numberFormat.format(ghost(active) as number)})</span> : null}
     </div>
     <div className="chart-focus" tabIndex={0} role="group" aria-label={`${title}. Use left and right arrow keys to read each day.`} onKeyDown={onKey} onBlur={() => setActive(null)}>
       <svg className="chart-svg" width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true" onPointerMove={onPointer} onPointerLeave={() => setActive(null)}>
@@ -75,8 +76,10 @@ export function BarChart({ points, unit, title, shade }: { points: ChartPoint[];
         {active !== null && <line className="chart-cursor" x1={x(active)} x2={x(active)} y1={margin.top} y2={margin.top + innerHeight} />}
         {points.map((point, index) => {
           const barHeight = Math.max(point.value > 0 ? 2 : 0, (point.value / top) * innerHeight)
-          return <rect key={point.label} className={`usage-bar${index === (active ?? peak) ? ' usage-bar-active' : ''}`} x={x(index) - barWidth / 2} y={margin.top + innerHeight - barHeight} width={barWidth} height={barHeight} />
+          return <rect key={point.label} className={`usage-bar${current?.(index) ? ' usage-bar-cur' : ''}${index === (active ?? peak) ? ' usage-bar-active' : ''}`} x={x(index) - barWidth / 2} y={margin.top + innerHeight - barHeight} width={barWidth} height={barHeight} />
         })}
+        {ghost && points.map((point, index) => { const g = ghost(index); if (g === null) return null; return <line key={`g${point.label}`} className="chart-ghost" x1={x(index) - barWidth / 2} x2={x(index) + barWidth / 2} y1={y(g)} y2={y(g)} /> })}
+        {reference && <line className="chart-ref" x1={margin.left} x2={width - margin.right} y1={y(reference.value)} y2={y(reference.value)} />}
         {active === null && <text className="chart-peak" x={x(peak)} y={y(points[peak].value) - 6} textAnchor="middle">{numberFormat.format(points[peak].value)}</text>}
         {points.map((point, index) => index % labelEvery === 0 && <text key={point.label} className="chart-tick" x={x(index)} y={height - 6} textAnchor="middle">{point.short}</text>)}
       </svg>
@@ -84,7 +87,7 @@ export function BarChart({ points, unit, title, shade }: { points: ChartPoint[];
     <table className="sr-only">
       <caption>{title}</caption>
       <thead><tr><th>Day</th><th>{unit}</th></tr></thead>
-      <tbody>{points.map(point => <tr key={point.label}><td>{point.label}</td><td>{numberFormat.format(point.value)}</td></tr>)}</tbody>
+      <tbody>{points.map(point => <tr key={point.label}><td>{point.label}</td><td className="num">{numberFormat.format(point.value)}</td></tr>)}</tbody>
     </table>
   </figure>
 }

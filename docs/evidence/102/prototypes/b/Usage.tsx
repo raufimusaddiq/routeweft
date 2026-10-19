@@ -3,7 +3,7 @@ import { Delta, Status } from './kit2'
 import { BarChart, ErrorNotice, MetricsSkeleton, Sparkline, StackedBar } from './kit'
 import { statusTone } from './chartMath'
 import { clock, compact, delta, num, pct, rate, statusClass, useData } from './proto'
-import { Fig } from './Overview'
+import { Caption, ErrCell, Fact, Main, Margin, Row, Statement, outlier } from './Overview'
 
 const periods = [['24h', '24 hours'], ['7d', '7 days'], ['30d', '30 days']] as const
 
@@ -18,42 +18,86 @@ export function Usage({ onUnauthorized }: { onUnauthorized: () => void }) {
   const days = period === '24h' ? 1 : period === '7d' ? 7 : 30
   const tokens = t.inputTokens + t.outputTokens
   const hit = (t.cacheReadTokens / Math.max(1, t.inputTokens + t.cacheReadTokens)) * 100
-  const points = s.series.map(d => ({ label: d.day, short: d.day.slice(5), value: d.requests }))
+  const series = s.series, n = series.length
+  const points = series.map(d => ({ label: d.day, short: d.day.slice(5), value: d.requests }))
+  const fleet = rate(t.errors, t.requests)
+  const topFail = s.statuses.filter(x => !x.key.startsWith('2')).sort((a, b) => b.requests - a.requests)[0]
+  const out = outlier(s)
+  const wk = n >= 14
+  const ghost = (i: number) => (wk && i >= n - 7 ? series[i - 7].requests : null)
   const topP = Math.max(1, ...s.providers.map(p => p.requests))
 
   return <div className="usage-content b-usage" aria-busy={data.loading}>
-    <div className="ed-lead ed-lead-usage">
-      <p className="ed-headline"><strong>{compact(tokens)}</strong> tokens across <strong>{num(t.requests)}</strong> requests in {periods.find(p => p[0] === period)![1]}. <strong>{pct(hit, 0)}</strong> of input came from cache; the average call took <strong>{num(t.avgDurationMs ?? 0)} ms</strong>.</p>
-      <div className="ed-period" role="group" aria-label="Time period"><label htmlFor="usage-period" className="tile-label">Period</label>
-        <select id="usage-period" value={period} onChange={e => setPeriod(e.target.value as typeof period)}>{periods.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
-        <button className="button-secondary" type="button" onClick={data.reload}>Refresh</button></div>
-    </div>
-
-    <Fig kicker="Fig. 1" title="Requests per day" caption={<>{num(t.requests)} requests, <strong>{num(t.requests / days)}</strong> a day on average.{period === '7d' && delta(t.requests, data.prevWeek?.requests) !== null && <> <Delta value={delta(t.requests, data.prevWeek?.requests)} basis="vs prior 7 d" /></>}</>}>
-      <section className="ed-figure accent-surface"><BarChart points={points} unit="requests" title="Requests per day" /></section>
-    </Fig>
-
-    <Fig kicker="Fig. 2" title="Tokens and cache" caption={<>{compact(t.inputTokens)} in, {compact(t.outputTokens)} out, {compact(t.cacheReadTokens)} read from cache and {compact(t.cacheWriteTokens)} written.</>}>
-      <div className="ed-pair">
-        <figure><figcaption className="tile-label">Tokens per day</figcaption><Sparkline values={s.series.map(d => d.inputTokens + d.outputTokens)} label="Tokens per day" caption={`${compact(tokens / days)} /day`} /></figure>
-        <figure><figcaption className="tile-label">Cache tokens per day</figcaption><Sparkline values={s.series.map(d => d.cacheReadTokens + d.cacheWriteTokens)} label="Cache tokens per day" caption={`${pct(hit, 0)} hit`} /></figure>
+    <Row gap="s" label="Summary">
+      <div className="ed-main">
+        <p className="ed-headline"><strong>{compact(tokens)}</strong> tokens, <strong>{num(t.requests)}</strong> requests</p>
+        <p className="ed-subline">in the last {periods.find(p => p[0] === period)![1]}. {pct(hit, 0)} of input came from cache; the average call took <span className="ed-nowrap">{num(t.avgDurationMs ?? 0)} ms.</span></p>
       </div>
-    </Fig>
+      <Margin>
+        <div className="ed-period"><label htmlFor="usage-period" className="ed-label">Period</label>
+          <select id="usage-period" value={period} onChange={e => setPeriod(e.target.value as typeof period)}>{periods.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+          <button className="button-secondary" type="button" onClick={data.reload}>Refresh</button></div>
+      </Margin>
+    </Row>
 
-    <Fig kicker="Fig. 3" title="Outcomes" caption={<>{pct(rate(t.errors, t.requests))} of responses failed ({num(t.errors)}).</>}>
-      <StackedBar title="Response status counts" segments={s.statuses.map(i => ({ key: i.key, label: i.key, value: i.requests, tone: statusTone(i.key) }))} />
-    </Fig>
+    <Row gap="s" label="Requests per day">
+      <Main title="Requests per day">
+        <figure className="ed-figure accent-surface ed-plate">
+          <BarChart points={points} unit="requests" title="Requests per day" current={wk ? (i => i >= n - 7) : undefined} ghost={wk ? ghost : undefined} reference={n > 1 ? { value: t.requests / days, label: `average ${num(t.requests / days)}` } : undefined} />
+          <figcaption><Caption kicker="Fig. 1">{wk ? `Cyan bars are the last 7 days; each tick is the same day a week earlier. Dashed line: average ${num(t.requests / days)}.` : 'One bar per day.'}</Caption></figcaption>
+        </figure>
+      </Main>
+      <Margin>
+        <dl className="ed-facts">
+          <Fact label="Requests" value={<>{num(t.requests)} <small>req</small></>} note={wk ? <Delta value={delta(series.slice(-7).reduce((a, d) => a + d.requests, 0), series.slice(-14, -7).reduce((a, d) => a + d.requests, 0))} basis="last 7 vs prior 7 d" /> : `avg ${num(t.requests / days)} /day`} />
+          <Fact label="Tokens" value={<>{compact(tokens)} <small>in + out</small></>} note={`${compact(tokens / days)} /day`} />
+          <Fact label="Cache" value={<>{pct(hit, 0)} <small>of input</small></>} note={`${compact(t.cacheReadTokens)} read, ${compact(t.cacheWriteTokens)} written`} />
+        </dl>
+      </Margin>
+    </Row>
 
-    <Fig kicker="Table 1" title="Providers and models" caption="Share of requests; error rate beside each.">
-      <div className="ed-pair ed-pair-top">
-        <ol className="ed-list">{s.providers.slice(0, 7).map(i => { const e = rate(i.errors, i.requests); return <li key={i.key}><Status tone={e > 8 ? 'bad' : e > 4 ? 'warn' : 'good'}><span className="ed-name">{i.key}</span></Status><span className="ed-bar"><span style={{ width: `${(i.requests / topP) * 100}%` }} /></span><span className="ed-fig">{num(i.requests)}</span><span className="ed-sub">{pct(e)}</span></li> })}</ol>
-        <ol className="ed-list">{s.models.slice(0, 7).map(i => <li key={i.key}><span className="ed-name ed-mono">{i.key}</span><span className="ed-bar"><span style={{ width: `${(i.requests / s.models[0].requests) * 100}%` }} /></span><span className="ed-fig">{num(i.requests)}</span><span className="ed-sub">{compact(i.inputTokens + i.outputTokens)} tok</span></li>)}</ol>
-      </div>
-    </Fig>
+    {topFail && <Statement>
+      <strong>{topFail.key}</strong> causes <strong>{Math.round((topFail.requests / Math.max(1, t.errors)) * 100)}%</strong> of failures.{out ? <> <span className="ed-quiet">{out.key} is the weakest provider at {pct(out.err)}.</span></> : null}
+    </Statement>}
 
-    <Fig kicker="Log" title="Recent requests" caption={`Latest ${Math.min(10, data.events.length)}, newest first.`}>
-      <div className="table-scroll"><table className="ed-table usage-table"><thead><tr><th scope="col">Time</th><th scope="col">Status</th><th scope="col">Route</th><th scope="col" className="num">In</th><th scope="col" className="num">Out</th><th scope="col" className="num">Latency</th></tr></thead>
-        <tbody>{data.events.slice(0, 10).map(e => <tr key={e.id} className="usage-event"><td>{clock(e.createdAt)}</td><td><Status tone={statusClass(e.status)}>{e.status}</Status></td><td>{e.providerId} / {e.modelId}</td><td className="num">{num(e.inputTokens)}</td><td className="num">{num(e.outputTokens)}</td><td className="num">{e.durationMs ?? 0} ms</td></tr>)}</tbody></table></div>
-    </Fig>
+    <Row gap="s" label="Providers and models">
+      <Main title="Providers">
+        <figure className="ed-figure">
+          <div className="table-scroll"><table className="ed-table prov-table"><thead><tr><th scope="col">Provider</th><th scope="col" className="num">Requests</th><th scope="col"><span className="sr-only">Share</span></th><th scope="col" className="num">Errors</th></tr></thead>
+            <tbody>{s.providers.slice(0, 8).map(i => <tr key={i.key}><td><Status tone={rate(i.errors, i.requests) > 8 ? 'bad' : rate(i.errors, i.requests) > 4 ? 'warn' : 'good'}><span className="ed-name">{i.key}</span></Status></td><td className="num ed-big">{num(i.requests)}</td><td><span className="ed-bar"><span style={{ width: `${(i.requests / topP) * 100}%` }} /></span></td><ErrCell errors={i.errors} requests={i.requests} fleet={fleet} /></tr>)}</tbody></table></div>
+          <figcaption><Caption kicker="Table 1">By requests; the error bar scales to 10%.</Caption></figcaption>
+        </figure>
+      </Main>
+      <Margin>
+        <h3 className="ed-h3">Models</h3>
+        <ul className="ed-watch ed-models">{s.models.slice(0, 6).map(m => <li key={m.key}><code>{m.key}</code><span className="num">{num(m.requests)} <small>req</small></span></li>)}</ul>
+      </Margin>
+    </Row>
+
+    <Row gap="l" label="Outcomes">
+      <Main title="Outcomes">
+        <figure className="ed-figure">
+          <StackedBar title="Response status counts" segments={s.statuses.map(i => ({ key: i.key, label: i.key, value: i.requests, tone: statusTone(i.key) }))} />
+          <figcaption><Caption kicker="Fig. 2">Responses by status code.</Caption></figcaption>
+        </figure>
+      </Main>
+      <Margin>
+        <dl className="ed-facts"><Fact label="Failed" value={<>{pct(fleet)}</>} note={`${num(t.errors)} of ${num(t.requests)} responses`} /></dl>
+      </Margin>
+    </Row>
+
+    <Row gap="m" label="Recent requests">
+      <Main title="Recent requests">
+        <figure className="ed-figure">
+          <div className="table-scroll"><table className="ed-table usage-table"><thead><tr><th scope="col">Route</th><th scope="col" className="num">Status</th><th scope="col" className="num">In</th><th scope="col" className="num">Out</th><th scope="col" className="num">Latency</th><th scope="col" className="num">Time</th></tr></thead>
+            <tbody>{data.events.slice(0, 9).map(e => <tr key={e.id} className="usage-event"><td>{e.providerId} / {e.modelId}</td><td className="num"><Status tone={statusClass(e.status)}>{e.status}</Status></td><td className="num">{num(e.inputTokens)}</td><td className="num">{num(e.outputTokens)}</td><td className="num">{e.durationMs ?? 0} ms</td><td className="num">{clock(e.createdAt)}</td></tr>)}</tbody></table></div>
+          <figcaption><Caption kicker="Log">Latest 9, newest first.</Caption></figcaption>
+        </figure>
+      </Main>
+      <Margin>
+        <figure className="ed-mini"><figcaption className="ed-label">Tokens per day</figcaption><Sparkline values={series.map(d => d.inputTokens + d.outputTokens)} label="Tokens per day" caption={`${compact(tokens / days)} /day`} /></figure>
+        <figure className="ed-mini"><figcaption className="ed-label">Cache tokens per day</figcaption><Sparkline values={series.map(d => d.cacheReadTokens + d.cacheWriteTokens)} label="Cache tokens per day" caption={`${pct(hit, 0)} hit`} /></figure>
+      </Margin>
+    </Row>
   </div>
 }
