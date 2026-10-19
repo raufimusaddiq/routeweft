@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { BarChart, EditorialSkeleton, EmptyState, ErrorNotice, Sparkline, StackedBar } from './kit'
 import { Caption, ErrCell, Fact, Main, Margin, Row, Statement, Status } from './editorial'
-import { badRate, compact, delta, num, outlier, pct, priorWeek, failureStatuses, providerTone, rate, share, statusTone, sum, type Summary, type UsageEvent } from './format'
+import { badRate, compact, delta, denseDays, num, outlier, pct, priorWeek, failureStatuses, periodDays, providerTone, rate, share, statusTone, sum, utcDay, type Summary, type UsageEvent } from './format'
 
 type Props = { onUnauthorized: () => void }
 
@@ -42,9 +42,12 @@ export function Usage({ onUnauthorized }: Props) {
 
   const first = loading && !summary
   const t = summary?.totals
-  const series = summary?.series ?? []
+  // Days without attributed 2xx traffic are absent from the API series; fill them so windows and averages are calendar-based.
+  const raw = summary?.series ?? []
+  const series = period !== '24h' && raw.length > 0 ? denseDays(raw, periodDays(period, raw, utcDay()), utcDay()) : raw
   const n = series.length
-  const days = Math.max(1, period === '24h' ? 1 : period === '7d' ? 7 : period === '30d' ? 30 : n)
+  const days = Math.max(1, period === '24h' ? 1 : n || (period === '7d' ? 7 : 30))
+  const dailyAverage = n > 0 ? sum(series, 'requests') / n : 0
   const points = series.map(day => ({ label: day.day, short: day.day.slice(5), value: day.requests }))
   const prior = priorWeek(series)
   const ghost = (index: number) => (prior && index >= n - 7 ? series[index - 7].requests : null)
@@ -83,13 +86,13 @@ export function Usage({ onUnauthorized }: Props) {
           {points.length === 0
             ? <EmptyState reason="No attributed usage in this period.">{period !== 'all' && <button className="button-secondary" type="button" onClick={() => setPeriod('all')}>Show all time</button>}</EmptyState>
             : <figure className="ed-figure usage-chart-panel accent-surface ed-plate">
-              <BarChart points={points} unit="requests" title="Requests per day" current={prior ? (index => index >= n - 7) : undefined} ghost={prior ? ghost : undefined} reference={n > 1 ? { value: t.requests / days } : undefined} />
-              <figcaption><Caption kicker="Fig. 1">{prior ? `Cyan bars are the latest 7 days; each tick is the same day a week earlier. Dashed line: average ${num(t.requests / days)} a day.` : 'One bar per day.'}</Caption></figcaption>
+              <BarChart points={points} unit="requests" title="Requests per day" current={prior ? (index => index >= n - 7) : undefined} ghost={prior ? ghost : undefined} reference={n > 1 ? { value: dailyAverage } : undefined} />
+              <figcaption><Caption kicker="Fig. 1">{prior ? `Cyan bars are the latest 7 days; each tick is the same day a week earlier. Dashed line: average ${num(dailyAverage)} successful requests a day.` : 'One bar per day.'}</Caption></figcaption>
             </figure>}
         </Main>
         <Margin>
           <dl className="ed-facts">
-            <Fact label="Requests" value={<>{num(t.requests)} <small>req</small></>} note={prior ? `${num(thisWeek)} in the latest 7 days, ${delta(thisWeek, lastWeek) === null ? 'no prior week' : `${(delta(thisWeek, lastWeek) ?? 0) >= 0 ? '↑' : '↓'} ${Math.abs(delta(thisWeek, lastWeek) ?? 0).toFixed(1)}% vs prior 7 d`}` : `avg ${num(t.requests / days)} a day`} />
+            <Fact label="Requests" value={<>{num(t.requests)} <small>req</small></>} note={prior ? `${num(thisWeek)} successful in the latest 7 days, ${delta(thisWeek, lastWeek) === null ? 'no prior week' : `${(delta(thisWeek, lastWeek) ?? 0) >= 0 ? '↑' : '↓'} ${Math.abs(delta(thisWeek, lastWeek) ?? 0).toFixed(1)}% vs prior 7 d`}` : `avg ${num(t.requests / days)} a day`} />
             <Fact label="Tokens" value={<>{compact(tokens)} <small>in + out</small></>} note={`input ${num(t.inputTokens)}, output ${num(t.outputTokens)}`} />
             <Fact label="Cache" value={<>{pct(hit, 0)} <small>of input</small></>} note={`read ${num(t.cacheReadTokens)}, write ${num(t.cacheWriteTokens)}`} />
             <Fact label="Latency" value={<>{t.avgDurationMs !== undefined ? num(t.avgDurationMs) : '—'} <small>ms avg</small></>} note={`TTFT ${t.avgTtftMs !== undefined ? `${num(t.avgTtftMs)} ms` : '—'}`} />

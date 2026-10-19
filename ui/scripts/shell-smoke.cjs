@@ -333,6 +333,8 @@ const { join } = require('node:path');
     }
     return route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
   });
+  // Freeze the page clock: the usage windows are calendar windows ending today, and the fixture's days are 2026-09-24 and 2026-09-25.
+  await page.clock.setFixedTime(new Date('2026-09-25T12:00:00Z'));
   await page.goto('http://127.0.0.1:4173');
   await page.waitForSelector('#sign-in-title');
   await page.keyboard.press('Tab');
@@ -958,7 +960,7 @@ const { join } = require('node:path');
   assert.ok(report.skeleton.blocks >= 10, 'skeleton mirrors the content shape');
   assert.equal(report.skeleton.spinner, 0);
   assert.equal(report.skeleton.animation, 'pulse');
-  assert.equal(report.usageBars, 2);
+  assert.equal(report.usageBars, 7, 'a 7-day period draws 7 calendar days; absent days are zero bars');
   assert.equal(report.usageProviderRows, 2);
   assert.equal(report.usageEventRows, 1);
   assert.equal(report.usagePeriod, '7d');

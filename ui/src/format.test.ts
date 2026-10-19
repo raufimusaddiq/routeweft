@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ago, badRate, compact, delta, isWeekend, outlier, pct, priorWeek, providerTone, rate, failureStatuses, isFailure, share, statusTone, topByRequests, weekendLighter, type Day, type Summary } from './format.ts'
+import { ago, badRate, compact, delta, isWeekend, outlier, pct, priorWeek, providerTone, rate, denseDays, failureStatuses, isFailure, periodDays, utcDay, share, statusTone, topByRequests, weekendLighter, type Day, type Summary } from './format.ts'
 
 test('compact keeps small numbers exact and abbreviates large ones', () => {
   assert.equal(compact(950), '950')
@@ -114,4 +114,28 @@ test('a failure is any non-2xx response, the same set the API counts as errors',
   assert.equal(isFailure(204), false)
   assert.equal(isFailure('199'), true)
   assert.equal(isFailure(302), true)
+})
+
+test('denseDays fills absent days with zeros so windows are calendar windows', () => {
+  const series = [day('2026-10-17', 40), day('2026-10-19', 60)]
+  const dense = denseDays(series, 5, '2026-10-19')
+  assert.deepEqual(dense.map(d => d.day), ['2026-10-15', '2026-10-16', '2026-10-17', '2026-10-18', '2026-10-19'])
+  assert.deepEqual(dense.map(d => d.requests), [0, 0, 40, 0, 60])
+  assert.equal(dense.reduce((total, d) => total + d.requests, 0) / dense.length, 20)
+  assert.equal(denseDays([], 3, '2026-10-19').length, 3)
+})
+
+test('denseDays keeps a day recorded after the end date instead of dropping it', () => {
+  const dense = denseDays([day('2026-10-20', 9)], 2, '2026-10-19')
+  assert.deepEqual(dense.map(d => d.day), ['2026-10-19', '2026-10-20'])
+  assert.equal(dense[1].requests, 9)
+})
+
+test('periodDays counts calendar days, including a quiet history for all time', () => {
+  assert.equal(periodDays('24h', [], '2026-10-19'), 1)
+  assert.equal(periodDays('7d', [], '2026-10-19'), 7)
+  assert.equal(periodDays('30d', [], '2026-10-19'), 30)
+  assert.equal(periodDays('all', [day('2026-10-10', 5)], '2026-10-19'), 10)
+  assert.equal(periodDays('all', [], '2026-10-19'), 1)
+  assert.match(utcDay(new Date('2026-10-19T23:30:00Z')), /^2026-10-19$/)
 })

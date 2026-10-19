@@ -120,3 +120,35 @@ export function isFailure(status: number | string) {
 export function failureStatuses<T extends { key: string; requests: number }>(statuses: T[]) {
   return statuses.filter(item => isFailure(item.key)).sort((a, b) => b.requests - a.requests)
 }
+
+// ---- calendar days ----
+// The daily series is GROUP BY day over usage_daily, so a day without attributed 2xx traffic is absent, not zero.
+// Windows (this week, the week before, averages) must be calendar windows, so absent days are filled with zeros.
+export const utcDay = (date = new Date()) => date.toISOString().slice(0, 10)
+
+function shiftDay(day: string, offset: number) {
+  const date = new Date(`${day}T00:00:00Z`)
+  date.setUTCDate(date.getUTCDate() + offset)
+  return date.toISOString().slice(0, 10)
+}
+
+// Whole calendar days a period covers, ending today (inclusive). 'all' runs from the first recorded day.
+export function periodDays(period: string, series: Day[], today: string) {
+  if (period === '24h') return 1
+  if (period === '7d') return 7
+  if (period === '30d') return 30
+  if (series.length === 0) return 1
+  const first = new Date(`${series[0].day}T00:00:00Z`).getTime()
+  const last = new Date(`${today}T00:00:00Z`).getTime()
+  return Math.max(1, Math.round((last - first) / 86400000) + 1)
+}
+
+// `count` consecutive days ending on `endDay` (or on the latest recorded day, if that is later), zero-filled.
+export function denseDays(series: Day[], count: number, endDay: string): Day[] {
+  const byDay = new Map(series.map(day => [day.day, day]))
+  const latest = series.reduce((best, day) => (day.day > best ? day.day : best), endDay)
+  return Array.from({ length: count }, (_, index) => {
+    const day = shiftDay(latest, index - (count - 1))
+    return byDay.get(day) ?? { day, requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }
+  })
+}

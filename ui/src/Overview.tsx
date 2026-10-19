@@ -1,7 +1,7 @@
 import { BarChart, EditorialSkeleton, ErrorNotice, StackedBar } from './kit'
 import { useOverviewData } from './data'
 import { Caption, Dot, ErrCell, Fact, Main, Margin, Row, Statement, Status } from './editorial'
-import { ago, badRate, clock, delta, isWeekend, num, outlier, pct, priorWeek, failureStatuses, providerTone, rate, share, statusTone, sum, weekendLighter } from './format'
+import { ago, badRate, clock, delta, denseDays, isWeekend, num, outlier, pct, priorWeek, failureStatuses, providerTone, rate, share, statusTone, sum, utcDay, weekendLighter } from './format'
 
 type Props = { onUnauthorized: () => void }
 
@@ -32,18 +32,22 @@ export function Overview({ onUnauthorized }: Props) {
   if (overview.telemetry.degraded) attention.push({ key: 'telemetry', tone: 'warn', title: 'Usage telemetry', text: 'Degraded: some accounting may be delayed or incomplete.' })
   if (overview.traffic.errors > 0 && !flagged) attention.push({ key: 'failed', tone: 'warn', title: 'Failed requests', text: `${num(overview.traffic.errors)} recorded.` })
 
-  const series = month?.series ?? []
+  // The API omits days without attributed 2xx traffic; fill them so every window below is a calendar window.
+  const series = month && month.series.length > 0 ? denseDays(month.series, 30, utcDay()) : []
   const n = series.length
   const points = series.map(day => ({ label: day.day, short: day.day.slice(5), value: day.requests }))
   const prior = priorWeek(series)
   const thisWeek = sum(series.slice(-7), 'requests')
   const lastWeek = prior ? sum(prior, 'requests') : undefined
-  const up = t ? delta(t.requests, lastWeek) : null
+  // Both sides come from the daily rollup (attributed 2xx), so the percentage compares like with like.
+  const up = t ? delta(thisWeek, lastWeek) : null
   const m = month?.totals
   const err30 = m ? rate(m.errors, m.requests) : 0
-  const average = m && n ? m.requests / n : 0
+  const average = n ? sum(series, 'requests') / n : 0
   const peak = n ? series.reduce((best, day) => (day.requests > best.requests ? day : best), series[0]) : null
-  const lighter = weekendLighter(series)
+  // Zero-filled days before the first recorded day are not observations, so the weekend ratio starts there.
+  const firstRecorded = month?.series[0]?.day
+  const lighter = firstRecorded ? weekendLighter(series.filter(day => day.day >= firstRecorded)) : null
   const ghost = (index: number) => (prior && index >= n - 7 ? series[index - 7].requests : null)
   const failures = week ? failureStatuses(week.statuses) : []
   const shown = events.slice(0, 7)
@@ -74,12 +78,12 @@ export function Overview({ onUnauthorized }: Props) {
       <Main title="Requests per day">
         <figure className="ed-figure">
           <BarChart points={points} unit="requests" title="Requests per day, 30 days" shade={isWeekend} current={index => index >= n - 7} ghost={ghost} reference={{ value: average }} />
-          <figcaption><Caption kicker="Fig. 1">Last 30 days. Cyan bars are this week; each white tick is the same day a week earlier. The dashed line is the 30-day average ({num(average)}), weekends shaded.</Caption></figcaption>
+          <figcaption><Caption kicker="Fig. 1">Last 30 days. Cyan bars are this week; each white tick is the same day a week earlier. The dashed line is the 30-day average of successful requests ({num(average)} a day), weekends shaded.</Caption></figcaption>
         </figure>
       </Main>
       <Margin>
         <dl className="ed-facts">
-          <Fact label="This week" value={<>{num(t.requests)} <small>req</small></>} note={up !== null ? `${up >= 0 ? '↑' : '↓'} ${Math.abs(up).toFixed(1)}% vs prior 7 d (${num(lastWeek ?? 0)})` : `${num(thisWeek)} in the latest 7 days`} />
+          <Fact label="This week" value={<>{num(t.requests)} <small>req</small></>} note={up !== null ? `${up >= 0 ? '↑' : '↓'} ${Math.abs(up).toFixed(1)}% vs prior 7 d, successful requests (${num(thisWeek)} vs ${num(lastWeek ?? 0)})` : `${num(thisWeek)} successful requests in the latest 7 days`} />
           <Fact label="Busiest day" value={<>{num(peak.requests)} <small>req</small></>} note={`${peak.day.slice(5)}, ${Math.round((peak.requests / Math.max(1, average) - 1) * 100)}% above the 30-day average`} />
           <Fact label="Weekends" value={lighter === null || Math.abs(lighter) < 1 ? '—' : <>{Math.abs(Math.round(lighter))}% <small>{lighter >= 0 ? 'lighter' : 'heavier'}</small></>} note={lighter === null ? 'needs weekday and weekend days' : Math.abs(lighter) < 1 ? 'about the same as weekdays' : `than weekdays, ${n} days`} />
         </dl>
