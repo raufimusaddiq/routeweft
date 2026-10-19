@@ -547,41 +547,49 @@ func (h *Handler) keys(w http.ResponseWriter, r *http.Request) error {
 	})
 }
 
+const usageColumns = "id,request_id,provider_id,model_id,connection_id,api_key_id,status,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,duration_ms,ttft_ms,created_at"
+
 func (h *Handler) usage(w http.ResponseWriter, r *http.Request) error {
 	where, args, err := usageFilter(r.URL.Query())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
 		return nil
 	}
-	return h.sqlList(w, r, `SELECT id,request_id,provider_id,model_id,connection_id,api_key_id,status,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,duration_ms,ttft_ms,created_at FROM usage_events`+where+` ORDER BY created_at DESC,id DESC`, "SELECT COUNT(*) FROM usage_events"+where, func(rows *sql.Rows) (any, error) {
-		var item struct {
-			ID         int64  `json:"id"`
-			RequestID  string `json:"requestId"`
-			Provider   sql.NullString
-			Model      sql.NullString
-			Connection sql.NullString
-			APIKey     sql.NullString
-			Status     int   `json:"status"`
-			Input      int64 `json:"inputTokens"`
-			Output     int64 `json:"outputTokens"`
-			CacheRead  int64 `json:"cacheReadTokens"`
-			CacheWrite int64 `json:"cacheWriteTokens"`
-			Duration   sql.NullInt64
-			TTFT       sql.NullInt64
-			CreatedAt  string `json:"createdAt"`
-		}
-		if err := rows.Scan(&item.ID, &item.RequestID, &item.Provider, &item.Model, &item.Connection, &item.APIKey, &item.Status, &item.Input, &item.Output, &item.CacheRead, &item.CacheWrite, &item.Duration, &item.TTFT, &item.CreatedAt); err != nil {
-			return nil, err
-		}
-		result := map[string]any{"id": item.ID, "requestId": item.RequestID, "status": item.Status, "inputTokens": item.Input, "outputTokens": item.Output, "cacheReadTokens": item.CacheRead, "cacheWriteTokens": item.CacheWrite, "createdAt": item.CreatedAt}
-		putNull(result, "providerId", item.Provider)
-		putNull(result, "modelId", item.Model)
-		putNull(result, "connectionId", item.Connection)
-		putNull(result, "apiKeyId", item.APIKey)
-		putNullInt(result, "durationMs", item.Duration)
-		putNullInt(result, "ttftMs", item.TTFT)
-		return result, nil
+	return h.sqlList(w, r, "SELECT "+usageColumns+" FROM usage_events"+where+" ORDER BY created_at DESC,id DESC", "SELECT COUNT(*) FROM usage_events"+where, func(rows *sql.Rows) (any, error) {
+		return scanUsageEvent(rows)
 	}, args...)
+}
+
+// scanUsageEvent reads one usageColumns row into its API shape; absent
+// attribution and timings are omitted rather than rendered as zero.
+func scanUsageEvent(rows *sql.Rows) (map[string]any, error) {
+	var item struct {
+		ID         int64
+		RequestID  string
+		Provider   sql.NullString
+		Model      sql.NullString
+		Connection sql.NullString
+		APIKey     sql.NullString
+		Status     int
+		Input      int64
+		Output     int64
+		CacheRead  int64
+		CacheWrite int64
+		Duration   sql.NullInt64
+		TTFT       sql.NullInt64
+		CreatedAt  string
+	}
+	if err := rows.Scan(&item.ID, &item.RequestID, &item.Provider, &item.Model, &item.Connection, &item.APIKey, &item.Status, &item.Input, &item.Output, &item.CacheRead, &item.CacheWrite, &item.Duration, &item.TTFT, &item.CreatedAt); err != nil {
+		return nil, err
+	}
+	result := map[string]any{"id": item.ID, "requestId": item.RequestID, "status": item.Status, "inputTokens": item.Input, "outputTokens": item.Output, "cacheReadTokens": item.CacheRead, "cacheWriteTokens": item.CacheWrite, "createdAt": item.CreatedAt}
+	putNull(result, "providerId", item.Provider)
+	putNull(result, "modelId", item.Model)
+	putNull(result, "connectionId", item.Connection)
+	putNull(result, "apiKeyId", item.APIKey)
+	putNullInt(result, "durationMs", item.Duration)
+	putNullInt(result, "ttftMs", item.TTFT)
+	return result, nil
 }
 
 func (h *Handler) requests(w http.ResponseWriter, r *http.Request) error {

@@ -880,12 +880,24 @@ exposed over this API and need an explicit product/host decision.
 Usage and console logs (SPEC §21):
 
 ```text
-GET    /admin/v1/usage    bounded list; optional exact filters providerId, modelId,
-                          connectionId, apiKeyId, status (100-599), and inclusive
+GET    /admin/v1/usage    bounded list; optional exact filters requestId, providerId,
+                          modelId, connectionId, apiKeyId, status (100-599), and inclusive
                           startDate/endDate (RFC 3339); a malformed filter is 400
                           invalid_filter without echoing the value
 DELETE /admin/v1/logs     clears the bounded console buffer -> {cleared}
 ```
+
+`GET /admin/v1/usage/summary?period=` accepts `today`, `24h`, `7d` (default), `30d`,
+`60d`, and `all`. `today` begins at the current UTC midnight, the calendar the daily
+series uses; the others roll back from now. The hourly series below does not serve
+`today` or `60d`.
+
+`GET /admin/v1/usage/requests/{requestId}` returns `{requestId, events, detail}`:
+every usage event stored for the id (oldest first, at most 50) and, when the
+`request_details` table holds one, `detail: {routeMode, detail, createdAt}` with the
+payload redacted again on read; otherwise `detail` is `null`. An id with neither is
+`404 request_not_found`. Nothing in the gateway currently enqueues request details,
+so `detail` is null until diagnostics capture is wired.
 
 `GET /admin/v1/usage/hourly?period=7d` returns a flat, oldest-first hourly
 series from `usage_events` under the same admin session policy and filter grammar

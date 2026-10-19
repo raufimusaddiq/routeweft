@@ -4,6 +4,8 @@ export type Totals = { requests: number; inputTokens: number; outputTokens: numb
 export type Day = { day: string; requests: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
 export type Breakdown = { key: string; requests: number; inputTokens: number; outputTokens: number; errors: number }
 export type Summary = { period: string; since: string; totals: Totals; series: Day[]; providers: Breakdown[]; models: Breakdown[]; statuses: Breakdown[] }
+export type RequestDetail = { routeMode?: string; detail: unknown; createdAt: string }
+export type RequestRecord = { requestId: string; events: UsageEvent[]; detail: RequestDetail | null }
 export type UsageEvent = { id: number; requestId: string; status: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; createdAt: string; providerId?: string; modelId?: string; connectionId?: string; apiKeyId?: string; durationMs?: number; ttftMs?: number }
 
 const numberFormat = new Intl.NumberFormat('en-US')
@@ -126,13 +128,23 @@ function shiftDay(day: string, offset: number) {
 
 // Whole calendar days a period covers, ending today (inclusive). 'all' runs from the first recorded day.
 export function periodDays(period: string, series: Day[], today: string) {
-  if (period === '24h') return 1
+  if (period === 'today' || period === '24h') return 1
   if (period === '7d') return 7
   if (period === '30d') return 30
+  if (period === '60d') return 60
   if (series.length === 0) return 1
   const first = new Date(`${series[0].day}T00:00:00Z`).getTime()
   const last = new Date(`${today}T00:00:00Z`).getTime()
   return Math.max(1, Math.round((last - first) / 86400000) + 1)
+}
+
+// Start of a period as an RFC 3339 instant, or null for all time. Mirrors the API's summary window
+// (internal/control/api/usage_summary.go): "today" begins at UTC midnight, the rest roll back from now.
+const rollingHours: Record<string, number> = { '24h': 24, '7d': 168, '30d': 720, '60d': 1440 }
+export function periodStart(period: string, now = new Date()): string | null {
+  if (period === 'today') return `${utcDay(now)}T00:00:00.000Z`
+  const hours = rollingHours[period]
+  return hours === undefined ? null : new Date(now.getTime() - hours * 3600_000).toISOString()
 }
 
 // Internal: `count` consecutive days ending on `endDay` (or on the latest recorded day, if that is later), zero-filled.

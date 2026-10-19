@@ -16,11 +16,23 @@ var usagePeriods = map[string]time.Duration{
 	"all": 0,
 }
 
+// summaryPeriods are the Usage summary windows. They add "today" (since the UTC
+// midnight, the same calendar the daily series uses) and "60d" to the rolling
+// periods the hourly series also serves.
+var summaryPeriods = map[string]time.Duration{"60d": 60 * 24 * time.Hour}
+
 func usageWindow(period string, now time.Time) (string, bool) {
 	if period == "" {
 		period = "7d"
 	}
+	if period == "today" {
+		now = now.UTC()
+		return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Format(usageStoredTime), true
+	}
 	duration, ok := usagePeriods[period]
+	if !ok {
+		duration, ok = summaryPeriods[period]
+	}
 	if !ok {
 		return "", false
 	}
@@ -40,7 +52,7 @@ func (h *Handler) handleUsageSummary(w http.ResponseWriter, r *http.Request) {
 	period := strings.TrimSpace(r.URL.Query().Get("period"))
 	since, ok := usageWindow(period, time.Now())
 	if !ok {
-		writeError(w, http.StatusBadRequest, "invalid_period", "period must be one of 24h, 7d, 30d, all")
+		writeError(w, http.StatusBadRequest, "invalid_period", "period must be one of today, 24h, 7d, 30d, 60d, all")
 		return
 	}
 	ctx := r.Context()

@@ -21,7 +21,7 @@ func usageFilter(query url.Values) (string, []any, error) {
 	var clauses []string
 	var args []any
 	for _, f := range []struct{ param, column string }{
-		{"providerId", "provider_id"}, {"modelId", "model_id"}, {"connectionId", "connection_id"}, {"apiKeyId", "api_key_id"},
+		{"requestId", "request_id"}, {"providerId", "provider_id"}, {"modelId", "model_id"}, {"connectionId", "connection_id"}, {"apiKeyId", "api_key_id"},
 	} {
 		value := strings.TrimSpace(query.Get(f.param))
 		if value == "" {

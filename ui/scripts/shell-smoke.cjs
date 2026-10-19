@@ -134,6 +134,7 @@ const { join } = require('node:path');
   let adapterEnabled = false;
   let systemOneModelAdded = false;
   let usageSummaryCalls = 0;
+  let lastUsageURL = '';
   let usageGate = null;
   // History length of the usage fixture: 2 days by default (the original fixture); a steady 100 a day with the latest 7 days at 140 otherwise.
   let historyDays = 2;
@@ -243,7 +244,14 @@ const { join } = require('node:path');
       statuses: [{ key: '200', requests: 117, inputTokens: 9000, outputTokens: 3000, errors: 0 }, { key: '500', requests: 3, inputTokens: 0, outputTokens: 0, errors: 3 }],
     }) });
   }
+  if (url.pathname === '/admin/v1/usage/requests/req-abc' && method === 'GET') {
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ requestId: 'req-abc', events: [{ id: 1, requestId: 'req-abc', status: 200, providerId: 'openai', modelId: 'gpt-5', connectionId: 'conn-1', apiKeyId: 'key-a', inputTokens: 100, outputTokens: 20, cacheReadTokens: 10, cacheWriteTokens: 0, durationMs: 300, ttftMs: 80, createdAt: '2026-09-25T20:00:00Z' }], detail: null }) });
+  }
+  if (url.pathname.startsWith('/admin/v1/usage/requests/') && method === 'GET') {
+    return route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: { code: 'request_not_found', message: 'no usage or detail is stored for this request id' } }) });
+  }
   if (url.pathname === '/admin/v1/usage' && method === 'GET') {
+    lastUsageURL = url.search;
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 1, requestId: 'req-abc', status: 200, providerId: 'openai', modelId: 'gpt-5', inputTokens: 100, outputTokens: 20, cacheReadTokens: 10, cacheWriteTokens: 0, durationMs: 300, ttftMs: 80, createdAt: '2026-09-25T20:00:00Z' }], page: 1, pageSize: 50, total: 1 }) });
   }
   if (url.pathname === '/admin/v1/quota' && method === 'GET') {
@@ -586,7 +594,6 @@ const { join } = require('node:path');
   await captureVisuals('usage');
   report.usageBars = await page.locator('.usage-bar').count();
   report.usageProviderRows = await page.locator('.usage-content .prov-table tbody tr').count();
-  report.usageEventRows = await page.locator('.usage-event').count();
   report.usagePeriod = usagePeriod;
   // Focus, error and empty states (#102).
   await page.locator('#usage-period').focus();
@@ -620,6 +627,33 @@ const { join } = require('node:path');
   await page.waitForFunction(() => document.querySelector('.usage-toolbar .count-label').textContent.includes('since'));
   report.usagePeriodAfterChange = usagePeriod;
   report.usageSummaryCalls = usageSummaryCalls;
+  // The two added periods reach the API as themselves.
+  for (const added of ['today', '60d']) {
+    const loaded = page.waitForResponse(response => response.url().includes(`usage/summary?period=${added}`));
+    await page.selectOption('#usage-period', added); await loaded; await page.waitForTimeout(200);
+    if (added === 'today') report.todayHeadline = await page.locator('.usage-content .ed-subline').first().innerText();
+  }
+  // Tabs: Requests lists the log and filters it server-side; a row opens Request details.
+  report.tabs = await page.getByRole('tab').allInnerTexts();
+  await page.getByRole('tab', { name: 'Requests' }).click();
+  await page.waitForSelector('.log-table tbody tr');
+  report.usageEventRows = await page.locator('.log-table tbody tr').count();
+  report.logsURL = lastUsageURL;
+  await page.getByLabel('Provider').fill('openai');
+  await page.getByLabel('Status').fill('200');
+  const filtered = page.waitForResponse(response => response.url().includes('providerId=openai'));
+  await page.getByRole('button', { name: 'Apply filters' }).click(); await filtered;
+  report.logsFilteredURL = lastUsageURL;
+  await page.getByRole('button', { name: 'Open details for request req-abc' }).click();
+  await page.waitForSelector('.usage-content .ed-facts');
+  report.detailTabSelected = await page.getByRole('tab', { name: 'Request details' }).getAttribute('aria-selected');
+  report.detailFacts = await page.locator('.usage-content .ed-fact dt').allInnerTexts();
+  report.detailNoDetail = await page.locator('.ed-margin .ed-now-note').innerText();
+  await page.screenshot({ path: join(artifacts, 'usage-details-1440.png') });
+  await page.getByLabel('Request id').fill('nope');
+  await page.getByRole('button', { name: 'Show request' }).click();
+  await page.waitForSelector('.usage-content .empty-state');
+  report.detailMissing = await page.locator('.usage-content .empty-state').innerText();
   // Quota Tracker (PRD-QUOTA-001).
   await page.click('a[href="#quota-tracker"]');
   await page.waitForSelector('.quota-content');
@@ -998,6 +1032,15 @@ const { join } = require('node:path');
   assert.equal(report.usageBars, 7, 'a 7-day period draws 7 calendar days; absent days are zero bars');
   assert.equal(report.usageProviderRows, 2);
   assert.equal(report.usageEventRows, 1);
+  assert.deepEqual(report.tabs, ['Overview', 'Requests', 'Request details']);
+  assert.match(report.todayHeadline, /so far today \(UTC\)/);
+  assert.match(report.logsURL, /startDate=/, 'the selected period bounds the log');
+  assert.match(report.logsFilteredURL, /providerId=openai/);
+  assert.match(report.logsFilteredURL, /status=200/);
+  assert.equal(report.detailTabSelected, 'true');
+  assert.ok(['Status', 'Provider', 'Connection', 'Key', 'Duration', 'Time to first token'].every(label => report.detailFacts.includes(label)));
+  assert.match(report.detailNoDetail, /No diagnostic detail is stored/);
+  assert.match(report.detailMissing, /No stored request has the id nope/);
   assert.equal(report.usagePeriod, '7d');
   assert.equal(report.usagePeriodAfterChange, '24h');
   assert.equal(report.usageSummaryCalls >= 2, true);
