@@ -107,7 +107,8 @@ h1, h2, h3, h4, h5, h6, small, code, pre, kbd, samp, th, td, legend, summary, fi
 .skip-link:focus { top: 8px; outline: 2px solid var(--focus); outline-offset: 2px; }
 .sidebar { position: fixed; z-index: 6; inset: 0 auto 0 0; display: flex; width: var(--rail-width); flex-direction: column; border-right: 1px solid var(--border-subtle); padding: 24px 12px 12px; background: var(--sidebar); }
 .brand { display: flex; min-height: 48px; align-items: center; gap: 11px; padding: 0 8px 16px; text-decoration: none; }
-.brand-mark { display: none; }
+.brand-mark { display: block; flex: 0 0 auto; width: 20px; height: 20px; color: var(--text-main); --mark-accent: var(--live); }
+.brand-mark svg { display: block; width: 100%; height: 100%; }
 .brand-copy { display: grid; gap: 3px; }
 .brand-copy strong { font-size: var(--t-body); font-weight: 600; letter-spacing: -.025em; }
 .brand-copy small { color: var(--text-muted); font-size: var(--t-body); font-weight: 700; }
@@ -475,7 +476,6 @@ th { color: var(--text-muted); font-size: var(--t-body); font-weight: 500; }
   .mobile-menu::after { content: ""; position: absolute; top: 50%; right: 12px; left: 12px; height: 2px; margin-top: -1px; background: currentColor; }
   .workspace { margin-left: 0; }
   .mobile-header { display: flex; height: 66px; align-items: center; gap: 10px; border-bottom: 1px solid var(--border-subtle); padding: 10px 12px 10px 65px; color: var(--text-main); font-size: var(--t-body); font-weight: 600; }
-  .mobile-header .brand-mark { width: 34px; height: 34px; font-size: var(--t-body); }
   .workspace-inner { padding: 29px 16px 40px; }
   h1 { font-size: var(--t-title); }
   .empty-workspace { align-items: flex-start; padding: 16px; }
