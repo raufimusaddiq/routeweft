@@ -65,6 +65,7 @@ type Options struct {
 	// It passes the same SSRF policy as any outbound URL.
 	ProxyTestURL    string
 	DiscoveryClient *discovery.Client
+	OAuthClient     OAuthClient
 	Providers       []registry.Spec
 	Telemetry       TelemetryReader
 	Events          *controlevents.Bus
@@ -134,6 +135,8 @@ type Handler struct {
 	proxyTestTarget string
 	// saverClient is the guarded client for Headroom/PXPIPE health probes.
 	saverClient *http.Client
+	// oauth holds pending sign-in attempts bound to admin sessions.
+	oauth *oauthFlows
 }
 
 // New builds the control API handler.
@@ -145,7 +148,7 @@ func New(opts Options) *Handler {
 	if opts.DiscoveryClient == nil || opts.DiscoveryClient.HTTP == nil {
 		opts.DiscoveryClient = &discovery.Client{HTTP: client}
 	}
-	h := &Handler{opts: opts, throttler: newThrottler(), probeTransport: client.Transport, proxyClients: transport.NewPooledClients(), proxyTestTarget: defaultProxyTestTarget, saverClient: client}
+	h := &Handler{opts: opts, throttler: newThrottler(), probeTransport: client.Transport, proxyClients: transport.NewPooledClients(), proxyTestTarget: defaultProxyTestTarget, saverClient: client, oauth: newOAuthFlows()}
 	if strings.TrimSpace(opts.ProxyTestURL) != "" {
 		h.proxyTestTarget = strings.TrimSpace(opts.ProxyTestURL)
 	}
@@ -181,6 +184,8 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.Handle("POST /admin/v1/connections", h.requireSessionHandler(http.HandlerFunc(h.handlePutConnection)))
 	mux.Handle("PATCH /admin/v1/connections/{id}", h.requireSessionHandler(http.HandlerFunc(h.handlePutConnection)))
 	mux.Handle("DELETE /admin/v1/connections/{id}", h.requireSessionHandler(http.HandlerFunc(h.handleDeleteConnection)))
+	mux.Handle("POST /admin/v1/oauth/{provider}/start", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthStart)))
+	mux.Handle("POST /admin/v1/oauth/{provider}/callback", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthCallback)))
 	mux.Handle("POST /admin/v1/connections/{id}/test", h.requireSessionHandler(http.HandlerFunc(h.handleTestConnection)))
 	mux.Handle("POST /admin/v1/connections/{id}/test-models", h.requireSessionHandler(http.HandlerFunc(h.handleTestModels)))
 	mux.Handle("POST /admin/v1/connections/{id}/discover", h.requireSessionHandler(http.HandlerFunc(h.handleDiscoverModels)))

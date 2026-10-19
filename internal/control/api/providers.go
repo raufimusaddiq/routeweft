@@ -260,23 +260,10 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 	if body.NodeID != "" {
 		node, err = h.opts.Credentials.GetNode(r.Context(), body.NodeID)
 	} else if body.ProviderID != "" {
-		for _, candidate := range h.nodes(r.Context()) {
-			if candidate.Kind == credentials.NodeBuiltin && candidate.ProviderID == body.ProviderID {
-				node = candidate
-				break
-			}
-		}
-		if node.ID == "" {
-			spec, ok := h.providerSpec(body.ProviderID)
-			if !ok {
-				writeError(w, http.StatusBadRequest, "unknown_provider", "provider is not in the built-in catalog")
-				return
-			}
-			var transports []string
-			for _, value := range spec.Transports {
-				transports = append(transports, string(value))
-			}
-			node, err = h.opts.Credentials.PutNode(r.Context(), credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: spec.ID, Name: spec.ID, BaseURL: spec.DefaultBaseURL, Transports: transports})
+		node, err = h.builtinNode(r.Context(), body.ProviderID)
+		if errors.Is(err, errUnknownProvider) {
+			writeError(w, http.StatusBadRequest, "unknown_provider", "provider is not in the built-in catalog")
+			return
 		}
 	} else {
 		writeError(w, http.StatusBadRequest, "node_required", "provider node is required")
@@ -336,6 +323,7 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity, auth mode, and proxy pool")
 		return
 	}
+	connection.ProviderID = node.ProviderID
 	if h.opts.CredentialRegistry != nil {
 		h.opts.CredentialRegistry.Register(connection, nil)
 	}
@@ -1054,6 +1042,27 @@ func (h *Handler) providerSpec(id string) (registry.Spec, bool) {
 		}
 	}
 	return registry.Spec{}, false
+}
+
+var errUnknownProvider = errors.New("provider is not in the built-in catalog")
+
+// builtinNode returns the built-in provider's node, creating it from the
+// catalog entry on first use.
+func (h *Handler) builtinNode(ctx context.Context, providerID string) (credentials.Node, error) {
+	for _, candidate := range h.nodes(ctx) {
+		if candidate.Kind == credentials.NodeBuiltin && candidate.ProviderID == providerID {
+			return candidate, nil
+		}
+	}
+	spec, ok := h.providerSpec(providerID)
+	if !ok {
+		return credentials.Node{}, errUnknownProvider
+	}
+	var transports []string
+	for _, value := range spec.Transports {
+		transports = append(transports, string(value))
+	}
+	return h.opts.Credentials.PutNode(ctx, credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: spec.ID, Name: spec.ID, BaseURL: spec.DefaultBaseURL, Transports: transports})
 }
 
 func (h *Handler) nodes(ctx context.Context) []credentials.Node {

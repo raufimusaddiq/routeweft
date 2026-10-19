@@ -36,6 +36,9 @@ type Registry struct {
 
 	mu      sync.Mutex
 	entries map[string]*entry
+	// resolve supplies the refresh implementation for connections registered
+	// without one, so every registration path refreshes the same way.
+	resolve func(Connection) Exchanger
 }
 
 type entry struct {
@@ -79,11 +82,22 @@ var ErrNoExchanger = errors.New("connection has no credential refresh implementa
 // install (import or register) landed while the exchange was in flight.
 var ErrSuperseded = errors.New("credential refresh was superseded by a newer install")
 
+// SetExchangerResolver installs the default refresh implementation lookup used
+// when a connection is registered without an explicit Exchanger.
+func (r *Registry) SetExchangerResolver(resolve func(Connection) Exchanger) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.resolve = resolve
+}
+
 // Register seeds one connection into memory-first state. An already-registered
 // connection is replaced, which is how an import or edit installs new material.
 func (r *Registry) Register(connection Connection, exchanger Exchanger) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if exchanger == nil && r.resolve != nil {
+		exchanger = r.resolve(connection)
+	}
 	if existing, ok := r.entries[connection.ID]; ok {
 		existing.installMu.Lock()
 		existing.mu.Lock()
