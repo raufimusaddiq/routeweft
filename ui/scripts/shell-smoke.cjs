@@ -9,7 +9,7 @@ const { join } = require('node:path');
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:4173' });
   const errors = [];
   const report = {};
-  const artifacts = process.env.ROUTEWEFT_SMOKE_ARTIFACTS || '/tmp/routeweft-98-evidence';
+  const artifacts = process.env.ROUTEWEFT_SMOKE_ARTIFACTS || '/tmp/routeweft-ui-evidence';
   mkdirSync(artifacts, { recursive: true });
   report.visualChecks = [];
   async function captureVisuals(view) {
@@ -22,6 +22,7 @@ const { join } = require('node:path');
         await page.setViewportSize({ width, height: 900 });
         await page.mouse.move(width - 1, 1);
         await page.evaluate(() => document.fonts.ready);
+        await page.waitForTimeout(260); // let hover/theme transitions and the 120ms entry settle
         const checks = await page.evaluate(() => {
           const canvas = document.createElement('canvas');
           canvas.width = canvas.height = 1;
@@ -56,12 +57,15 @@ const { join } = require('node:path');
             return ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomLeftRadius', 'borderBottomRightRadius'].filter(key => style[key].split(' ').some(value => parseFloat(value) > 2)).map(key => `${element.className}${pseudo}: ${key}=${style[key]}`);
           }));
           const states = ['--danger', '--success', '--warning', '--info'].map(token => ({ token, ratio: ratio(rgba(getComputedStyle(document.documentElement).getPropertyValue(token)), background(document.body)) }));
+          const sizes = [...new Set(elements.filter(visible).filter(element => [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim())).map(element => getComputedStyle(element).fontSize))].sort((a, b) => parseFloat(a) - parseFloat(b));
+          const eleven = elements.filter(visible).filter(element => [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim()) && getComputedStyle(element).fontSize === '11px' && !element.closest('svg')).map(element => element.tagName + '.' + element.className);
+          const accents = [...document.querySelectorAll('.accent-surface')].filter(visible).length;
           const active = document.querySelector('.nav-link-active');
           const marker = getComputedStyle(active, '::before');
           return {
             resolvedTheme: document.documentElement.dataset.theme,
             overflow: document.documentElement.scrollWidth - innerWidth,
-            lowContrast, radii, states,
+            lowContrast, radii, states, sizes, eleven, accents,
             active: { width: marker.width, color: marker.backgroundColor, weight: getComputedStyle(active).fontWeight, inactiveWeight: getComputedStyle(document.querySelector('.nav-link:not(.nav-link-active)')).fontWeight },
           };
         });
@@ -70,13 +74,20 @@ const { join } = require('node:path');
         assert.deepEqual(checks.radii, [], `${view}/${theme}/${width}: rounded shell`);
         assert.deepEqual(checks.lowContrast, [], `${view}/${theme}/${width}: low contrast`);
         assert.ok(checks.states.every(state => state.ratio >= 4.5), JSON.stringify(checks.states));
-        assert.equal(checks.active.width, '1px');
+        const allowedSizes = width < 700 ? ['11px', '12px', '16px', '24px', '28px'] : ['11px', '12px', '16px', '28px'];
+        assert.ok(checks.sizes.every(size => allowedSizes.includes(size)), `${view}/${theme}/${width}: type sizes ${checks.sizes}`);
+        assert.ok(checks.sizes.includes('12px') && checks.sizes.includes('28px'), `${view}/${theme}/${width}: scale ${checks.sizes}`);
+        assert.deepEqual(checks.eleven, [], `${view}/${theme}/${width}: 11px is reserved for chart axis text`);
+        assert.equal(checks.accents, 1, `${view}/${theme}/${width}: exactly one accent surface`);
+        assert.equal(checks.active.width, '2px');
         assert.notEqual(checks.active.color, 'rgba(0, 0, 0, 0)');
         assert.ok(Number(checks.active.weight) > Number(checks.active.inactiveWeight));
         if (width === 1440) {
           await page.locator('.brand').focus();
           await page.keyboard.press('Tab');
-          checks.focus = await page.locator('.nav-link').first().evaluate(element => ({ focused: document.activeElement === element, visible: element.matches(':focus-visible'), style: getComputedStyle(element).outlineStyle, width: getComputedStyle(element).outlineWidth, color: getComputedStyle(element).outlineColor }));
+          checks.focus = await page.locator('.nav-link').first().evaluate(element => ({ focused: document.activeElement === element, visible: element.matches(':focus-visible'), style: getComputedStyle(element).outlineStyle, width: getComputedStyle(element).outlineWidth, color: getComputedStyle(element).outlineColor, offset: getComputedStyle(element).outlineOffset, token: getComputedStyle(document.documentElement).getPropertyValue('--focus').trim() }));
+          assert.equal(checks.focus.offset, '2px');
+          assert.notEqual(checks.focus.color, 'rgb(32, 36, 43)', 'focus ring is the accent colour, not the ink');
           assert.equal(checks.focus.focused, true);
           assert.equal(checks.focus.visible, true);
           assert.equal(checks.focus.style, 'solid');
@@ -123,6 +134,8 @@ const { join } = require('node:path');
   let adapterEnabled = false;
   let systemOneModelAdded = false;
   let usageSummaryCalls = 0;
+  let usageGate = null;
+  let usageMode = 'ok';
   let quotaRefreshCalls = 0;
   let usagePeriod = '7d';
   let systemOneProbeCalls = 0;
@@ -213,6 +226,9 @@ const { join } = require('node:path');
   }
   if (url.pathname === '/admin/v1/usage/summary' && method === 'GET') {
     usageSummaryCalls += 1;
+    if (usageGate) await usageGate;
+    if (usageMode === 'error') return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Usage store is unavailable. Check the database volume.' } }) });
+    if (usageMode === 'empty') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ period: url.searchParams.get('period'), since: '', totals: { requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, errors: 0 }, series: [], providers: [], models: [], statuses: [] }) });
     usagePeriod = url.searchParams.get('period');
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
       period: usagePeriod, since: '2026-09-18T00:00:00.000Z',
@@ -317,6 +333,8 @@ const { join } = require('node:path');
     }
     return route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
   });
+  // Freeze the page clock: the usage windows are calendar windows ending today, and the fixture's days are 2026-09-24 and 2026-09-25.
+  await page.clock.setFixedTime(new Date('2026-09-25T12:00:00Z'));
   await page.goto('http://127.0.0.1:4173');
   await page.waitForSelector('#sign-in-title');
   await page.keyboard.press('Tab');
@@ -326,20 +344,23 @@ const { join } = require('node:path');
   await page.fill('#admin-username', 'operator');
   await page.fill('#admin-password', 'not-a-real-secret');
   await page.click('button[type="submit"]');
-  await page.waitForSelector('.metrics-grid');
+  await page.waitForSelector('.overview-content .ed-headline');
   report.loginCalls = loginCalls;
   report.initialOverviewCalls = overviewCalls;
-  report.overviewMetrics = await page.locator('.metric-value').allTextContents();
-  report.overviewAlert = await page.locator('.actionable-alert').innerText();
+  report.overviewHeadline = await page.locator('.overview-content .ed-headline').first().innerText();
+  report.overviewLive = await page.locator('.ed-now').innerText();
+  report.weekendFact = await page.locator('.ed-fact', { hasText: 'Weekends' }).innerText();
+  report.busiestFact = await page.locator('.ed-fact', { hasText: 'Busiest day' }).innerText();
+  report.overviewAlert = await page.locator('[aria-label="Needs a look"]').innerText();
   report.sessionCalls = sessionCalls;
   report.signOutLabel = await page.locator('.sign-out').textContent();
-  report.monospaceValue = await page.locator('.technical-value').first().evaluate(el => getComputedStyle(el).fontFamily);
+  report.monospaceValue = await page.locator('.ed-fact-note').first().evaluate(el => getComputedStyle(el).fontFamily);
   report.overviewScroll = await page.evaluate(() => document.documentElement.scrollWidth + '/' + document.documentElement.clientWidth);
   await captureVisuals('overview');
   await page.click('.refresh-button');
   await page.waitForSelector('.refresh-error');
   report.refreshError = await page.locator('.refresh-error').innerText();
-  report.staleMetricAfterRefreshError = await page.locator('.metric-value').first().textContent();
+  report.staleHeadlineAfterRefreshError = await page.locator('.overview-content .ed-headline').first().innerText();
   await page.click('.refresh-error button');
   await page.waitForFunction(() => !document.querySelector('.refresh-error'));
   report.overviewCallsAfterRetry = overviewCalls;
@@ -404,7 +425,7 @@ const { join } = require('node:path');
   await page.waitForFunction(() => document.querySelector('.switch-label').textContent === 'Not required');
   report.enforcementAfterToggle = await page.locator('.switch-label').textContent();
   await page.click('a[href="#overview"]');
-  await page.waitForSelector('.metrics-grid');
+  await page.waitForSelector('.overview-content .ed-headline');
   await page.emulateMedia({ colorScheme: 'dark' });
   report.navCount = await page.locator('nav a').count();
   report.groups = await page.locator('.nav-group h2').allTextContents();
@@ -422,6 +443,7 @@ const { join } = require('node:path');
   report.focusAfterDesktopNav = await page.evaluate(() => ({ className: document.activeElement.className, visibility: getComputedStyle(document.activeElement).visibility, display: getComputedStyle(document.activeElement).display }));
   await page.waitForSelector('.provider-option');
   report.providerCards = await page.locator('.provider-option').count();
+  report.providerPageSummary = await page.locator('.providers-content').innerText().then(text => text.split('\n').filter(line => /providers carry traffic|carry \d+% of the month/.test(line)));
   await page.locator('.provider-option', { hasText: 'openai' }).first().click();
   await page.waitForSelector('.connection-row');
   report.connectionRows = await page.locator('.connection-row').count();
@@ -455,6 +477,7 @@ const { join } = require('node:path');
   assert.match(report.modelProbeGuidance, /10-minute batch limit/);
   await page.fill('#provider-filter', 'openrouter');
   report.filteredCards = await page.locator('.provider-option').count();
+  report.providerPageSummaryFiltered = await page.locator('.providers-content').innerText().then(text => text.split('\n').filter(line => /providers carry traffic|carry \d+% of the month/.test(line)));
   await page.fill('#provider-filter', '');
   await page.click('.providers-content .provider-details .connection-row .button-secondary');
   await page.waitForFunction(() => document.querySelector('.providers-content .connection-row .state-tag').textContent === 'Disabled');
@@ -530,15 +553,49 @@ const { join } = require('node:path');
   report.systemOneProbeCalls = systemOneProbeCalls;
   report.systemOneProbeTransport = systemOneProbeTransport;
   // Usage & request details (PRD 13, PRD-OBS-001/002).
+  let releaseUsage;
+  usageGate = new Promise(resolve => { releaseUsage = resolve; });
   await page.click('a[href="#usage"]');
+  await page.waitForSelector('.usage-content .skeleton-page');
+  report.skeleton = await page.evaluate(() => ({
+    busy: document.querySelector('.usage-content').getAttribute('aria-busy'),
+    blocks: document.querySelectorAll('.usage-content .skeleton').length,
+    label: document.querySelector('.skeleton-page').getAttribute('aria-label'),
+    spinner: document.querySelectorAll('.spinner, [role="progressbar"]').length,
+    animation: getComputedStyle(document.querySelector('.usage-content .skeleton')).animationName,
+  }));
+  await page.screenshot({ path: join(artifacts, 'usage-skeleton-1440.png') });
+  usageGate = null;
+  releaseUsage();
   await page.waitForSelector('.usage-content');
-  await page.waitForSelector('.usage-chart');
-  report.usageMetrics = await page.locator('.usage-metrics .metric-value').allTextContents();
+  await page.waitForSelector('.usage-content .chart');
+  report.usageFacts = await page.locator('.usage-content .ed-fact dt, .usage-content .ed-fact dd:not(.ed-fact-note)').allInnerTexts();
   await captureVisuals('usage');
   report.usageBars = await page.locator('.usage-bar').count();
-  report.usageProviderRows = await page.locator('.breakdown-row').count();
+  report.usageProviderRows = await page.locator('.usage-content .prov-table tbody tr').count();
   report.usageEventRows = await page.locator('.usage-event').count();
   report.usagePeriod = usagePeriod;
+  // Focus, error and empty states (#102).
+  await page.locator('#usage-period').focus();
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
+  report.focusRing = await page.evaluate(() => { const el = document.activeElement, style = getComputedStyle(el); return { id: el.id, style: style.outlineStyle, width: style.outlineWidth, offset: style.outlineOffset, color: style.outlineColor, token: getComputedStyle(document.documentElement).getPropertyValue('--focus').trim() }; });
+  await page.screenshot({ path: join(artifacts, 'usage-focus-1440.png'), clip: { x: 208, y: 120, width: 1000, height: 160 } });
+  usageMode = 'error';
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await page.waitForSelector('.usage-content .page-error');
+  report.usageError = await page.evaluate(() => { const el = document.querySelector('.usage-content .page-error'); const style = getComputedStyle(el); return { text: el.textContent, leftWidth: style.borderLeftWidth, leftColor: style.borderLeftColor, retry: !!el.querySelector('button') }; });
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: join(artifacts, 'usage-error-1440.png') });
+  usageMode = 'empty';
+  await page.locator('.usage-content .page-error button').click();
+  await page.waitForSelector('.usage-content .empty-state');
+  report.usageEmpty = await page.evaluate(() => ({ boxes: document.querySelectorAll('.usage-content .empty-state').length, action: !!document.querySelector('.usage-content .empty-state button'), border: getComputedStyle(document.querySelector('.empty-state')).borderTopStyle }));
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: join(artifacts, 'usage-empty-1440.png') });
+  usageMode = 'ok';
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await page.waitForSelector('.usage-content .chart');
   await page.selectOption('#usage-period', '24h');
   await page.waitForFunction(() => document.querySelector('.usage-toolbar .count-label').textContent.includes('since'));
   report.usagePeriodAfterChange = usagePeriod;
@@ -784,14 +841,32 @@ const { join } = require('node:path');
     animation: getComputedStyle(document.querySelector('.usage-bar') || document.body).animationDuration,
   }));
   await page.emulateMedia({ reducedMotion: 'no-preference' });
+  // Every page: three type sizes, one accent surface (#102).
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  report.pageSizes = {};
+  for (const href of await page.locator('nav a.nav-link').evaluateAll(links => links.map(link => link.getAttribute('href')))) {
+    await page.evaluate(target => { location.hash = target; }, href);
+    await page.waitForTimeout(500);
+    report.pageSizes[href] = await page.evaluate(() => {
+      const visible = element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden';
+      const sizes = [...new Set([...document.querySelectorAll('.workspace *, .sidebar *')].filter(visible).filter(element => [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim())).map(element => getComputedStyle(element).fontSize))].sort((a, b) => parseFloat(a) - parseFloat(b));
+      return { sizes, accents: [...document.querySelectorAll('.accent-surface')].filter(visible).length };
+    });
+  }
   console.log(JSON.stringify(report, null, 2));
-  assert.deepEqual(report.overviewMetrics, ['Ready', '2', '1', '1,200']);
+  assert.match(report.overviewHeadline, /requests this week/);
+  assert.match(report.busiestFact, /17% above the average over the 2 recorded days/, 'the average starts at the first recorded day: (70+50)/2 = 60, so 70 is 17% above it');
+  assert.match(report.overviewLive, /Live/);
+  assert.match(report.weekendFact, /—/, 'a two-day fixture has no weekend days, so the ratio is a dash');
+  assert.doesNotMatch(report.weekendFact, /lighter|heavier|%/);
+  assert.match(report.overviewLive, /2 connections enabled, 1 API keys/);
   assert.equal(report.signInPrompt, 'Sign in to Routeweft');
   assert.equal(report.passwordMasked, 'password');
   assert.equal(report.loginCalls, 1);
   assert.equal(report.initialOverviewCalls, 1);
   assert.match(report.refreshError, /Overview is temporarily unavailable/);
-  assert.equal(report.staleMetricAfterRefreshError, 'Ready');
+  assert.match(report.staleHeadlineAfterRefreshError, /requests this week/);
   assert.equal(report.overviewCallsAfterRetry, 3);
   assert.match(report.endpointURL, /\/v1$/);
   assert.equal(report.copiedEndpoint, report.endpointURL);
@@ -819,15 +894,15 @@ const { join } = require('node:path');
   assert.equal(report.patchKeyCalls, 1);
   assert.equal(report.deleteCalls, 1);
   assert.equal(report.enforcementAfterToggle, 'Not required');
-  assert.match(report.overviewAlert, /3 failed requests/);
-  assert.match(report.overviewAlert, /telemetry is degraded/);
+  assert.match(report.overviewAlert, /3 recorded/);
+  assert.match(report.overviewAlert, /Degraded: some accounting may be delayed/);
   assert.equal(report.sessionCalls, 1);
   assert.equal(report.signOutLabel, 'Sign out · operator');
   assert.match(report.monospaceValue, /JetBrains Mono/);
   assert.equal(report.overviewScroll, '1440/1440');
   assert.equal(report.navCount, 10);
   assert.deepEqual(report.groups, ['Operate', 'Route', 'Observe', 'System']);
-  assert.equal(report.sidebarWidth, 208);
+  assert.equal(report.sidebarWidth, 200);
   assert.equal(report.themeDark, 'dark');
   assert.equal(report.pageAfterNav, 'Providers');
   assert.equal(report.ariaCurrent, 'page');
@@ -836,6 +911,8 @@ const { join } = require('node:path');
   assert.equal(report.providerDetail, 'openai');
   assert.equal(report.modelRows, 1);
   assert.equal(report.filteredCards, 1);
+  assert.deepEqual(report.providerPageSummaryFiltered, report.providerPageSummary, 'headline and concentration must not follow the Find box');
+  assert.ok(report.providerPageSummary.length >= 1);
   assert.equal(report.providerPatches, 1);
   assert.equal(report.providerDisabledLabel, 'Disabled');
   assert.match(report.comboEmpty, /No Combos yet/);
@@ -865,12 +942,28 @@ const { join } = require('node:path');
   assert.match(report.systemOneNotice, /Typed request succeeded for jev \(HTTP 200\)/);
   assert.equal(report.systemOneProbeCalls, 1);
   assert.equal(report.systemOneProbeTransport, 'systemone');
-  assert.equal(report.usageMetrics[0], '120');
-  assert.equal(report.usageMetrics[1], '12,000');
-  assert.equal(report.usageMetrics[2], '4,500');
-  assert.equal(report.usageMetrics[3], '420 ms');
-  assert.equal(report.usageBars, 2);
-  assert.equal(report.usageProviderRows, 5);
+  assert.deepEqual(report.usageFacts.slice(0, 2), ['Requests', '120 req']);
+  assert.ok(report.usageFacts.includes('12k in + out') || report.usageFacts.some(text => text.startsWith('12,000') || text.startsWith('12k')));
+  assert.ok(report.usageFacts.some(text => text.startsWith('420 ms')));
+  assert.equal(report.focusRing.style, 'solid');
+  assert.equal(report.focusRing.width, '2px');
+  assert.equal(report.focusRing.offset, '2px');
+  assert.notEqual(report.focusRing.color, 'rgba(0, 0, 0, 0)');
+  assert.match(report.usageError.text, /Usage store is unavailable/);
+  assert.equal(report.usageError.leftWidth, '3px');
+  assert.equal(report.usageError.retry, true);
+  assert.equal(report.usageEmpty.action, true);
+  assert.equal(report.usageEmpty.border, 'solid');
+  for (const [href, result] of Object.entries(report.pageSizes)) {
+    assert.ok(result.sizes.every(size => ['11px', '12px', '16px', '28px'].includes(size)), `${href}: type sizes ${result.sizes}`);
+    assert.equal(result.accents, 1, `${href}: one accent surface`);
+  }
+  assert.equal(report.skeleton.busy, 'true');
+  assert.ok(report.skeleton.blocks >= 10, 'skeleton mirrors the content shape');
+  assert.equal(report.skeleton.spinner, 0);
+  assert.equal(report.skeleton.animation, 'pulse');
+  assert.equal(report.usageBars, 7, 'a 7-day period draws 7 calendar days; absent days are zero bars');
+  assert.equal(report.usageProviderRows, 2);
   assert.equal(report.usageEventRows, 1);
   assert.equal(report.usagePeriod, '7d');
   assert.equal(report.usagePeriodAfterChange, '24h');

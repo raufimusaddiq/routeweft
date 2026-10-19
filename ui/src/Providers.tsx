@@ -1,5 +1,8 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchAll, PAGE_SIZE, Pager, usePagedList } from './ProviderPaging'
+import { EmptyState, ErrorNotice, SkeletonRows } from './kit'
+import { Dot, Statement, Status, type Tone } from './editorial'
+import { badRate, num, outlier, pct, rate, share, topByRequests, type Summary } from './format'
 
 type Provider = { id: string; transports: string[]; auth: string; authModes: string[]; defaultBaseURL?: string; modelCatalog: string; passthroughModels: boolean; staticModels?: string[]; reportsUsage: boolean; configuredNodes: number; enabledAccounts: number }
 type Node = { id: string; kind: string; providerId: string; name: string; prefix?: string; baseUrl?: string; transports: string[] }
@@ -27,6 +30,9 @@ export function Providers({ onUnauthorized }: Props) {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
+  const [loadFailed, setLoadFailed] = useState(false)
+  const [usage, setUsage] = useState<Summary | null>(null)
+  const [sort, setSort] = useState<'traffic' | 'name' | 'accounts'>('traffic')
   const [notice, setNotice] = useState('')
   const [testModelID, setTestModelID] = useState('')
   const [genericOpen, setGenericOpen] = useState(false)
@@ -39,10 +45,12 @@ export function Providers({ onUnauthorized }: Props) {
   const [aliasTarget, setAliasTarget] = useState('')
   const [price, setPrice] = useState({ modelId: '', input: '', output: '', cacheRead: '', cacheWrite: '' })
   const modelProbeController = useRef<AbortController | null>(null)
+  const usageAbort = useRef<AbortController | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
+    setLoadFailed(false)
     try {
       const [loadedProviders, loadedNodes, loadedConnections, loadedPools] = await Promise.all([
         fetchAll<Provider>('providers', onUnauthorized), fetchAll<Node>('provider-nodes', onUnauthorized),
@@ -54,13 +62,19 @@ export function Providers({ onUnauthorized }: Props) {
       const genericProviders = loadedNodes.filter(node => node.kind === 'generic').map(node => ({ id: node.providerId, transports: node.transports, auth: 'api-key', authModes: ['api-key', 'none'], defaultBaseURL: node.baseUrl, modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, configuredNodes: 1, enabledAccounts: loadedConnections.filter(connection => connection.providerId === node.providerId && connection.enabled).length }))
       setProviders([...loadedProviders, ...genericProviders])
       setProxyPools(loadedPools)
+      // Traffic and error rates enrich the list; the catalog works without them.
+      usageAbort.current?.abort()
+      const usageController = new AbortController()
+      usageAbort.current = usageController
+      void fetch('/admin/v1/usage/summary?period=30d', { credentials: 'same-origin', signal: usageController.signal }).then(response => { if (response.status === 401) { onUnauthorized(); return null } return response.ok ? response.json() : null }).then(value => { if (!usageController.signal.aborted) setUsage(value as Summary | null) }).catch(() => { if (!usageController.signal.aborted) setUsage(null) })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not load Providers.')
+      setLoadFailed(true)
     } finally { setLoading(false) }
   }, [onUnauthorized])
 
   useEffect(() => { void load() }, [load])
-  useEffect(() => () => modelProbeController.current?.abort(), [])
+  useEffect(() => () => { modelProbeController.current?.abort(); usageAbort.current?.abort() }, [])
 
   const selectedProvider = providers.find(provider => provider.id === selected)
   const selectedNode = nodes.find(node => node.kind === 'generic' && node.providerId === selected)
@@ -91,6 +105,29 @@ export function Providers({ onUnauthorized }: Props) {
     const term = filter.trim().toLowerCase()
     return providers.filter(provider => !term || provider.id.includes(term) || provider.transports.some(transport => transport.includes(term)))
   }, [providers, filter])
+
+  const traffic = useMemo(() => new Map((usage?.providers ?? []).map(item => [item.key, item])), [usage])
+  const fleet = usage ? rate(usage.totals.errors, usage.totals.requests) : 0
+  // Page-level numbers (headline, concentration, attention) come from every provider; only the list below follows the filter.
+  const allRows = useMemo(() => providers.map(provider => {
+    const stats = traffic.get(provider.id)
+    const total = connections.filter(connection => connection.providerId === provider.id).length
+    return { provider, requests: stats?.requests ?? 0, errors: stats?.errors ?? 0, total }
+  }), [providers, traffic, connections])
+  const visibleIds = useMemo(() => new Set(visibleProviders.map(provider => provider.id)), [visibleProviders])
+  const rows = useMemo(() => allRows.filter(row => visibleIds.has(row.provider.id)), [allRows, visibleIds])
+  const order = (a: typeof rows[number], b: typeof rows[number]) => sort === 'name' ? a.provider.id.localeCompare(b.provider.id) : sort === 'accounts' ? b.total - a.total || a.provider.id.localeCompare(b.provider.id) : b.requests - a.requests || a.provider.id.localeCompare(b.provider.id)
+  const connected = (row: typeof rows[number]) => row.provider.enabledAccounts > 0 || row.total > 0
+  const inServiceAll = allRows.filter(connected)
+  const inService = rows.filter(connected).sort(order)
+  const catalogue = rows.filter(row => !connected(row)).sort((a, b) => a.provider.id.localeCompare(b.provider.id))
+  const peak = Math.max(1, ...inServiceAll.map(row => row.requests))
+  const monthRequests = Math.max(1, usage?.totals.requests ?? 1)
+  const topTwo = topByRequests(inServiceAll.map(row => ({ id: row.provider.id, requests: row.requests })), 2)
+  const topShare = (topTwo.reduce((total, row) => total + row.requests, 0) / monthRequests) * 100
+  const tone = (row: typeof rows[number]): Tone => row.total === 0 && row.provider.enabledAccounts === 0 ? 'idle' : row.provider.enabledAccounts === 0 ? 'bad' : row.provider.enabledAccounts < row.total || badRate(row.errors, row.requests, fleet) ? 'warn' : 'good'
+  const attention = inServiceAll.filter(row => tone(row) === 'warn' || tone(row) === 'bad')
+  const worst = usage ? outlier(usage) : null
 
   async function send(path: string, method: string, body?: unknown, signal?: AbortSignal) {
     const response = await fetch(`/admin/v1${path}`, { method, credentials: 'same-origin', headers: body === undefined ? undefined : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal })
@@ -191,9 +228,28 @@ export function Providers({ onUnauthorized }: Props) {
     await action('pricing', 'Pricing override saved.', async () => { await send('/pricing', 'POST', body); setPrice({ modelId: '', input: '', output: '', cacheRead: '', cacheWrite: '' }) })
   }
 
+  const option = (row: typeof rows[number]) => {
+    const bad = row.requests > 0 && badRate(row.errors, row.requests, fleet)
+    return <button className={`provider-option${selected === row.provider.id ? ' provider-option-selected' : ''}`} type="button" key={row.provider.id} onClick={() => { setSelected(row.provider.id); setAccountOpen(false); setConnectionPage(1); setSeedPage(1) }}>
+      <Status tone={tone(row)}><strong>{row.provider.id}</strong></Status>
+      <span className="provider-option-meta">{row.provider.authModes.join(' / ') || row.provider.auth} · {row.provider.transports.length} transport{row.provider.transports.length === 1 ? '' : 's'}{row.total ? ` · ${row.provider.enabledAccounts}/${row.total} on` : ''}</span>
+      <span className="ed-bar" aria-hidden="true"><span style={{ width: `${share(row.requests, peak)}%` }} /></span>
+      <span className="provider-option-fig">{row.requests ? num(row.requests) : '—'}</span>
+      <span className={`provider-option-err${bad ? ' err-text-bad' : ''}`}>{row.requests ? pct(rate(row.errors, row.requests)) : row.total ? '0.0%' : 'no account'}</span>
+    </button>
+  }
+
   return <div className="providers-content" aria-busy={loading}>
-    <div className="providers-toolbar"><label htmlFor="provider-filter">Find provider</label><input id="provider-filter" value={filter} onChange={event => setFilter(event.target.value)} placeholder="Name or transport" /><span className="count-label">{loading ? 'Loading…' : `${providers.length} providers`}</span><button className="button-primary" type="button" onClick={() => { setGenericNodeID(''); setGeneric({ name: '', prefix: '', baseUrl: '', transports: ['openai-chat'] }); setGenericOpen(value => !value) }}>Add Generic Provider</button><button className="button-secondary" type="button" disabled={loading} onClick={() => void load()}>Refresh</button></div>
-    {error && <p className="auth-error" role="alert">{error}</p>}{notice && <p className="inline-notice" role="status">{notice}</p>}
+    <section className="ed-banner accent-surface" aria-label="Provider summary">
+      <p className="ed-headline"><strong>{num(inServiceAll.length)}</strong> of {num(providers.length)} providers carry traffic</p>
+      <p className="ed-subline">{attention.length > 0 ? <><Dot tone={attention.some(row => tone(row) === 'bad') ? 'bad' : 'warn'} /> <strong>{attention.map(row => row.provider.id).join(', ')}</strong> {attention.length === 1 ? 'needs' : 'need'} a look.</> : loading ? 'Loading providers…' : 'Every connected provider is enabled and within the fleet error rate.'}</p>
+    </section>
+    {usage && topTwo.length === 2 && topShare > 0 && <Statement><strong>{topTwo.map(row => row.id).join(' and ')}</strong> carry <strong>{Math.round(topShare)}%</strong> of the month's traffic.</Statement>}
+
+    <div className="providers-toolbar gap-s"><label htmlFor="provider-filter">Find provider</label><input id="provider-filter" value={filter} onChange={event => setFilter(event.target.value)} placeholder="Name or transport" /><span className="count-label">{loading ? 'Loading…' : `${providers.length} providers`}</span>
+      <div className="provider-sort" role="group" aria-label="Sort providers"><span className="ed-label">Sort by</span>{(['traffic', 'name', 'accounts'] as const).map(key => <button key={key} type="button" aria-pressed={sort === key} className={`ed-link${sort === key ? ' ed-link-on' : ''}`} onClick={() => setSort(key)}>{key === 'traffic' ? '30 d traffic' : key === 'name' ? 'Name' : 'Accounts'}</button>)}</div>
+      <button className="button-primary" type="button" onClick={() => { setGenericNodeID(''); setGeneric({ name: '', prefix: '', baseUrl: '', transports: ['openai-chat'] }); setGenericOpen(value => !value) }}>Add Generic Provider</button><button className="button-secondary" type="button" disabled={loading} onClick={() => void load()}>Refresh</button></div>
+    {error && (loadFailed ? <ErrorNotice className="auth-error" message={error} busy={loading} onRetry={() => void load()} /> : <p className="auth-error" role="alert">{error}</p>)}{notice && <p className="inline-notice" role="status">{notice}</p>}
 
 	    {selectedProvider && selectedConnections[0] && <form className="detail-panel model-test-form" onSubmit={event => { event.preventDefault(); if (testModelID) void testModels(selectedConnections[0], [testModelID]) }}><label htmlFor="test-model-id">Test model</label><input id="test-model-id" required list="provider-model-choices" placeholder="Model ID" value={testModelID} onChange={event => setTestModelID(event.target.value)} /><button className="button-secondary" type="submit" disabled={busy !== '' || !testModelID.trim()}>{busy.startsWith('testmodels-') ? 'Testing…' : 'Run model test'}</button>{busy.startsWith('testmodels-') && <button className="button-ghost" type="button" onClick={() => modelProbeController.current?.abort()}>Cancel model test</button>}<span className="count-label">First-token probe. Multi-model runs stop at the 10-minute batch limit.</span></form>}
 
@@ -204,11 +260,12 @@ export function Providers({ onUnauthorized }: Props) {
       </div><button className="button-primary" type="submit" disabled={busy === 'generic' || generic.transports.length === 0}>{busy === 'generic' ? 'Saving…' : 'Save provider'}</button>
     </form>}
 
-    <div className="providers-layout"><section className="provider-catalog" aria-label="Provider catalog">{visibleProviders.map(provider => <button className={`provider-option${selected === provider.id ? ' provider-option-selected' : ''}`} type="button" key={provider.id} onClick={() => { setSelected(provider.id); setAccountOpen(false); setConnectionPage(1); setSeedPage(1) }}>
-      <span className="provider-option-top"><strong>{provider.id}</strong><span className="state-tag">{provider.modelCatalog}</span></span><span className="provider-option-meta">{provider.configuredNodes} node{provider.configuredNodes === 1 ? '' : 's'} · {provider.enabledAccounts} enabled</span><span className="provider-transport">{provider.transports.join(' · ')}</span>
-    </button>)}{visibleProviders.length === 0 && <p className="empty-keys">No provider matches this filter.</p>}</section>
+    <div className="providers-layout"><section className="provider-catalog" aria-label="Provider catalog">{loading && providers.length === 0 && <div role="status" aria-label="Loading providers"><SkeletonRows rows={8} columns={2} /></div>}
+      {inService.length > 0 && <h2 className="ed-group">In service <span>30-day requests and errors</span></h2>}{inService.map(option)}
+      {catalogue.length > 0 && <h2 className="ed-group ed-group-late">Catalogue <span>{catalogue.length} without an account</span></h2>}{catalogue.map(option)}
+      {!loading && visibleProviders.length === 0 && <EmptyState reason="No provider matches this filter.">{filter && <button className="button-secondary" type="button" onClick={() => setFilter('')}>Clear filter</button>}</EmptyState>}</section>
 
-    <section className="provider-details" aria-live="polite"><datalist id="provider-model-choices">{modelChoices.slice(0, 500).map(id => <option key={id} value={id} />)}</datalist>{!selectedProvider ? <div className="detail-panel"><h2>Select a provider</h2><p>Browse built-in providers or add a Generic Provider.</p></div> : <>
+    <section className="provider-details" aria-live="polite"><datalist id="provider-model-choices">{modelChoices.slice(0, 500).map(id => <option key={id} value={id} />)}</datalist>{!selectedProvider ? <div className="detail-panel provider-empty"><h2>Select a provider</h2><p>Browse built-in providers or add a Generic Provider.</p>{attention.length > 0 && <><h3 className="ed-h3">Needs a look</h3><ul className="ed-watch">{attention.map(row => <li key={row.provider.id}><Status tone={tone(row)}><button className="row-button" type="button" onClick={() => setSelected(row.provider.id)}><strong>{row.provider.id}</strong></button></Status><span>{row.provider.enabledAccounts < row.total ? `${row.provider.enabledAccounts} of ${row.total} accounts enabled.` : `${pct(rate(row.errors, row.requests))} failed against ${pct(fleet)} fleet-wide.`}</span></li>)}</ul></>}{worst && attention.length === 0 && <p className="ed-now-note">Highest error rate: {worst.key} at {pct(worst.err)}.</p>}</div> : <>
       <div className="detail-panel provider-summary"><div className="panel-heading"><div><p className="eyebrow">{selectedNode ? 'GENERIC PROVIDER' : 'BUILT-IN PROVIDER'}</p><h2>{selectedProvider.id}</h2></div><span className="state-tag">{selectedProvider.authModes.join(' / ') || selectedProvider.auth}</span></div><p>{selectedProvider.transports.join(' · ')} · models: {selectedProvider.modelCatalog}{selectedProvider.passthroughModels ? ' + passthrough' : ''}</p>{selectedNode?.baseUrl && <code className="technical-value">{selectedNode.baseUrl}</code>}
         <button className="button-primary" type="button" onClick={() => { const defaultAuth = selectedProvider.authModes[0] || selectedProvider.auth; setAccountOpen(value => !value); setAccount(current => ({ ...current, authKind: defaultAuth })) }}>Add connection</button>{selectedNode && <><button className="button-secondary" type="button" onClick={() => { setGenericNodeID(selectedNode.id); setGeneric({ name: selectedNode.name, prefix: selectedNode.prefix || selectedNode.providerId, baseUrl: selectedNode.baseUrl || '', transports: selectedNode.transports }); setGenericOpen(true) }}>Edit Generic Provider</button><button className="button-danger" type="button" onClick={() => { if (window.confirm(`Delete ${selectedNode.name} and all its connections?`)) void action('delete-generic', 'Generic Provider deleted.', () => send(`/provider-nodes/${encodeURIComponent(selectedNode.id)}`, 'DELETE').then(() => { setSelected('') })) }}>Delete Generic Provider</button></>}
       </div>

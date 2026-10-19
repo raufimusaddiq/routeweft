@@ -61,7 +61,7 @@ export function ConsoleLog({ onUnauthorized }: Props) {
   const pages = Math.max(1, Math.ceil(total / pageSize))
 
   return <div className="console-log-content" aria-busy={loading}>
-    <form className="console-log-toolbar" onSubmit={applyFilters}>
+    <form className="console-log-toolbar accent-surface" onSubmit={applyFilters}>
       <label htmlFor="console-log-level">Level</label>
       <select id="console-log-level" value={levelDraft} onChange={event => setLevelDraft(event.target.value)}>{levels.map(value => <option key={value} value={value}>{value || 'All levels'}</option>)}</select>
       <label htmlFor="console-log-query">Contains</label>

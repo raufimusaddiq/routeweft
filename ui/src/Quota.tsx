@@ -70,7 +70,7 @@ export function Quota({ onUnauthorized }: Props) {
   const limited = items.filter(item => item.remaining !== undefined || item.resetAt)
 
   return <div className="quota-content" aria-busy={loading}>
-    <div className="quota-toolbar"><span className="count-label" role="status">{loading ? 'Loading…' : `${items.length} account${items.length === 1 ? '' : 's'} · ${limited.length} with limit data`}</span><button className="button-primary" type="button" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? 'Requesting…' : 'Refresh quota'}</button><button className="button-secondary" type="button" disabled={loading} onClick={() => void load()}>Reload</button></div>
+    <div className="quota-toolbar accent-surface"><span className="count-label" role="status">{loading ? 'Loading…' : `${items.length} account${items.length === 1 ? '' : 's'} · ${limited.length} with limit data`}</span><button className="button-primary" type="button" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? 'Requesting…' : 'Refresh quota'}</button><button className="button-secondary" type="button" disabled={loading} onClick={() => void load()}>Reload</button></div>
     {error && <p className="auth-error" role="alert">{error}</p>}{notice && <p className="inline-notice" role="status">{notice}</p>}
 
     <section className="detail-panel" aria-labelledby="quota-title">
