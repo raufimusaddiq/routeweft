@@ -65,6 +65,7 @@ func newOAuthAPI(t *testing.T, exchange *oauthExchange) (*Handler, *http.ServeMu
 	h.opts.OAuthClient = exchange
 	h.opts.Providers = append(h.opts.Providers,
 		registry.Spec{ID: "claude", Transports: []registry.Protocol{registry.TransportAnthropic}, Auth: registry.AuthOAuth, DefaultBaseURL: "https://api.anthropic.com/v1", ModelCatalog: registry.CatalogStatic},
+		registry.Spec{ID: "kilocode", Transports: []registry.Protocol{registry.TransportOpenAIChat}, Auth: registry.AuthOAuth, DefaultBaseURL: "https://api.kilo.ai/api", ModelCatalog: registry.CatalogDynamic},
 		registry.Spec{ID: "codex", Transports: []registry.Protocol{registry.TransportOpenAIResponses}, Auth: registry.AuthOAuth, DefaultBaseURL: "https://chatgpt.com/backend-api/codex", ModelCatalog: registry.CatalogStatic},
 	)
 	return h, mux, creds, cookie

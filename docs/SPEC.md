@@ -746,6 +746,12 @@ Pending state is process-local, expires after 10 minutes, is bound to the admin 
 
 OAuth connections that hold a refresh token (Claude, Codex) are registered with a refresh exchanger by the credential registry, so every registration path (sign-in, manual entry, startup load) refreshes through the same singleflight and durable commit.
 
+### 19.2 Device sign-in (Kilo Code)
+
+Providers whose oracle flow is device authorization use `POST /admin/v1/oauth/{provider}/device` (body: account name and stable identity), which returns `{state, userCode, verificationUrl, intervalSeconds, expiresAt}`, and `POST /admin/v1/oauth/{provider}/poll` (body: `state`). The browser's only handle on an attempt is the opaque `state`; poll requests carry nothing else, and poll responses never echo the code. Kilo Code's protocol uses one code as both the device code and the user code, so that code is shown to the operator once, in the start response, because the operator must confirm it on the provider's page. A provider with a separate device code keeps it server-side.
+
+`expiresAt` is the earlier of the 10-minute flow limit and the lifetime the provider reported for its code, so an attempt never outlives its code. Poll is session-bound, answers `{status:"pending"}` while the operator has not approved (throttled server-side so a fast client cannot drive upstream traffic), and on approval answers `{status:"connected", connection}`. Approval reserves the attempt so concurrent polls cannot save it twice, and ends it only once a connection has been persisted; a save that persisted nothing releases the attempt so the next poll can save the token already issued upstream. Denial and expiry end the attempt (`oauth_denied`, `oauth_expired`); a transient upstream fault answers `oauth_poll_failed` (502) and leaves the attempt open, and clients must retry on it. A provider offers either the browser flow or the device flow, never both. Kilo Code's approved token is a non-expiring bearer with no refresh token.
+
 ## 20. Transport pooling and proxying
 
 Use shared `http.Transport` instances keyed by material transport configuration, such as:
