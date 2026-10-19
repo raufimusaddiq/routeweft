@@ -69,6 +69,7 @@ type Options struct {
 	Providers       []registry.Spec
 	Telemetry       TelemetryReader
 	Events          *controlevents.Bus
+	UsageFeed       *controlevents.UsageFeed
 	Logs            *LogBuffer
 	ActiveRequests  func() int64
 	Ready           func() bool
@@ -227,6 +228,7 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 		mux.Handle("GET /admin/v1/"+path, h.requireSessionHandler(h.readModel(path)))
 	}
 	mux.Handle("GET /admin/v1/models/disabled", h.requireSessionHandler(h.readModel("models/disabled")))
+	mux.HandleFunc("GET /admin/v1/usage/stream", h.requireSession(h.handleUsageStream))
 	mux.HandleFunc("GET /admin/v1/usage/summary", h.requireSession(h.handleUsageSummary))
 	mux.HandleFunc("GET /admin/v1/usage/hourly", h.requireSession(h.handleUsageHourly))
 	mux.HandleFunc("GET /admin/v1/usage/requests/{requestId}", h.requireSession(h.handleUsageRequest))

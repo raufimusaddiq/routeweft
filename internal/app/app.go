@@ -117,6 +117,7 @@ type App struct {
 	credReg *credentials.Registry
 	control *controlapi.Handler
 	events  *controlevents.Bus
+	feed    *controlevents.UsageFeed
 	logs    *controlapi.LogBuffer
 	active  atomic.Int64
 	ready   atomic.Bool
@@ -185,6 +186,7 @@ func (a *App) initialize(ctx context.Context) error {
 	usage.WithDetails(a.details)
 	a.usage = usage
 	a.events = controlevents.New()
+	a.feed = controlevents.NewUsageFeed()
 	binder := proxy.NewBinder(loadSnapshot(manager))
 	binder.AllowLocal = a.cfg.AllowPrivateUpstreams
 	if err := a.initializeQuota(ctx, store, manager); err != nil {
@@ -224,6 +226,12 @@ func (a *App) initialize(ctx context.Context) error {
 				"connectionId": outcome.ConnectionID,
 				"status":       outcome.Status,
 				"durationMs":   outcome.Duration.Milliseconds(),
+			})
+			a.feed.Publish(controlevents.UsageEvent{
+				RequestID: outcome.RequestID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
+				ConnectionID: outcome.ConnectionID, APIKeyID: outcome.APIKeyID, Status: outcome.Status,
+				DurationMS: outcome.Duration.Milliseconds(), InputTokens: outcome.InputTokens,
+				OutputTokens: outcome.OutputTokens, CreatedAt: time.Now().UTC(),
 			})
 			usage.Record(telemetry.Event{
 				Class:        telemetry.Critical,
@@ -291,6 +299,7 @@ func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager 
 		DiscoveryClient:       &discovery.Client{},
 		Telemetry:             a.usage,
 		Events:                a.events,
+		UsageFeed:             a.feed,
 		Logs:                  a.logs,
 		ActiveRequests:        func() int64 { return a.active.Load() },
 		Ready:                 a.ready.Load,

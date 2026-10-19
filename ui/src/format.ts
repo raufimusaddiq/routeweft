@@ -55,7 +55,7 @@ export function clock(iso: string) {
 }
 
 // One classification for every status mark and chart segment: success, redirect (neutral), client error, server error.
-export type Tone = 'good' | 'warn' | 'bad' | 'idle'
+export type Tone = 'live' | 'good' | 'warn' | 'bad' | 'idle'
 export function statusTone(status: number | string): Tone {
   const code = typeof status === 'number' ? status : Number.parseInt(status, 10)
   if (code >= 200 && code < 300) return 'good'
