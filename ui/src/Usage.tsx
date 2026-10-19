@@ -60,7 +60,6 @@ export function Usage({ onUnauthorized }: Props) {
 
   useEffect(() => { void load() }, [load])
 
-  const maxRequests = useMemo(() => Math.max(1, ...(summary?.series.map(day => day.requests) || [1])), [summary])
   const maxProvider = useMemo(() => Math.max(1, ...(summary?.providers.map(item => item.requests) || [1])), [summary])
 
   const first = loading && !summary

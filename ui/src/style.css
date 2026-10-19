@@ -47,6 +47,7 @@
   --accent-fg: #f7f8fa;
   --accent-muted: #b4bcc7;
   --accent-rule: #4d5662;
+  --accent-control: #6b7480;
   --accent-raised: #2c323b;
   --accent-danger: #ff91a0;
   --accent-focus: #8dbff2;
@@ -80,6 +81,7 @@
   --accent-fg: #171a20;
   --accent-muted: #4a525e;
   --accent-rule: #aab3bf;
+  --accent-control: #6b7480;
   --accent-raised: #dde2e9;
   --accent-danger: #ae2337;
   --accent-focus: #205d94;
@@ -372,7 +374,6 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .breakdown-fill { display: block; height: 100%; background: var(--ink); }
 .breakdown-count { min-width: 42px; text-align: right; color: var(--text-main); font-variant-numeric: tabular-nums; }
 .usage-log { margin-top: 0; }
-.usage-event-list { display: grid; gap: 2px; margin-top: 10px; }
 .usage-event { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; border-top: 1px solid var(--border-subtle); padding: 9px 0; font-size: var(--t-body); }
 .usage-event code { font-family: var(--font-mono); font-size: var(--t-label); }
 .usage-event .state-tag { min-width: 40px; justify-content: center; }
@@ -453,7 +454,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 :is(input, select):not([type="checkbox"]):not([type="radio"]):not([type="file"]) { min-height: var(--control-height); }
 :is(input[type="number"], input[type="password"], input[list], textarea, code, pre, time),
 .technical-value, .count-label, .updated-at, .detail-list dd, .metric-note, .key-status,
-.usage-bar-label, .breakdown-count, .usage-event-tokens, .quota-remaining, .quota-reset,
+.breakdown-count, .usage-event-tokens, .quota-remaining, .quota-reset,
 .console-log-time, .pagination, .connection-row > small, .model-row > small,
 .model-row > span:not(.state-tag), .combo-main small, .adapter-header small { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .model-test-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; border-block: 1px solid var(--border-subtle); padding-block: 12px; }
@@ -555,7 +556,7 @@ th { color: var(--text-muted); font-size: var(--t-label); font-weight: 500; lett
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
 /* One accent surface per page. Re-points the tokens so everything inside stays legible. */
-.accent-surface { --text-main: var(--accent-fg); --text-muted: var(--accent-muted); --text-subtle: var(--accent-muted); --ink: var(--accent-fg); --ink-hover: var(--accent-muted); --paper: var(--accent-bg); --bg: var(--accent-bg); --surface: var(--accent-bg); --surface-2: var(--accent-raised); --surface-3: var(--accent-rule); --border: var(--accent-rule); --border-subtle: var(--accent-rule); --danger: var(--accent-danger); --success: var(--accent-success); --warning: var(--accent-warning); --focus: var(--accent-focus); color: var(--accent-fg); background: var(--accent-bg); }
+.accent-surface { --text-main: var(--accent-fg); --text-muted: var(--accent-muted); --text-subtle: var(--accent-muted); --ink: var(--accent-fg); --ink-hover: var(--accent-muted); --paper: var(--accent-bg); --bg: var(--accent-bg); --surface: var(--accent-bg); --surface-2: var(--accent-raised); --surface-3: var(--accent-rule); --border: var(--accent-control); --border-subtle: var(--accent-rule); --danger: var(--accent-danger); --success: var(--accent-success); --warning: var(--accent-warning); --focus: var(--accent-focus); color: var(--accent-fg); background: var(--accent-bg); }
 .accent-surface:is(.detail-panel, .metric, .combo-row, .endpoint-panel) { padding: 14px 16px; }
 :is(.combos-toolbar, .quota-toolbar, .token-saver-toolbar, .settings-toolbar, .console-log-toolbar).accent-surface { padding: 8px 12px; }
 

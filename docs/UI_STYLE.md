@@ -69,8 +69,9 @@ Wrapped rows grow with their content; fixed heights must not clip labels.
   notes, detail values, counts, chart labels and pagination.
 - Tabular numerals inherit throughout the application.
 - Labels: 10-11px, uppercase, tracking approximately `0.08em`.
-- Values: approximately 28px, tight tracking. Page titles: 28px desktop / 24px
-  mobile, weight 500, tracking `-0.035em`.
+- Values: approximately 28px, tight tracking. Page titles: 28px on every
+  viewport, weight 600, tracking `-0.04em`. Each page uses exactly three computed
+  font sizes: 28px (titles, values), 12px (body), 10px (labels, notes).
 - Descriptions remain readable sans prose, not terminal output.
 
 Fonts load through the existing Google Fonts stylesheet in `ui/index.html`;
@@ -130,7 +131,9 @@ Inputs/selects have square corners, readable labels and explicit boundaries.
 Keep secrets masked, inline validation and native control semantics.
 Do not reorder focusable markup or alter event handlers during visual work.
 
-Every control has a visible 2px ink focus outline, 2px offset, both themes.
+Every control has a visible 2px focus outline in the focus accent (`--focus`), 2px offset, both
+themes. Each page has one accent surface (`.accent-surface`) whose control
+borders (`--accent-control`) keep 3:1 against its fill.
 Keep skip-to-content, landmarks, labels, `aria-live`, focus order and reduced
 motion. Focus must not be clipped by scroll regions.
 Normal text and state colors require WCAG AA 4.5:1; control boundaries and
