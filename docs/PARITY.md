@@ -783,7 +783,7 @@ The checklists in #75-#78 are normative follow-up scope for this inventory. Ever
 | IDs | Explicit gap / decision required | Authority | Owner |
 | --- | --- | --- | --- |
 | R01 | Native configured app account resolution/fallback/retry is implemented. Retained actual Combo/Fusion/capacity serving and pinned Fusion defaults remain open; no PRD 11 / BDR-011 waiver. | PRD 5/10/11; SPEC 8/13-16; Sprint 5.1 | #75 |
-| R02 | Chat/Responses, Messages<->Chat, Ollama (provider side), the Gemini and Vertex legs (Gemini routable, Vertex gated on #115 PR-C: see 6.7) and the Cursor and CommandCode conversion legs (not yet routable: see 6.5) are implemented (#119). The Gemini CLI, Antigravity and Kiro legs, the Cursor and CommandCode transports, count-tokens and provider compact behavior remain open under SPEC 9/10; #119 tracks each leg. | PRD 5; SPEC 9/10; Sprint 5.2 | #75 |
+| R02 | Chat/Responses, Messages<->Chat, Ollama (provider side), the Gemini and Vertex legs (Gemini routable, Vertex gated on #115 PR-C: see 6.7), the Kiro Chat legs (not yet routable: see 6.8) and the Cursor and CommandCode conversion legs (not yet routable: see 6.5) are implemented (#119). The Gemini CLI and Antigravity legs, the Kiro Messages legs, the Cursor and CommandCode transports, count-tokens and provider compact behavior remain open under SPEC 9/10; #119 tracks each leg. | PRD 5; SPEC 9/10; Sprint 5.2 | #75 |
 | R03 | Serving pipeline slice resolved: normative per-attempt savers/final cache, bypass and fail-open tests in internal/app/transforms_test.go. Native helper parity stays R09. | PRD 12; SPEC 17/18; BDR-012; Sprint 5.3 | #75 |
 | R04 | Typed validation, native/custom/Cloudflare transports, streams/cancel and shared usage are implemented; internal/app/systemone_test.go. R11 adds pinned handler comparison; no broad-provider claim. | PRD 5/14; SPEC 10/28; #73 explicit System One | #75 |
 | R05 | Historical aliases, Ollama tags and id/kind/access catalog semantics are implemented (SPEC 34). Legacy /api/v1 is retained with identical inference auth/CORS; media kinds stay excluded. | PRD-API-001-004; SPEC 34 | #75 |
@@ -1141,8 +1141,7 @@ with available Chat pivots that must lose to the direct pair. It preserves the
 source request bytes, including a Messages-only system field and a nested
 extension. It proves incremental output, failure terminals, no replay,
 non-2xx status/body preservation and upstream cancellation. It is a framing and
-dispatch test, not a Kiro translator or live-provider qualification. All four
-Kiro conversion gaps remain tracked until PRs 4b/4c implement them.
+dispatch test, not a Kiro translator or live-provider qualification. The two Kiro Chat legs are PR 4b (6.8); the two Messages legs remain tracked for PR 4c.
 
 Framing provenance, all at oracle `1c3b9f47837d42ea64992063309064af755a14a3`:
 
@@ -1276,6 +1275,124 @@ Mirrored though odd, each asserted by a test:
 | a body that ends before a `finishReason`; invalid JSON; a part that is not an object | failure terminal then `[DONE]` | SPEC 9.3 |
 | a cancelled client | no terminal | |
 
+
+### 6.8 Kiro Chat legs: where Routeweft differs from the pin (#119, PR 4b)
+
+This PR builds the two Chat legs of the Kiro wire: `request openai-chat>kiro` (`translator/request/openai-to-kiro.js:308-447`, registered `:449`) and `response kiro>openai-chat` (registered `translator/response/kiro-to-openai.js:185`). The pin dispatches both directly, with no pivot (`translator/index.js:106-108`, `:208-213`). The two Messages legs (`claude-to-kiro.js:231-366`, `kiro-to-claude.js:57-285`) are PR 4c and stay in `trackedLegGaps`. The code is `internal/protocol/kiro`.
+
+**The response leg is not where the ticket says.** `kiro-to-openai.js:37-55` returns the chunks it is given, because the pin's executor already turned the EventStream into Chat chunks (`executors/kiro.js:629-1190`, `transformEventStreamToSSE`); the raw-event branch below it (`:57-181`) reads `usageEvent` and `done`, which that transform never emits, so no real stream reaches it. The leg is therefore the executor transform, reading frames with `concerns.ReadEventStream` instead of the pin's parser (`:1216-1300`). Where the ticket and the pin disagree, the pin wins.
+
+**Routing.** Kiro stays in `ingress.unwired`. Its transport needs the account-aware body and headers from `internal/providers/wire` (#135), and without PR 4c a Messages client would pivot through Chat where the pin has a direct pair. `hub.CanTranslate` is true for Chat and Responses clients and, until 4c, also for Messages; `TestKiroLegsExistButKiroStaysUnwired` pins that the ingress answer is false for all three. The legs receive the raw upstream body: ingress passes `response.Body` to `translation.Stream` (`ingress/openai.go:211-215`) and the whole body to `translation.Response` (`:231-242`), and `internal/providers/wire` has no Kiro hook, so no wire change is needed for the legs to read EventStream.
+
+#### Request, Chat to Kiro
+
+| Chat field | Disposition | Reason |
+| --- | --- | --- |
+| `messages[].content` (string, text parts) | carried | `openai-to-kiro.js:108-170`; text parts of one message join with a newline, messages of one turn with a blank line |
+| `system` / `developer` messages | carried as a user turn wrapped in `<instructions>` | Kiro has no system field (`:165-169`). The pin silently loses `developer` (`:94-100`); here it is a system message, as in every other leg |
+| `image_url` with a base64 data URI of an image type | carried as `images[{format, source.bytes}]` | `:118-124`; the format is the media subtype as in the pin. Whether Kiro accepts every subtype is not verifiable offline |
+| `image_url` with an `http(s)` URL | **refused** | Kiro takes bytes. The pin substitutes the text `[Image: url]` (`:125-128`) |
+| `image_url.detail` | advisory | a rendering hint Kiro has no field for |
+| other content parts, wrong-typed `content`, a part with no `type` | **refused** | the pin ignores them (`:129-136`) |
+| `tool_calls` | carried as `toolUses` | `:186-216`; arguments must be a JSON object, or empty for a tool that takes none |
+| malformed `tool_calls[].function.arguments` | **refused** | the pin flattens the call to text (`kiroConversation.js:129-134`) |
+| `tool` messages | carried as `toolResults` | `:158-164`; `is_error` or `status:"error"` give status error. Array content joins its text parts (the pin sends `""` for it, `:159`); non-text parts are refused |
+| tool-call/result pairing | **refused** when a call is unanswered, a result is orphaned, answers a call another turn made, or answers one twice | the pin repairs by flattening both sides to text (`:261-338`, `:373-391`). The error names the turn |
+| tool-call ids | carried; characters Kiro rejects are removed on both sides, a missing id is generated for the client's own body | `concerns.EnsureToolCallIDs`. **Refused** when the id is empty once cleaned, over 64 characters, or two calls end up with one id (the pin suffixes, `:208-223`) |
+| a call to a tool that is not among `tools` | **refused** | the pin flattens it (`:299-310`) |
+| `tools` (function) | carried as `toolSpecification` on the current message only | `kiroConversation.js:429-431` |
+| tool of another type, tool with no name, a name declared twice | **refused** | the pin ignores the type, skips the nameless tool (`:100`) and the second definition (`:103`). Byte-identical repeats are also refused |
+| tool names | valid names are sent unchanged; the rest are rewritten and put back on the response | `concerns.ToolNameRule{Strict: true}` with Kiro's rule. **Refused** when two names are one name once normalized (the pin suffixes `_2`, `:47-61`). The pin also renames valid names that begin or end with `_`; this does not |
+| tool description | carried; absent or empty becomes `Tool: <name>`; **refused** over 10237 characters | the pin truncates (`:108-111`). The limit is the pin's; whether Kiro enforces it is not verifiable offline |
+| `temperature`, `top_p` | carried, an explicit `0` as `0` | `:426-431`. Absent and `null` send nothing; a non-number is refused |
+| `max_tokens`, else `max_completion_tokens` | carried to `inferenceConfig.maxTokens` | the pin sends a fixed 32000 (`:311`). Absent sends nothing: whether Kiro applies a default is not verifiable offline. Zero, negative, fractional and non-numbers are refused |
+| thinking intent: `reasoning_effort`, `reasoning.effort`, `thinking`, `output_config.effort`, `enable_thinking`, `thinking_budget`, `thinkingConfig`, the `model(level)` suffix, `-thinking`, a `<thinking_mode>` tag in a system or user message | carried | `kiroConstants.js:44-259` and `thinkingUnified.js:34-103`, ported inside the Kiro package: the budget prefix and, for Claude 4.6+ and GPT 5.6, `additionalModelRequestFields`. Unknown effort values and unrecognized parenthesized model overrides are refused instead of falling back to a default budget or dropping the suffix. The Gemini envelope shapes nested under `generationConfig` and `request` are refused as unknown fields |
+| `-agentic` model suffix | carried | the pin's chunked-write prompt, verbatim, in front of the first user turn |
+| `anthropic-beta: interleaved-thinking` | **not readable by a leg** | the legs get no request headers (`ChatRequest` has none). Matters for the Messages legs; recorded on the ticket |
+| `tool_choice` other than absent, `null`, `"auto"`; `parallel_tool_calls:false` | **refused** | Kiro has neither; the pin ignores both. Non-boolean `parallel_tool_calls` is also refused |
+| `stop`, `seed`, `logit_bias`, `top_logprobs`, `logprobs:true`, `n` other than numeric `1`, audio, `functions`, `function_call`, `web_search_options`, `prediction`, `response_format` other than text, non-zero `presence_penalty` / `frequency_penalty`, any field not listed here | **refused** | Kiro's request has no equivalent. A zero penalty is the identity |
+| `stream`, `stream_options`, `user`, `store`, `metadata`, `service_tier`, `prompt_cache_key`, `prompt_cache_retention`, `safety_identifier` | advisory | the answer is the same without them |
+| message/part `cache_control`, message `annotations`, echoed `reasoning_content` / `reasoning` / `reasoning_details` / `refusal` | advisory | Kiro has no cache field or reasoning history. **Known gap:** prompt-cache anchoring does not reach Kiro (as at the pin) |
+| message `name` on user, assistant, system | **refused** | a participant name has no Kiro equivalent. Empty and wrong-typed names are also refused. On a `tool` message it is ignored: the call id pairs the result |
+| conversation starting or ending on an assistant turn; a user turn with no text and no tool result (an image alone) | **refused** | the pin invents `continue` user turns (`kiroConversation.js:181-186`, `:19-21`) |
+| consecutive turns of one role | carried, merged | Kiro alternates; no content is lost |
+| tool-results-only user turn, assistant turn with no text | placeholder `Tool results provided.` / `...` | structural: the wire needs some text; neither reads as an instruction (`:81`, `kiroConversation.js:15`) |
+
+**Deliberate divergences.** There is no session replay cache and the first user message is not frozen (`kiroSessionReplay.js:65-130`, `openai-to-kiro.js:359-376`): the pin keys it with no client dimension, so one client's prompt could be served to another. `conversationId` is a fresh random UUID for each request. The `[Context: Current time is …]` line the pin adds to every turn (`:356`) is not sent: it exists to keep the frozen message cacheable, nothing shows the wire needs it, and it would be a system fact the client never sent. The executor's integrity retry (`executors/kiro.js:437-505`) and its content heuristics (`:46-56`, `:185-197`) are not ported: a replay after output would repeat an answer already sent.
+
+#### Tool schema rows
+
+Kiro does not accept some keywords. Each row below is a decision, and `RequestInfo.Normalized` counts the rewrites so a test can assert them.
+
+| Schema content | Disposition | Consequence |
+| --- | --- | --- |
+| no `parameters`, `{}`, a missing root `type`, missing `properties` | `type:"object"` and empty `properties` are filled in | says the same thing |
+| root `type` other than `object` (including a list) | **refused** | a tool input is an object |
+| `additionalProperties: true` or `null`, at any depth | stripped | the JSON-schema default; carries nothing |
+| `additionalProperties: false`, at any depth | stripped, counted | **Kiro does not accept the keyword, so the model may emit a property the client did not declare; the client's own validator is the backstop.** It is a guarantee about what comes back, not a field the caller sent |
+| `additionalProperties` as a schema, including `{}`, at any depth | **refused** | it declares structure the model must know about; dropping it changes what the model can produce |
+| `required` naming an undeclared property (any depth, no `allOf`/`anyOf`/`oneOf`/`$ref`) | entry dropped, counted; duplicates collapse | the model cannot satisfy it either way. Not dropped where composition may declare the property |
+| `required: []`, at any depth | dropped | says nothing |
+| `required` that is not a list (any depth), or has an entry that is not a string | **refused** | |
+| a property that is *named* `additionalProperties` or `required`; `enum`, `const`, `default`, `examples` values | untouched | the pin's blind walk (`kiroConversation.js:63-74`) strips these too; here only schemas are visited |
+
+#### Response, Kiro EventStream to Chat
+
+| Event or condition | Disposition |
+| --- | --- |
+| `assistantResponseEvent{content}` | carried as `content`; a payload that is not an object, or a `content` that is not a string, fails the stream (the pin ignores both, `:808`) |
+| `<thinking>…</thinking>` in answer text | when the request injected thinking mode: the inside is `reasoning_content`, the tags are removed, one newline after the close is removed, and an unfinished tag is held back until the next frame (the pin drops the inside and leaks a split tag, `:810-828`). Otherwise the text is the model's own and passes through |
+| `reasoningContentEvent` | carried as `reasoning_content`, in the pin's three shapes (`:834-841`) |
+| `codeEvent{content}` | carried as `content` (`:842`) |
+| `toolUseEvent` | fragments joined per `toolUseId`; a name change, a fragment-type change, a missing name or input, a blank or non-string id, input that is not an object, and the `tool_call` wrapper without a nested name and `arguments` fail the stream (`:846-871`, `:746-753`). An empty input string is `{}`. Calls are emitted after the reader confirms the body is whole (`:1036`); one unusable call means none of the turn's calls are emitted and the stream ends with an error (the pin drops it and answers 200, `:739-759`) |
+| `messageStopEvent`, `metadataEvent` with a stop reason | the terminal. `end_turn`, `stop_sequence`, none: `stop`, or `tool_calls` if calls were made. `tool_use` with no call: failure. `max_tokens`: `length`, but failure with a call. `model_context_window_exceeded`: `length` only after output, otherwise failure. `refusal`, content-filter-like, `cancelled`, `pause_turn`, `malformed_model_output` and unknown reasons: failure (`:145-183`, `:1077-1120`). Failure reasons outrank reasons that can succeed; `tool_use` outranks `end_turn`, so a second terminal cannot hide a missing call |
+| `metricsEvent` | usage from `concerns.KiroUsage`: `inputTokens` is taken as cache-exclusive, the prompt is input + cache read + cache creation, the cache counts are `prompt_tokens_details`; explicit zero and cache-only counts are measurements; negative, fractional, out-of-range, conflicting alias counts or overflowing totals are not a measurement (the pin copies input into the prompt and spells the cache counts outside `prompt_tokens_details`, `:906-922`). Whether Kiro's `inputTokens` is cache-exclusive is the owner's decision, not verified offline |
+| `contextUsageEvent`, `meteringEvent`, `metadataEvent` without a stop reason | counted and ignored: the only events the pin reads for accounting and never for content |
+| any other event type | counted; **fails the stream, including an empty payload**. Nothing else is proven harmless: that needs a sanitized capture |
+| known event with an unread key holding a value | fails the stream; the pin ignores the key and the content in it may be text |
+| clean EOF with no stop event, truncation, corrupt bytes after the stop | failure; the pin counts clean EOF with output as success (`:1065-1075`) |
+| content after the stop event | failure; usage and bookkeeping after it are accepted |
+| `:message-type` `exception` / `error` | failure carrying the upstream message (`:793-803`) |
+| tool id absent | a stable generated id; the pin embeds the clock (`:854-855`) |
+| tool name | restored from the request's name map; a name not in the map passes through, as at the pin |
+
+**Known gaps, each its own follow-up under #119.** *Kiro saver view:* conversation history and the current message have no saver view; the transform order is unchanged. *Token estimates:* the pin's `contextUsagePercentage × context window` and `chars/4` estimates (`:1102-1113`) are not reported; no usage is better than an invented one. *Credits:* `meteringEvent` credits (`:895-905`) are counted, not reported, and no `kiro_credits` key is added to `usage`. *Time context:* see above. *Header-driven thinking:* `anthropic-beta` needs request headers in the Messages legs.
+
+**Wire hooks #135 needs (not implemented here).** `profileArn` in the body and `x-amzn-codewhisperer-profile-arn` in the headers, account-aware: API-key, IdC and external-IdP accounts never use the shared default (`openai-to-kiro.js:325-341`, `executors/kiro.js:276-279`); the auth headers `TokenType`, `x-amz-sso-bearer`, `x-amzn-kiro-agent-mode`, `X-Amz-Target` for `codewhisperer.*` hosts and `Accept: application/vnd.amazon.eventstream` (`:235-282`); the three-host order and region rewrite (`:299-328`); endpoint-fallback statuses 401/403/404 (`kiroConstants.js:28`).
+
+The request guards also refuse unread tool, call, content-part and thinking keys (including empty values), malformed thinking configurations, and strict tool-output guarantees. Supplied IDs are validated before shared repair can rewrite them. Known response events enumerate the keys they read or treat as bookkeeping; mixed nested and flat envelopes, multiple reasoning values and conflicting object tool fragments fail rather than select one and lose another.
+
+Guard coverage before push:
+
+| Input dimension | Crossed branches / expected result |
+| --- | --- |
+| Sampling values: absent, `null`, `0`, `0.0`, positive, string, bool, list | `temperature`, `top_p` and each `max_*` name; zero is emitted as `0`, absent and null send nothing, wrong types refuse; `max_tokens` wins, `null` falls to `max_completion_tokens` |
+| Message and content shapes: absent, `null`, empty, wrong type, populated, malformed part | all four roles; refused unless meaningful |
+| Tool history: unanswered, orphaned, wrong id, twice answered, undeclared, bad arguments (invalid / array / number), duplicate id, id equal once cleaned, unusable id, 65-character id, image result | each refused with the turn named; the whole conversation served |
+| Tool names and descriptions: collision with a valid name, with each other, empty twice, same name different definition, identical repeat (refused), 10237 / 10238 characters | refused or served accordingly |
+| Schema rows above, flat and nested | each row asserted, with its count |
+| Thinking: every source, suffix and model family | prefix, flag, upstream model and extra fields asserted |
+| Event payloads: absent, `null`, empty, string, number, list, object, wrong-typed field, unread key | every known event; error or carried |
+| Stop reasons ×  with and without output, with and without calls | one outcome each |
+| Thinking tag split | every split of the sample into two and into three frames, and byte by byte; plus tag edges |
+| Truncation, trailing garbage, missing stop, post-stop content, source error, cancellation | failure terminal, nothing written after a cancel |
+| Buffered and streamed | the same answer |
+
+Validation for PR 4b uses sanitized synthetic EventStream fixtures and the pinned
+leg inventory. The converter benchmark (three-frame text/usage/stop response,
+Go 1.22.12, shared host under load) measured 0.779–0.890 ms/op, about 13.1 KB/op
+and 197 allocations/op across three runs. This is a new, gated path with no
+previous Kiro converter baseline; it does not establish production latency.
+No SQLite schema, provider inventory, credentials or runtime dependency changes.
+No live provider calls were made.
+
+`go build ./...` and the normal Go suite (`go test -p 1 ./...`) pass. Race tests
+pass for Kiro, concerns, hub, ingress and the pinned parity suite. The broad
+`go test -race ./...` run on this host hit the existing runbook's ten-second
+readiness deadline and the app package's ten-minute total deadline; the normal
+versions pass, and the app test active at the deadline passes separately under
+race. These broad-run timeouts remain a validation limitation, not a green race
+suite claim.
 
 ## 7. Validation, limits and completion
 
