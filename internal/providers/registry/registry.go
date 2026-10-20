@@ -122,6 +122,9 @@ func (s Spec) Validate() error {
 	if s.ID == "" {
 		return errors.New("provider id is required")
 	}
+	if (s.CredentialName == "") != (s.CredentialExpiryName == "") {
+		return errors.New("named credential and its expiry must be declared together")
+	}
 	if len(s.Transports) == 0 {
 		return errors.New("provider transport is required")
 	}

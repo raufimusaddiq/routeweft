@@ -168,9 +168,7 @@ func githubFlow() Flow {
 			}
 			if err := getJSON(ctx, p.Client, copilotURL, headers, &copilot); err == nil && copilot.Token != "" {
 				providerData["copilotToken"] = copilot.Token
-				if expires, ok := numberFromJSON(copilot.ExpiresAt); ok {
-					providerData["copilotTokenExpiresAt"] = fmt.Sprintf("%.0f", expires)
-				}
+				providerData["copilotTokenExpiresAt"] = copilotExpiry(copilot.ExpiresAt, p.now())
 			}
 			if len(providerData) == 0 {
 				providerData = nil
@@ -642,4 +640,15 @@ func getDocument(ctx context.Context, client HTTPClient, endpoint string, header
 // readLimited reads a response body under the shared size cap.
 func readLimited(response *http.Response) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(response.Body, 1<<20))
+}
+
+// Missing or invalid Copilot expiry gets a bounded TTL, never a permanent token.
+func copilotExpiry(raw json.RawMessage, now time.Time) string {
+	var seconds json.Number
+	if err := json.Unmarshal(raw, &seconds); err == nil {
+		if expires, err := seconds.Int64(); err == nil && expires > 0 {
+			return fmt.Sprint(expires)
+		}
+	}
+	return fmt.Sprint(now.Add(10 * credentials.RefreshLead).Unix())
 }

@@ -352,3 +352,20 @@ func TestTransportEndpointsValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestNamedCredentialRequiresExpiryDeclaration(t *testing.T) {
+	for _, tc := range []struct {
+		name, expiry string
+		valid        bool
+	}{
+		{"", "", true},
+		{"wireToken", "wireTokenExpiresAt", true},
+		{"wireToken", "", false},
+		{"", "wireTokenExpiresAt", false},
+	} {
+		spec := Spec{ID: "fixture", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, ModelCatalog: CatalogStatic, CredentialName: tc.name, CredentialExpiryName: tc.expiry}
+		if _, err := NewCatalog([]Spec{spec}); (err == nil) != tc.valid {
+			t.Errorf("name=%q expiry=%q valid=%v: %v", tc.name, tc.expiry, tc.valid, err)
+		}
+	}
+}

@@ -197,7 +197,8 @@ func (a *App) initialize(ctx context.Context) error {
 	a.feed = controlevents.NewUsageFeed()
 	binder := proxy.NewBinder(loadSnapshot(manager))
 	binder.AllowLocal = a.cfg.AllowPrivateUpstreams
-	if err := a.initializeQuota(ctx, store, manager); err != nil {
+	specs := registry.Builtins()
+	if err := a.initializeQuota(ctx, store, manager, specs); err != nil {
 		_ = store.Close()
 		return err
 	}
@@ -260,7 +261,7 @@ func (a *App) initialize(ctx context.Context) error {
 			})
 		},
 	})
-	if err := a.initializeAdmin(ctx, store, manager); err != nil {
+	if err := a.initializeAdmin(ctx, store, manager, specs); err != nil {
 		_ = store.Close()
 		return err
 	}
@@ -272,7 +273,7 @@ func (a *App) initialize(ctx context.Context) error {
 // builds the session-gated control API. A missing bootstrap credential is not an
 // error while no admin exists: the control API stays mounted but returns 409
 // until an operator provisions one (RUNBOOK §bootstrap).
-func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager *runtime.Manager) error {
+func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager *runtime.Manager, specs []registry.Spec) error {
 	a.admin = adminauth.NewStore(store.DB())
 	if (a.cfg.AdminBootstrapUsername == "") != (a.cfg.AdminBootstrapPassword == "") {
 		return errors.New("initial admin bootstrap username and password must be configured together")
@@ -290,7 +291,6 @@ func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager 
 		}
 	}
 	sessions := adminauth.NewSessionManager(a.cfg.AdminSessionTTL)
-	specs := registry.Builtins()
 	a.control = controlapi.New(controlapi.Options{
 		Accounts:              a.admin,
 		Sessions:              sessions,
@@ -331,7 +331,7 @@ func newAdminID() string { return "admin_" + uuid.NewString() }
 // singleflight-refreshed credentials inference uses. It is skipped when no
 // credential master key is configured, in which case there are no stored
 // provider connections to read quota for.
-func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager *runtime.Manager) error {
+func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager *runtime.Manager, specs []registry.Spec) error {
 	if len(a.cfg.CredentialKey) == 0 {
 		return nil
 	}
@@ -344,7 +344,7 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 		return fmt.Errorf("initialize credential store: %w", err)
 	}
 	credentialPolicies := make(map[string]registry.Spec)
-	for _, spec := range registry.Builtins() {
+	for _, spec := range specs {
 		credentialPolicies[spec.ID] = spec
 	}
 	credentialRegistry := credentials.NewRegistry(credentialStore, nil)
