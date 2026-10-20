@@ -24,7 +24,7 @@ func TestSnapshotCompilesConnectionPoolBindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedProxyBinding(t, store.DB(), "conn-1", "pool-1")
-	manager, err := NewManager(ctx, store.DB())
+	manager, err := NewManagerObserved(ctx, store.DB(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

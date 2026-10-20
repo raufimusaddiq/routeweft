@@ -264,6 +264,10 @@ func (r *Registry) refresh(ctx context.Context, connectionID string, stored Secr
 	if strings.TrimSpace(refreshed.RefreshToken) == "" {
 		refreshed.RefreshToken = stored.RefreshToken
 	}
+	// Exchangers often build a fresh Secret. Provider data holds the connection
+	// metadata serving snapshots carry (azureEndpoint, region, baseUrl, ...), so a
+	// timer-driven refresh must never drop keys the exchange did not mention.
+	refreshed.ProviderData = carryProviderData(stored.ProviderData, refreshed.ProviderData)
 	current.installMu.Lock()
 	defer current.installMu.Unlock()
 	// Still current under the install lock: nothing has replaced this generation
@@ -272,6 +276,10 @@ func (r *Registry) refresh(ctx context.Context, connectionID string, stored Secr
 		return Secret{}, ErrSuperseded
 	}
 	if r.store != nil {
+		// RotateSecret queues on the runtime mutation gate. That wait honors this
+		// deadline, so a long config mutation can at worst fail this refresh with a
+		// persist error (nothing is published; the next call retries the exchange
+		// from the durable secret). The exchange itself runs before the gate.
 		commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		err := r.store.RotateSecret(commitCtx, connectionID, refreshed)
 		cancel()
@@ -321,6 +329,14 @@ func (r *Registry) Import(ctx context.Context, connectionID, identity string, se
 	current.mu.Lock()
 	current.generation++
 	current.mu.Unlock()
+	// Nil provider data in an import means "no provider-field change", as in PATCH.
+	if secret.ProviderData == nil {
+		existing, err := r.store.GetConnection(ctx, connectionID)
+		if err != nil {
+			return err
+		}
+		secret.ProviderData = carryProviderData(existing.Secret.ProviderData, nil)
+	}
 	if err := r.store.RotateSecret(ctx, connectionID, secret); err != nil {
 		return err
 	}
@@ -377,4 +393,20 @@ func (r *Registry) validLocked(current *entry) bool {
 		return true
 	}
 	return r.now().Add(r.lead).Before(expiry)
+}
+
+// carryProviderData returns stored overlaid with update. Nil in both stays nil so
+// secrets without provider data keep their serialized shape.
+func carryProviderData(stored, update map[string]string) map[string]string {
+	if len(stored) == 0 {
+		return update
+	}
+	merged := make(map[string]string, len(stored)+len(update))
+	for key, value := range stored {
+		merged[key] = value
+	}
+	for key, value := range update {
+		merged[key] = value
+	}
+	return merged
 }

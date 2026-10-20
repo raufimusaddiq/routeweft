@@ -177,7 +177,15 @@ func (a *App) initialize(ctx context.Context) error {
 	// PXPIPE diagnostics outlive snapshots, so the sink is process-level and
 	// handed to every compiled pipeline.
 	a.pxpipe = pxpipe.NewService(pxpipe.Transform{})
-	manager, err := runtime.NewManagerObserved(ctx, store.DB(), a.pxpipe.Observe)
+	var sealer *credentials.Sealer
+	if len(a.cfg.CredentialKey) != 0 {
+		sealer, err = credentials.NewSealer(a.cfg.CredentialKey)
+		if err != nil {
+			_ = store.Close()
+			return fmt.Errorf("initialize credential sealer: %w", err)
+		}
+	}
+	manager, err := runtime.NewManagerObserved(ctx, store.DB(), a.pxpipe.Observe, sealer)
 	if err != nil {
 		_ = store.Close()
 		return fmt.Errorf("initialize runtime: %w", err)
@@ -198,7 +206,7 @@ func (a *App) initialize(ctx context.Context) error {
 	binder := proxy.NewBinder(loadSnapshot(manager))
 	binder.AllowLocal = a.cfg.AllowPrivateUpstreams
 	specs := registry.Builtins()
-	if err := a.initializeQuota(ctx, store, manager, specs); err != nil {
+	if err := a.initializeQuota(ctx, store, manager, specs, sealer); err != nil {
 		_ = store.Close()
 		return err
 	}
@@ -330,13 +338,9 @@ func newAdminID() string { return "admin_" + uuid.NewString() }
 // singleflight-refreshed credentials inference uses. It is skipped when no
 // credential master key is configured, in which case there are no stored
 // provider connections to read quota for.
-func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager *runtime.Manager, specs []registry.Spec) error {
-	if len(a.cfg.CredentialKey) == 0 {
+func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager *runtime.Manager, specs []registry.Spec, sealer *credentials.Sealer) error {
+	if sealer == nil {
 		return nil
-	}
-	sealer, err := credentials.NewSealer(a.cfg.CredentialKey)
-	if err != nil {
-		return fmt.Errorf("initialize credential sealer: %w", err)
 	}
 	credentialStore, err := credentials.NewStore(store.DB(), sealer)
 	if err != nil {

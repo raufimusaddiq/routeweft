@@ -3,7 +3,11 @@ package credentials
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
+
+	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
 // Configuration contains routing metadata only, never credential material.
@@ -39,7 +43,7 @@ func (s *Store) update(ctx context.Context, change func(*Configuration) error, p
 		}
 		return err
 	}
-	config, err := LoadConfiguration(ctx, s.db)
+	config, err := LoadConfiguration(ctx, s.db, s.sealer)
 	if err != nil {
 		return err
 	}
@@ -93,13 +97,26 @@ func editConnection(id string, edit func(*Connection)) func(*Configuration) erro
 }
 
 // LoadConfiguration reads metadata at startup; serving never calls it.
-func LoadConfiguration(ctx context.Context, db *sql.DB) (Configuration, error) {
+func LoadConfiguration(ctx context.Context, db *sql.DB, sealer *Sealer) (Configuration, error) {
+	return loadConfiguration(ctx, db, sealer, true)
+}
+
+// LoadMetadata omits sealed settings for inventories and structural backup validation only.
+func LoadMetadata(ctx context.Context, db *sql.DB) (Configuration, error) {
+	return loadConfiguration(ctx, db, nil, false)
+}
+
+func (s *Store) Configuration(ctx context.Context) (Configuration, error) {
+	return LoadConfiguration(ctx, s.db, s.sealer)
+}
+
+func loadConfiguration(ctx context.Context, db *sql.DB, sealer *Sealer, settings bool) (Configuration, error) {
 	s := &Store{db: db}
 	nodes, err := s.ListNodes(ctx)
 	if err != nil {
 		return Configuration{}, err
 	}
-	rows, err := db.QueryContext(ctx, `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,c.identity,c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.account_id FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id ORDER BY c.priority,c.name,c.id`)
+	rows, err := db.QueryContext(ctx, `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,c.identity,COALESCE(c.secret_blob,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.account_id FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id ORDER BY c.priority,c.name,c.id`)
 	if err != nil {
 		return Configuration{}, err
 	}
@@ -107,10 +124,35 @@ func LoadConfiguration(ctx context.Context, db *sql.DB) (Configuration, error) {
 	config := Configuration{Nodes: nodes}
 	for rows.Next() {
 		var c Connection
-		if err := rows.Scan(&c.ID, &c.NodeID, &c.ProviderID, &c.Name, &c.AuthKind, &c.Identity, &c.Enabled, &c.Priority, &c.ProxyPoolID, &c.AccountID); err != nil {
+		var blob string
+		if err := rows.Scan(&c.ID, &c.NodeID, &c.ProviderID, &c.Name, &c.AuthKind, &c.Identity, &blob, &c.Enabled, &c.Priority, &c.ProxyPoolID, &c.AccountID); err != nil {
 			return Configuration{}, err
+		}
+		if blob != "" && settings {
+			if sealer == nil {
+				return Configuration{}, fmt.Errorf("open provider settings for connection %q: %w", c.ID, ErrKeyRequired)
+			}
+			payload, err := sealer.Open(blob)
+			if err != nil {
+				return Configuration{}, fmt.Errorf("open provider settings for connection %q: %w", c.ID, err)
+			}
+			var secret Secret
+			if err := json.Unmarshal(payload, &secret); err != nil {
+				return Configuration{}, fmt.Errorf("decode provider settings for connection %q: %w", c.ID, err)
+			}
+			c.Settings = projectSettings(secret.ProviderData)
 		}
 		config.Connections = append(config.Connections, c)
 	}
 	return config, rows.Err()
+}
+
+func projectSettings(data map[string]string) routing.ProviderSettings {
+	return routing.ProviderSettings{
+		BaseURL: data["baseUrl"], AzureEndpoint: data["azureEndpoint"], APIVersion: data["apiVersion"],
+		Deployment: data["deployment"], Organization: data["organization"], Region: data["region"],
+		WorkspaceID: data["workspaceId"], DeviceID: data["deviceId"], AgentID: data["agentId"],
+		Email: data["email"], UserID: data["userId"], SystemID: data["systemId"],
+		OrganizationID: data["organizationId"], DefaultOrganizationID: data["defaultOrganizationId"], UID: data["uid"],
+	}
 }

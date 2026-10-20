@@ -105,7 +105,7 @@ func newProvidersAPI(t *testing.T, allowPrivate bool, upstream *discovery.Client
 	if err := migrations.NewRunner(store.DB()).Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
-	manager, err := runtime.NewManager(ctx, store.DB())
+	manager, err := runtime.NewManagerObserved(ctx, store.DB(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +395,7 @@ func TestConnectionReorderAndProxyAssignment(t *testing.T) {
 	if err != nil || stored.ProxyPoolID != "pool-1" || stored.Priority != 5 {
 		t.Fatalf("stored connection=%+v err=%v", stored, err)
 	}
-	snapshot, err := runtime.NewManager(ctx, store.DB())
+	snapshot, err := runtime.NewManagerObserved(ctx, store.DB(), nil, restartSealer(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -526,4 +526,14 @@ func TestSystemOneModelProbeUsesTypedEndpoint(t *testing.T) {
 	if string(gotBody) != wantBody {
 		t.Fatalf("probe body=%s want=%s", gotBody, wantBody)
 	}
+}
+
+// restartSealer reopens the fixed test key so a restart can open sealed rows.
+func restartSealer(t *testing.T) *credentials.Sealer {
+	t.Helper()
+	sealer, err := credentials.NewSealer(bytes.Repeat([]byte{7}, credentials.MasterKeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sealer
 }

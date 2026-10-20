@@ -57,7 +57,7 @@ func TestComboCRUDPersistsOrderAndSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	restarted, err := NewManager(ctx, reopened.DB())
+	restarted, err := NewManagerObserved(ctx, reopened.DB(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

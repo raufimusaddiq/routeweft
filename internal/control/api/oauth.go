@@ -1086,13 +1086,12 @@ func (h *Handler) publishConnection(ctx context.Context, connection credentials.
 	if connection.AuthKind == "" {
 		connection.AuthKind = credentials.AuthOAuth
 	}
-	if connection.Secret.Empty() && connection.ID != "" {
-		// An edit without a secret keeps the stored blob.
+	if connection.ID != "" {
 		existing, err := h.opts.Credentials.GetConnection(ctx, connection.ID)
 		if err != nil {
 			return credentials.Connection{}, false, err
 		}
-		connection.Secret = existing.Secret
+		connection.Secret = mergeConnectionSecret(existing.Secret, connection.Secret)
 	}
 	stored, err = h.opts.Credentials.PutConnection(ctx, connection)
 	if err != nil {
@@ -1153,4 +1152,29 @@ func (h *Handler) publishBindings(ctx context.Context) error {
 	}
 	_, err := h.opts.PoolBindings.RefreshPoolBindings(ctx)
 	return err
+}
+
+// Nil provider data leaves all existing provider fields unchanged.
+func mergeConnectionSecret(existing, update credentials.Secret) credentials.Secret {
+	data := update.ProviderData
+	if update.Empty() {
+		// Same material rule as sealSecret: an ID token alone is a real update.
+		idToken := update.IDToken
+		update = existing
+		if idToken != "" {
+			update.IDToken = idToken
+		}
+	}
+	if existing.ProviderData == nil && data == nil {
+		update.ProviderData = nil
+		return update
+	}
+	update.ProviderData = make(map[string]string, len(existing.ProviderData)+len(data))
+	for key, value := range existing.ProviderData {
+		update.ProviderData[key] = value
+	}
+	for key, value := range data {
+		update.ProviderData[key] = value
+	}
+	return update
 }

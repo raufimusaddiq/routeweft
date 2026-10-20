@@ -36,7 +36,7 @@ func TestCustomModelWorkflowRestartAndReferences(t *testing.T) {
 	if _, ok := mustLoad(t, m).ResolveModel("custom", "discovered"); ok {
 		t.Fatal("sync enabled a disabled model")
 	}
-	m, err := NewManager(ctx, store.DB())
+	m, err := NewManagerObserved(ctx, store.DB(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestCustomModelWorkflowRestartAndReferences(t *testing.T) {
 	if err := m.PutModel(ctx, Model{ProviderID: "custom", ID: custom.ID, Kind: "llm"}); err != nil {
 		t.Fatal(err)
 	}
-	m, err = NewManager(ctx, store.DB())
+	m, err = NewManagerObserved(ctx, store.DB(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestCustomModelWorkflowRestartAndReferences(t *testing.T) {
 	if err := m.DeleteModel(ctx, "custom", custom.ID); err != nil {
 		t.Fatal(err)
 	}
-	m, err = NewManager(ctx, store.DB())
+	m, err = NewManagerObserved(ctx, store.DB(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestCustomSeedOverrideDelete(t *testing.T) {
 	if err := m.DeleteModel(ctx, "openai", "gpt-4o"); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := NewManager(ctx, m.db)
+	restarted, err := NewManagerObserved(ctx, m.db, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

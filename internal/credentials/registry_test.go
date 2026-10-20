@@ -368,3 +368,43 @@ func BenchmarkCredential(b *testing.B) {
 		})
 	}
 }
+
+func TestRefreshAndImportCarryProviderDataForward(t *testing.T) {
+	ctx := context.Background()
+	store, _ := testStore(t)
+	node := seedNode(t, store, "azure")
+	data := map[string]string{"azureEndpoint": "https://example.openai.azure.com", "region": "eastus"}
+	connection, err := store.PutConnection(ctx, Connection{NodeID: node.ID, Name: "primary", AuthKind: AuthOAuth, Identity: "acct", Enabled: true, Secret: Secret{AccessToken: "stale", RefreshToken: "r0", Expiry: time.Now().Add(-time.Minute), ProviderData: data}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if connection.Settings.AzureEndpoint != data["azureEndpoint"] {
+		t.Fatalf("fixture settings=%+v", connection.Settings)
+	}
+	registry := NewRegistry(store, nil)
+	// The exchanger constructs a Secret without provider data, as real ones do.
+	registry.Register(connection, func(context.Context, Secret) (Secret, error) {
+		return Secret{AccessToken: "fresh", Expiry: time.Now().Add(time.Hour), ProviderData: map[string]string{"region": "westus"}}, nil
+	})
+	if _, err := registry.Secret(ctx, connection.ID); err != nil {
+		t.Fatal(err)
+	}
+	check := func(stage, token, region string) {
+		t.Helper()
+		loaded, err := store.GetConnection(ctx, connection.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loaded.Secret.AccessToken != token || loaded.Secret.ProviderData["azureEndpoint"] != data["azureEndpoint"] || loaded.Secret.ProviderData["region"] != region {
+			t.Fatalf("%s: durable secret=%+v", stage, loaded.Secret)
+		}
+		if loaded.Settings.AzureEndpoint != data["azureEndpoint"] || loaded.Settings.Region != region {
+			t.Fatalf("%s: projected settings=%+v", stage, loaded.Settings)
+		}
+	}
+	check("refresh", "fresh", "westus")
+	if err := registry.Import(ctx, connection.ID, "acct", Secret{AccessToken: "imported"}); err != nil {
+		t.Fatal(err)
+	}
+	check("import", "imported", "westus")
+}

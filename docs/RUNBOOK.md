@@ -688,3 +688,34 @@ An operator may continue only the explicitly validated native/configuration
 subset. Full parity and broad-provider GA require the remaining PARITY rows,
 provider readiness and complete differential/browser evidence to close through
 reviewed follow-ups. A future traffic change needs its own approved plan.
+
+## 26. Incident: unreadable sealed connection settings
+
+Startup fails with `open provider settings for connection "<id>"` or
+`decode provider settings for connection "<id>"` when a sealed payload cannot
+be authenticated or decoded. The service stays unready; do not direct traffic
+to it or replace the settings with defaults.
+
+1. Stop Routeweft and preserve the data directory, including any SQLite WAL/SHM
+   files, before attempting recovery. Keep the copy private; it contains sealed
+   credentials and operator configuration.
+2. Check that the deployment supplies the original `ROUTEWEFT_CREDENTIAL_KEY`
+   (a base64-encoded 32-byte key) for this database. Restore that key from the
+   deployment's secret store; generating a new key cannot decrypt existing rows.
+   Do not print the key or credential payloads into a terminal transcript or logs.
+3. Restart with the matching key. Require `/health/ready` to succeed before
+   restoring traffic. A missing/wrong key is not a reason to delete connections.
+4. If the key matches but a row is corrupt, restore an intact database backup
+   paired with its matching key, following §12. Rehearse against a private copy
+   first. CLI structural `restore --check` does not authenticate sealed provider
+   settings; starting Routeweft with the matching key performs that check.
+5. If no decryptable copy/key exists, preserve the damaged database for recovery
+   and provision a separate empty Routeweft data directory with a securely stored
+   credential key. Recreate provider connections through supported onboarding
+   and reapply configuration from the operator's records. Reauthorize OAuth
+   accounts rather than assuming an older backup's refresh tokens remain valid.
+   Verify inference and readiness before directing traffic to the replacement.
+
+Do not clear `secret_blob`, disable authentication checks, or hand-edit encrypted
+payloads to force startup. A successful startup must compile the configured
+provider settings, including endpoint and account identity fields.
