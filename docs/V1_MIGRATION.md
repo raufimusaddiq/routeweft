@@ -1,0 +1,122 @@
+# LiteRouter v1 → Routeweft: one-time migration policy (#78 C01)
+
+Oracle: `/opt/9router` @ `1c3b9f47`. Implementation: `PlanV1Migration` and
+`V1Plan.ApplyCatalog` in `internal/runtime/v1_migration.go`; tests in
+`v1_migration_test.go` run on a synthetic export with fake sentinel secrets.
+
+Routeweft never opens, mounts or restores a v1 database (AGENTS §2, BDR-001/017).
+The only input is the **JSON export** that v1 produces at `GET /api/settings/database`
+(`src/app/api/settings/database/route.js:14-25`, built by `exportDb`,
+`src/lib/db/index.js:74-95`). `routeweft restore` refuses a v1 `data.sqlite` by
+name and points here (`internal/backup`, `TestStageRestoreNamesLiteRouterV1Database`).
+`PlanV1Migration` refuses a non-JSON or non-object input the same way.
+
+The plan is a **plan, not a commit**: nothing is stored until the operator commits
+`Settings` through `SetSettings` and the catalog through `ApplyCatalog`, so every value
+still passes the normal validate → compile → commit → publish protocol. Nothing is
+stored-and-ignored: every v1 value is carried, or named in the plan's `Refused`,
+`Recreate`, `KeyReissue` or `Reauth` list. No list holds a secret.
+
+Not yet provided: an operator-facing command or admin route that calls the plan.
+Today it is a tested library; see "Open questions".
+
+## 1. Mapping
+
+| v1 export member | Result | Where |
+|---|---|---|
+| `settings`: `stickyRoundRobinLimit`, `comboStickyRoundRobinLimit`, `capacityAdapter`, `outboundNoProxy`, `observabilityMaxJsonSize`, `dnsToolEnabled`, `fallbackStrategy`, `comboStrategy`, `providerStrategies`, `comboStrategies`, `ccFilterNaming`, `headroomCodeAware`, `headroomKompress` | **Migrated** by the existing `ImportPinSettings` (not re-implemented); its notes are carried into the plan | `settings_pin.go` |
+| `settings`: `rtkEnabled`, `headroom{Enabled,Url,CompressUserMessages,TimeoutMs}`, `caveman{Enabled,Level}`, `ponytail{Enabled,Level}`, `pxpipe{Enabled,AutoInstall,MinChars,TimeoutMs}`, `enableObservability`, `observability{MaxRecords,BatchSize,FlushIntervalMs}`, `outboundProxy{Enabled,Url}`, `requireApiKey`, `quotaVisibility` | **Migrated** under the same key after `validateSettingValue` | `v1PassthroughSettings` |
+| `combos` | **Migrated** as Routeweft Combos, member order kept. `comboStrategies[name]` with `fallbackStrategy: "fusion"` sets `FusionEnabled`, `judgeModel`, `fusionTuning` on the Combo | `ApplyCatalog` |
+| `modelAliases` | **Migrated** when the target is `provider/model` | `ApplyCatalog` |
+| `providerConnections`, `apiKeys` | **Not carried**; listed (§4, §5) | |
+| `providerNodes`, `proxyPools`, `customModels`, `pricing` | **Recreate by hand**; listed | `Recreate` |
+
+Combos and aliases need their providers and models to exist: Routeweft rejects an unknown
+member (`compileCombos`). `ApplyCatalog` therefore commits entry by entry, returns each
+failure by name, and is idempotent (Combo IDs are `v1-<name>`). The operator order is:
+recreate providers → authorize connections → `ApplyCatalog` → reissue keys. A `provider/`
+prefix that is a v1 provider *alias* (for example `cc/…`) is kept verbatim and fails
+until the operator fixes it; Routeweft does not guess.
+
+## 2. Units
+
+Only one stored unit differs; the rest were verified identical against the pin.
+
+| Value | v1 | Routeweft | Handling |
+|---|---|---|---|
+| `observabilityMaxJsonSize` | KiB (`requestDetailsRepo.js:27,44` ×1024) | bytes | ×1024 (existing importer; fixed in #158) |
+| `observabilityMaxRecords`, `observabilityBatchSize`, `observabilityFlushIntervalMs` | count / count / ms; `0` → default (`requestDetailsRepo.js:24-26`) | same | carried; `0` kept as the Routeweft default with a note |
+| `headroomTimeoutMs`, `pxpipeTimeoutMs`, `pxpipeMinChars` | ms / ms / chars | same | carried; Routeweft rejects ≤ 0, which is then refused by name (v1's UI clamp is not applied) |
+| `fusionTuning.stragglerGraceMs`, `panelHardTimeoutMs` | ms | ms | carried; grace > 10 min or hard timeout ≤ 0 / > 10 min refused by name (`routing.FusionTuning.Validate`) |
+| `fusionTuning.minPanel` | count; < 2 behaves as 2 (`combo.js:562`) | count | stored as `max(v, 2)` |
+| `stickyRoundRobinLimit`, `comboStickyRoundRobinLimit` | count; `0` → default | same | existing importer |
+| `pricing[…]` | $ / 1M tokens | $ / 1M tokens | no conversion, but fields rename: `cached`→cache read, `cache_creation`→cache write, `reasoning` has no Routeweft rate |
+
+There is no percent-valued setting in the v1 export.
+
+## 3. Unsupported fields (named and refused)
+
+Each appears in `Refused` as `settings.<key>` with a reason, never with its value:
+
+- `password` — hash not carried; set the Routeweft bootstrap password.
+- `cloudEnabled: true` — no cloud sync (PRD 4.2). `false` is the Routeweft behavior and is not reported.
+- `requireLogin: false` — Routeweft always requires a session (C03). `true` is not reported.
+- `tunnel*`, `tailscale*`, `mitm*` — v1 deletes these itself on import (`index.js:116`).
+- `outboundProxyUrl` containing user info — the credential would be copied; enter the proxy by hand.
+- Wrong-typed or Routeweft-invalid values (`"yes"` for a boolean, `cavemanLevel: "max"`).
+- Any other key (for example `claudeAutoPing`) — "no Routeweft equivalent, not stored".
+- Top-level export members that are not v1 tables are refused by name.
+- The C04 importer's own refusals (unknown capability, `*.host` no-proxy entry, unsupported strategy fields, `ccFilterNaming`, `headroomCodeAware`, `headroomKompress`) arrive as plan notes unchanged. Its fusion notes for a Combo that the plan carries are dropped, since the value was carried.
+
+## 4. Key reissue
+
+v1 stores client keys in plaintext (`apiKeys.key`, `apiKeysRepo.js:54-72`); Routeweft keeps only a
+digest and shows a key once. No v1 key is read into the plan. `KeyReissue` lists, per key, its
+**name, active flag and access restriction/allow-list** so the operator can recreate it
+(`CreateAPIKeyWithAccess`) and give each client the new value. Inactive v1 keys are listed as
+inactive: reissue them only if wanted. Clients keep working against v1 until they receive the new key.
+
+## 5. Credential reauthorization
+
+All connections are listed in `Reauth` (id, provider, name, auth type, active flag, priority) and none is carried:
+
+- **`oauth`** — authorize again through the Routeweft OAuth flow. v1 refresh tokens are plaintext in the
+  export; Routeweft seals credentials under its own key and never reuses v1's. Copying a refresh token
+  would also leave two routers rotating one token, which providers may invalidate; use a separate provider
+  identity, or designate one rotation owner (RUNBOOK §25).
+- **`apikey`** — enter the provider key again. Reading it from the export would put a plaintext secret
+  through logs, shell history and fixtures for no benefit.
+- **Any other auth type** — listed with the action "authorize again".
+
+Priority is listed so the operator can restore the account order by hand (Routeweft orders by
+`priority, name, id`). Cooldown, health and last-error state are volatile in Routeweft and start empty.
+
+## 6. Recreate by hand
+
+`providerNodes` (compatible/custom nodes), `proxyPools` (pool URLs carry credentials, so none is
+read), `customModels` (v1 keys them by provider alias, not a Routeweft provider ID) and `pricing`
+(§2). Per-connection proxy fields are not part of the mapping at all (PARITY §6 C06 row 3).
+
+## 7. History
+
+**Decision: v1 usage and request history is not imported. The v1 file is archived in place by the operator.**
+
+- The JSON export contains no history: `exportDb` selects neither `usageHistory`, `usageDaily` nor `requestDetails`
+  (`index.js:78-88`). History exists only in `data.sqlite`, which Routeweft never opens.
+- v1 itself excludes `requestDetails` from its safety backups (`backup.js:16-17`).
+- Routeweft usage rows are keyed to Routeweft key IDs and connection IDs and costed with Routeweft pricing;
+  v1 rows reference v1 `apiKey` and `connectionId` values that no longer exist, and a v1 `cost` was computed with
+  v1 prices. Merging them would silently mix two accounting bases in one total (RUNBOOK §25.3: "do not combine").
+- A history field in an export is refused by name: `usageHistory`, `usageDaily`, `requestDetails`.
+
+Operator action: keep the v1 `data.sqlite` read-only, off any Routeweft volume, for as long as old usage is needed, and
+read it with v1 or `sqlite3`. Nothing is deleted by Routeweft.
+
+## Open questions for the owner
+
+1. **History retention.** The decision above leaves history in v1 indefinitely. Recommendation: keep it; do not build
+   an importer. If aggregate continuity is wanted later, import `usageDaily` totals as a labelled, read-only
+   "imported from v1" series that never feeds Routeweft cost totals. Needs an owner decision, not built here.
+2. **Operator entry point.** `PlanV1Migration` has no CLI or admin route yet. Recommendation: a read-only
+   `routeweft v1-plan --input export.json` that prints the plan (no write), followed by an explicit apply step, in a
+   separate PR so the control-API surface is reviewed on its own.

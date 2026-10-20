@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
@@ -106,6 +107,28 @@ func TestStageRestoreValidatesAndDiscards(t *testing.T) {
 	candidate.Discard()
 	if _, err := os.Stat(candidate.Dir); !os.IsNotExist(err) {
 		t.Fatalf("staging directory survived Discard: %v", err)
+	}
+}
+
+// C01: a v1 data.sqlite is refused by name and pointed at the policy, never
+// opened as Routeweft state, and the supplied file is left untouched.
+func TestStageRestoreNamesLiteRouterV1Database(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	v1 := filepath.Join(dir, "data.sqlite")
+	store, err := sqlite.Open(ctx, v1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DB().ExecContext(ctx, "CREATE TABLE providerConnections(id TEXT PRIMARY KEY, data TEXT); CREATE TABLE usageHistory(id INTEGER PRIMARY KEY)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = StageRestore(ctx, v1, dir)
+	if err == nil || !strings.Contains(err.Error(), "LiteRouter v1 database") || !strings.Contains(err.Error(), "docs/V1_MIGRATION.md") {
+		t.Fatalf("err=%v", err)
 	}
 }
 
