@@ -430,6 +430,10 @@ func (h *Handler) newUpstreamRequest(r *http.Request, snapshot *runtime.RuntimeS
 	}
 	base.RawPath = ""
 	body = h.finalBody(r, snapshot, provider.Protocol, body)
+	// Registry quirks are provider normalization, step 8 of AGENTS §6: they run on
+	// what the savers and prompt-cache anchoring (steps 2-7) left, so nothing after
+	// them can put back a field a quirk removed.
+	body = wire.FinalizeBody(provider, body)
 	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, base.String(), bytes.NewReader(body))
 	if err != nil {
 		return nil, err

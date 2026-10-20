@@ -10,7 +10,6 @@ import (
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
-	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
@@ -117,9 +116,6 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			}
 			continue
 		}
-		// Registry quirks rewrite the final body, after every transform and
-		// prompt-cache anchoring (AGENTS §6 step 8).
-		outbound.Body = wire.FinalizeBody(provider, outbound.Body)
 		for retry := 0; retry < 2 && used < maxAccountAttempts; retry++ {
 			if err := r.Context().Err(); err != nil {
 				return nil, provider, err

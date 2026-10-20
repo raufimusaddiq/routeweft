@@ -18,8 +18,10 @@ type Body map[string]json.RawMessage
 // protocol it is about to be sent on. It reports whether it changed the body.
 type Finalize func(protocol string, body Body) bool
 
-// FinalizeBody applies the provider's registry quirks to the final outbound body,
-// after every transform and prompt-cache anchoring (AGENTS §6 step 8). It is
+// FinalizeBody applies the provider's registry quirks to the final outbound body.
+// It is provider normalization, AGENTS §6 step 8: the caller must run it on the
+// body the token savers and prompt-cache anchoring (steps 2-7) produced, as the
+// last rewrite before dispatch (internal/ingress newUpstreamRequest). It is
 // fail-open: a body that is not a JSON object, or a quirk that cannot be
 // applied, leaves the request exactly as it was. A body no quirk changes is
 // returned untouched, byte for byte.
