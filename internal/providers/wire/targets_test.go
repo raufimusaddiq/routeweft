@@ -33,8 +33,8 @@ func TestResolveTargetWithoutHookIsTheRoute(t *testing.T) {
 func TestBetaQueryIsMessagesOnlyAndOnlyForTheDeclaringProviders(t *testing.T) {
 	declaring := map[string]bool{"claude": true, "glm": true, "kimi": true, "minimax": true, "minimax-cn": true}
 	for _, id := range providerIDs() {
-		if id == "azure" {
-			continue // its own api-version query is covered by TestAzureTargetCrossProduct
+		if id == "azure" || id == "vertex-partner" {
+			continue // azure: api-version is in TestAzureTargetCrossProduct; vertex-partner needs a project, see its own tests
 		}
 		for _, protocol := range []string{chat, responses, messages} {
 			got, err := ResolveTarget(ref(id, protocol, "https://x.example", routing.ProviderSettings{}), "messages")
@@ -200,6 +200,84 @@ func TestTokenplanNeverMovesAKeyToAnotherRegionUnlessAsked(t *testing.T) {
 					t.Errorf("base %s region %q %s: %+v %v", host, region, protocol, got, err)
 				}
 			}
+		}
+	}
+}
+
+// executors/opencode.js:471-476: chat models post to {base}/zen/v1/chat/completions.
+func TestOpenCodeTargetIsTheZenChatEndpoint(t *testing.T) {
+	for _, model := range []string{"big-pickle", "grok-code", "some/future-model(high)"} {
+		provider := ref("opencode", chat, "https://opencode.ai", routing.ProviderSettings{})
+		provider.UpstreamModel = model
+		got, err := ResolveTarget(provider, "chat/completions")
+		if err != nil || got != (Target{BaseURL: "https://opencode.ai", Endpoint: "zen/v1/chat/completions"}) {
+			t.Errorf("%s: %+v %v", model, got, err)
+		}
+		u, err := got.URL(func(raw string) (*url.URL, error) { return url.Parse(raw) })
+		if err != nil || u.String() != "https://opencode.ai/zen/v1/chat/completions" {
+			t.Errorf("%s: url %v %v", model, u, err)
+		}
+	}
+}
+
+// The models the pin serves on /responses (muse-spark, executors/opencode.js:36-39,
+// helpers.js:22-27) and /messages (union-alpha) are refused, not posted a Chat body.
+func TestOpenCodeRefusesModelsServedOnAnotherWire(t *testing.T) {
+	for _, model := range []string{"muse-spark-1.2-contributor-free", "muse-spark-1.3-contributor-free", "Muse_Spark(high)", "vendor/muse-spark-2", "union-alpha", "union-alpha(low)"} {
+		provider := ref("opencode", chat, "https://opencode.ai", routing.ProviderSettings{})
+		provider.UpstreamModel = model
+		if got, err := ResolveTarget(provider, "chat/completions"); err == nil {
+			t.Errorf("%s: routed to %+v", model, got)
+		}
+	}
+	provider := ref("opencode", chat, "https://opencode.ai", routing.ProviderSettings{})
+	provider.UpstreamModel = "museum-guide"
+	if _, err := ResolveTarget(provider, "chat/completions"); err != nil {
+		t.Errorf("museum-guide is a chat model: %v", err)
+	}
+}
+
+func TestOpenCodeForcesStream(t *testing.T) {
+	if !ForcesStream("opencode") {
+		t.Fatal("registry/opencode.js:20 forceStream")
+	}
+	body := Body{"stream": []byte("false")}
+	if !For("opencode").Finalize(chat, body) || string(body["stream"]) != "true" {
+		t.Fatalf("stream not forced: %s", body["stream"])
+	}
+}
+
+// executors/vertex.js:76-81.
+func TestVertexPartnerTargetUsesTheConnectionProject(t *testing.T) {
+	provider := ref("vertex-partner", chat, "https://aiplatform.googleapis.com", routing.ProviderSettings{ProjectID: " my-proj-123 "})
+	got, err := ResolveTarget(provider, "chat/completions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := got.URL(func(raw string) (*url.URL, error) { return url.Parse(raw) })
+	want := "https://aiplatform.googleapis.com/v1/projects/my-proj-123/locations/global/endpoints/openapi/chat/completions"
+	if err != nil || u.String() != want {
+		t.Fatalf("url %v %v, want %s", u, err, want)
+	}
+	if u.RawQuery != "" || strings.Contains(u.String(), "tok") {
+		t.Fatalf("credential or query leaked into the URL: %s", u)
+	}
+}
+
+// No project: refuse and name the setting. Nothing is probed or defaulted.
+func TestVertexPartnerRefusesWithoutAProject(t *testing.T) {
+	for _, project := range []string{"", "   "} {
+		_, err := ResolveTarget(ref("vertex-partner", chat, "https://aiplatform.googleapis.com", routing.ProviderSettings{ProjectID: project}), "chat/completions")
+		if err == nil || !strings.Contains(err.Error(), "projectId") {
+			t.Errorf("%q: %v", project, err)
+		}
+	}
+}
+
+func TestVertexPartnerRejectsAProjectThatIsNotAPathSegment(t *testing.T) {
+	for _, project := range []string{"../x", "a/b", "a?b", "a#b", "a..b", ".hidden", "a b", "a%2fb"} {
+		if got, err := ResolveTarget(ref("vertex-partner", chat, "https://aiplatform.googleapis.com", routing.ProviderSettings{ProjectID: project}), "chat/completions"); err == nil {
+			t.Errorf("%q accepted: %+v", project, got)
 		}
 	}
 }

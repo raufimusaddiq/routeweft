@@ -224,3 +224,57 @@ func firstNonEmpty(values ...string) string {
 	}
 	return ""
 }
+
+var opencodeMuseSpark = regexp.MustCompile(`(?i)^muse[-_]?spark(?:$|[-_:.\s])`)
+
+var opencodeThinkingSuffix = regexp.MustCompile(`\([^()]+\)\s*$`)
+
+// OpenCode Zen (open-sse/executors/opencode.js:471-476). Every model is served
+// under {base}/zen/v1, but the endpoint depends on the model: the Muse Spark
+// models are on /responses and union-alpha is on /messages
+// (executors/opencode.js:35-40,271-278, registry/opencode.js:35-37), the rest on
+// /chat/completions.
+//
+// A Routeweft route carries one wire per request, picked from the node's
+// transports and the client's protocol, never from the model, and opencode
+// declares Chat only. A model that the pin serves on another wire would be sent
+// a Chat body at the wrong endpoint, so it is refused here rather than guessed
+// at; serving it needs a per-model transport, which is a registry change.
+func opencodeTarget(provider routing.ProviderRef) (Target, error) {
+	model := strings.TrimSpace(opencodeThinkingSuffix.ReplaceAllString(provider.UpstreamModel, ""))
+	bare := model
+	if i := strings.LastIndex(bare, "/"); i >= 0 {
+		bare = bare[i+1:]
+	}
+	if opencodeMuseSpark.MatchString(bare) || model == "union-alpha" {
+		return Target{}, errors.New("opencode model " + model + " is served on a Responses or Messages endpoint that needs a per-model transport; only Chat Completions models are routable")
+	}
+	return Target{Endpoint: "zen/v1/chat/completions"}, nil
+}
+
+// vertexProject is a GCP project id as it appears in a path: a letter-led id, or
+// a domain-scoped one ("example.com:project"). It is a path segment, so it is
+// matched rather than spliced in raw.
+var vertexProject = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*$`)
+
+// vertexPartnerTarget builds
+// {base}/v1/projects/{projectId}/locations/global/endpoints/openapi/chat/completions
+// (executors/vertex.js:76-81). The pin takes the project from the service
+// account JSON, the ADC quota project or the connection's projectId
+// (vertex.js:71-74); Routeweft reads only the last, the connection's projectId.
+//
+// Divergences from the pin: it probes the API with a dummy request to discover
+// the project of a raw key (vertex.js:35-49,158-164), which Routeweft never
+// does, and it appends a raw key as ?key= (vertex.js:80), which would put a
+// credential in a URL. With no projectId the request is refused naming the
+// setting.
+func vertexPartnerTarget(provider routing.ProviderRef) (Target, error) {
+	project := strings.TrimSpace(provider.Connection.Settings.ProjectID)
+	if project == "" {
+		return Target{}, errors.New("vertex-partner connection has no projectId: set projectId in the connection's provider settings")
+	}
+	if !vertexProject.MatchString(project) || strings.Contains(project, "..") {
+		return Target{}, errors.New("vertex-partner projectId is not a valid GCP project id")
+	}
+	return Target{Endpoint: "v1/projects/" + project + "/locations/global/endpoints/openapi/chat/completions"}, nil
+}

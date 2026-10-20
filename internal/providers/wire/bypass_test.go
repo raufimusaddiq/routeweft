@@ -246,3 +246,91 @@ func TestEveryInferenceBodyPostGoesThroughFinalizeBody(t *testing.T) {
 		}
 	}
 }
+
+// The base guard above sees a function that reads a base URL field. An upstream
+// URL can also be assembled from a base the function was handed, by appending a
+// path or setting a query on a *url.URL. Target.URL is the one place that does it
+// for a request: a provider's path and settings-derived segments (an opencode
+// /zen/v1 prefix, a Vertex projects/{projectId}/ path) are validated there, and a
+// refusal for a missing setting is raised by the Target hook, not a caller. This
+// finds any other non-test function that assigns .Path or .RawQuery, so a third
+// place cannot start building an endpoint without being listed with the reason it
+// does not.
+var urlAssemblers = map[string]string{
+	"control/api/providers.go:testProviderModel":    "model probe: adds alt=sse to the URL Target.URL returned (Gemini)",
+	"control/api/settings.go:safeSettings":          "redacts a stored URL for display; never dials",
+	"control/api/read_models.go:safeURL":            "redacts a stored URL for display; never dials",
+	"ingress/catalog.go:handleModelKind":            "rewrites the inbound request's own query",
+	"providers/generic/generic.go:Endpoint":         "generic node's own endpoint; no caller outside its package",
+	"providers/generic/generic.go:DiscoverModels":   "generic node; no caller outside its package",
+	"providers/discovery/discovery.go:ModelEntries": "model listing: dials the base its callers resolved with wire.NodeBase / wire.DiscoveryBase",
+	"providers/onboarding/flow.go:appendQuery":      "OAuth URL query, not an inference upstream",
+	"transforms/headroom/headroom.go:Health":        "transform sidecar health probe, not a provider",
+	"transforms/pxpipe/pxpipe.go:Health":            "transform sidecar health probe, not a provider",
+}
+
+func TestUpstreamURLsAreAssembledOnlyInTheSeam(t *testing.T) {
+	root := filepath.Join("..", "..")
+	found := map[string]bool{}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || strings.HasSuffix(path, "_gen.go") {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		if strings.HasPrefix(rel, "providers/wire/") {
+			return nil // the seam itself
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			return err
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			assembles := false
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				switch node := n.(type) {
+				case *ast.AssignStmt:
+					for _, lhs := range node.Lhs {
+						if sel, ok := lhs.(*ast.SelectorExpr); ok && (sel.Sel.Name == "Path" || sel.Sel.Name == "RawQuery" || sel.Sel.Name == "RawPath") {
+							assembles = true
+						}
+					}
+				case *ast.CallExpr:
+					if sel, ok := node.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "JoinPath" {
+						assembles = true
+					}
+				}
+				return !assembles
+			})
+			if assembles {
+				found[rel+":"+fn.Name.Name] = true
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for name := range found {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if _, allowed := urlAssemblers[name]; !allowed {
+			t.Errorf("%s sets a URL path or query outside internal/providers/wire: return a Target from the provider's hook and let Target.URL build it, or list the function with the reason it never builds an upstream URL", name)
+		}
+	}
+	for name := range urlAssemblers {
+		if !found[name] {
+			t.Errorf("allowlist entry %s no longer assembles a URL; remove it", name)
+		}
+	}
+}
