@@ -21,12 +21,8 @@ import (
 	ollamaadapter "github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	systemoneadapter "github.com/raufimusaddiq/routeweft/internal/protocol/systemone"
-	anthropicprovider "github.com/raufimusaddiq/routeweft/internal/providers/anthropic"
-	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
-	clineprovider "github.com/raufimusaddiq/routeweft/internal/providers/cline"
-	codexprovider "github.com/raufimusaddiq/routeweft/internal/providers/codex"
-	"github.com/raufimusaddiq/routeweft/internal/providers/oauthheaders"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
@@ -385,66 +381,16 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 // anthropicHeaders sets the provider credential and version headers. Routeweft
 // forwards the client's anthropic-beta opt-in but never the client credential.
-// Claude and GitHub Copilot OAuth connections authenticate with a bearer token
-// and identify as their native client; API-key connections use x-api-key.
+// Which providers use a bearer credential, an identity fingerprint or a default
+// beta is declared by their wire hook (internal/providers/wire).
 func anthropicHeaders(r *http.Request, provider routing.ProviderRef) http.Header {
-	headers := http.Header{}
-	// Claude and GitHub Copilot advertise Anthropic Messages natively but their
-	// credential is a bearer token, not an x-api-key. Copilot additionally needs
-	// its identity fingerprint on the native Messages route, not only on the
-	// OpenAI Chat/Responses path.
-	bearer := provider.ProviderID == "claude" || provider.ProviderID == "github"
-	if provider.APIToken != "" {
-		if bearer {
-			headers.Set("Authorization", "Bearer "+provider.APIToken)
-		} else {
-			headers.Set("X-Api-Key", provider.APIToken)
-		}
-	}
-	if provider.ProviderID == "claude" {
-		for name, value := range claudeprovider.Headers() {
-			headers.Set(name, value)
-		}
-	}
-	for name, value := range oauthheaders.Headers(provider.ProviderID) {
-		headers.Set(name, value)
-	}
-	if version := r.Header.Get("Anthropic-Version"); version != "" {
-		headers.Set("Anthropic-Version", version)
-	} else {
-		headers.Set("Anthropic-Version", anthropicprovider.Version)
-	}
-	if beta := r.Header.Get("Anthropic-Beta"); beta != "" {
-		headers.Set("Anthropic-Beta", beta)
-	} else if provider.ProviderID == "anthropic" {
-		headers.Set("Anthropic-Beta", anthropicprovider.Beta)
-	}
-	return headers
+	return wire.MessagesHeaders(provider, r.Header.Get("Anthropic-Version"), r.Header.Get("Anthropic-Beta"))
 }
 
 // openAIProviderHeaders applies the provider credential plus any provider
-// identity headers, such as the Codex CLI fingerprint on Codex Responses.
+// identity headers declared by its wire hook.
 func openAIProviderHeaders(provider routing.ProviderRef) http.Header {
-	headers := http.Header{}
-	if provider.APIToken != "" {
-		headers.Set("Authorization", "Bearer "+provider.APIToken)
-	}
-	if provider.ProviderID == "codex" {
-		for name, value := range codexprovider.Headers() {
-			headers.Set(name, value)
-		}
-	}
-	for name, value := range oauthheaders.Headers(provider.ProviderID) {
-		headers.Set(name, value)
-	}
-	if clineprovider.Applies(provider.ProviderID) {
-		// The full clineHeaders set replaces the plain bearer credential: a WorkOS
-		// JWT is sent as `Bearer workos:<jwt>`, any other token verbatim.
-		for name, value := range clineprovider.Headers(provider.APIToken) {
-			headers.Set(name, value)
-		}
-	}
-	return headers
+	return wire.OpenAIHeaders(provider)
 }
 
 func (h *Handler) handleResponses(w http.ResponseWriter, r *http.Request) {

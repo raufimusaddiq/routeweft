@@ -9,9 +9,8 @@ import (
 
 	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
-	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
-	clineprovider "github.com/raufimusaddiq/routeweft/internal/providers/cline"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
 )
@@ -95,11 +94,10 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 				if translated.Headers == nil {
 					translated.Headers = http.Header{}
 				}
-				if provider.ProviderID == "claude" && err == nil {
-					// The legs add no system prompt of their own (PARITY V14); the
-					// Claude OAuth credential is used with its CLI identity, so that
-					// belongs to this provider's preparation.
-					translated.Body, err = claudeprovider.WithIdentity(translated.Body)
+				if err == nil {
+					// A provider may rewrite the converted body (the Claude OAuth
+					// identity: the legs add no system prompt of their own, PARITY V14).
+					translated.Body, err = wire.PrepareMessages(provider.ProviderID, translated.Body)
 				}
 				for name, values := range anthropicHeaders(r, provider) {
 					translated.Headers[name] = values
@@ -138,8 +136,8 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 		h.writeOpenAITranslation(w, r, response, provider, translation, stream, started)
 		return
 	}
-	if !stream && response.StatusCode >= 200 && response.StatusCode < 300 && clineprovider.Applies(provider.ProviderID) {
-		h.writeClineEnvelope(w, r, response, provider, started)
+	if !stream && response.StatusCode >= 200 && response.StatusCode < 300 && wire.UnwrapResponse(provider.ProviderID) != nil {
+		h.writeUnwrapped(w, r, response, provider, started)
 		return
 	}
 	copyResponseHeaders(w.Header(), response.Header)
@@ -152,11 +150,11 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 	h.relayNative(w, r, response, provider, source, stream, started)
 }
 
-// writeClineEnvelope relays a non-stream Cline response with the gateway's
-// {"success":true,"data":{...}} envelope removed, so the client gets a bare
-// OpenAI body and usage is read from data.usage (the reference unwraps before
-// any consumer reads choices or usage). Streams never reach here.
-func (h *Handler) writeClineEnvelope(w http.ResponseWriter, r *http.Request, response *http.Response, provider routing.ProviderRef, started time.Time) {
+// writeUnwrapped relays a non-stream response with the provider's gateway
+// envelope removed (Cline's {"success":true,"data":{...}}), so the client gets a
+// bare OpenAI body and usage is read from the inner body (the reference unwraps
+// before any consumer reads choices or usage). Streams never reach here.
+func (h *Handler) writeUnwrapped(w http.ResponseWriter, r *http.Request, response *http.Response, provider routing.ProviderRef, started time.Time) {
 	body, err := io.ReadAll(io.LimitReader(response.Body, openaiadapter.MaxTranslatedResponseBytes+1))
 	if r.Context().Err() != nil {
 		return
@@ -165,7 +163,7 @@ func (h *Handler) writeClineEnvelope(w http.ResponseWriter, r *http.Request, res
 		h.writeError(w, 502, "upstream_response_invalid", "upstream response could not be read")
 		return
 	}
-	body, _ = clineprovider.UnwrapEnvelope(body)
+	body = wire.UnwrapResponse(provider.ProviderID)(body)
 	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(body)
@@ -212,8 +210,8 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 		h.writeError(w, 502, "upstream_response_invalid", "upstream response could not be translated")
 		return
 	}
-	if clineprovider.Applies(provider.ProviderID) {
-		body, _ = clineprovider.UnwrapEnvelope(body)
+	if unwrap := wire.UnwrapResponse(provider.ProviderID); unwrap != nil {
+		body = unwrap(body)
 	}
 	translated, err := translation.Response(body)
 	if err != nil {
