@@ -49,7 +49,8 @@ func TestEventStreamHeaderTypesAndTruncations(t *testing.T) {
 		{5, bytes.Repeat([]byte{255}, 8), int64(-1)},
 		{6, []byte{0, 255, 7}, []byte{0, 255, 7}}, {6, []byte{}, []byte{}},
 		{7, []byte("λ"), "λ"}, {7, nil, ""},
-		{8, []byte{0, 0, 0, 0, 0, 0, 0, 123}, int64(123)},
+		{8, []byte{0, 0, 0, 0, 0, 0, 0, 123}, EventStreamTimestamp(123)},
+		{8, bytes.Repeat([]byte{255}, 8), EventStreamTimestamp(-1)},
 		{9, bytes.Repeat([]byte{42}, 16), [16]byte{42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42}},
 	} {
 		t.Run(fmt.Sprintf("type_%d/length_%d", tc.kind, len(tc.raw)), func(t *testing.T) {
@@ -72,6 +73,40 @@ func TestEventStreamHeaderTypesAndTruncations(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Every header kind must decode to a self-describing value no other kind can produce.
+func TestEventStreamHeaderKindsAreDistinct(t *testing.T) {
+	raws := map[byte][]byte{0: nil, 1: nil, 2: {1}, 3: {0, 1}, 4: {0, 0, 0, 1}, 5: {0, 0, 0, 0, 0, 0, 0, 1},
+		6: {1}, 7: []byte("1"), 8: {0, 0, 0, 0, 0, 0, 0, 1}, 9: bytes.Repeat([]byte{1}, 16)}
+	seen := map[reflect.Type]byte{}
+	var values []any
+	for kind := byte(0); kind <= 9; kind++ {
+		var got any
+		err := ReadEventStream(context.Background(), bytes.NewReader(eventFrame(eventHeader("x", kind, raws[kind]), nil)), func(event EventStreamEvent) (bool, error) {
+			got = event.Headers["x"]
+			return true, nil
+		})
+		if err != nil || got == nil {
+			t.Fatalf("kind %d: value=%#v err=%v", kind, got, err)
+		}
+		typ := reflect.TypeOf(got)
+		if kind == 1 {
+			if typ != reflect.TypeOf(true) || got == values[0] {
+				t.Fatalf("kinds 0 and 1 must be bool true/false, got %#v and %#v", values[0], got)
+			}
+		} else if prior, dup := seen[typ]; dup {
+			t.Fatalf("kinds %d and %d both decode to %v", prior, kind, typ)
+		} else {
+			seen[typ] = kind
+		}
+		values = append(values, got)
+	}
+	for _, kind := range []byte{10, 11, 255} {
+		if err := ReadEventStream(context.Background(), bytes.NewReader(eventFrame(eventHeader("x", kind, nil), nil)), func(EventStreamEvent) (bool, error) { return true, nil }); err == nil {
+			t.Fatalf("unknown kind %d accepted", kind)
+		}
 	}
 }
 
@@ -234,9 +269,9 @@ func TestEventStreamPreludeGuardsBeforeBodyRead(t *testing.T) {
 					t.Fatal("incomplete body delivered")
 					return true, nil
 				})
-				want := "EventStream frame bounds are invalid"
+				want := "eventstream frame bounds are invalid"
 				if !validCRC {
-					want = "EventStream prelude CRC mismatch"
+					want = "eventstream prelude CRC mismatch"
 				} else if length >= 16 && length <= MaxEventStreamMessageBytes && headers <= MaxEventStreamHeadersBytes && uint64(headers)+16 <= uint64(length) {
 					want = bodyRead.Error()
 				}

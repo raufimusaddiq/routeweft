@@ -402,8 +402,10 @@ The format identifiers and the legs LiteRouter registers are read from the pinne
 header lengths, prelude CRC32/IEEE and message CRC32/IEEE before delivering a
 frame. A frame is at least 16 bytes and at most 24 MiB; headers are at most
 128 KiB; the stream shares the 32 MiB translated-response budget. Header types
-0–9 are retained, including signed 64-bit integers, timestamp milliseconds and
-UUID bytes. Duplicate names, empty names, invalid UTF-8 names/strings, unknown
+0–9 are retained as distinct Go types (bool, int8, int16, int32, int64, `[]byte`,
+string, `EventStreamTimestamp` for timestamp milliseconds, `[16]byte` UUID), so a
+timestamp never reads as a long. Payload and byte-array values alias the
+per-frame buffer; copy them to outlive the event. Duplicate names, empty names, invalid UTF-8 names/strings, unknown
 header types and truncated headers fail. Payload bytes remain opaque: an empty
 payload and JSON `null` are distinct, and JSON validation belongs to the adapter.
 

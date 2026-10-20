@@ -14,7 +14,16 @@ const (
 	MaxEventStreamHeadersBytes = 128 << 10
 )
 
+// EventStreamTimestamp is header kind 8: milliseconds since the Unix epoch. It is a distinct type so
+// a timestamp never reads as a kind 5 long (int64).
+type EventStreamTimestamp int64
+
 // EventStreamEvent retains typed headers and opaque payload bytes; protocol adapters own JSON and event semantics.
+// Header values by kind: 0/1 bool, 2 int8, 3 int16, 4 int32, 5 int64, 6 []byte, 7 string,
+// 8 EventStreamTimestamp, 9 [16]byte.
+// Payload and kind 6 header values are views into the frame buffer, which is allocated per frame and never
+// reused by the reader; they stay valid and unmodified, but retaining one keeps the whole frame (up to
+// MaxEventStreamMessageBytes) alive. Copy what must outlive the event.
 type EventStreamEvent struct {
 	Headers map[string]any
 	Payload []byte
@@ -24,7 +33,7 @@ type EventStreamEvent struct {
 // It reads past terminals to detect trailing corruption. Callers emit success only after nil and close src on cancellation.
 func ReadEventStream(ctx context.Context, src io.Reader, consume func(EventStreamEvent) (bool, error)) error {
 	if src == nil || consume == nil {
-		return errors.New("EventStream reader and consumer are required")
+		return errors.New("eventstream reader and consumer are required")
 	}
 	read := func(dst []byte) (int, error) {
 		if err := ctx.Err(); err != nil {
@@ -51,12 +60,12 @@ func ReadEventStream(ctx context.Context, src io.Reader, consume func(EventStrea
 		}
 		total += n
 		if binary.BigEndian.Uint32(prelude[8:]) != crc32.ChecksumIEEE(prelude[:8]) {
-			return errors.New("EventStream prelude CRC mismatch")
+			return errors.New("eventstream prelude CRC mismatch")
 		}
 		length := binary.BigEndian.Uint32(prelude[:4])
 		headersLength := binary.BigEndian.Uint32(prelude[4:8])
 		if length < 16 || length > MaxEventStreamMessageBytes || headersLength > MaxEventStreamHeadersBytes || headersLength > length-16 {
-			return errors.New("EventStream frame bounds are invalid")
+			return errors.New("eventstream frame bounds are invalid")
 		}
 		if int(length)-12 > MaxTranslatedResponseBytes-total {
 			return errors.New("translated upstream response exceeds limit")
@@ -71,7 +80,7 @@ func ReadEventStream(ctx context.Context, src io.Reader, consume func(EventStrea
 		}
 		total += len(frame) - 12
 		if binary.BigEndian.Uint32(frame[len(frame)-4:]) != crc32.ChecksumIEEE(frame[:len(frame)-4]) {
-			return errors.New("EventStream message CRC mismatch")
+			return errors.New("eventstream message CRC mismatch")
 		}
 		headers, err := eventStreamHeaders(frame[12 : 12+int(headersLength)])
 		if err != nil {
@@ -135,8 +144,10 @@ func eventStreamHeaders(raw []byte) (map[string]any, error) {
 			value = int16(binary.BigEndian.Uint16(raw[:2]))
 		case 4:
 			value = int32(binary.BigEndian.Uint32(raw[:4]))
-		case 5, 8:
+		case 5:
 			value = int64(binary.BigEndian.Uint64(raw[:8]))
+		case 8:
+			value = EventStreamTimestamp(binary.BigEndian.Uint64(raw[:8]))
 		case 6:
 			value = raw[:size]
 		case 7:
