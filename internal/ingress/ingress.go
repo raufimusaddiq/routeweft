@@ -418,22 +418,14 @@ func (h *Handler) newUpstreamRequest(r *http.Request, snapshot *runtime.RuntimeS
 	if h.opts.AllowPrivateUpstreams {
 		validate = transport.ValidateTrustedLocalURL
 	}
-	base, err := validate(provider.BaseURL)
+	target, err := wire.ResolveTarget(provider, endpoint)
 	if err != nil {
 		return nil, err
 	}
-	if endpoint != "" {
-		if strings.HasPrefix(endpoint, "/") || strings.ContainsAny(endpoint, "?#") {
-			return nil, errors.New("provider endpoint must be a relative path without query or fragment")
-		}
-		for _, segment := range strings.Split(endpoint, "/") {
-			if segment == "." || segment == ".." {
-				return nil, errors.New("provider endpoint must not traverse paths")
-			}
-		}
-		base.Path = strings.TrimRight(base.Path, "/") + "/" + endpoint
+	base, err := target.URL(validate)
+	if err != nil {
+		return nil, err
 	}
-	base.RawPath = ""
 	body = h.finalBody(r, snapshot, provider.Protocol, body)
 	// Registry quirks are provider normalization, step 8 of AGENTS §6: they run on
 	// what the savers and prompt-cache anchoring (steps 2-7) left, so nothing after

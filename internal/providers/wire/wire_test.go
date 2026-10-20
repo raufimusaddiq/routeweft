@@ -86,8 +86,15 @@ var tokens = []string{
 	"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig",
 }
 
+// providers whose headers PR-C changed on purpose; headers_test.go pins their new
+// values. Every other provider must still match the frozen legacy result.
+var headersChanged = map[string]bool{"azure": true, "kimi": true, "kilocode": true}
+
 func TestOpenAIHeadersMatchLegacyForEveryProvider(t *testing.T) {
 	for _, id := range providerIDs() {
+		if headersChanged[id] {
+			continue
+		}
 		for _, token := range tokens {
 			ref := routing.ProviderRef{ProviderID: id, APIToken: token}
 			if got, want := OpenAIHeaders(ref), legacyOpenAIProviderHeaders(ref); !reflect.DeepEqual(got, want) {
@@ -99,6 +106,9 @@ func TestOpenAIHeadersMatchLegacyForEveryProvider(t *testing.T) {
 
 func TestMessagesHeadersMatchLegacyForEveryProvider(t *testing.T) {
 	for _, id := range providerIDs() {
+		if headersChanged[id] {
+			continue
+		}
 		for _, token := range tokens {
 			for _, version := range []string{"", "2024-01-01"} {
 				for _, beta := range []string{"", "tools-2024"} {
@@ -160,7 +170,7 @@ func TestPrepareMessagesMatchesLegacyForEveryProvider(t *testing.T) {
 func TestRegisteredHooksAreExactlyTheDeclaredProviders(t *testing.T) {
 	got := Registered()
 	sort.Strings(got)
-	want := []string{"anthropic", "cerebras", "claude", "cline", "clinepass", "codex", "deepseek", "github", "kenari", "minimax", "minimax-cn", "mistral"}
+	want := []string{"anthropic", "azure", "cerebras", "claude", "cline", "clinepass", "codex", "deepseek", "github", "glm", "kenari", "kilocode", "kimchi", "kimi", "minimax", "minimax-cn", "mistral", "xiaomi-tokenplan"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("registered hooks %v, want %v", got, want)
 	}

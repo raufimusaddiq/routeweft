@@ -174,7 +174,11 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	if transport, ok := xai.NativeBinding("openai-responses"); !ok || transport != TransportOpenAIResponses {
 		t.Fatalf("xai responses binding=%q ok=%v", transport, ok)
 	}
-	for _, id := range []string{"kimi", "xiaomi-mimo"} {
+	// kimi also serves the Responses API natively (registry/kimi.js:55-59).
+	if spec, _ := catalog.Lookup("kimi"); len(spec.Transports) != 3 || spec.Transports[2] != TransportOpenAIResponses || spec.TransportEndpoints[TransportOpenAIResponses] != "responses" || !spec.ReportsUsage {
+		t.Errorf("kimi spec=%+v", spec)
+	}
+	for _, id := range []string{"xiaomi-mimo"} {
 		spec, _ := catalog.Lookup(id)
 		if len(spec.Transports) != 2 || spec.Transports[0] != TransportOpenAIChat || spec.Transports[1] != TransportAnthropic || !spec.ReportsUsage {
 			t.Errorf("dual-transport %s spec=%+v", id, spec)

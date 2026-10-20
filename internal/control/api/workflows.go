@@ -10,6 +10,8 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/discovery"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
+	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
@@ -137,11 +139,7 @@ func (h *Handler) validateConnection(ctx context.Context, c credentials.Connecti
 		protocol = node.Transports[0]
 	}
 	spec, _ := h.providerSpec(node.ProviderID)
-	base := node.BaseURL
-	if base == "" {
-		base = spec.DefaultBaseURL
-	}
-	probe := h.testProviderModel(ctx, c, node, spec, base, protocol, model, modelProbeTimeout)
+	probe := h.testProviderModel(ctx, c, node, spec, protocol, model, modelProbeTimeout)
 	result.OK, result.Status, result.Error, result.ModelID = probe.OK, probe.Status, probe.Error, model
 	result.UpstreamModelID, result.ServedModelID = probe.UpstreamModelID, probe.ServedModelID
 	result.Classification, result.LatencyMS = probe.Classification, probe.LatencyMS
@@ -460,10 +458,11 @@ func (h *Handler) handleNodeRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 	routes := map[string]string{}
 	spec, _ := h.providerSpec(node.ProviderID)
-	base := node.BaseURL
-	if base == "" {
-		base = spec.DefaultBaseURL
-	}
+	// A listing has no connection, so a node whose base comes from the connection
+	// (Azure) has no routes to show; the rest go through the same target rules as
+	// serving, so a Token Plan region, a deployment path or ?beta=true is what a
+	// request would reach.
+	base := wire.NodeBase(node.BaseURL, spec.DefaultBaseURL, routing.ProviderSettings{})
 	for _, protocol := range node.Transports {
 		path, supported := map[string]string{"openai-chat": "chat/completions", "openai-responses": "responses", "anthropic-messages": "messages", "systemone": "", "gemini": "models/{model}:generateContent", "ollama": "api/chat"}[protocol]
 		if node.Kind == credentials.NodeBuiltin {
@@ -480,13 +479,24 @@ func (h *Handler) handleNodeRoutes(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if !supported {
+		if !supported || base == "" {
 			continue
 		}
-		routes[protocol] = strings.TrimRight(base, "/")
-		if path != "" {
-			routes[protocol] += "/" + nativeEndpointPath(base, protocol, path)
+		// "{model}" stands in for the model: a provider whose target depends on the
+		// real model (an Azure deployment) fails the lookup and is not listed.
+		route := routing.ProviderRef{ProviderID: modelWireProviderID(node), Protocol: protocol, BaseURL: base, UpstreamModel: "{model}"}
+		target, err := wire.ResolveTarget(route, nativeEndpointPath(base, protocol, path))
+		if err != nil {
+			continue // the target depends on the connection (an Azure deployment)
 		}
+		listed := strings.TrimRight(target.BaseURL, "/")
+		if target.Endpoint != "" {
+			listed += "/" + target.Endpoint
+		}
+		if target.Query != "" {
+			listed += "?" + target.Query
+		}
+		routes[protocol] = listed
 	}
 	writeJSON(w, 200, map[string]any{"id": node.ID, "routes": routes})
 }

@@ -27,13 +27,27 @@ type Hook struct {
 	BearerMessages bool
 	// OpenAIHeaders are identity headers for Chat and Responses requests, applied
 	// after the credential and before the shared OAuth identity table.
-	OpenAIHeaders func() map[string]string
+	OpenAIHeaders func(routing.ProviderRef) map[string]string
 	// OpenAIOverride headers are applied last on Chat and Responses requests and
 	// may replace the credential header.
-	OpenAIOverride func(token string) map[string]string
+	OpenAIOverride func(routing.ProviderRef) map[string]string
 	// MessagesHeaders are identity headers for Messages requests, applied after
 	// the credential and before the shared OAuth identity table.
-	MessagesHeaders func() map[string]string
+	MessagesHeaders func(routing.ProviderRef) map[string]string
+	// NoOpenAIBearer leaves the bearer Authorization header off Chat and
+	// Responses requests, for a provider whose credential there travels in another
+	// header that OpenAIHeaders sets (Azure's api-key). It does not touch the
+	// Messages credential, which BearerMessages and MessagesHeaders own.
+	NoOpenAIBearer bool
+	// Base is the host a model listing is requested from, when it is not the
+	// route's base (a Token Plan region).
+	Base func(routing.ProviderRef) string
+	// Unlisted marks a provider with no model listing: the reference never lists
+	// its models, and a URL we cannot verify is not invented for it.
+	Unlisted bool
+	// Target resolves where the request goes when that depends on the
+	// connection, the model or the wire (a deployment path, a region, a query).
+	Target func(routing.ProviderRef) (Target, error)
 	// PrepareMessages rewrites a Messages body produced by a conversion leg.
 	PrepareMessages func(body []byte) ([]byte, error)
 	// DefaultMessagesBeta is sent when the client supplied no anthropic-beta.
@@ -45,28 +59,37 @@ type Hook struct {
 }
 
 var hooks = map[string]Hook{
-	"codex": {OpenAIHeaders: codexprovider.Headers},
+	"codex": {OpenAIHeaders: func(routing.ProviderRef) map[string]string { return codexprovider.Headers() }},
 	"claude": {
 		BearerMessages:  true,
-		MessagesHeaders: claudeprovider.Headers,
+		MessagesHeaders: func(routing.ProviderRef) map[string]string { return claudeprovider.Headers() },
 		PrepareMessages: claudeprovider.WithIdentity,
+		Target:          betaQuery,
 	},
-	"github":     {BearerMessages: true},
-	"anthropic":  {DefaultMessagesBeta: anthropicprovider.Beta},
-	"cerebras":   {Finalize: dropClientMetadata},
-	"mistral":    {Finalize: dropClientMetadata},
-	"minimax":    minimaxHook,
-	"minimax-cn": minimaxHook,
-	"deepseek":   {Finalize: supportedToolTypes("web_search_20250305", "web_search_20260209")},
-	"kenari":     {Finalize: foldResponsesSystem},
-	"cline":      clineHook,
-	"clinepass":  clineHook,
+	"anthropic":        {DefaultMessagesBeta: anthropicprovider.Beta},
+	"cerebras":         {Finalize: dropClientMetadata},
+	"mistral":          {Finalize: dropClientMetadata},
+	"minimax":          minimaxHook,
+	"minimax-cn":       minimaxHook,
+	"deepseek":         {Finalize: supportedToolTypes("web_search_20250305", "web_search_20260209")},
+	"kenari":           {Finalize: foldResponsesSystem},
+	"azure":            {NoOpenAIBearer: true, OpenAIHeaders: azureHeaders, Target: azureTarget, Unlisted: true},
+	"xiaomi-tokenplan": {Target: tokenplanTarget, Base: tokenplanBase},
+	"glm":              {Target: betaQuery},
+	"kimi":             {OpenAIHeaders: kimiDeviceHeaders, MessagesHeaders: kimiDeviceHeaders, Target: betaQuery},
+	"kilocode":         {OpenAIHeaders: kilocodeOrgHeaders},
+	"github":           githubHook,
+	"kimchi":           {Finalize: kimchiBody},
+	"cline":            clineHook,
+	"clinepass":        clineHook,
 }
 
-var minimaxHook = Hook{Finalize: chain(dropOutputConfig, requireClaudeToolType)}
+var minimaxHook = Hook{Finalize: chain(dropOutputConfig, requireClaudeToolType), Target: betaQuery}
+
+var githubHook = Hook{BearerMessages: true, Finalize: githubChatBody}
 
 var clineHook = Hook{
-	OpenAIOverride: clineprovider.Headers,
+	OpenAIOverride: func(provider routing.ProviderRef) map[string]string { return clineprovider.Headers(provider.APIToken) },
 	UnwrapResponse: func(body []byte) []byte {
 		unwrapped, _ := clineprovider.UnwrapEnvelope(body)
 		return unwrapped
@@ -89,16 +112,16 @@ func Registered() []string {
 // Responses request to provider.
 func OpenAIHeaders(provider routing.ProviderRef) http.Header {
 	headers := http.Header{}
-	if provider.APIToken != "" {
+	hook := For(provider.ProviderID)
+	if provider.APIToken != "" && !hook.NoOpenAIBearer {
 		headers.Set("Authorization", "Bearer "+provider.APIToken)
 	}
-	hook := For(provider.ProviderID)
 	if hook.OpenAIHeaders != nil {
-		set(headers, hook.OpenAIHeaders())
+		set(headers, hook.OpenAIHeaders(provider))
 	}
 	set(headers, oauthheaders.Headers(provider.ProviderID))
 	if hook.OpenAIOverride != nil {
-		set(headers, hook.OpenAIOverride(provider.APIToken))
+		set(headers, hook.OpenAIOverride(provider))
 	}
 	return headers
 }
@@ -117,7 +140,7 @@ func MessagesHeaders(provider routing.ProviderRef, clientVersion, clientBeta str
 		}
 	}
 	if hook.MessagesHeaders != nil {
-		set(headers, hook.MessagesHeaders())
+		set(headers, hook.MessagesHeaders(provider))
 	}
 	set(headers, oauthheaders.Headers(provider.ProviderID))
 	if clientVersion != "" {

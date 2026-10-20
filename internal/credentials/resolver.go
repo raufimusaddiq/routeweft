@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
@@ -49,7 +50,7 @@ func (r Resolver) ResolveForAccount(ctx context.Context, connectionID, upstreamM
 	if token == "" {
 		token = secret.Cookie
 	}
-	baseURL := strings.TrimSpace(node.BaseURL)
+	baseURL := wire.NodeBase(node.BaseURL, "", connection.Settings)
 	protocol := strings.TrimSpace(firstTransport(node.Transports))
 	if baseURL == "" || protocol == "" {
 		if r.Fallback == nil {
