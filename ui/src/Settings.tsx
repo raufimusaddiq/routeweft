@@ -7,6 +7,17 @@ type BackupCheck = { valid: boolean; schemaVersion: number; configRevision: numb
 const providerStrategies = ['fill-first', 'round-robin', 'sticky-round-robin']
 const comboStrategies = ['fallback', 'round-robin', 'sticky-round-robin']
 
+// An override is a strategy name or an object carrying fallbackStrategy (and, for
+// providers, stickyRoundRobinLimit); the server rejects every other field.
+function strategyEntryValid(item: unknown, allowed: string[]): boolean {
+  if (typeof item === 'string') return allowed.includes(item)
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false
+  const { fallbackStrategy, stickyRoundRobinLimit, ...rest } = item as Record<string, unknown>
+  return Object.keys(rest).length === 0 &&
+    (fallbackStrategy === undefined || (typeof fallbackStrategy === 'string' && allowed.includes(fallbackStrategy))) &&
+    (stickyRoundRobinLimit === undefined || (typeof stickyRoundRobinLimit === 'number' && Number.isInteger(stickyRoundRobinLimit) && stickyRoundRobinLimit >= 0))
+}
+
 async function responseError(response: Response, fallback: string) {
   try { return ((await response.json()) as { error?: { message?: string } }).error?.message || fallback } catch { return fallback }
 }
@@ -118,8 +129,9 @@ export function Settings({ onUnauthorized }: Props) {
         const parsed: unknown = JSON.parse(display)
         if (kind === 'string-array' && (!Array.isArray(parsed) || parsed.some(item => typeof item !== 'string'))) throw new Error('Enter a JSON array of strings.')
         if (kind === 'object' && (!parsed || Array.isArray(parsed) || typeof parsed !== 'object')) throw new Error('Enter a JSON object.')
-        if (setting === 'providerStrategies' && Object.values(parsed as Record<string, unknown>).some(item => typeof item !== 'string' || !providerStrategies.includes(item))) throw new Error(`Provider strategies must be one of: ${providerStrategies.join(', ')}.`)
-        if (setting === 'comboStrategies' && Object.values(parsed as Record<string, unknown>).some(item => typeof item !== 'string' || !comboStrategies.includes(item))) throw new Error(`Combo strategies must be one of: ${comboStrategies.join(', ')}.`)
+        if (setting === 'providerStrategies' && Object.values(parsed as Record<string, unknown>).some(item => !strategyEntryValid(item, providerStrategies))) throw new Error(`Provider strategies must be one of: ${providerStrategies.join(', ')}, or an object with fallbackStrategy and stickyRoundRobinLimit.`)
+        if (setting === 'comboStrategies' && Object.values(parsed as Record<string, unknown>).some(item => !strategyEntryValid(item, comboStrategies))) throw new Error(`Combo strategies must be one of: ${comboStrategies.join(', ')}, or an object with fallbackStrategy.`)
+        if (setting === 'dnsToolEnabled' && Object.values(parsed as Record<string, unknown>).some(item => typeof item !== 'boolean')) throw new Error('DNS tool flags must map provider IDs to true or false.')
         void save({ [setting]: JSON.stringify(parsed) }, `${label} saved.`)
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : 'Enter valid JSON.')
@@ -204,14 +216,14 @@ export function Settings({ onUnauthorized }: Props) {
         <div className="section-heading"><div><h2 id="settings-routing-title">Provider routing</h2><p>Default strategy and per-provider overrides.</p></div></div>
         <div className="settings-field"><label htmlFor="setting-providerStrategy">Default provider strategy<select id="setting-providerStrategy" disabled={loading || busy !== '' || !writable.includes('providerStrategy')} {...field('providerStrategy', 'fill-first')}>{providerStrategies.map(strategy => <option key={strategy} value={strategy}>{strategy}</option>)}</select></label><SaveButton setting="providerStrategy" message="Provider strategy saved." /></div>
         <NumberField setting="stickyRoundRobinLimit" label="Sticky round-robin limit" fallback="3" min={0} />
-        <JSONEditor setting="providerStrategies" label="Provider strategy overrides" description="JSON object mapping provider IDs to fill-first, round-robin, or sticky-round-robin." />
+        <JSONEditor setting="providerStrategies" label="Provider strategy overrides" description="JSON object mapping provider IDs to fill-first, round-robin, sticky-round-robin, or {fallbackStrategy, stickyRoundRobinLimit}." />
       </section>
 
       <section className="detail-panel" aria-labelledby="settings-combo-title">
         <div className="section-heading"><div><h2 id="settings-combo-title">Combo routing</h2><p>Default behavior for Combos without their own strategy.</p></div></div>
         <div className="settings-field"><label htmlFor="setting-comboStrategy">Default Combo strategy<select id="setting-comboStrategy" disabled={loading || busy !== '' || !writable.includes('comboStrategy')} {...field('comboStrategy', 'fallback')}>{comboStrategies.map(strategy => <option key={strategy} value={strategy}>{strategy}</option>)}</select></label><SaveButton setting="comboStrategy" message="Combo strategy saved." /></div>
         <NumberField setting="comboStickyRoundRobinLimit" label="Combo sticky round-robin limit" fallback="1" min={0} />
-        <JSONEditor setting="comboStrategies" label="Combo strategy overrides" description="JSON object mapping Combo names to fallback, round-robin, or sticky-round-robin." />
+        <JSONEditor setting="comboStrategies" label="Combo strategy overrides" description="JSON object mapping Combo names to fallback, round-robin, sticky-round-robin, or {fallbackStrategy}." />
       </section>
 
       <section className="detail-panel" aria-labelledby="settings-quota-title">
@@ -239,7 +251,7 @@ export function Settings({ onUnauthorized }: Props) {
 
       <section className="detail-panel" aria-labelledby="settings-compatibility-title">
         <div className="section-heading"><div><h2 id="settings-compatibility-title">Compatibility and tools</h2><p>Contract-defined flags; unsupported semantics remain explicit rather than inferred.</p></div></div>
-        <Toggle setting="dnsToolEnabled" label="DNS tool flag" description="Persist the configured flag; no DNS-tool runtime consumer is currently defined." />
+        <JSONEditor setting="dnsToolEnabled" label="DNS tool flags" description="JSON object mapping provider IDs to true or false. Stored as configured; no DNS-tool runtime consumer is currently defined." />
         <JSONEditor setting="providerCompatibility" label="Provider compatibility map" description="JSON object stored as configured. Its per-provider keys and behavior are not defined in the current product contract." />
       </section>
 

@@ -39,8 +39,7 @@ func (p ProxyPolicy) proxyFor(host string) (*url.URL, error) {
 		return nil, nil
 	}
 	for _, entry := range p.NoProxy {
-		entry = strings.TrimSpace(entry)
-		if entry == "*" || entry == host || (strings.HasPrefix(entry, ".") && strings.HasSuffix(host, entry)) {
+		if noProxyMatches(entry, host) {
 			return nil, nil
 		}
 	}
@@ -61,6 +60,25 @@ func (p ProxyPolicy) proxyFor(host string) (*url.URL, error) {
 		return nil, errors.New("unsupported proxy scheme")
 	}
 	return parsed, nil
+}
+
+// noProxyMatches applies the pin's bypass rules
+// (open-sse/utils/proxyFetch.js:11-24): case-insensitive hostname match where
+// "*" matches everything, a bare "example.com" matches itself and every
+// subdomain, and ".example.com" matches every subdomain and the apex itself.
+func noProxyMatches(entry, host string) bool {
+	entry = strings.ToLower(strings.TrimSpace(entry))
+	host = strings.ToLower(host)
+	switch {
+	case entry == "" || host == "":
+		return false
+	case entry == "*":
+		return true
+	case strings.HasPrefix(entry, "."):
+		return strings.HasSuffix(host, entry) || host == entry[1:]
+	default:
+		return host == entry || strings.HasSuffix(host, "."+entry)
+	}
 }
 
 // PooledClients caches one http.Client per material transport configuration so

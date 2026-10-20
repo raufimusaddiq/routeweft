@@ -92,3 +92,42 @@ func containsAll(haystack string, needles ...string) bool {
 	}
 	return true
 }
+
+// #78/C04: the API carries the pin's roundRobin flag and derives strategy from
+// it; a PUT that omits roundRobin keeps the stored policy.
+func TestCapabilityAdapterRoundRobinRoundTrips(t *testing.T) {
+	handler, mux, store, _, cookie := newProvidersAPI(t, false, nil)
+	defer store.Close()
+	ctx := context.Background()
+	for _, id := range []string{"gpt-a", "gpt-b"} {
+		if err := handler.opts.ProviderCatalog.PutModel(ctx, runtime.Model{ProviderID: "openai", ID: id, Source: "custom"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pool := `"pool":[{"providerId":"openai","modelId":"gpt-a"},{"providerId":"openai","modelId":"gpt-b"}]`
+	saved := doJSON(t, mux, cookie, http.MethodPut, "/admin/v1/capability-adapters/vision", `{"enabled":true,"roundRobin":true,`+pool+`}`)
+	if saved.Code != http.StatusOK || !containsAll(saved.Body.String(), `"roundRobin":true`, `"strategy":"round-robin"`) {
+		t.Fatalf("save status=%d body=%s", saved.Code, saved.Body.String())
+	}
+	// Omitting roundRobin must not reset it.
+	kept := doJSON(t, mux, cookie, http.MethodPut, "/admin/v1/capability-adapters/vision", `{"enabled":true,`+pool+`}`)
+	if kept.Code != http.StatusOK || !containsAll(kept.Body.String(), `"roundRobin":true`) {
+		t.Fatalf("omitted roundRobin reset the policy: %d %s", kept.Code, kept.Body.String())
+	}
+	// A disabled pool reports fallback even with roundRobin stored (pin capacityAdapter.js:59).
+	off := doJSON(t, mux, cookie, http.MethodPut, "/admin/v1/capability-adapters/vision", `{"enabled":false,"roundRobin":true,`+pool+`}`)
+	if off.Code != http.StatusOK || !containsAll(off.Body.String(), `"roundRobin":true`, `"strategy":"fallback"`) {
+		t.Fatalf("disabled body=%s", off.Body.String())
+	}
+	read := doJSON(t, mux, cookie, http.MethodGet, "/admin/v1/capability-adapters", "")
+	if !containsAll(read.Body.String(), `"capability":"vision"`, `"roundRobin":true`, `"capability":"pdf"`) {
+		t.Fatalf("read body=%s", read.Body.String())
+	}
+	snapshot, err := handler.opts.Runtime.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := snapshot.CapacityAdapter("vision"); got.Enabled || !got.RoundRobin || len(got.Pool) != 2 {
+		t.Fatalf("compiled=%+v", got)
+	}
+}

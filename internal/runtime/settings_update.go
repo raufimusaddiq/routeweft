@@ -120,7 +120,7 @@ func (m *Manager) SetSettings(ctx context.Context, values map[string]string, rem
 func validateSettingValue(key, value string) error {
 	invalid := func() error { return fmt.Errorf("setting %q has an invalid value", key) }
 	switch key {
-	case "requireApiKey", "enableObservability", "outboundProxyEnabled", "dnsToolEnabled", "rtkEnabled", "headroomEnabled", "headroomCompressUserMessages", "cavemanEnabled", "ponytailEnabled", "pxpipeEnabled", "pxpipeAutoInstall":
+	case "requireApiKey", "enableObservability", "outboundProxyEnabled", "rtkEnabled", "headroomEnabled", "headroomCompressUserMessages", "cavemanEnabled", "ponytailEnabled", "pxpipeEnabled", "pxpipeAutoInstall":
 		if value != "true" && value != "false" {
 			return invalid()
 		}
@@ -162,25 +162,17 @@ func validateSettingValue(key, value string) error {
 		if err != nil || number < minimum {
 			return invalid()
 		}
-	case "providerStrategies":
-		var entries map[string]string
-		if json.Unmarshal([]byte(value), &entries) != nil || entries == nil {
+	case "providerStrategies", "comboStrategies":
+		if _, err := parseStrategyOverrides(value, key == "comboStrategies"); err != nil {
+			return fmt.Errorf("setting %q has an invalid value: %w", key, err)
+		}
+	case "dnsToolEnabled":
+		if _, err := parseDNSToolEnabled(value); err != nil {
 			return invalid()
 		}
-		for _, strategy := range entries {
-			if strategy != "fill-first" && strategy != "round-robin" && strategy != "sticky-round-robin" {
-				return invalid()
-			}
-		}
-	case "comboStrategies":
-		var entries map[string]string
-		if json.Unmarshal([]byte(value), &entries) != nil || entries == nil {
+	case "capacityAdapterVision", "capacityAdapterPDF", "capacityAdapterAudioInput", "capacityAdapterVideoInput":
+		if _, err := parseCapacityAdapter(value); err != nil {
 			return invalid()
-		}
-		for _, strategy := range entries {
-			if strategy != "fallback" && strategy != "round-robin" && strategy != "sticky-round-robin" {
-				return invalid()
-			}
 		}
 	case "quotaVisibility", "providerCompatibility":
 		var entries map[string]json.RawMessage
@@ -188,8 +180,7 @@ func validateSettingValue(key, value string) error {
 			return invalid()
 		}
 	case "noProxy":
-		var entries []string
-		if json.Unmarshal([]byte(value), &entries) != nil || entries == nil {
+		if _, err := parseNoProxy(value); err != nil {
 			return invalid()
 		}
 	case "outboundProxyUrl":

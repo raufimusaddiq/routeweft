@@ -275,7 +275,7 @@ func (h *Handler) planProviderAttempts(snapshot *runtime.RuntimeSnapshot, provid
 		return nil, false
 	}
 	state := h.opts.State
-	limit := h.StickyLimit(snapshot)
+	limit := h.StickyLimitFor(snapshot, providerID)
 	cursor := uint64(0)
 	strategy := h.StrategyFor(snapshot, providerID)
 	if state != nil && strategy != routing.StrategyFillFirst {
@@ -354,6 +354,15 @@ func (h *Handler) StrategyFor(snapshot *runtime.RuntimeSnapshot, provider string
 		return strategy
 	}
 	return h.Strategy(snapshot)
+}
+
+// StickyLimitFor applies the provider's stickyRoundRobinLimit override over the
+// base limit (pin: auth.js:186).
+func (h *Handler) StickyLimitFor(snapshot *runtime.RuntimeSnapshot, provider string) uint64 {
+	if h.opts.StickyLimit != 0 {
+		return routing.StickyRotations(h.opts.StickyLimit)
+	}
+	return snapshot.ProviderStickyLimitFor(provider)
 }
 
 // StickyLimit returns how many requests one sticky starting candidate serves

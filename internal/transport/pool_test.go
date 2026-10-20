@@ -94,3 +94,37 @@ func TestPooledClientsReleaseDropsOnlyThatPolicy(t *testing.T) {
 		t.Fatal("released policy kept its cached client")
 	}
 }
+
+// TestNoProxyMatchesPinSemantics pins the bypass rules of
+// open-sse/utils/proxyFetch.js:11-24 (#78/C04): case-insensitive, a bare entry
+// covers its subdomains, a leading-dot entry also covers the apex.
+func TestNoProxyMatchesPinSemantics(t *testing.T) {
+	cases := []struct {
+		entry, host string
+		want        bool
+	}{
+		{"example.com", "example.com", true},
+		{"example.com", "api.example.com", true}, // pin: endsWith("."+pattern); old Routeweft dialed via the proxy
+		{"example.com", "badexample.com", false},
+		{".example.com", "example.com", true}, // pin: hostname === pattern.slice(1)
+		{".example.com", "api.example.com", true},
+		{".example.com", "badexample.com", false},
+		{"EXAMPLE.com", "Api.Example.COM", true},
+		{" localhost ", "localhost", true},
+		{"*", "anything.test", true},
+		{"", "example.com", false},
+		{"*", "", false},
+	}
+	for _, tc := range cases {
+		if got := noProxyMatches(tc.entry, tc.host); got != tc.want {
+			t.Errorf("noProxyMatches(%q,%q)=%v want %v", tc.entry, tc.host, got, tc.want)
+		}
+	}
+	policy := ProxyPolicy{Enabled: true, GlobalProxyURL: "http://proxy.example:3128", NoProxy: []string{"example.com"}}
+	if proxy, err := policy.ProxyForHost("api.example.com"); err != nil || proxy != nil {
+		t.Fatalf("subdomain of a bare no-proxy entry must dial directly: %v %v", proxy, err)
+	}
+	if proxy, err := policy.ProxyForHost("other.test"); err != nil || proxy == nil {
+		t.Fatalf("unrelated host must use the proxy: %v %v", proxy, err)
+	}
+}

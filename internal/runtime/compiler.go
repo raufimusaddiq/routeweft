@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -95,10 +94,10 @@ var defaultSettings = map[string]string{
 	"comboStrategy":                "fallback",
 	"comboStickyRoundRobinLimit":   "1",
 	"comboStrategies":              "{}",
-	"capacityAdapterVision":        "{\"enabled\":false,\"pool\":[]}",
-	"capacityAdapterPDF":           "{\"enabled\":false,\"pool\":[]}",
-	"capacityAdapterAudioInput":    "{\"enabled\":false,\"pool\":[]}",
-	"capacityAdapterVideoInput":    "{\"enabled\":false,\"pool\":[]}",
+	"capacityAdapterVision":        "{\"enabled\":false,\"roundRobin\":false,\"pool\":[]}",
+	"capacityAdapterPDF":           "{\"enabled\":false,\"roundRobin\":false,\"pool\":[]}",
+	"capacityAdapterAudioInput":    "{\"enabled\":false,\"roundRobin\":false,\"pool\":[]}",
+	"capacityAdapterVideoInput":    "{\"enabled\":false,\"roundRobin\":false,\"pool\":[]}",
 	"enableObservability":          "false",
 	"observabilityMaxRecords":      "1000",
 	"observabilityBatchSize":       "20",
@@ -107,7 +106,7 @@ var defaultSettings = map[string]string{
 	"outboundProxyEnabled":         "false",
 	"outboundProxyUrl":             "",
 	"noProxy":                      "[]",
-	"dnsToolEnabled":               "false",
+	"dnsToolEnabled":               "{}",
 	"providerCompatibility":        "{}",
 	"rtkEnabled":                   "true",
 	"headroomEnabled":              "false",
@@ -173,6 +172,7 @@ func (c Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, erro
 	for key, value := range config.Settings {
 		settings[key] = value
 	}
+	normalizeLegacySettings(settings)
 	models, aliases, disabled := compileCatalog(config.Models, config.Aliases, config.DisabledModels)
 	combos, err := compileCombos(config.Combos, models, aliases)
 	if err != nil {
@@ -195,9 +195,7 @@ func (c Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, erro
 	}
 	snapshot.proxyEnabled, _ = strconv.ParseBool(strings.TrimSpace(settings["outboundProxyEnabled"]))
 	snapshot.proxyURL = strings.TrimSpace(settings["outboundProxyUrl"])
-	if err := json.Unmarshal([]byte(settings["noProxy"]), &snapshot.noProxy); err != nil {
-		snapshot.noProxy = nil
-	}
+	snapshot.noProxy, _ = parseNoProxy(settings["noProxy"])
 	snapshot.compileServingIndexes()
 	snapshot.compileKeyAccess(config.APIKeys)
 	return snapshot, nil

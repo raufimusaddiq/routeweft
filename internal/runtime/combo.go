@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -90,9 +89,9 @@ func compileCombos(combos []Combo, models map[string]Model, aliases map[string]M
 			}
 			seen[key] = struct{}{}
 		}
-		if combo.StickyLimit == 0 {
-			combo.StickyLimit = 1
-		}
+		// StickyLimit 0 means "inherit comboStickyRoundRobinLimit"; defaulting it
+		// to 1 here would shadow the global setting the pin applies to every
+		// combo (src/sse/handlers/chat.js:136).
 		compiled[name] = combo
 	}
 	return compiled, nil
@@ -143,12 +142,8 @@ func (s *RuntimeSnapshot) ComboStrategy(name string) string {
 	if !ok {
 		return "fallback"
 	}
-	var overrides map[string]string
-	_ = json.Unmarshal([]byte(s.settings["comboStrategies"]), &overrides)
-	if strategy, ok := overrides[name]; ok {
-		if parsed, err := parseComboStrategy(strategy); err == nil {
-			return parsed
-		}
+	if strategy, ok := s.comboOverrides[name]; ok {
+		return strategy
 	}
 	if combo.Strategy != "" {
 		return combo.Strategy
