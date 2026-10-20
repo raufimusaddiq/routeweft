@@ -188,7 +188,7 @@ func (h *Handler) writeUnwrapped(w http.ResponseWriter, r *http.Request, respons
 // reported are not recorded as zero: usage_observed is false, as for a native
 // stream (SPEC 21.1; PARITY V8). That covers a Chat provider that omits its usage
 // chunk, a Gemini stream framed as a JSON array (which the scanner cannot read,
-// 6.6 G11) and a stream that broke.
+// 6.7 G11) and a stream that broke.
 func (h *Handler) emitTranslated(r *http.Request, provider routing.ProviderRef, status int, stream bool, usage promptcache.Usage, observed bool, started time.Time) {
 	if r != nil && r.Context().Err() != nil {
 		return

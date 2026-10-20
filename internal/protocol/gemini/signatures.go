@@ -13,7 +13,7 @@ import (
 // signature with a 400, and the signature the model returned is state this
 // gateway can only replay when it still has it. The value is the dummy Google
 // documents for exactly this case. That Google accepts it is NOT verified here:
-// there is no live call in this repository (PARITY 6.6 G2). The pin ships three
+// there is no live call in this repository (PARITY 6.7 G2). The pin ships three
 // captured vendor blobs instead (config/defaultThinkingSignature.js); those are
 // deliberately not copied.
 const PlaceholderSignature = "skip_thought_signature_validator"

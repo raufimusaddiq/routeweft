@@ -362,7 +362,7 @@ func inline(mediaType, data string) map[string]any {
 // normalizeContents is normalizeGeminiContents (formats/gemini.js:481-516):
 // empty parts are removed, adjacent turns of one role merge, and the history is
 // closed so it starts and ends on a user turn. Two turns are written by the
-// gateway, not the client, and PARITY 6.6 G3 says so: "..." when the history
+// gateway, not the client, and PARITY 6.7 G3 says so: "..." when the history
 // begins with a model turn, and "Continue." (or a functionResponse of
 // "Continue." for each unanswered call) when it ends on one. They are a shape
 // requirement of the wire.
@@ -484,7 +484,7 @@ func renameReserved(value any) any {
 
 // stripIDs removes the ids Vertex rejects (openai-to-vertex.js:12-35). The
 // pin also replaces every thoughtSignature with a captured Vertex blob; this
-// keeps the signature the response carried or the placeholder (PARITY 6.6 G2).
+// keeps the signature the response carried or the placeholder (PARITY 6.7 G2).
 func stripIDs(contents []any) {
 	for _, raw := range contents {
 		for _, rawPart := range concerns.Items(concerns.Object(raw)["parts"]) {

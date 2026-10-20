@@ -37,7 +37,7 @@ const hello = `"contents":[{"role":"user","parts":[{"text":"hi"}]}]`
 const declared = `"tools":[{"functionDeclarations":[{"name":"f","description":"d","parameters":{"type":"object","properties":{"a":{"type":"string"}}}}]}]`
 
 // Every Gemini request field is carried, not carried for a stated reason, or
-// refused. PARITY 6.6 is this table.
+// refused. PARITY 6.7 is this table.
 func TestGeminiRequestFieldsAreCarriedOrRefused(t *testing.T) {
 	carried := map[string]struct{ body, path, want string }{
 		"model and stream":     {`{` + hello + `}`, "model", `"m"`},

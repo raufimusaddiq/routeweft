@@ -57,7 +57,7 @@ var (
 
 // defaultSafetySettings are sent on every request (openai-to-gemini.js:82,
 // formats/gemini.js:47-53): the gateway turns the filters off, not the client.
-// Whether Vertex accepts every category is not verified here (PARITY 6.6 G8).
+// Whether Vertex accepts every category is not verified here (PARITY 6.7 G8).
 var defaultSafetySettings = []any{
 	map[string]any{"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF"},
 	map[string]any{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF"},
@@ -76,7 +76,7 @@ func unsupported(format string, args ...any) error {
 // generateContent and the tool names it rewrote, so a response can put the
 // client's own names back. It mutates body.
 //
-// What it does with every Chat field is the table in docs/PARITY.md 6.6. A field
+// What it does with every Chat field is the table in docs/PARITY.md 6.7. A field
 // is carried, not carried for a stated reason (the request is still served and
 // nothing it asks for is lost), or refused with an error, so the dispatcher
 // tries the next candidate. Nothing is dropped silently.
@@ -164,7 +164,7 @@ func generationConfig(body map[string]any, model string) (map[string]any, error)
 			return nil, err
 		}
 		// Gemini 4 removed the sampling controls and rejects them (:85-95). The
-		// request is served without them and PARITY 6.6 G6 says so; that the model
+		// request is served without them and PARITY 6.7 G6 says so; that the model
 		// rejects them is the pin's comment, not something verified here.
 		if present && !isGeminiFour(model) {
 			config[target] = value

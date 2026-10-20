@@ -216,7 +216,7 @@ func (s *responseState) finishReason() string {
 // GeminiResponseToChat is the buffered response leg gemini>openai-chat
 // (gemini-to-openai.js:41-156, wired for buffered bodies at
 // handlers/chatCore/nonStreamingHandler.js:196-256). The pin's buffered path and
-// its stream disagree, and this follows the stream (PARITY 6.6 G10): usage is
+// its stream disagree, and this follows the stream (PARITY 6.7 G10): usage is
 // the shared Gemini arithmetic, and the finish reason is the mapped one, not the
 // raw lowercased reason.
 func GeminiResponseToChat(body []byte, options ResponseOptions) ([]byte, error) {

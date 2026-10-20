@@ -293,7 +293,7 @@ func mustChat(t *testing.T) *openai.ChatRequest {
 
 // Without ?alt=sse Gemini streams a JSON array. The client is still served, and
 // the usage record says the scanner saw none rather than recording zero tokens
-// (PARITY 6.6 G11); #115 PR-C's target hook is what sets the query.
+// (PARITY 6.7 G11); #115 PR-C's target hook is what sets the query.
 func TestGeminiArrayFramedStreamIsServedWithUnobservedUsage(t *testing.T) {
 	array := "[" + strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(geminiStreamed, "data: ", ""), "\n\n", ",")) + "]"
 	array = strings.Replace(array, "},]", "}]", 1)

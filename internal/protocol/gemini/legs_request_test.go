@@ -75,7 +75,7 @@ const user = `"messages":[{"role":"user","content":"hi"}]`
 const oneTool = `"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object","properties":{"a":{"type":"string"}}}}}]`
 
 // Every Chat request field is carried, not carried for a stated reason (the
-// request is still served), or refused. PARITY 6.6 is this table.
+// request is still served), or refused. PARITY 6.7 is this table.
 func TestChatRequestFieldsAreCarriedOrRefused(t *testing.T) {
 	carried := map[string]struct{ body, path, want string }{
 		"model":             {`{` + user + `}`, "model", `"gemini-2.5-flash"`},
@@ -272,7 +272,7 @@ func TestToolChoiceAcrossToolShapes(t *testing.T) {
 
 // Gemini 4 rejects the sampling controls (the pin's comment, openai-to-gemini.js:85;
 // not verified here). The request is served without them, and this test is the
-// visible record that they are omitted: PARITY 6.6 G6.
+// visible record that they are omitted: PARITY 6.7 G6.
 func TestGeminiFourOmitsSamplingVisibly(t *testing.T) {
 	for _, model := range []string{"gemini-4-pro", "models/gemini-4.1-flash", "google/gemini-4-flash"} {
 		result, _, err := convertWith(t, `{`+user+`,"temperature":0.4,"top_p":0.8,"top_k":20,"max_tokens":9}`, RequestOptions{Model: model, Repair: true})
@@ -436,7 +436,7 @@ func TestSchemaNarrowing(t *testing.T) {
 		}
 	}
 	// A tool that declares nothing is sent with no parameters, and no parameter
-	// the client never declared is invented (PARITY 6.6 G5).
+	// the client never declared is invented (PARITY 6.7 G5).
 	for _, schema := range []string{`{}`, `{"type":"object"}`, `{"type":"object","properties":{}}`, `null`} {
 		result := mustConvert(t, `{`+user+`,"tools":[{"type":"function","function":{"name":"f","parameters":`+schema+`}}]}`)
 		declaration := concerns.Object(at(result, "tools.0.functionDeclarations.0"))

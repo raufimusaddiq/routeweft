@@ -14,7 +14,7 @@ import (
 // by name at every depth, which also deletes a tool PARAMETER called title,
 // format, default or description-less "const": the model is then never told the
 // parameter exists. Here they are keywords only where a keyword can stand, never
-// the name of an entry of properties (PARITY 6.6 G9).
+// the name of an entry of properties (PARITY 6.7 G9).
 var unsupportedKeywords = map[string]bool{
 	"minLength": true, "maxLength": true, "exclusiveMinimum": true, "exclusiveMaximum": true,
 	"minItems": true, "maxItems": true, "format": true, "multipleOf": true,
@@ -43,7 +43,7 @@ const maxRefDepth = 8
 // CleanSchema is cleanJSONSchemaForAntigravity (translator/formats/gemini.js:358-447)
 // minus the placeholder phase: it returns a copy of schema narrowed to the subset
 // Gemini accepts. It returns nil for a schema that declares nothing (no
-// properties), so the caller omits `parameters` (PARITY 6.6 G5: the pin's
+// properties), so the caller omits `parameters` (PARITY 6.7 G5: the pin's
 // injected `reason` parameter makes the model return an argument the client never
 // declared). A local $ref is inlined where the pin drops it; a reference it
 // cannot inline is an error. Only the Gemini-specific narrowing the pin also does

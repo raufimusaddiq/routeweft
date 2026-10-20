@@ -15,7 +15,7 @@ import (
 // body. It never reads the client's thought signatures; a Chat provider has no
 // use for them.
 //
-// What it does with every Gemini field is the table in docs/PARITY.md 6.6. A
+// What it does with every Gemini field is the table in docs/PARITY.md 6.7. A
 // field is carried, not carried for a stated reason, or refused. Nothing is
 // dropped silently.
 func GeminiRequestToChat(body map[string]any, model string, stream bool) ([]byte, error) {
@@ -104,7 +104,7 @@ func chatGeneration(config map[string]any, tools []any, chat map[string]any) err
 			chat[target] = value
 		}
 	}
-	// topK has no Chat field; thinkingConfig is deferred to #125 (PARITY 6.6).
+	// topK has no Chat field; thinkingConfig is deferred to #125 (PARITY 6.7).
 	if raw := config["stopSequences"]; raw != nil {
 		stop, err := stopSequences(raw)
 		if err != nil {

@@ -9,7 +9,7 @@
 //     and serve vertex too.
 //
 // Every field of every leg is carried, not carried for a stated reason, or
-// refused; docs/PARITY.md 6.6 is the table. Thought signatures are the one piece
+// refused; docs/PARITY.md 6.7 is the table. Thought signatures are the one piece
 // of state a leg keeps between requests, in Signatures, scoped to the client and
 // connection they came from.
 package gemini
