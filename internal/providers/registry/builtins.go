@@ -150,7 +150,7 @@ func SpecializedWire() []Spec {
 func OAuthSpecialized() []Spec {
 	return []Spec{
 		{ID: "xai", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.x.ai/v1", ModelCatalog: CatalogStatic},
-		{ID: "github", CredentialName: "copilotToken", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses, TransportAnthropic}, Auth: AuthOAuth, DefaultBaseURL: "https://api.githubcopilot.com", TransportEndpoints: map[Protocol]string{
+		{ID: "github", CredentialName: "copilotToken", CredentialExpiryName: "copilotTokenExpiresAt", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses, TransportAnthropic}, Auth: AuthOAuth, DefaultBaseURL: "https://api.githubcopilot.com", TransportEndpoints: map[Protocol]string{
 			TransportOpenAIChat:      "chat/completions",
 			TransportOpenAIResponses: "responses",
 			TransportAnthropic:       "v1/messages",

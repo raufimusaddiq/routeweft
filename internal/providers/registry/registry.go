@@ -66,6 +66,8 @@ type Spec struct {
 	Auth       AuthKind
 	// CredentialName prefers this sealed ProviderData field over AccessToken for inference.
 	CredentialName string
+	// CredentialExpiryName identifies the named token's Unix-seconds expiry in ProviderData.
+	CredentialExpiryName string
 	// AuthModes lists every credential mode the provider accepts, in baseline
 	// order, for dual-auth providers (e.g. API key + OAuth). Auth is the default
 	// mode and AuthModes[0] is always Auth. Empty means single-mode (Auth only).

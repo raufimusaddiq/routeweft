@@ -14,10 +14,14 @@ import (
 
 	"github.com/raufimusaddiq/routeweft/internal/adminauth"
 	controlapi "github.com/raufimusaddiq/routeweft/internal/control/api"
+	"github.com/raufimusaddiq/routeweft/internal/providers/oauthrefresh"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 )
 
-type githubSignInClient struct{ calls atomic.Int32 }
+type githubSignInClient struct {
+	calls        atomic.Int32
+	copilotCalls atomic.Int32
+}
 
 func (c *githubSignInClient) Do(r *http.Request) (*http.Response, error) {
 	c.calls.Add(1)
@@ -26,11 +30,17 @@ func (c *githubSignInClient) Do(r *http.Request) (*http.Response, error) {
 	case "https://github.com/login/device/code":
 		body = `{"device_code":"fixture-device","user_code":"ABCD-1234","verification_uri":"https://example.invalid/device","expires_in":900,"interval":1}`
 	case "https://github.com/login/oauth/access_token":
-		body = `{"access_token":"fixture-github","expires_in":3600}`
+		body = `{"access_token":"fixture-github","token_type":"bearer","scope":"read:user"}`
 	case "https://api.github.com/user":
 		body = `{"login":"fixture-user","id":1}`
 	case "https://api.github.com/copilot_internal/v2/token":
-		body = fmt.Sprintf(`{"token":"fixture-copilot","expires_at":%d}`, time.Now().Add(time.Hour).Unix())
+		token, expiry := "fixture-copilot", time.Now().Add(30*time.Minute)
+		if c.copilotCalls.Add(1) == 1 {
+			token, expiry = "fixture-copilot-stale", time.Now().Add(30*time.Second)
+		} else if r.Header.Get("Authorization") != "token fixture-github" {
+			return nil, fmt.Errorf("Copilot renewal did not use the GitHub token")
+		}
+		body = fmt.Sprintf(`{"token":%q,"expires_at":%d}`, token, expiry.Unix())
 	default:
 		return nil, fmt.Errorf("unexpected sign-in request: %s", r.URL)
 	}
@@ -39,8 +49,12 @@ func (c *githubSignInClient) Do(r *http.Request) (*http.Response, error) {
 
 func TestGitHubOnboardingServesCopilotCredential(t *testing.T) {
 	var upstreamCalls atomic.Int32
+	client := &githubSignInClient{}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamCalls.Add(1)
+		if client.copilotCalls.Load() != 2 {
+			t.Error("inference reached upstream before Copilot renewal")
+		}
 		if r.Header.Get("Authorization") != "Bearer fixture-copilot" {
 			t.Error("inference did not use the Copilot credential")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -68,7 +82,18 @@ func TestGitHubOnboardingServesCopilotCredential(t *testing.T) {
 	if err := a.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { a.store.Close() })
+	storeOpen := true
+	closeStore := func() {
+		t.Helper()
+		if !storeOpen {
+			return
+		}
+		if err := a.store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		storeOpen = false
+	}
+	t.Cleanup(closeStore)
 	_, key, err := a.runtime.CreateAPIKey(ctx, "client")
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +104,12 @@ func TestGitHubOnboardingServesCopilotCredential(t *testing.T) {
 			specs[i].DefaultBaseURL = upstream.URL
 		}
 	}
-	client := &githubSignInClient{}
+	// Replace only refresh HTTP; provider selection and renewal use production code.
+	resolve, err := oauthrefresh.Resolver(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.credReg.SetExchangerResolver(resolve)
 	sessions := adminauth.NewSessionManager(time.Hour)
 	control := controlapi.New(controlapi.Options{
 		Accounts: a.admin, Sessions: sessions, Settings: a.runtime, Keys: a.runtime,
@@ -128,6 +158,16 @@ func TestGitHubOnboardingServesCopilotCredential(t *testing.T) {
 	if client.calls.Load() != 4 {
 		t.Fatalf("sign-in calls: %d", client.calls.Load())
 	}
+	connections, err := a.creds.ListConnections(ctx, "github")
+	if err != nil || len(connections) != 1 {
+		t.Fatalf("onboarded connections: %d, error: %v", len(connections), err)
+	}
+	if !connections[0].Secret.Expiry.IsZero() {
+		t.Fatal("GitHub token response must not supply expires_in")
+	}
+	if client.copilotCalls.Load() != 1 {
+		t.Fatal("onboarding did not mint the first Copilot token")
+	}
 	assertServes := func() {
 		t.Helper()
 		for _, tc := range []struct{ path, body string }{
@@ -142,16 +182,16 @@ func TestGitHubOnboardingServesCopilotCredential(t *testing.T) {
 		}
 	}
 	assertServes()
-	if err := a.store.Close(); err != nil {
-		t.Fatal(err)
+	if client.copilotCalls.Load() != 2 || client.calls.Load() != 5 {
+		t.Fatal("near-expiry Copilot token was not re-minted exactly once before serving")
 	}
+	closeStore()
 	if err := a.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
+	storeOpen = true
 	// Closing SQLite proves restored routing and credential selection use memory.
-	if err := a.store.Close(); err != nil {
-		t.Fatal(err)
-	}
+	closeStore()
 	assertServes()
 	if upstreamCalls.Load() != 6 {
 		t.Fatalf("inference calls: %d", upstreamCalls.Load())

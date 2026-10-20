@@ -342,13 +342,14 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 	if err != nil {
 		return fmt.Errorf("initialize credential store: %w", err)
 	}
-	credentialNames := make(map[string]string)
+	credentialPolicies := make(map[string]registry.Spec)
 	for _, spec := range registry.Builtins() {
-		credentialNames[spec.ID] = spec.CredentialName
+		credentialPolicies[spec.ID] = spec
 	}
-	registry := credentials.NewRegistry(credentialStore, nil)
-	registry.SetCredentialNameResolver(func(connection credentials.Connection) string {
-		return credentialNames[connection.ProviderID]
+	credentialRegistry := credentials.NewRegistry(credentialStore, nil)
+	credentialRegistry.SetCredentialNameResolver(func(connection credentials.Connection) (string, string) {
+		policy := credentialPolicies[connection.ProviderID]
+		return policy.CredentialName, policy.CredentialExpiryName
 	})
 	// Refreshes are network calls: they need the same pooled, SSRF-guarded client
 	// inference uses, never nil. A nil client here failed every refresh at request
@@ -361,10 +362,10 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 	if err != nil {
 		return fmt.Errorf("install credential refresh: %w", err)
 	}
-	registry.SetExchangerResolver(resolver)
+	credentialRegistry.SetExchangerResolver(resolver)
 	// The control plane shares this store/registry so provider CRUD publishes
 	// credentials to the same memory-first state inference reads (SPEC §19).
-	a.creds, a.credReg = credentialStore, registry
+	a.creds, a.credReg = credentialStore, credentialRegistry
 	credentialStore.SetPublisher(manager.UpdateProviders)
 	// Seed the memory-first credential registry so quota reads do not fail with
 	// ErrNotFound before the first refresh.
@@ -387,7 +388,7 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 					"provider", node.ProviderID, "error", err)
 			}
 		}
-		if _, err := registry.Load(ctx, node.ProviderID); err != nil {
+		if _, err := credentialRegistry.Load(ctx, node.ProviderID); err != nil {
 			a.log.Warn("provider credentials unavailable; skipping startup seed", "provider", node.ProviderID, "error", err)
 		}
 	}
@@ -408,7 +409,7 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 		Clients:   clients,
 		Publisher: manager.State(),
 	}
-	a.quota = quota.NewService(credentialStore, registry, observer).WithSeeder(registry)
+	a.quota = quota.NewService(credentialStore, credentialRegistry, observer).WithSeeder(credentialRegistry)
 	return nil
 }
 
