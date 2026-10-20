@@ -21,7 +21,9 @@ type Body map[string]json.RawMessage
 // protocol it is about to be sent on. It reports whether it changed the body.
 type Finalize func(protocol string, body Body) bool
 
-// FinalizeBody applies the provider's registry quirks to the final outbound body.
+// FinalizeBody applies the body sanitation (sanitize.go: the pin's strip rules and
+// reasoning_content injection) and then the provider's registry quirks to the
+// final outbound body.
 // It is provider normalization, AGENTS §6 step 8: the caller must run it on the
 // body the token savers and prompt-cache anchoring (steps 2-7) produced, as the
 // last rewrite before dispatch (internal/ingress newUpstreamRequest). It is
@@ -29,15 +31,15 @@ type Finalize func(protocol string, body Body) bool
 // applied, leaves the request exactly as it was. A body no quirk changes is
 // returned untouched, byte for byte.
 func FinalizeBody(provider routing.ProviderRef, body []byte) []byte {
-	finalize := For(provider.ProviderID).Finalize
-	if finalize == nil {
-		return body
-	}
 	var parsed Body
 	if err := json.Unmarshal(body, &parsed); err != nil || parsed == nil {
 		return body
 	}
-	if !finalize(provider.Protocol, parsed) {
+	changed := sanitizeBody(provider.ProviderID, provider.Protocol, parsed)
+	if finalize := For(provider.ProviderID).Finalize; finalize != nil && finalize(provider.Protocol, parsed) {
+		changed = true
+	}
+	if !changed {
 		return body
 	}
 	out, err := json.Marshal(parsed)

@@ -48,8 +48,10 @@ func TestGithubChatBodyCrossProduct(t *testing.T) {
 							t.Fatalf("client max_completion_tokens changed: %s", out)
 						}
 						// "none" is removed; every other state, including a non-string
-						// value the client owns, is left exactly as sent.
-						if wantEffort := en == "high" || en == "non-string"; has(got, "reasoning_effort") != wantEffort {
+						// value the client owns, is left exactly as sent. A Copilot
+						// Claude model other than opus/sonnet 4.6 loses reasoning_effort
+						// to the strip rules (paramSupport.js:14).
+						if wantEffort := (en == "high" || en == "non-string") && model != "claude-sonnet-4.5"; has(got, "reasoning_effort") != wantEffort {
 							t.Fatalf("reasoning_effort %s: present=%v: %s", en, has(got, "reasoning_effort"), out)
 						}
 						if !strings.Contains(out, `"hi"`) {
@@ -218,8 +220,11 @@ func TestKimchiFieldsCrossModel(t *testing.T) {
 			if has(got, "reasoning_effort") == anthropic || has(got, "reasoning") == anthropic {
 				t.Errorf("reasoning fields for anthropic=%v model: %s", anthropic, out)
 			}
-			if got["temperature"] != 0.2 {
-				t.Errorf("unrelated field changed: %s", out)
+			// temperature is rejected by every claude model id (paramSupport.js:10),
+			// which the substring match reads in all of the "anthropic" ids and in
+			// declaude-x and claudette; it is otherwise an unrelated field.
+			if _, kept := got["temperature"]; kept == strings.Contains(model, "claude") || (kept && got["temperature"] != 0.2) {
+				t.Errorf("temperature wrong for %s: %s", model, out)
 			}
 		})
 	}

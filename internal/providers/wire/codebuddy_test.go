@@ -283,9 +283,12 @@ func TestCodeBuddyReasoningPlaceholder(t *testing.T) {
 	}
 }
 
-func TestCodeBuddyOnlyTheCodeBuddyHooksInjectAPlaceholder(t *testing.T) {
-	in := `{"model":"deepseek-v4-pro","messages":[{"role":"assistant","content":"a"}]}`
-	for _, id := range []string{"deepseek", "kimi", "openai", "mistral"} {
+// The placeholder is generic finalize behaviour (sanitize.go), chosen by model
+// or by the provider's registry rule, not by the CodeBuddy hooks: a model that
+// needs no placeholder gets none from any provider.
+func TestPlaceholderIsNotCodeBuddySpecific(t *testing.T) {
+	in := `{"model":"gpt-4o","messages":[{"role":"assistant","content":"a"}]}`
+	for _, id := range []string{"kimi", "openai", "mistral", "codebuddy-cn", "codebuddy-intl"} {
 		if out := finalize(t, id, chat, in); strings.Contains(out, "reasoning_content") {
 			t.Fatalf("%s gained a placeholder: %s", id, out)
 		}
