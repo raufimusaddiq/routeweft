@@ -121,8 +121,8 @@ func (h *Handler) overview(w http.ResponseWriter, r *http.Request) error {
 		{&nodes, "SELECT COUNT(*) FROM provider_nodes"},
 		{&connections, "SELECT COUNT(*) FROM provider_connections WHERE enabled=1"},
 		{&keys, "SELECT COUNT(*) FROM api_keys WHERE enabled=1 AND paused=0"},
-		{&requests, "SELECT COUNT(*) FROM usage_events"},
-		{&failed, "SELECT COUNT(*) FROM usage_events WHERE status >= 400"},
+		{&requests, "SELECT COUNT(*) FROM usage_events WHERE termination = ''"},
+		{&failed, "SELECT COUNT(*) FROM usage_events WHERE termination = '' AND status >= 400"},
 	}
 	for _, query := range queries {
 		if err := h.opts.DB.QueryRowContext(r.Context(), query.query).Scan(query.dst); err != nil {
@@ -547,7 +547,7 @@ func (h *Handler) keys(w http.ResponseWriter, r *http.Request) error {
 	})
 }
 
-const usageColumns = "id,request_id,provider_id,model_id,connection_id,api_key_id,status,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,duration_ms,ttft_ms,created_at"
+const usageColumns = "id,request_id,provider_id,model_id,connection_id,api_key_id,status,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,duration_ms,ttft_ms,created_at,termination,usage_observed"
 
 func (h *Handler) usage(w http.ResponseWriter, r *http.Request) error {
 	where, args, err := usageFilter(r.URL.Query())
@@ -564,25 +564,38 @@ func (h *Handler) usage(w http.ResponseWriter, r *http.Request) error {
 // attribution and timings are omitted rather than rendered as zero.
 func scanUsageEvent(rows *sql.Rows) (map[string]any, error) {
 	var item struct {
-		ID         int64
-		RequestID  string
-		Provider   sql.NullString
-		Model      sql.NullString
-		Connection sql.NullString
-		APIKey     sql.NullString
-		Status     int
-		Input      int64
-		Output     int64
-		CacheRead  int64
-		CacheWrite int64
-		Duration   sql.NullInt64
-		TTFT       sql.NullInt64
-		CreatedAt  string
+		ID          int64
+		RequestID   string
+		Provider    sql.NullString
+		Model       sql.NullString
+		Connection  sql.NullString
+		APIKey      sql.NullString
+		Status      int
+		Input       int64
+		Output      int64
+		CacheRead   int64
+		CacheWrite  int64
+		Duration    sql.NullInt64
+		TTFT        sql.NullInt64
+		CreatedAt   string
+		Termination string
+		Observed    bool
 	}
-	if err := rows.Scan(&item.ID, &item.RequestID, &item.Provider, &item.Model, &item.Connection, &item.APIKey, &item.Status, &item.Input, &item.Output, &item.CacheRead, &item.CacheWrite, &item.Duration, &item.TTFT, &item.CreatedAt); err != nil {
+	if err := rows.Scan(&item.ID, &item.RequestID, &item.Provider, &item.Model, &item.Connection, &item.APIKey, &item.Status, &item.Input, &item.Output, &item.CacheRead, &item.CacheWrite, &item.Duration, &item.TTFT, &item.CreatedAt, &item.Termination, &item.Observed); err != nil {
 		return nil, err
 	}
 	result := map[string]any{"id": item.ID, "requestId": item.RequestID, "status": item.Status, "inputTokens": item.Input, "outputTokens": item.Output, "cacheReadTokens": item.CacheRead, "cacheWriteTokens": item.CacheWrite, "createdAt": item.CreatedAt}
+	if !item.Observed {
+		// Zero means measured zero; a request whose upstream never reported
+		// usage carries no token counts at all.
+		for _, key := range []string{"inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"} {
+			delete(result, key)
+		}
+		result["usageUnobserved"] = true
+	}
+	if item.Termination != "" {
+		result["termination"] = item.Termination
+	}
 	putNull(result, "providerId", item.Provider)
 	putNull(result, "modelId", item.Model)
 	putNull(result, "connectionId", item.Connection)

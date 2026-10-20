@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ago, badRate, compact, delta, isWeekend, largest, latestWeekTotal, observeSeries, observedAverage, outlier, pct, providerTone, rate, failureStatuses, isFailure, periodDays, periodStart, sameDayLastWeek, utcDay, share, statusTone, topByRequests, weekOverWeek, weekendLighter, type Day, type Summary } from './format.ts'
+import { ago, badRate, compact, compactOrDash, numOrDash, delta, isWeekend, largest, latestWeekTotal, observeSeries, observedAverage, outlier, pct, providerTone, rate, failureStatuses, isFailure, periodDays, periodStart, sameDayLastWeek, utcDay, share, statusTone, topByRequests, weekOverWeek, weekendLighter, type Day, type Summary } from './format.ts'
 
 test('compact keeps small numbers exact and abbreviates large ones', () => {
   assert.equal(compact(950), '950')
@@ -219,4 +219,13 @@ test('observeSeries keeps a day recorded after today instead of dropping it', ()
 test('largest is the biggest value present, not the first', () => {
   assert.equal(largest([]), 0)
   assert.equal(largest([3, 9, 4]), 9)
+})
+
+test('absent token counts render as a dash, never as NaN or zero', () => {
+  assert.equal(numOrDash(undefined), '—')
+  assert.equal(numOrDash(0), '0')
+  assert.equal(numOrDash(1234), '1,234')
+  assert.equal(compactOrDash(undefined, undefined), '—')
+  assert.equal(compactOrDash(12_000, undefined), '—')
+  assert.equal(compactOrDash(12_000, 3_000), '15k')
 })

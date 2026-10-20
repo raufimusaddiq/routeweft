@@ -402,10 +402,13 @@ database; rollback requires the pre-upgrade database backup.
 Upstream response status/body and allowed headers remain opaque. A successful
 `text/event-stream` response streams incrementally regardless of request-side
 stream hints; Routeweft neither synthesizes events nor rewrites terminal markers.
-Client cancellation stops upstream work and suppresses completed accounting.
+Client cancellation stops upstream work; it does not produce a completed record,
+but the request is still recorded once as `client_abandoned` (§21.1).
 Usage parsing recognizes native and Cloudflare `result.usage` token/cache
 counters without unwrapping the client response. Streaming usage is accounted
-once only after clean EOF; canceled/broken relays cannot report partial tokens.
+once. For the retained native OpenAI Chat and Responses paths a canceled or broken
+relay keeps whatever usage had arrived and is marked per §21.1; other families
+report usage only after clean EOF.
 Accounting scans skip opaque SSE lines over 4 MiB without changing relayed bytes.
 
 ## 11. Provider modules
@@ -815,6 +818,21 @@ Under queue pressure:
 
 Normal success path still does not synchronously write SQLite.
 
+### 21.1 Native OpenAI Chat and Responses accounting
+
+A successful native Chat or Responses request produces exactly one usage record. Usage is read by a tee on the relayed bytes (a streaming scanner for SSE, a bounded capture of the top-level `usage` object for a JSON body); the response is never buffered to be measured, and the client receives the upstream bytes unchanged.
+
+The record carries the upstream's reported figures. Input, output and cache counts are never summed into a total or reconciled against `total_tokens`. `reasoning_tokens` is already part of the upstream's output count and is not recorded separately until #119 defines its representation.
+
+A record says what is known and what is not:
+
+- `usage_observed = 0` means the upstream never reported usage (an abandoned stream that ended before the usage chunk, a Chat stream without `stream_options.include_usage`, a body with no `usage`). The token columns then hold no measurement and readers must not treat them as measured zero; the admin API omits the counts for such a row and returns `usageUnobserved: true` (the live stream uses the same field, present only when true).
+- `termination` is empty for a request that ran to its end, `client_abandoned` when the client went away mid-flight, and `upstream_truncated` when the upstream stream ended without its terminal event.
+
+An abandoned stream is still recorded, because the upstream kept generating and was billed. Whatever usage had arrived is kept. The status stays what was sent to the client (a stream or body that began is `200`); the abandonment is carried by `termination`, never by an invented status.
+
+**A terminated request is not a successful request.** A row with a non-empty `termination` is excluded from request counts (the `requests` in the `usage_daily` rollup, the usage summary totals and breakdowns, the hourly series and the overview request/failed counters) and from the error counts, so a client disconnect neither inflates successes nor raises the error rate. The tokens it carries are still summed, because they were billed. The summary reports the excluded rows as `totals.terminated`. `GET /admin/v1/usage` still lists every row.
+
 ## 22. Admin/control API
 
 All new UI-facing control APIs are versioned under:
@@ -930,9 +948,11 @@ completed requests for the Usage requests tab. It accepts the usage list's filte
 grammar (same validation, same `400 invalid_filter`) and delivers only events that
 match it. Each frame is `event: request.completed` with `data` limited to
 `requestId, providerId, modelId, connectionId, apiKeyId, status, durationMs,
-inputTokens, outputTokens, createdAt`: a subset of what `GET /admin/v1/usage`
-already returns, never a body, prompt or credential. A client-cancelled request is
-not recorded and is not published. It is a separate channel from `/admin/v1/events`
+inputTokens, outputTokens, createdAt`, plus `termination` and `usageUnobserved`
+only when set (§21.1; for an unobserved request the token counts are 0 and
+carry no measurement): a subset of what `GET /admin/v1/usage`
+already returns, never a body, prompt or credential. A client-abandoned request is
+recorded and published like any other (`termination: client_abandoned`, §21.1). It is a separate channel from `/admin/v1/events`
 (see PARITY D09) so that per-request volume and per-subscriber filtering cannot evict
 configuration-invalidation subscribers. Delivery contract:
 

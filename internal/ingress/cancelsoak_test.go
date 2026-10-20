@@ -17,7 +17,8 @@ import (
 
 // TestStreamingCancellationSoak repeatedly drives streamed Chat requests and
 // disconnects the client mid-stream, asserting the handler returns promptly, no
-// completed-outcome telemetry is emitted for cancelled work, and the upstream
+// completed-outcome telemetry is emitted for cancelled work (the request is
+// instead recorded once as client_abandoned, because the upstream was billed), and the upstream
 // reader stops rather than draining every panel (PRD-API-005 cancellation,
 // SPEC §34, SPEC §28.2 shutdown/telemetry behaviour).
 func TestStreamingCancellationSoak(t *testing.T) {
@@ -35,11 +36,17 @@ func TestStreamingCancellationSoak(t *testing.T) {
 	}
 	defer server.Close()
 
-	var outcomes atomic.Int64
+	var completed, abandoned atomic.Int64
 	mux, key := keyedHandler(t, Options{
 		AllowPrivateUpstreams: true,
 		ProviderResolver:      fixedProvider(openaiadapter.ChatProtocol, server.URL()),
-		OnRequestComplete:     func(RequestOutcome) { outcomes.Add(1) },
+		OnRequestComplete: func(o RequestOutcome) {
+			if o.Termination == TerminationClientAbandoned {
+				abandoned.Add(1)
+			} else {
+				completed.Add(1)
+			}
+		},
 	})
 	authed := bearer(mux, key)
 
@@ -73,8 +80,11 @@ func TestStreamingCancellationSoak(t *testing.T) {
 		if writer.status != http.StatusOK {
 			t.Fatalf("iteration %d status %d", i, writer.status)
 		}
-		if got := outcomes.Load(); got != 0 {
+		if got := completed.Load(); got != 0 {
 			t.Fatalf("iteration %d emitted %d completed outcomes for cancelled streams", i, got)
+		}
+		if got := abandoned.Load(); got != int64(i+1) {
+			t.Fatalf("iteration %d: %d abandoned outcomes, want exactly one per cancelled stream (%d)", i, got, i+1)
 		}
 	}
 	t.Logf("%d cancelled streams in %s (slowest %s)", iterations, time.Since(start), slowest)
@@ -90,8 +100,8 @@ func TestStreamingCancellationSoak(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if outcomes.Load() != 0 {
-		t.Fatalf("%d completed outcomes emitted for cancelled streams", outcomes.Load())
+	if completed.Load() != 0 {
+		t.Fatalf("%d completed outcomes emitted for cancelled streams", completed.Load())
 	}
 }
 

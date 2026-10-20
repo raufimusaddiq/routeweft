@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/raufimusaddiq/routeweft/internal/telemetry"
 )
 
 func TestUsageSummaryRequiresSession(t *testing.T) {
@@ -138,5 +140,51 @@ func TestUsageSummarySeriesKeepsNewestDays(t *testing.T) {
 	}
 	if body.Series[0].Day != oldest {
 		t.Fatalf("oldest kept day=%s want %s", body.Series[0].Day, oldest)
+	}
+}
+
+// An abandoned or truncated request answered 200 on the wire but is not a
+// successful request: it must not raise request counts, in the totals, the
+// breakdowns or the daily rollup. The tokens the upstream billed for it stay.
+func TestUsageSummaryExcludesTerminatedRequestsFromCountsButKeepsTokens(t *testing.T) {
+	_, mux, store, _, cookie := newProvidersAPI(t, false, nil)
+	defer store.Close()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	events := []telemetry.Event{
+		{RequestID: "ok", ProviderID: "openai", ModelID: "gpt-5", Status: 200, InputTokens: 10, OutputTokens: 5, CreatedAt: now},
+		{RequestID: "gone", ProviderID: "openai", ModelID: "gpt-5", Status: 200, InputTokens: 7, OutputTokens: 3, Termination: "client_abandoned", CreatedAt: now},
+		{RequestID: "cut", ProviderID: "openai", ModelID: "gpt-5", Status: 200, Termination: "upstream_truncated", UsageUnobserved: true, CreatedAt: now},
+	}
+	if err := telemetry.NewSQLiteSink(store.DB()).WriteUsageEvents(ctx, events); err != nil {
+		t.Fatal(err)
+	}
+	recorder := doJSON(t, mux, cookie, http.MethodGet, "/admin/v1/usage/summary?period=all", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Totals struct {
+			Requests     int64 `json:"requests"`
+			InputTokens  int64 `json:"inputTokens"`
+			OutputTokens int64 `json:"outputTokens"`
+			Errors       int64 `json:"errors"`
+			Terminated   int64 `json:"terminated"`
+		} `json:"totals"`
+		Providers []struct{ Requests int64 } `json:"providers"`
+	}
+	decodeBody(t, recorder, &body)
+	if body.Totals.Requests != 1 || body.Totals.Errors != 0 || body.Totals.Terminated != 2 || body.Totals.InputTokens != 17 || body.Totals.OutputTokens != 8 {
+		t.Fatalf("totals=%+v", body.Totals)
+	}
+	if len(body.Providers) != 1 || body.Providers[0].Requests != 1 {
+		t.Fatalf("providers=%+v", body.Providers)
+	}
+	var requests, input int64
+	if err := store.DB().QueryRowContext(ctx, "SELECT requests,input_tokens FROM usage_daily").Scan(&requests, &input); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 || input != 17 {
+		t.Fatalf("usage_daily requests=%d input=%d want 1/17", requests, input)
 	}
 }

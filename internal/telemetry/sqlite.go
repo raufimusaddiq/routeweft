@@ -18,14 +18,14 @@ type SQLiteSink struct {
 func NewSQLiteSink(db *sql.DB) *SQLiteSink { return &SQLiteSink{db: db} }
 
 const insertUsageEvent = `INSERT INTO usage_events ` +
-	`(request_id,provider_id,model_id,connection_id,api_key_id,status,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,duration_ms,ttft_ms,created_at) ` +
-	`VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	`(request_id,provider_id,model_id,connection_id,api_key_id,status,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,duration_ms,ttft_ms,created_at,termination,usage_observed) ` +
+	`VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 const upsertUsageDaily = `INSERT INTO usage_daily ` +
 	`(day,provider_id,model_id,requests,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens) ` +
-	`VALUES (?,?,?,1,?,?,?,?) ` +
+	`VALUES (?,?,?,?,?,?,?,?) ` +
 	`ON CONFLICT(day,provider_id,model_id) DO UPDATE SET ` +
-	`requests=requests+1, input_tokens=input_tokens+excluded.input_tokens, ` +
+	`requests=requests+excluded.requests, input_tokens=input_tokens+excluded.input_tokens, ` +
 	`output_tokens=output_tokens+excluded.output_tokens, cache_read_tokens=cache_read_tokens+excluded.cache_read_tokens, ` +
 	`cache_write_tokens=cache_write_tokens+excluded.cache_write_tokens`
 
@@ -48,7 +48,7 @@ func (s *SQLiteSink) WriteUsageEvents(ctx context.Context, events []Event) error
 		if _, err := tx.ExecContext(ctx, insertUsageEvent,
 			event.RequestID, nullable(event.ProviderID), nullable(event.ModelID), nullable(event.ConnectionID), nullable(event.APIKeyID),
 			event.Status, event.InputTokens, event.OutputTokens, event.CacheRead, event.CacheWrite,
-			nullableInt(event.DurationMS), nullableInt(event.TTFTMS), stamp,
+			nullableInt(event.DurationMS), nullableInt(event.TTFTMS), stamp, event.Termination, !event.UsageUnobserved,
 		); err != nil {
 			return fmt.Errorf("insert usage event: %w", err)
 		}
@@ -57,8 +57,15 @@ func (s *SQLiteSink) WriteUsageEvents(ctx context.Context, events []Event) error
 		if event.ProviderID == "" || event.ModelID == "" || event.Status < 200 || event.Status >= 300 {
 			continue
 		}
+		// A terminated request (client abandoned, upstream truncated) is not a
+		// successful request, so it adds no request to the rollup; the tokens
+		// the upstream billed for it are still counted.
+		requests := 1
+		if event.Termination != "" {
+			requests = 0
+		}
 		if _, err := tx.ExecContext(ctx, upsertUsageDaily,
-			createdAt.Format("2006-01-02"), event.ProviderID, event.ModelID,
+			createdAt.Format("2006-01-02"), event.ProviderID, event.ModelID, requests,
 			event.InputTokens, event.OutputTokens, event.CacheRead, event.CacheWrite,
 		); err != nil {
 			return fmt.Errorf("upsert usage daily: %w", err)

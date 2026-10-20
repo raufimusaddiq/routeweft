@@ -105,7 +105,7 @@ func TestLargeBodyDefaultLimitMatchesPRD(t *testing.T) {
 func TestLargeBodyStreamingPathAcceptedAndCancelled(t *testing.T) {
 	limit := int64(2 << 20)
 	body := largeJSONWithPadding(int(limit))
-	closed := make(chan struct{})
+	var outcomes []RequestOutcome
 	server, err := mockupstream.Start(nil, mockupstream.WithMatcher(func(_ *http.Request, _ string) mockupstream.Decision {
 		return mockupstream.Decision{Status: http.StatusOK, Headers: map[string]string{"Content-Type": "text/event-stream"}, Body: strings.Repeat("data: {\"delta\":\"x\"}\n\n", 4096)}
 	}))
@@ -117,13 +117,7 @@ func TestLargeBodyStreamingPathAcceptedAndCancelled(t *testing.T) {
 		AllowPrivateUpstreams: true,
 		MaxBodyBytes:          limit,
 		ProviderResolver:      fixedProvider(openaiadapter.ChatProtocol, server.URL()),
-		OnRequestComplete: func(RequestOutcome) {
-			select {
-			case <-closed:
-			default:
-				close(closed)
-			}
-		},
+		OnRequestComplete:     func(o RequestOutcome) { outcomes = append(outcomes, o) },
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body)).WithContext(ctx)
@@ -133,10 +127,10 @@ func TestLargeBodyStreamingPathAcceptedAndCancelled(t *testing.T) {
 	if writer.status != http.StatusOK {
 		t.Fatalf("streaming large-body status %d", writer.status)
 	}
-	select {
-	case <-closed:
-		t.Fatal("cancelled streaming request still reported a completed outcome")
-	default:
+	// Published synchronously before ServeHTTP returns. A cancelled stream is
+	// recorded once as abandoned, never as a completed request.
+	if len(outcomes) != 1 || outcomes[0].Termination != TerminationClientAbandoned {
+		t.Fatalf("cancelled streaming request outcomes %+v, want one client_abandoned", outcomes)
 	}
 }
 

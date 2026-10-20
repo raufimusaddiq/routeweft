@@ -51,36 +51,43 @@ func ParseUsage(family string, body []byte) (promptcache.Usage, bool) {
 	}
 }
 
+// openAIWireUsage is one usage object in any of the shapes OpenAI-compatible
+// upstreams send: Chat (prompt/completion), Responses (input/output) and the
+// vendor cache extensions. Only the counts the accounting contract carries are
+// read. reasoning_tokens (completion_tokens_details / output_tokens_details) is
+// deliberately not read: upstreams already include it in the output count, so
+// the reported output total is emitted unchanged, and how a reasoning token is
+// represented on its own belongs to #119. total_tokens is likewise never used:
+// the reported parts are emitted as reported, never summed or reconciled.
+type openAIWireUsage struct {
+	InputTokens      int64               `json:"input_tokens"`
+	OutputTokens     int64               `json:"output_tokens"`
+	PromptTokens     int64               `json:"prompt_tokens"`
+	CompletionTokens int64               `json:"completion_tokens"`
+	PromptCacheRead  int64               `json:"prompt_cache_hit_tokens"`
+	CachedTokens     int64               `json:"cached_tokens"`
+	CacheRead        int64               `json:"cache_read_input_tokens"`
+	CacheWrite       int64               `json:"cache_creation_input_tokens"`
+	InputDetails     *openAIUsageDetails `json:"input_tokens_details"`
+	PromptDetails    *openAIUsageDetails `json:"prompt_tokens_details"`
+}
+
 func parseOpenAIUsage(body []byte) (promptcache.Usage, bool) {
 	var decoded struct {
-		Usage *struct {
-			InputTokens      int64               `json:"input_tokens"`
-			OutputTokens     int64               `json:"output_tokens"`
-			PromptTokens     int64               `json:"prompt_tokens"`
-			CompletionTokens int64               `json:"completion_tokens"`
-			PromptCacheRead  int64               `json:"prompt_cache_hit_tokens"`
-			PromptCacheMiss  int64               `json:"prompt_cache_miss_tokens"`
-			CachedTokens     int64               `json:"cached_tokens"`
-			CacheRead        int64               `json:"cache_read_input_tokens"`
-			CacheWrite       int64               `json:"cache_creation_input_tokens"`
-			InputDetails     *openAIUsageDetails `json:"input_tokens_details"`
-			PromptDetails    *openAIUsageDetails `json:"prompt_tokens_details"`
-		} `json:"usage"`
+		Usage    *openAIWireUsage `json:"usage"`
 		Response *struct {
-			Usage *struct {
-				InputTokens  int64 `json:"input_tokens"`
-				OutputTokens int64 `json:"output_tokens"`
-			} `json:"usage"`
+			Usage *openAIWireUsage `json:"usage"`
 		} `json:"response"`
 	}
 	if json.Unmarshal(body, &decoded) != nil {
 		return promptcache.Usage{}, false
 	}
 	usage := decoded.Usage
+	if usage == nil && decoded.Response != nil {
+		// Responses stream events and response.* terminals nest usage here.
+		usage = decoded.Response.Usage
+	}
 	if usage == nil {
-		if decoded.Response != nil && decoded.Response.Usage != nil {
-			return promptcache.Usage{InputTokens: decoded.Response.Usage.InputTokens, OutputTokens: decoded.Response.Usage.OutputTokens}, true
-		}
 		return promptcache.Usage{}, false
 	}
 	input := usage.InputTokens

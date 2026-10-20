@@ -6,10 +6,13 @@ export type Breakdown = { key: string; requests: number; inputTokens: number; ou
 export type Summary = { period: string; since: string; totals: Totals; series: Day[]; providers: Breakdown[]; models: Breakdown[]; statuses: Breakdown[] }
 export type RequestDetail = { routeMode?: string; detail: unknown; createdAt: string }
 export type RequestRecord = { requestId: string; events: UsageEvent[]; detail: RequestDetail | null }
-export type UsageEvent = { id: number; requestId: string; status: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; createdAt: string; providerId?: string; modelId?: string; connectionId?: string; apiKeyId?: string; durationMs?: number; ttftMs?: number }
+export type UsageEvent = { id: number; requestId: string; status: number; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; usageUnobserved?: boolean; termination?: string; createdAt: string; providerId?: string; modelId?: string; connectionId?: string; apiKeyId?: string; durationMs?: number; ttftMs?: number }
 
 const numberFormat = new Intl.NumberFormat('en-US')
 export const num = (value: number) => numberFormat.format(Math.round(value))
+// Token counts of a request whose upstream never reported usage are absent, not zero, and must not read as a number.
+export const numOrDash = (value?: number) => (value === undefined ? '—' : num(value))
+export const compactOrDash = (...values: (number | undefined)[]) => (values.some(value => value === undefined) ? '—' : compact(values.reduce<number>((sum, value) => sum + (value as number), 0)))
 
 export function compact(value: number) {
   const abs = Math.abs(value)

@@ -2,8 +2,8 @@ import type { UsageEvent } from './format'
 
 // A request that finished while the log was open. It is the stream's metadata-only projection of a UsageEvent:
 // no id of its own (the database id is assigned later), so identity is the request id.
-export type LiveRow = Pick<UsageEvent, 'requestId' | 'status' | 'inputTokens' | 'outputTokens' | 'createdAt'> &
-  Partial<Pick<UsageEvent, 'providerId' | 'modelId' | 'connectionId' | 'apiKeyId' | 'durationMs'>>
+export type LiveRow = Pick<UsageEvent, 'requestId' | 'status' | 'createdAt'> &
+  Partial<Pick<UsageEvent, 'inputTokens' | 'outputTokens' | 'usageUnobserved' | 'termination' | 'providerId' | 'modelId' | 'connectionId' | 'apiKeyId' | 'durationMs'>>
 
 export const LIVE_CAP = 25
 
@@ -18,8 +18,12 @@ export function parseLiveRow(data: string): LiveRow | null {
   const requestId = text(raw.requestId)
   const createdAt = text(raw.createdAt)
   if (!requestId || !createdAt || typeof raw.status !== 'number' || Number.isNaN(Date.parse(createdAt))) return null
+  const unobserved = raw.usageUnobserved === true
   return {
-    requestId, createdAt, status: raw.status, inputTokens: count(raw.inputTokens), outputTokens: count(raw.outputTokens),
+    requestId, createdAt, status: raw.status,
+    // Zero on the wire means "not measured" when usageUnobserved is set; keep it absent so it cannot render as a number.
+    inputTokens: unobserved ? undefined : count(raw.inputTokens), outputTokens: unobserved ? undefined : count(raw.outputTokens),
+    usageUnobserved: unobserved || undefined, termination: text(raw.termination),
     providerId: text(raw.providerId), modelId: text(raw.modelId), connectionId: text(raw.connectionId), apiKeyId: text(raw.apiKeyId),
     durationMs: typeof raw.durationMs === 'number' ? raw.durationMs : undefined,
   }

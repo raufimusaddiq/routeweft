@@ -79,3 +79,28 @@ func TestUsageHourlyStillRejectsTodayAnd60d(t *testing.T) {
 		}
 	}
 }
+
+func TestUsageRequestOmitsCountsForUnobservedUsage(t *testing.T) {
+	handler, mux, store, _, cookie := newProvidersAPI(t, false, nil)
+	defer store.Close()
+	if _, err := handler.opts.DB.Exec(`INSERT INTO usage_events(request_id,provider_id,model_id,status,termination,usage_observed) VALUES('gone','p','m',200,'client_abandoned',0)`); err != nil {
+		t.Fatal(err)
+	}
+	recorder := doJSON(t, mux, cookie, http.MethodGet, "/admin/v1/usage/requests/gone", "")
+	var body struct {
+		Events []map[string]any `json:"events"`
+	}
+	decodeBody(t, recorder, &body)
+	if len(body.Events) != 1 {
+		t.Fatalf("body=%s", recorder.Body.String())
+	}
+	event := body.Events[0]
+	for _, key := range []string{"inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"} {
+		if _, present := event[key]; present {
+			t.Fatalf("%s rendered for an unobserved request: %v", key, event)
+		}
+	}
+	if event["usageUnobserved"] != true || event["termination"] != "client_abandoned" {
+		t.Fatalf("event=%v", event)
+	}
+}

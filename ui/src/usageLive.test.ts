@@ -41,3 +41,12 @@ test('a reconnect that reloads history does not show a request twice', () => {
   assert.deepEqual(freshLive(live, []).length, 3)
   assert.deepEqual(freshLive([], [{ requestId: 'b' }]), [])
 })
+
+test('a frame flagged usageUnobserved carries no token counts', () => {
+  const parsed = parseLiveRow(frame({ inputTokens: 0, outputTokens: 0, usageUnobserved: true, termination: 'client_abandoned' }))
+  assert.equal(parsed?.inputTokens, undefined)
+  assert.equal(parsed?.outputTokens, undefined)
+  assert.equal(parsed?.usageUnobserved, true)
+  assert.equal(parsed?.termination, 'client_abandoned')
+  assert.equal(parseLiveRow(frame({ inputTokens: 0, outputTokens: 0 }))?.inputTokens, 0)
+})

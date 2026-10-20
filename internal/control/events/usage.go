@@ -22,17 +22,21 @@ var ErrTooManySubscribers = errors.New("too many live usage subscribers")
 // request or response body, no prompt text, no credential material. New
 // fields need the same property.
 type UsageEvent struct {
-	ID           uint64    `json:"-"`
-	RequestID    string    `json:"requestId"`
-	ProviderID   string    `json:"providerId,omitempty"`
-	ModelID      string    `json:"modelId,omitempty"`
-	ConnectionID string    `json:"connectionId,omitempty"`
-	APIKeyID     string    `json:"apiKeyId,omitempty"`
-	Status       int       `json:"status"`
-	DurationMS   int64     `json:"durationMs"`
-	InputTokens  int64     `json:"inputTokens"`
-	OutputTokens int64     `json:"outputTokens"`
-	CreatedAt    time.Time `json:"createdAt"`
+	ID           uint64 `json:"-"`
+	RequestID    string `json:"requestId"`
+	ProviderID   string `json:"providerId,omitempty"`
+	ModelID      string `json:"modelId,omitempty"`
+	ConnectionID string `json:"connectionId,omitempty"`
+	APIKeyID     string `json:"apiKeyId,omitempty"`
+	Status       int    `json:"status"`
+	DurationMS   int64  `json:"durationMs"`
+	InputTokens  int64  `json:"inputTokens"`
+	OutputTokens int64  `json:"outputTokens"`
+	// Termination and UsageUnobserved qualify the counts above: an unobserved
+	// request carries no measurement, and zero must not be read as one.
+	Termination     string    `json:"termination,omitempty"`
+	UsageUnobserved bool      `json:"usageUnobserved,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
 }
 
 // UsageFeed fans completed-request events out to live dashboard streams.

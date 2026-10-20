@@ -39,7 +39,11 @@ type Event struct {
 	DurationMS   int64
 	TTFTMS       int64
 	RouteOutcome string
-	CreatedAt    time.Time
+	// Termination is empty for a request that ran to its end, else why it did
+	// not. UsageUnobserved marks token counts as not measured, not as zero.
+	Termination     string
+	UsageUnobserved bool
+	CreatedAt       time.Time
 	// detail, when non-nil, marks the event as a request-detail diagnostic the
 	// batcher routes to the DetailSink instead of the usage sink.
 	detail *Detail

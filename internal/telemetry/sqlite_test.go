@@ -60,3 +60,36 @@ func TestSQLiteSinkEmptyBatchIsNoOp(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSQLiteSinkPersistsTerminationAndUnobservedUsage(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "routeweft.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := migrations.NewRunner(store.DB()).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
+	events := []Event{
+		{Class: Critical, RequestID: "done", ProviderID: "p", ModelID: "m", Status: 200, InputTokens: 4, CreatedAt: now},
+		{Class: Critical, RequestID: "gone", ProviderID: "p", ModelID: "m", Status: 200, Termination: "client_abandoned", UsageUnobserved: true, CreatedAt: now},
+	}
+	if err := NewSQLiteSink(store.DB()).WriteUsageEvents(ctx, events); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]struct {
+		termination string
+		observed    bool
+	}{"done": {"", true}, "gone": {"client_abandoned", false}} {
+		var termination string
+		var observed bool
+		if err := store.DB().QueryRowContext(ctx, "SELECT termination,usage_observed FROM usage_events WHERE request_id=?", id).Scan(&termination, &observed); err != nil {
+			t.Fatal(err)
+		}
+		if termination != want.termination || observed != want.observed {
+			t.Fatalf("%s termination=%q observed=%v want %+v", id, termination, observed, want)
+		}
+	}
+}
