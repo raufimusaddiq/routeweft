@@ -1811,3 +1811,13 @@ the strip rules only (`github.js:109`) and opencode the injection only
 Hot path: `FinalizeBody` now parses the body for every provider that takes either
 set (all but the list above), where before only providers with a hook did. It is
 one top-level decode and a re-encode only when a rule fires; no benchmark was run.
+
+## volcengine-ark `maxOutput` and xiaomi-mimo Preview route (#115 PR K)
+
+Both gaps were re-verified against the pin (`1c3b9f47`). Neither is the gap the
+scoping round described, and no code changed.
+
+| Item | Pin | Routeweft | Outcome |
+| --- | --- | --- | --- |
+| volcengine-ark `maxOutput` in seed metadata | `providers/registry/volcengine-ark.js:24-34` declares nine models with `id`/`name` only; no `maxOutput` anywhere in the entry | `seeds_gen.go` carries `ID`/`Name`/`ContextWindow`, same as the pin's shape | **gap did not exist as stated.** The pin's value comes from the capability catalog (`providers/capabilities.js:703-748`, `refine` at `:634-651`), and `PROVIDER_CAPABILITIES` has no `volcengine-ark` block. Ark models resolve by model-name pattern, the optional models.dev source, or the `64000` floor (`:67`). Seeding a number would invent one. The consequence is the one already recorded under "Body sanitation": the `glm-5` clamp is not carried because Routeweft has no capability catalog. |
+| xiaomi-mimo Preview models | `executors/xiaomi-mimo.js:7,30-39,41-52,54-69,71-94`; `registry/xiaomi-mimo.js:53-56`; `shared/mimoAccount.js:1-40` | the six seeded models, both transports, dual auth and the `preview` content flattening are all present (`builtins.go:165`, `sanitize.go:95`) | **real gap, not implemented.** `mimo-x-pro-preview` / `mimo-x-flash-preview` are served at `mimo-server-cn.xiaomimimo.com/api/route/chat/completions` with a Xiaomi account-session `Cookie` (not the `sk-` key), obtained by a five-step SSO exchange from a `passToken` read out of MiMo Desktop's Chromium cookie DB. Routeweft would send a Preview model to `api.xiaomimimo.com` with the key. Closing it needs host credential discovery, which rows 40-41 above hold for an approved local-only import policy (#76/P04), so it is not a small provider patch. The pin's Preview defaults (`thinking`, `temperature` 1.0, `top_p` 0.95, `max_tokens` 4096) only apply on that route and are left with it. |
