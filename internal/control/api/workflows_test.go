@@ -197,7 +197,7 @@ func TestWorkflowAvailabilityCatalogSyncBatchAndCustomDelete(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"success":true`) {
 		t.Fatalf("metadata refresh: %d %s", w.Code, w.Body)
 	}
-	restarted, err := runtime.NewManager(context.Background(), store.DB())
+	restarted, err := runtime.NewManagerObserved(context.Background(), store.DB(), nil, restartSealer(t))
 	if err != nil {
 		t.Fatal(err)
 	}

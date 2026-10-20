@@ -113,7 +113,7 @@ func BenchmarkStreamedChatCompletion(b *testing.B) {
 	if err := migrations.NewRunner(store.DB()).Apply(ctx); err != nil {
 		b.Fatal(err)
 	}
-	manager, err := runtime.NewManager(ctx, store.DB())
+	manager, err := runtime.NewManagerObserved(ctx, store.DB(), nil, nil)
 	if err != nil {
 		b.Fatal(err)
 	}

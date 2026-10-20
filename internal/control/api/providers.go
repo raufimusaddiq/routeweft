@@ -231,9 +231,6 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 		if body.Identity == "" {
 			body.Identity = old.Identity
 		}
-		if body.Secret.Empty() {
-			body.Secret = old.Secret
-		}
 		if body.Enabled == nil {
 			body.Enabled = &old.Enabled
 		}

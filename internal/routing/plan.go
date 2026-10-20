@@ -8,8 +8,23 @@ import (
 	"strings"
 )
 
+// ProviderSettings is the allowlisted, non-authentication projection of sealed provider data.
+type ProviderSettings struct {
+	BaseURL, AzureEndpoint, APIVersion, Deployment, Organization        string
+	Region, WorkspaceID, DeviceID, AgentID                              string
+	Email, UserID, SystemID, OrganizationID, DefaultOrganizationID, UID string
+}
+
+// ConnectionMetadata contains immutable account configuration needed by provider wires.
+type ConnectionMetadata struct {
+	NodeID, NodeKind, NodeName, NodePrefix           string
+	Name, AuthKind, Identity, AccountID, ProxyPoolID string
+	Settings                                         ProviderSettings
+}
+
 // ProviderRef identifies one configured provider node and connection.
 type ProviderRef struct {
+	Connection    ConnectionMetadata `json:"-"`
 	ProviderID    string
 	Protocol      string
 	BaseURL       string

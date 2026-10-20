@@ -2,10 +2,13 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	appruntime "github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/store/migrations"
 	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
 )
@@ -53,6 +56,21 @@ func TestStageRestoreValidatesAndDiscards(t *testing.T) {
 	if err := migrations.NewRunner(store.DB()).Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
+	sealer, err := credentials.NewSealer([]byte("01234567890123456789012345678901"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds, err := credentials.NewStore(store.DB(), sealer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := creds.PutNode(ctx, credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "ollama-local", Name: "Local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := creds.PutConnection(ctx, credentials.Connection{NodeID: node.ID, Name: "Local", Identity: "local", AuthKind: credentials.AuthNone, Enabled: true, Secret: credentials.Secret{ProviderData: map[string]string{"baseUrl": "http://localhost:11435"}}}); err != nil {
+		t.Fatal(err)
+	}
 	artifact := filepath.Join(dir, "artifact.sqlite")
 	want, err := Create(ctx, store, artifact)
 	if err != nil {
@@ -69,6 +87,20 @@ func TestStageRestoreValidatesAndDiscards(t *testing.T) {
 		t.Fatalf("candidate metadata %+v, want %+v", candidate.Metadata, want)
 	}
 	if _, err := os.Stat(candidate.Path); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := sqlite.Open(ctx, candidate.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := appruntime.NewManagerObserved(ctx, restored.DB(), nil, nil); !errors.Is(err, credentials.ErrKeyRequired) {
+		t.Fatalf("keyless validation accidentally enabled serving: %v", err)
+	}
+	config, err := credentials.LoadConfiguration(ctx, restored.DB(), sealer)
+	if err != nil || len(config.Connections) != 1 || config.Connections[0].Settings.BaseURL != "http://localhost:11435" {
+		t.Fatalf("backup lost sealed settings: %v", err)
+	}
+	if err := restored.Close(); err != nil {
 		t.Fatal(err)
 	}
 	candidate.Discard()

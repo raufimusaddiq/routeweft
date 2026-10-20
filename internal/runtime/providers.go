@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 )
 
 type servingProvider struct {
+	metadata  routing.ConnectionMetadata
 	node      credentials.Node
 	endpoints map[registry.Protocol]string
 	account   routing.Account
@@ -62,17 +64,48 @@ func compileProviders(config credentials.Configuration) (map[string]servingProvi
 		if node.Kind == credentials.NodeBuiltin {
 			endpoints = specs[node.ProviderID].TransportEndpoints
 		}
-		result[connection.ID] = servingProvider{node: node, endpoints: endpoints, account: routing.Account{ID: connection.ID, Enabled: connection.Enabled, Priority: connection.Priority}, name: connection.Name, accountID: connection.AccountID}
+		result[connection.ID] = servingProvider{metadata: routing.ConnectionMetadata{
+			NodeID: node.ID, NodeKind: string(node.Kind), NodeName: node.Name, NodePrefix: node.Prefix,
+			Name: connection.Name, AuthKind: string(connection.AuthKind), Identity: connection.Identity,
+			AccountID: connection.AccountID, ProxyPoolID: connection.ProxyPoolID, Settings: connection.Settings,
+		}, node: node, endpoints: endpoints, account: routing.Account{ID: connection.ID, Enabled: connection.Enabled, Priority: connection.Priority}, name: connection.Name, accountID: connection.AccountID}
 	}
 	return result, nil
 }
 
 // UpdateProviders uses the same compile/commit/publish lock as other config.
 func (m *Manager) UpdateProviders(ctx context.Context, change func(*credentials.Configuration) error, persist func(*sql.Tx) error) error {
-	_, err := m.update(ctx, func(candidate *Candidate) error {
-		if err := change(&candidate.Providers); err != nil {
+	// Sealed settings and their snapshot must serialize with configuration writes.
+	// Only local compile/SQLite work holds this gate; refresh HTTP runs before it.
+	if err := m.lockMutation(ctx); err != nil {
+		return err
+	}
+	defer m.unlockMutation()
+	current, err := m.Load()
+	if err != nil {
+		return err
+	}
+	next := current.providerConfig.Clone()
+	if err := change(&next); err != nil {
+		return err
+	}
+	// Token-only renewals keep the compiled configuration and revision unchanged.
+	if reflect.DeepEqual(next, current.providerConfig) {
+		if persist == nil {
+			return nil
+		}
+		tx, err := m.db.BeginTx(ctx, nil)
+		if err != nil {
 			return err
 		}
+		defer tx.Rollback()
+		if err := persist(tx); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	_, err = m.updateLocked(ctx, func(candidate *Candidate) error {
+		candidate.Providers = next
 		candidate.PoolBindings = make(map[string]string)
 		for _, connection := range candidate.Providers.Connections {
 			if connection.ProxyPoolID != "" {
@@ -191,7 +224,7 @@ func (s *RuntimeSnapshot) AccountProvider(requested, account, source string, can
 			return routing.ProviderRef{}, false
 		}
 	}
-	return routing.ProviderRef{ProviderID: model.ProviderID, ConnectionID: account, BaseURL: config.node.BaseURL, Protocol: protocol, UpstreamModel: model.ID, Endpoint: endpoint}, true
+	return routing.ProviderRef{Connection: config.metadata, ProviderID: model.ProviderID, ConnectionID: account, BaseURL: config.node.BaseURL, Protocol: protocol, UpstreamModel: model.ID, Endpoint: endpoint}, true
 }
 
 func (s *RuntimeSnapshot) compileServingIndexes() {

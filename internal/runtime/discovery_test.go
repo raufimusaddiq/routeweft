@@ -131,7 +131,7 @@ func TestReplaceDiscoveredModelsPersistsAcrossReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	reopened, err := NewManager(ctx, store.DB())
+	reopened, err := NewManagerObserved(ctx, store.DB(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

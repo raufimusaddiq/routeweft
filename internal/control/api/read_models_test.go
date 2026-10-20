@@ -28,7 +28,7 @@ func newReadAPI(t *testing.T) (*Handler, *http.ServeMux, *sqlite.Store) {
 	if err := migrations.NewRunner(store.DB()).Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
-	manager, err := runtime.NewManager(ctx, store.DB())
+	manager, err := runtime.NewManagerObserved(ctx, store.DB(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ INSERT INTO provider_models(provider_id,model_id,capabilities) VALUES('cloudflar
 INSERT INTO disabled_models(provider_id,model_id) VALUES('typed-custom','generic-typed');`); err != nil {
 		t.Fatal(err)
 	}
-	manager, err := runtime.NewManager(ctx, store.DB())
+	manager, err := runtime.NewManagerObserved(ctx, store.DB(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
