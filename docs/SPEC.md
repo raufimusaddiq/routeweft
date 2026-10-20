@@ -586,6 +586,117 @@ Each client key carries `access: {restricted, allow[]}` (stored in `api_keys`
   bodies up to 512 KiB). A missing `restricted` is a 400, never read as false.
   Switching to unrestricted clears the stored list.
 
+### 12.2 Dashboard/admin authentication policy (#78 C03)
+
+**Decision: admin login is immutable-true, with no local, token, header or
+first-run bypass. This is a deliberate hardening of v1, not parity.** Every
+oracle citation is `git show 1c3b9f47:<path>`.
+
+What v1 does:
+
+- `requireLogin` defaults true (`src/lib/db/repos/settingsRepo.js:30`) and is
+  writable through `PATCH /api/settings`, which applies any body key and asks
+  for no re-authentication (`src/app/api/settings/route.js:37-72`).
+- `false` turns `isAuthenticated` into "anyone" (`src/dashboardGuard.js:169-174`),
+  and that function gates the deny-by-default `/api/*` branch (`:220-226`), so
+  providers, combos, usage, logs, outbound-proxy settings and OAuth routes
+  answer anonymously. `/dashboard/*` is waved through (`:228-242`). With it on, an
+  anonymous caller gets 401 JSON on `/api/*` and a redirect to `/login` on pages.
+- A short list stays session-only whatever the setting (`:36-42`, `:208-213`):
+  `/api/keys`, `/api/settings/database`, Cursor/Kiro auto-import. v1 therefore
+  already limited how far login-off reached; the list is its own admission that
+  some admin routes are too dangerous to open.
+- Bypasses besides the setting: a CLI token equal to a machine-id derivation
+  (`:7-20`, accepted at `:210`, `:223`), a loopback peer exemption for the LLM
+  routes (`:143`, `:215-218`) and local-only routes (`:61-69`, `:148-153`), and
+  `POST /api/auth/reset-password`, local-only, which clears the password hash
+  (`src/app/api/auth/reset-password/route.js:4-13`).
+- Bootstrap in v1 is a published default: no stored hash means the password is
+  `INITIAL_PASSWORD` or `123456` (`src/app/api/auth/login/route.js:26-36`). A
+  non-local login with the default is refused rather than given a session
+  (`:43-64`), which v1 itself describes as closing a CVE-class chain where a
+  remote caller logged in with the default and PATCHed `requireLogin` off.
+- Public without a session: `/api/health`, `/api/locale`, login, logout,
+  `/api/auth/status`, `/api/settings/require-login` (`dashboardGuard.js:23-30`),
+  plus the LLM prefixes (key or local peer).
+
+What Routeweft does, exhaustively:
+
+| Surface | Credential | Notes |
+| --- | --- | --- |
+| `/admin/v1/*` except the three below | admin session cookie | `requireSession` (`internal/control/api/api.go:273`); non-GET also needs same-origin. Unauthenticated: 401 `unauthenticated`. |
+| `POST /admin/v1/auth/login` | username + password | 8 failures per 5 minutes per socket address, then 429 + `Retry-After`. 409 `no_admin` while no admin exists. |
+| `POST /admin/v1/auth/logout` | none | Revokes the presented session if any; otherwise a 204 no-op. |
+| `GET /admin/v1/auth/session` | cookie | 401 without a session. No `hasPassword`/`requireLogin`/bootstrap state is exposed. |
+| `/v1/*`, `/v1beta/*`, `/api/v1*`, `/responses`, `/codex`, `/messages`, `/api/tags` | client API key | `authorize` (`internal/ingress/ingress.go:843`). Separate domain from admin sessions (SPEC 12). No loopback or forwarded-header exemption. |
+| `GET /health/live`, `GET /health/ready` | none | Body is `ok\n` or a bare 503; no configuration, counts or versions. |
+| Static UI (`ROUTEWEFT_UI_DIR`) | none | Built assets and `index.html` only; every data call it makes is an admin or inference call above. |
+| Metrics, pprof, expvar, debug | n/a | Not served. |
+| CLI token, reset-password, auth-status, require-login, setup/bootstrap endpoints | n/a | Do not exist. |
+| `routeweft migrate/backup/restore` | filesystem access to the data dir | Local commands, not network listeners. Their trust boundary is host file permissions (RUNBOOK 3). |
+
+Trusted-peer logic does not exist: no code path reads `X-Forwarded-For`,
+`X-Real-Ip`, `Host` or `Origin` to grant access. `RemoteAddr` is used only as the
+login throttle bucket, so behind a reverse proxy every client shares one bucket;
+that can lock operators out for the window but never grants access.
+
+`requireLogin` is in the defaults and in `GET /admin/v1/settings` as `true` for
+shape compatibility only. It is not in the writable allowlist, nothing reads it
+to authorize a request, and the compiler pins the compiled value to `true`, so a
+stored or restored `false` (hand-edited database, backup, a v1 value that
+slipped through migration) is neither honored nor displayed as honored. The v1
+importer refuses a `requireLogin=false` source (`docs/V1_MIGRATION.md`).
+
+Why not preserve the v1 behavior:
+
+- Routeweft's admin plane is larger than the part v1 kept behind a session.
+  `GET /admin/v1/backup` returns the whole database, `POST /admin/v1/backup/restore`
+  replaces it, and the
+  provider/connection/key routes mint and rewrite credentials. v1's
+  `ALWAYS_PROTECTED` tiering would have to be rebuilt route by route, and one
+  missed route is an anonymous takeover. There is no such tier today.
+- The cost of supporting an open instance is that tiering, a settings flag with
+  its own re-authentication and audit trail, a loopback/proxy trust model that
+  PRD-SEC-002 forbids relying on, and tests for every admin route in both modes.
+  An operator who truly wants no login on a trusted network can still reach that
+  goal at the network layer (private listener, or a reverse proxy that injects
+  the session); Routeweft will not hold the switch.
+- An instance that needs no *client* keys keeps `requireApiKey=false`, which v1
+  also has (`src/sse/handlers/chat.js:75`) and which is the supported
+  trusted-network open mode. It opens inference only; it never opens `/admin`.
+
+Bootstrap, and how it differs from v1:
+
+- The first credential is supplied at process start by the operator:
+  `ROUTEWEFT_BOOTSTRAP_ADMIN_USERNAME` and `ROUTEWEFT_BOOTSTRAP_ADMIN_PASSWORD`,
+  both or neither (a lone one aborts startup, `internal/app/app.go:286`).
+- It acts only while `admin_users` is empty, decided and written in one
+  transaction (`internal/adminauth/store.go:41-62`), so it is single-use: later
+  boots ignore the variables, and a wrong or attacker-chosen value on an existing
+  database provisions nothing.
+- It is not a network bypass. There is no endpoint that creates the first admin,
+  so "loopback-only" and "time-limited" do not apply: the only actor is whoever
+  controls the process environment, who already controls the host.
+- With no credential configured the server runs locked: every admin route is 401,
+  login is 409 `no_admin`, and no default password exists. Inference requires a
+  key and keys are minted through admin, so a never-bootstrapped fresh instance has
+  no client that can call it.
+- Known limit: the only password rule is non-empty (`internal/adminauth/password.go:36`);
+  strength is the operator's responsibility. The variables stay visible in the
+  deployment environment until removed (RUNBOOK 3).
+- Recovery: there is no reset endpoint. With the service stopped and write
+  access to the SQLite file, delete the `admin_users` row and restart with
+  bootstrap credentials. That needs host access, the same bar as v1's local
+  reset, without being reachable over HTTP. (Restoring a backup does not help:
+  it carries the same forgotten hash.) Existing sessions are in memory and die
+  on restart.
+
+Tests asserting each statement: `internal/app/c03_auth_test.go` (route-scan of
+every admin pattern, bypass headers, closed recovery/status routes, fresh-install
+lockout, stored `requireLogin=false`, health-only unauthenticated surface,
+recovery path) and `TestStoredRequireLoginFalseCompilesToTrue` /
+`TestSetSettingsRejectsNonWritableKeys` in `internal/runtime`.
+
 ## 13. Account selection
 
 Inputs:

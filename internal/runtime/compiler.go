@@ -173,6 +173,10 @@ func (c Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, erro
 		settings[key] = value
 	}
 	normalizeLegacySettings(settings)
+	// requireLogin is immutable-true (#78 C03, docs/SPEC.md 12.2). Nothing reads
+	// it to gate a route; pinning the compiled value keeps a stored or restored
+	// "false" from being reported as if login were optional.
+	settings["requireLogin"] = "true"
 	models, aliases, disabled := compileCatalog(config.Models, config.Aliases, config.DisabledModels)
 	combos, err := compileCombos(config.Combos, models, aliases)
 	if err != nil {

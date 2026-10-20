@@ -88,6 +88,15 @@ Expected first boot:
 
 Remove the bootstrap password from deployment environment after the admin credential exists if the implementation does not require it for subsequent boots.
 
+The bootstrap variables are read only while the database has no admin account and
+are ignored on every later boot, so removing them is safe and recommended. There
+is no default password and no reset endpoint. If the password is lost: stop the
+service, delete the `admin_users` row in the SQLite file, set both bootstrap
+variables, start, then remove them again (a backup restore does not help, it
+carries the same hash). Login cannot be disabled; `requireApiKey=false` is the
+only supported open mode and covers inference, never `/admin`. Policy and
+rationale: SPEC 12.2.
+
 ## 4. Git worktree operating model
 
 Routeweft development uses one dedicated worktree per feature/PR.

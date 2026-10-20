@@ -115,3 +115,22 @@ func TestSetSettingsRejectsMalformedValuesWithoutMutation(t *testing.T) {
 		})
 	}
 }
+
+// TestStoredRequireLoginFalseCompilesToTrue covers a value that did not come
+// through SetSettings (hand-edited database, restored backup): login is
+// immutable-true (#78 C03), so the compiled snapshot never reports it off.
+func TestStoredRequireLoginFalseCompilesToTrue(t *testing.T) {
+	ctx := context.Background()
+	_, store := newTestManager(t)
+	defer store.Close()
+	if _, err := store.DB().ExecContext(ctx, "INSERT INTO settings (key,value) VALUES ('requireLogin','false')"); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManagerObserved(ctx, store.DB(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := manager.Settings()["requireLogin"]; got != "true" {
+		t.Fatalf("requireLogin=%q want true", got)
+	}
+}
