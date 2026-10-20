@@ -236,6 +236,17 @@ services:
 
 The production image should be referenced by an immutable version/SHA-derived tag for daily-drive deployments.
 
+The final scratch filesystem contains `/routeweft`, the static UI under `/ui`,
+and `/etc/ssl/certs/ca-certificates.crt` from Alpine's `ca-certificates` package.
+It contains no shell, Node runtime, or Go toolchain. The build loads the bundle
+with Go's system trust loader in a scratch stage and rejects an empty or
+unloadable store. The final stage copies that validated bundle; the test binary
+is not shipped. Outbound TLS uses system roots with certificate verification.
+
+`ROUTEWEFT_LOG_LEVEL` sets the JSON service log threshold (default `info`;
+`debug`, `warn`, and `error` are supported). Invalid levels stop startup before
+opening data. There is no corresponding CLI flag.
+
 ## 7. Reverse proxy
 
 Recommended topology:
@@ -248,7 +259,10 @@ internet/private LAN
     Routeweft:21128
 ```
 
-Forward only trusted proxy headers from known proxy peers.
+Routeweft currently ignores forwarded-IP headers from every peer. There is no
+`ROUTEWEFT_TRUSTED_PROXIES` setting or trusted-proxy CLI flag. Login throttling
+uses the socket remote address, so requests through a reverse proxy share its
+throttle identity. Restrict direct access to the service at the network boundary.
 
 Do not expose an unprotected admin API directly to the public network.
 
@@ -273,6 +287,37 @@ Then verify through normal client auth:
 - config mutation updates active snapshot revision.
 
 Do not use a destructive OAuth refresh smoke test casually on production credentials.
+
+TLS trust can be checked without contacting an upstream:
+
+```bash
+go test ./internal/transport -run '^TestSystemTLSRoots$' -count=1 -v
+```
+
+For an optional public HTTPS check, run this from a source checkout on the
+operator host:
+
+```bash
+ROUTEWEFT_TLS_SMOKE=1 go test ./internal/transport -run '^TestPublicHTTPSReachability$' -count=1 -v
+```
+
+To use the deployed image's filesystem and trust store, compile the test binary
+for the image's OS/architecture and mount it into a disposable container:
+
+```bash
+CGO_ENABLED=0 GOOS=linux go test -c -o /tmp/routeweft-tls-check ./internal/transport
+docker run --rm --entrypoint /tls-check \
+  --mount type=bind,src=/tmp/routeweft-tls-check,dst=/tls-check,readonly \
+  -e ROUTEWEFT_TLS_SMOKE=1 \
+  ghcr.io/raufimusaddiq/routeweft:<immutable-tag> \
+  -test.run='^(TestSystemTLSRoots|TestPublicHTTPSReachability)$' -test.v
+```
+
+The opt-in check sends an unauthenticated HEAD to `https://example.com` using
+the direct pooled transport and verifies the TLS chain. It does not use provider
+credentials, configured outbound proxies, or the service's database. CI and
+image builds only load the trust store; they make no public HTTPS probe and do
+not prove DNS, network egress, provider authentication, or inference success.
 
 ## 9. Health interpretation
 
