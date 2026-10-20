@@ -25,7 +25,7 @@ func TestWorkflowNativeRoutesDiscoveryAndProbe(t *testing.T) {
 		{"gemini", "/v1beta/", "/v1beta/models", "/v1beta/models/gemini-2.5-flash:streamGenerateContent", "gemini-2.5-flash", "/v1beta/models/{model}:generateContent", "x-goog-api-key", `{"models":[{"name":"models/gemini-2.5-flash"}]}`},
 		{"ollama", "", "/api/tags", "/api/chat", "llama3:latest", "/api/chat", "Authorization", `{"models":[{"name":"llama3:latest"}]}`},
 		{"anthropic", "/v1", "/v1/models", "/v1/messages", "claude-sonnet-4", "/v1/messages", "x-api-key", `{"data":[{"id":"claude-sonnet-4"}]}`},
-		{"claude", "/v1", "/v1/models", "/v1/messages", "claude-sonnet-4", "/v1/messages", "x-api-key", `{"data":[{"id":"claude-sonnet-4"}]}`},
+		{"claude", "/v1", "/v1/models", "/v1/messages", "claude-sonnet-4", "/v1/messages", "Authorization", `{"data":[{"id":"claude-sonnet-4"}]}`},
 	} {
 		t.Run(tc.provider+tc.basePath, func(t *testing.T) {
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

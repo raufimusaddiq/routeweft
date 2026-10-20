@@ -15,6 +15,8 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/providers/cloudflare"
 	"github.com/raufimusaddiq/routeweft/internal/providers/discovery"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
+	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
@@ -580,7 +582,7 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "text/event-stream, application/x-ndjson, application/json")
-	secret, err := h.probeSecret(ctx, connection)
+	credential, err := h.probeCredential(ctx, connection)
 	if err != nil {
 		result.Error = "provider credentials are unavailable"
 		return result
@@ -588,15 +590,10 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	switch connection.AuthKind {
 	case credentials.AuthNone:
 	case credentials.AuthCookie:
-		request.Header.Set("Cookie", secret.Cookie)
+		request.Header.Set("Cookie", credential)
 	case credentials.AuthAPIKey, credentials.AuthOAuth:
-		if transportName == string(registry.TransportAnthropic) {
-			request.Header.Set("x-api-key", secret.AccessToken)
-			request.Header.Set("anthropic-version", "2023-06-01")
-		} else if transportName == string(registry.TransportGemini) {
-			request.Header.Set("x-goog-api-key", secret.AccessToken)
-		} else if secret.AccessToken != "" {
-			request.Header.Set("Authorization", "Bearer "+secret.AccessToken)
+		for name, values := range modelWireHeaders(node, transportName, credential) {
+			request.Header[name] = values
 		}
 	default:
 		result.Error = "provider authentication mode is not supported for model probes"
@@ -716,25 +713,54 @@ func (h *Handler) fetchConnectionModelEntries(ctx context.Context, connection cr
 	style := discovery.AuthBearer
 	if slicesContain(node.Transports, string(registry.TransportGemini)) {
 		style = discovery.AuthGoogleAPIKey
-	} else if slicesContain(node.Transports, string(registry.TransportAnthropic)) {
+	} else if slicesContain(node.Transports, string(registry.TransportAnthropic)) && !wire.For(modelWireProviderID(node)).BearerMessages {
 		style = discovery.AuthXApiKey
 	}
 	client := discovery.Client{AllowPrivateUpstreams: h.opts.AllowPrivateUpstreams}
 	if h.opts.DiscoveryClient != nil {
 		client.HTTP = h.opts.DiscoveryClient.HTTP
 	}
-	secret, err := h.probeSecret(ctx, connection)
+	credential, err := h.probeCredential(ctx, connection)
 	if err != nil {
 		return nil, errors.New("provider credentials are unavailable")
 	}
-	credential := secret.AccessToken
 	switch connection.AuthKind {
 	case credentials.AuthNone:
 		style = discovery.AuthNone
 	case credentials.AuthCookie:
-		style, credential = discovery.AuthCookie, secret.Cookie
+		style = discovery.AuthCookie
 	}
-	return client.ModelEntries(ctx, discovery.Request{ProviderID: node.ProviderID, BaseURL: baseURL, Path: path, Credential: credential, AuthStyle: style})
+	headers := make(map[string]string)
+	protocol := string(registry.TransportOpenAIChat)
+	if slicesContain(node.Transports, string(registry.TransportAnthropic)) {
+		protocol = string(registry.TransportAnthropic)
+	}
+	for name, values := range modelWireHeaders(node, protocol, "") {
+		headers[name] = values[0]
+	}
+	return client.ModelEntries(ctx, discovery.Request{ProviderID: node.ProviderID, BaseURL: baseURL, Path: path, Credential: credential, AuthStyle: style, Headers: headers})
+}
+
+func modelWireProviderID(node credentials.Node) string {
+	if node.Kind == credentials.NodeBuiltin {
+		return node.ProviderID
+	}
+	return ""
+}
+
+func modelWireHeaders(node credentials.Node, protocol, credential string) http.Header {
+	provider := routing.ProviderRef{ProviderID: modelWireProviderID(node), APIToken: credential}
+	if protocol == string(registry.TransportAnthropic) {
+		return wire.MessagesHeaders(provider, "", "")
+	}
+	if protocol == string(registry.TransportGemini) {
+		headers := http.Header{}
+		if credential != "" {
+			headers.Set("x-goog-api-key", credential)
+		}
+		return headers
+	}
+	return wire.OpenAIHeaders(provider)
 }
 
 func (h *Handler) handlePutModel(w http.ResponseWriter, r *http.Request) {
