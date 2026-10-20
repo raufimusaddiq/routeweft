@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
 // Combo is a compiled ordered route candidate list with strategy metadata.
@@ -14,7 +16,10 @@ type Combo struct {
 	StickyLimit   uint64
 	JudgeModel    string
 	FusionEnabled bool
-	Members       []ComboMember
+	// FusionTuning overrides the default panel timing for this Combo only
+	// (v1 comboStrategies[name].fusionTuning). The zero value keeps the default.
+	FusionTuning routing.FusionTuning
+	Members      []ComboMember
 }
 
 // ComboMember is one ordered Combo route candidate.
@@ -36,10 +41,17 @@ func (c Combo) Resolve() []ComboMember {
 	return members
 }
 
+// FusionConfig resolves this Combo's panel timing over base for its selected
+// members, the way v1 resolves fusionTuning over FUSION_DEFAULTS.
+func (c Combo) FusionConfig(base routing.FusionConfig) (routing.FusionConfig, error) {
+	return c.FusionTuning.Apply(base, len(c.Resolve()))
+}
+
 func cloneCombos(combos map[string]Combo) map[string]Combo {
 	cloned := make(map[string]Combo, len(combos))
 	for key, combo := range combos {
 		combo.Members = append([]ComboMember(nil), combo.Members...)
+		combo.FusionTuning = combo.FusionTuning.Clone()
 		cloned[key] = combo
 	}
 	return cloned
@@ -89,6 +101,9 @@ func compileCombos(combos []Combo, models map[string]Model, aliases map[string]M
 			}
 			seen[key] = struct{}{}
 		}
+		if err := combo.FusionTuning.Validate(); err != nil {
+			return nil, fmt.Errorf("combo %q: %w", name, err)
+		}
 		// StickyLimit 0 means "inherit comboStickyRoundRobinLimit"; defaulting it
 		// to 1 here would shadow the global setting the pin applies to every
 		// combo (src/sse/handlers/chat.js:136).
@@ -120,6 +135,7 @@ func (s *RuntimeSnapshot) ComboByName(name string) (Combo, bool) {
 		return Combo{}, false
 	}
 	combo.Members = append([]ComboMember(nil), combo.Members...)
+	combo.FusionTuning = combo.FusionTuning.Clone()
 	return combo, true
 }
 
@@ -131,6 +147,7 @@ func (s *RuntimeSnapshot) Combos() []Combo {
 	list := make([]Combo, 0, len(s.combos))
 	for _, combo := range s.combos {
 		combo.Members = append([]ComboMember(nil), combo.Members...)
+		combo.FusionTuning = combo.FusionTuning.Clone()
 		list = append(list, combo)
 	}
 	return list

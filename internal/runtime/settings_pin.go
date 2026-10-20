@@ -210,7 +210,7 @@ func importCapacityAdapter(pinName string, raw json.RawMessage) (string, []strin
 		pool = append(pool, map[string]string{"providerId": provider, "modelId": id})
 	}
 	if len(pool) > 0 {
-		notes = append(notes, fmt.Sprintf("capacityAdapter.%s: provider prefixes kept verbatim; they must be Routeweft provider IDs, not pin aliases", pinName))
+		notes = append(notes, fmt.Sprintf("capacityAdapter.%s: provider prefixes kept verbatim and NOT resolved against the catalog (the admin PUT rejects unresolved members); correct any pin alias or unknown model after import", pinName))
 	}
 	encoded, _ := json.Marshal(map[string]any{"enabled": enabled, "roundRobin": roundRobin, "pool": pool})
 	return string(encoded), notes

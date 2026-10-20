@@ -63,9 +63,11 @@ type CapacityAdapterConfig struct {
 }
 
 // Strategy is the pool's selection policy: round-robin only when the pool is
-// enabled and roundRobin is set (capacityAdapter.js:57-60).
+// enabled, non-empty and roundRobin is set. The pin's per-capability rule is
+// enabled && roundRobin (capacityAdapter.js:57-60); its request-time caller
+// skips empty pools first (:64-72), which is the value R01 consumes.
 func (c CapacityAdapterConfig) Strategy() routing.Strategy {
-	if c.Enabled && c.RoundRobin {
+	if c.Enabled && c.RoundRobin && len(c.Pool) > 0 {
 		return routing.StrategyRoundRobin
 	}
 	return routing.StrategyFillFirst

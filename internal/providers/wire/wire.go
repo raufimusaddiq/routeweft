@@ -15,7 +15,6 @@ import (
 	anthropicprovider "github.com/raufimusaddiq/routeweft/internal/providers/anthropic"
 	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
 	clineprovider "github.com/raufimusaddiq/routeweft/internal/providers/cline"
-	codexprovider "github.com/raufimusaddiq/routeweft/internal/providers/codex"
 	"github.com/raufimusaddiq/routeweft/internal/providers/oauthheaders"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
@@ -88,7 +87,7 @@ type Hook struct {
 }
 
 var hooks = map[string]Hook{
-	"codex": {OpenAIHeaders: func(routing.ProviderRef) map[string]string { return codexprovider.Headers() }},
+	"codex": {OpenAIHeaders: codexHeaders},
 	"claude": {
 		BearerMessages:  true,
 		MessagesHeaders: func(routing.ProviderRef) map[string]string { return claudeprovider.Headers() },

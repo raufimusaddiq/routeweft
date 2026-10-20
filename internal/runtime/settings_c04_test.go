@@ -54,6 +54,10 @@ func TestC04CapacityAdapterRoundRobinStoredAndResolved(t *testing.T) {
 	if audio := snapshot.CapacityAdapter("audio-input"); !audio.Enabled || audio.RoundRobin || len(audio.Pool) != 2 || audio.Pool[0].ModelID != "legacy" {
 		t.Fatalf("audio=%+v", audio)
 	}
+	// An enabled but empty pool is never round-robin either.
+	if empty := (CapacityAdapterConfig{Enabled: true, RoundRobin: true}); empty.Strategy() != routing.StrategyFillFirst {
+		t.Fatalf("empty pool strategy=%v", empty.Strategy())
+	}
 	// Disagreement: roundRobin on a disabled pool is not a round-robin strategy
 	// (capacityAdapter.js:59), and a prefix-less model is reported, not stored.
 	video := snapshot.CapacityAdapter("video-input")

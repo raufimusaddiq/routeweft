@@ -58,6 +58,7 @@ func cloneComboList(combos []Combo) []Combo {
 	cloned := make([]Combo, len(combos))
 	for i, combo := range combos {
 		combo.Members = append([]ComboMember(nil), combo.Members...)
+		combo.FusionTuning = combo.FusionTuning.Clone()
 		cloned[i] = combo
 	}
 	return cloned
@@ -76,7 +77,7 @@ func persistCombos(ctx context.Context, tx *sql.Tx, combos []Combo) error {
 		if combo.FusionEnabled {
 			fusion = 1
 		}
-		if _, err := tx.ExecContext(ctx, "INSERT INTO combos(id,name,strategy,sticky_limit,fusion_enabled,judge_model) VALUES(?,?,?,?,?,?)", id, combo.Name, combo.Strategy, combo.StickyLimit, fusion, nullString(combo.JudgeModel)); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO combos(id,name,strategy,sticky_limit,fusion_enabled,judge_model,fusion_min_panel,fusion_grace_ms,fusion_hard_timeout_ms) VALUES(?,?,?,?,?,?,?,?,?)", id, combo.Name, combo.Strategy, combo.StickyLimit, fusion, nullString(combo.JudgeModel), nullInt(combo.FusionTuning.MinPanel), nullInt64(combo.FusionTuning.StragglerGraceMs), nullInt64(combo.FusionTuning.PanelHardTimeoutMs)); err != nil {
 			return fmt.Errorf("persist combo %q: %w", combo.Name, err)
 		}
 		members := append([]ComboMember(nil), combo.Members...)
@@ -95,7 +96,7 @@ func persistCombos(ctx context.Context, tx *sql.Tx, combos []Combo) error {
 }
 
 func loadCombos(ctx context.Context, db *sql.DB) ([]Combo, error) {
-	rows, err := db.QueryContext(ctx, "SELECT id,name,strategy,sticky_limit,fusion_enabled,COALESCE(judge_model,'') FROM combos ORDER BY name,id")
+	rows, err := db.QueryContext(ctx, "SELECT id,name,strategy,sticky_limit,fusion_enabled,COALESCE(judge_model,''),fusion_min_panel,fusion_grace_ms,fusion_hard_timeout_ms FROM combos ORDER BY name,id")
 	if err != nil {
 		return nil, fmt.Errorf("load combos: %w", err)
 	}
@@ -106,8 +107,19 @@ func loadCombos(ctx context.Context, db *sql.DB) ([]Combo, error) {
 		var combo Combo
 		var sticky int64
 		var fusion int
-		if err := rows.Scan(&combo.ID, &combo.Name, &combo.Strategy, &sticky, &fusion, &combo.JudgeModel); err != nil {
+		var minPanel, grace, hard sql.NullInt64
+		if err := rows.Scan(&combo.ID, &combo.Name, &combo.Strategy, &sticky, &fusion, &combo.JudgeModel, &minPanel, &grace, &hard); err != nil {
 			return nil, err
+		}
+		if minPanel.Valid {
+			value := int(minPanel.Int64)
+			combo.FusionTuning.MinPanel = &value
+		}
+		if grace.Valid {
+			combo.FusionTuning.StragglerGraceMs = &grace.Int64
+		}
+		if hard.Valid {
+			combo.FusionTuning.PanelHardTimeoutMs = &hard.Int64
 		}
 		if sticky > 0 {
 			combo.StickyLimit = uint64(sticky)
@@ -147,4 +159,18 @@ func nullString(value string) any {
 		return nil
 	}
 	return value
+}
+
+func nullInt(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return int64(*value)
+}
+
+func nullInt64(value *int64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }

@@ -4,16 +4,26 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
 type comboRequest struct {
-	Name          string             `json:"name"`
-	Strategy      string             `json:"strategy"`
-	StickyLimit   uint64             `json:"stickyLimit"`
-	JudgeModel    string             `json:"judgeModel"`
-	FusionEnabled bool               `json:"fusionEnabled"`
-	Members       []comboMemberInput `json:"members"`
+	Name          string `json:"name"`
+	Strategy      string `json:"strategy"`
+	StickyLimit   uint64 `json:"stickyLimit"`
+	JudgeModel    string `json:"judgeModel"`
+	FusionEnabled bool   `json:"fusionEnabled"`
+	// FusionTuning uses the pinned v1 key names so an operator can copy a v1
+	// comboStrategies[name].fusionTuning object across unchanged.
+	FusionTuning *fusionTuningJSON  `json:"fusionTuning"`
+	Members      []comboMemberInput `json:"members"`
+}
+
+type fusionTuningJSON struct {
+	MinPanel           *int   `json:"minPanel"`
+	StragglerGraceMs   *int64 `json:"stragglerGraceMs"`
+	PanelHardTimeoutMs *int64 `json:"panelHardTimeoutMs"`
 }
 
 type comboMemberInput struct {
@@ -37,6 +47,14 @@ func (h *Handler) handlePutCombo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	combo := runtime.Combo{ID: r.PathValue("id"), Name: body.Name, Strategy: strings.TrimSpace(body.Strategy), StickyLimit: body.StickyLimit, JudgeModel: strings.TrimSpace(body.JudgeModel), FusionEnabled: body.FusionEnabled}
+	if body.FusionTuning != nil {
+		combo.FusionTuning = routing.FusionTuning{MinPanel: body.FusionTuning.MinPanel, StragglerGraceMs: body.FusionTuning.StragglerGraceMs, PanelHardTimeoutMs: body.FusionTuning.PanelHardTimeoutMs}
+		if err := combo.FusionTuning.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_combo", err.Error())
+			return
+		}
+		combo.FusionTuning = combo.FusionTuning.Normalize()
+	}
 	for position, member := range body.Members {
 		selected := true
 		if member.Selected != nil {
@@ -77,5 +95,9 @@ func comboJSON(combo runtime.Combo, revision uint64) map[string]any {
 	for _, member := range combo.Members {
 		members = append(members, map[string]any{"providerId": member.ProviderID, "modelId": member.ModelID, "position": member.Position, "selected": member.Selected})
 	}
-	return map[string]any{"id": combo.ID, "name": combo.Name, "strategy": combo.Strategy, "stickyLimit": combo.StickyLimit, "judgeModel": combo.JudgeModel, "fusionEnabled": combo.FusionEnabled, "members": members, "configRevision": revision}
+	result := map[string]any{"id": combo.ID, "name": combo.Name, "strategy": combo.Strategy, "stickyLimit": combo.StickyLimit, "judgeModel": combo.JudgeModel, "fusionEnabled": combo.FusionEnabled, "members": members, "configRevision": revision}
+	if !combo.FusionTuning.IsZero() {
+		result["fusionTuning"] = fusionTuningJSON{MinPanel: combo.FusionTuning.MinPanel, StragglerGraceMs: combo.FusionTuning.StragglerGraceMs, PanelHardTimeoutMs: combo.FusionTuning.PanelHardTimeoutMs}
+	}
+	return result
 }

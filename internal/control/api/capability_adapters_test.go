@@ -153,3 +153,29 @@ func TestCapabilityAdapterPreC04StoredValueDoesNotPanic(t *testing.T) {
 		t.Fatalf("put status=%d body=%s", put.Code, put.Body.String())
 	}
 }
+
+// A partial PUT keeps every omitted field; it must not disable the adapter or
+// empty its pool.
+func TestCapabilityAdapterPartialPutKeepsStoredState(t *testing.T) {
+	handler, mux, store, _, cookie := newProvidersAPI(t, false, nil)
+	defer store.Close()
+	if err := handler.opts.ProviderCatalog.PutModel(context.Background(), runtime.Model{ProviderID: "openai", ID: "gpt-a", Source: "custom"}); err != nil {
+		t.Fatal(err)
+	}
+	seed := doJSON(t, mux, cookie, http.MethodPut, "/admin/v1/capability-adapters/vision", `{"enabled":true,"roundRobin":false,"pool":[{"providerId":"openai","modelId":"gpt-a"}]}`)
+	if seed.Code != http.StatusOK {
+		t.Fatalf("seed %d %s", seed.Code, seed.Body.String())
+	}
+	partial := doJSON(t, mux, cookie, http.MethodPut, "/admin/v1/capability-adapters/vision", `{"roundRobin":true}`)
+	if partial.Code != http.StatusOK || !containsAll(partial.Body.String(), `"enabled":true`, `"roundRobin":true`, `"strategy":"round-robin"`, `"modelId":"gpt-a"`) {
+		t.Fatalf("partial PUT lost state: %d %s", partial.Code, partial.Body.String())
+	}
+	toggle := doJSON(t, mux, cookie, http.MethodPut, "/admin/v1/capability-adapters/vision", `{"enabled":false}`)
+	if toggle.Code != http.StatusOK || !containsAll(toggle.Body.String(), `"roundRobin":true`, `"modelId":"gpt-a"`, `"strategy":"fallback"`) {
+		t.Fatalf("toggle lost state: %d %s", toggle.Code, toggle.Body.String())
+	}
+	cleared := doJSON(t, mux, cookie, http.MethodPut, "/admin/v1/capability-adapters/vision", `{"enabled":true,"pool":[]}`)
+	if cleared.Code != http.StatusOK || !containsAll(cleared.Body.String(), `"pool":[]`, `"strategy":"fallback"`) {
+		t.Fatalf("explicit empty pool: %d %s", cleared.Code, cleared.Body.String())
+	}
+}

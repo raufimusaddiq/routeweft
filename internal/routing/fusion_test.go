@@ -87,7 +87,7 @@ func TestFusionDefaultJudgeFallsBackToFirstComboModel(t *testing.T) {
 	}
 }
 
-func TestFusionHardTimeoutAndQuorum(t *testing.T) {
+func TestFusionHardTimeoutWithOneAnswerReturnsItDirectly(t *testing.T) {
 	fusion := &Fusion{Config: FusionConfig{MinPanelQuorum: 2, HardTimeout: 30 * time.Millisecond, Grace: 5 * time.Millisecond}, Panels: func(ctx context.Context, candidate PanelCandidate) (io.ReadCloser, error) {
 		if candidate.ModelID == "a" {
 			return io.NopCloser(strings.NewReader("fast")), nil
@@ -99,8 +99,11 @@ func TestFusionHardTimeoutAndQuorum(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}, Judge: func(context.Context, string, []string) (string, error) { return "judged", nil }}
-	if _, err := fusion.Run(context.Background(), candidates(2), "judge"); !errors.Is(err, ErrFusionQuorum) {
-		t.Fatalf("err=%v", err)
+	// Quorum 2 is never met, but v1 treats minPanel as the grace gate only: the
+	// lone success is the answer (combo.js:616-620), not an error.
+	answer, err := fusion.Run(context.Background(), candidates(2), "judge")
+	if err != nil || answer != "fast" {
+		t.Fatalf("answer=%q err=%v", answer, err)
 	}
 }
 

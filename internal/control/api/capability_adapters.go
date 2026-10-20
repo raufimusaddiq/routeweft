@@ -28,6 +28,15 @@ type adapterConfig struct {
 	Pool       []adapterPoolEntry `json:"pool"`
 }
 
+// adapterPut is the PUT body. Every field is optional and an omitted field keeps
+// the stored value, so a partial body such as {"roundRobin":true} cannot disable
+// the adapter or empty its pool.
+type adapterPut struct {
+	Enabled    *bool               `json:"enabled"`
+	RoundRobin *bool               `json:"roundRobin"`
+	Pool       *[]adapterPoolEntry `json:"pool"`
+}
+
 func parseAdapterConfig(raw string) adapterConfig {
 	roundRobin := false
 	config := adapterConfig{RoundRobin: &roundRobin, Pool: []adapterPoolEntry{}}
@@ -72,19 +81,30 @@ func (h *Handler) handlePutCapabilityAdapter(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusNotFound, "unknown_capability", "unknown capability adapter")
 		return
 	}
-	var body adapterConfig
+	var body adapterPut
 	if !decodeJSON(w, r, 1<<20, &body) {
 		return
 	}
 	settings := h.opts.Settings.Settings()
+	stored := parseAdapterConfig(settings[setting])
+	enabled, roundRobin, supplied := stored.Enabled, *stored.RoundRobin, stored.Pool
+	if body.Enabled != nil {
+		enabled = *body.Enabled
+	}
+	if body.RoundRobin != nil {
+		roundRobin = *body.RoundRobin
+	}
+	if body.Pool != nil {
+		supplied = *body.Pool
+	}
 	snapshot, err := h.opts.Runtime.Load()
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "runtime_unavailable", "runtime configuration is unavailable")
 		return
 	}
-	pool := make([]adapterPoolEntry, 0, len(body.Pool))
-	seen := make(map[string]struct{}, len(body.Pool))
-	for _, member := range body.Pool {
+	pool := make([]adapterPoolEntry, 0, len(supplied))
+	seen := make(map[string]struct{}, len(supplied))
+	for _, member := range supplied {
 		provider := strings.TrimSpace(member.ProviderID)
 		model := strings.TrimSpace(member.ModelID)
 		if provider == "" || model == "" {
@@ -103,11 +123,7 @@ func (h *Handler) handlePutCapabilityAdapter(w http.ResponseWriter, r *http.Requ
 		seen[key] = struct{}{}
 		pool = append(pool, adapterPoolEntry{ProviderID: provider, ModelID: model})
 	}
-	roundRobin := *parseAdapterConfig(settings[setting]).RoundRobin
-	if body.RoundRobin != nil {
-		roundRobin = *body.RoundRobin
-	}
-	encoded, err := json.Marshal(adapterConfig{Enabled: body.Enabled, RoundRobin: &roundRobin, Pool: pool})
+	encoded, err := json.Marshal(adapterConfig{Enabled: enabled, RoundRobin: &roundRobin, Pool: pool})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "encode_failed", "could not encode adapter configuration")
 		return
@@ -120,17 +136,17 @@ func (h *Handler) handlePutCapabilityAdapter(w http.ResponseWriter, r *http.Requ
 	if h.opts.Events != nil {
 		h.opts.Events.Publish("config.updated", map[string]any{"resource": "capability-adapter", "capability": name, "configRevision": revision})
 	}
-	view := adapterView(name, body.Enabled, roundRobin, pool)
+	view := adapterView(name, enabled, roundRobin, pool)
 	view["configRevision"] = revision
 	writeJSON(w, http.StatusOK, view)
 }
 
 // adapterView is the public adapter shape; strategy is derived the way the pin
-// derives it (capacityAdapter.js:57-60): round-robin only for an enabled pool
-// with roundRobin set, otherwise fallback.
+// derives the active one (capacityAdapter.js:57-72): round-robin only for an
+// enabled, non-empty pool with roundRobin set, otherwise fallback.
 func adapterView(name string, enabled, roundRobin bool, pool []adapterPoolEntry) map[string]any {
 	strategy := "fallback"
-	if enabled && roundRobin {
+	if enabled && roundRobin && len(pool) > 0 {
 		strategy = "round-robin"
 	}
 	return map[string]any{"capability": name, "enabled": enabled, "roundRobin": roundRobin, "strategy": strategy, "pool": pool}
