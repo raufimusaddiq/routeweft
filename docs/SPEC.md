@@ -330,6 +330,20 @@ The Chat/Responses adapter maps both request and success-response directions,
 including incremental SSE, parallel tool-call identity, custom-tool wrappers,
 reasoning continuity, refusal and upstream usage details. Non-2xx upstream
 responses retain their status/body and normal fallback classification.
+The Messages adapter (`internal/protocol/anthropic`) covers the same ground for
+Messages clients and Messages providers: it maps both request and
+success-response directions, incremental SSE, tool-call identity, thinking
+blocks and finish reasons, and it composes with the Chat/Responses adapter
+through the hub, so a Messages client reaches Chat and Responses providers and
+a Chat or Responses client reaches Messages providers. A stream that ends before
+its terminal event, or carries an upstream error event, ends with a failure
+terminal in the client's own protocol (an error object then `[DONE]` for Chat,
+an `error` event for Messages) and never with a normal completion. The rules
+every leg shares (finish reasons, tool ids and names, reasoning text, usage
+shape) live in `internal/protocol/concerns`. Deliberate divergence from the pin: a translated Messages-to-Chat stream sets `stream_options.include_usage` so the usage is observable, unless the client set `stream_options` itself, in which case its value is forwarded. Native Chat is never modified. Where Routeweft deliberately differs
+from the pinned oracle, the difference and its reason are recorded in
+`docs/PARITY.md` §6.3.
+
 Native paths bypass these converters. Translated responses are bounded to
 32 MiB (body or total SSE input) with a 4 MiB SSE event/line bound. A truncated,
 malformed or oversized translated stream emits a failure terminal rather than

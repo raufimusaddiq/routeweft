@@ -9,7 +9,10 @@
 // oracle's translator directory by internal/parity.
 package hub
 
-import "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
+import (
+	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
+)
 
 // Hub is the pivot format.
 const Hub = openai.ChatProtocol
@@ -41,8 +44,13 @@ type Leg struct {
 }
 
 // legs lists every implemented conversion. Chat and Responses are converted
-// directly in both directions (translate*.go in internal/protocol/openai).
+// directly in both directions (translate*.go in internal/protocol/openai), and
+// so are Chat and Messages (internal/protocol/anthropic).
 var legs = []Leg{
+	{anthropic.MessagesProtocol, openai.ChatProtocol, Request},
+	{openai.ChatProtocol, anthropic.MessagesProtocol, Request},
+	{anthropic.MessagesProtocol, openai.ChatProtocol, Response},
+	{openai.ChatProtocol, anthropic.MessagesProtocol, Response},
 	{openai.ChatProtocol, openai.ResponsesProtocol, Request},
 	{openai.ResponsesProtocol, openai.ChatProtocol, Request},
 	{openai.ResponsesProtocol, openai.ChatProtocol, Response},

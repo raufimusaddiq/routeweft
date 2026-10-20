@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	clineprovider "github.com/raufimusaddiq/routeweft/internal/providers/cline"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
@@ -87,6 +88,13 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 					translated.Headers = http.Header{}
 				}
 				for name, values := range openAIProviderHeaders(provider) {
+					translated.Headers[name] = values
+				}
+			} else if plan.TargetProtocol == anthropicadapter.MessagesProtocol {
+				if translated.Headers == nil {
+					translated.Headers = http.Header{}
+				}
+				for name, values := range anthropicHeaders(r, provider) {
 					translated.Headers[name] = values
 				}
 			}
