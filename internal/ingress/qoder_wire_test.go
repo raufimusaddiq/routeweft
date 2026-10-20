@@ -3,17 +3,22 @@ package ingress
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/routing"
+	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
-func TestQoderDispatchSignsFinalRequest(t *testing.T) {
+// The synthetic Chat route exercises signing while the production Qoder conversion leg is absent.
+func TestQoderDispatchSeamSignsFinalRequest(t *testing.T) {
 	up := newRecorder(t)
 	ref := routing.ProviderRef{ProviderID: "qoder", Protocol: "openai-chat", BaseURL: up.srv.URL + "/algo/final", APIToken: "fixture-token", UpstreamModel: "upstream-model",
-		Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{UserID: "fixture-user", MachineID: "stored-machine"}}}
+		Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{UserID: "fixture-user", MachineID: " \tstored-machine \n"}}}
 	out := send(t, ref, "/v1/chat/completions", chatBody)
 	if out.Code != 200 {
 		t.Fatalf("status %d %s", out.Code, out.Body)
@@ -60,7 +65,7 @@ func TestQoderMissingIdentityFailsBeforeNetwork(t *testing.T) {
 	for _, missing := range []string{"machineId", "userId", "token"} {
 		t.Run(missing, func(t *testing.T) {
 			up := newRecorder(t)
-			ref := routing.ProviderRef{ProviderID: "qoder", Protocol: "openai-chat", BaseURL: up.srv.URL, APIToken: "fixture-token",
+			ref := routing.ProviderRef{ProviderID: "qoder", Protocol: "openai-chat", BaseURL: up.srv.URL, APIToken: "fixture-token", ConnectionID: "qoder-account",
 				Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{UserID: "fixture-user", MachineID: "stored-machine"}}}
 			switch missing {
 			case "machineId":
@@ -70,9 +75,19 @@ func TestQoderMissingIdentityFailsBeforeNetwork(t *testing.T) {
 			case "token":
 				ref.APIToken = ""
 			}
-			out := send(t, ref, "/v1/chat/completions", chatBody)
-			if out.Code < 400 {
-				t.Fatalf("missing %s accepted: %d", missing, out.Code)
+			state := runtime.NewState()
+			mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, State: state,
+				ProviderResolver: func(*runtime.RuntimeSnapshot, string) (routing.ProviderRef, bool) { return ref, true },
+			})
+			before := time.Now()
+			out := httptest.NewRecorder()
+			bearer(mux, key).ServeHTTP(out, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(chatBody)))
+			if out.Code != http.StatusServiceUnavailable || !strings.Contains(out.Body.String(), "credentials_unavailable") {
+				t.Fatalf("missing %s: status %d, body %s", missing, out.Code, out.Body)
+			}
+			until, cooling := state.CooldownUntil(ref.ConnectionID, time.Now())
+			if !cooling || until.Before(before.Add(2*time.Minute)) || until.After(time.Now().Add(2*time.Minute)) {
+				t.Fatalf("missing %s did not get the auth-refresh cooldown: %s", missing, until)
 			}
 			if missing == "machineId" && (!strings.Contains(out.Body.String(), "machineId") || !strings.Contains(out.Body.String(), "re-run Qoder sign-in")) {
 				t.Fatalf("missing recovery instruction: %s", out.Body)

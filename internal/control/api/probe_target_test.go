@@ -65,10 +65,6 @@ func TestProbesTakeServingsTargetAndHeaders(t *testing.T) {
 		wantHeaders               map[string]string
 		wantNoHeaders             []string
 	}{
-		{"qoder signs the resolved probe URL", "qoder", "openai-chat",
-			routing.ProviderSettings{UserID: "fixture-user", MachineID: "stored-machine"},
-			"https://api3.qoder.sh/chat/completions",
-			map[string]string{"Cosy-User": "fixture-user", "Cosy-Machineid": "stored-machine", "Cosy-Sigpath": "/chat/completions"}, nil},
 		{"azure deployment url and api-key", "azure", "openai-chat",
 			routing.ProviderSettings{AzureEndpoint: "https://acme.openai.azure.com/", Deployment: "d1", APIVersion: "2025-01-01", Organization: "org-1"},
 			"https://acme.openai.azure.com/openai/deployments/d1/chat/completions?api-version=2025-01-01",
@@ -253,5 +249,19 @@ func TestEveryProbeBodyIsFinalized(t *testing.T) {
 	}
 	if checked < 100 {
 		t.Fatalf("only %d probe bodies checked; the table is not exercising the catalog", checked)
+	}
+}
+
+func TestQoderProbeIsUnavailableUntilConversionLegExists(t *testing.T) {
+	catalog, _ := registry.NewBuiltinCatalog()
+	spec, _ := catalog.Lookup("qoder")
+	h, calls := recordingHandler(t)
+	node, connection := builtinConnection("qoder", routing.ProviderSettings{UserID: "fixture-user", MachineID: "stored-machine"}, credentials.AuthOAuth)
+	if len(node.Transports) != 1 || node.Transports[0] != string(registry.TransportQoder) {
+		t.Fatalf("qoder transports changed: %v", node.Transports)
+	}
+	result := h.testProviderModel(context.Background(), connection, node, spec, node.Transports[0], "model-x", time.Second)
+	if result.OK || result.Error != "model probe is not implemented for this specialized provider transport" || len(calls()) != 0 {
+		t.Fatalf("qoder probe unexpectedly reached dispatch: %+v, calls %v", result, calls())
 	}
 }

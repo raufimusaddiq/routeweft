@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -294,23 +295,15 @@ func TestHookRefusalIsATargetError(t *testing.T) {
 	}
 }
 
-func TestRequestHeadersLeaveExistingHooksUnchanged(t *testing.T) {
-	for _, id := range providerIDs() {
+func TestRequestHeaderHooksAreExactlyTheDeclaredProviders(t *testing.T) {
+	var got []string
+	for _, id := range Registered() {
 		if For(id).RequestHeaders != nil {
-			continue
+			got = append(got, id)
 		}
-		provider := ref(id, "openai-chat", "https://example.invalid", routing.ProviderSettings{})
-		request, err := http.NewRequest(http.MethodPost, provider.BaseURL+"/chat/completions", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		request.Header = OpenAIHeaders(provider)
-		before := request.Header.Clone()
-		if err := ApplyRequestHeaders(provider, request, []byte(`{}`)); err != nil {
-			t.Fatalf("%s: %v", id, err)
-		}
-		if !reflect.DeepEqual(request.Header, before) {
-			t.Errorf("%s: body-aware hook changed existing headers", id)
-		}
+	}
+	sort.Strings(got)
+	if want := []string{"qoder"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("request header hooks %v, want %v", got, want)
 	}
 }

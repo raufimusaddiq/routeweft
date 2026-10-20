@@ -289,12 +289,18 @@ func vertexPartnerTarget(provider routing.ProviderRef) (Target, error) {
 	return Target{Endpoint: "v1/projects/" + project + "/locations/global/endpoints/openapi/chat/completions"}, nil
 }
 
+// CredentialError requires refreshing or reconnecting the selected account.
+type CredentialError struct{ Err error }
+
+func (e *CredentialError) Error() string { return e.Err.Error() }
+func (e *CredentialError) Unwrap() error { return e.Err }
+
 // ApplyRequestHeaders runs after body normalization and URL resolution so signatures cover the wire bytes.
 func ApplyRequestHeaders(provider routing.ProviderRef, request *http.Request, body []byte) error {
 	if hook := For(provider.ProviderID).RequestHeaders; hook != nil {
 		headers, err := hook(provider, body, request.URL.String())
 		if err != nil {
-			return &TargetError{Err: err}
+			return err
 		}
 		set(request.Header, headers)
 	}

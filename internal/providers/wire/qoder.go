@@ -277,11 +277,16 @@ func cosyPublicKey() (*rsa.PublicKey, error) {
 
 func qoderHeaders(provider routing.ProviderRef, body []byte, requestURL string) (map[string]string, error) {
 	settings := provider.Connection.Settings
-	if strings.TrimSpace(settings.MachineID) == "" {
-		return nil, fmt.Errorf("qoder: %w; re-run Qoder sign-in to create a connection with machineId", ErrCosyMachineID)
+	machineID := strings.TrimSpace(settings.MachineID)
+	if machineID == "" {
+		return nil, &CredentialError{Err: fmt.Errorf("qoder: %w; re-run Qoder sign-in to create a connection with machineId", ErrCosyMachineID)}
 	}
-	return BuildCosyHeaders(body, requestURL, CosyCredentials{
+	headers, err := BuildCosyHeaders(body, requestURL, CosyCredentials{
 		UserID: strings.TrimSpace(settings.UserID), AuthToken: strings.TrimSpace(provider.APIToken),
-		Name: provider.Connection.Name, Email: settings.Email, MachineID: settings.MachineID,
+		Name: provider.Connection.Name, Email: settings.Email, MachineID: machineID,
 	})
+	if errors.Is(err, ErrCosyUserID) || errors.Is(err, ErrCosyToken) {
+		return nil, &CredentialError{Err: err}
+	}
+	return headers, err
 }
