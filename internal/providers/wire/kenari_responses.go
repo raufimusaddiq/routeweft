@@ -405,7 +405,7 @@ type eventRewriter struct {
 	names     map[string]bool
 	converted map[string]bool // item ids announced as custom_tool_call
 	announced map[string]bool // item ids of every function_call announced by an output_item event
-	held      []heldDelta     // argument deltas of items never announced, until their .done says what they are
+	held      []heldDelta     // argument deltas awaiting an output_item event or arguments .done
 	heldSize  int
 	sequence  int64 // last sequence_number relayed, for the injected terminal event
 	pending   []byte
@@ -471,6 +471,7 @@ func (r *eventRewriter) next() ([]byte, error) {
 					rewritten = append(rewritten, delta.event...)
 				}
 				r.held = nil
+				r.heldSize = 0
 			}
 			return rewritten, err
 		}
@@ -497,7 +498,7 @@ func (r *eventRewriter) noteSequence(event []byte) {
 
 func (r *eventRewriter) rewrite(event []byte) ([]byte, error) {
 	r.noteSequence(event)
-	if !bytes.Contains(event, []byte("function_call")) {
+	if len(r.held) == 0 && !bytes.Contains(event, []byte("function_call")) {
 		return event, nil
 	}
 	var name string
@@ -510,6 +511,10 @@ func (r *eventRewriter) rewrite(event []byte) ([]byte, error) {
 		case bytes.HasPrefix(line, []byte("data:")):
 			data = append(data, bytes.TrimSpace(line[len("data:"):]))
 		}
+	}
+	if len(data) == 1 && bytes.Equal(data[0], []byte("[DONE]")) {
+		r.held, r.heldSize = nil, 0
+		return event, nil
 	}
 	var payload map[string]json.RawMessage
 	if len(data) == 0 || json.Unmarshal(bytes.Join(data, []byte("\n")), &payload) != nil || payload == nil {
@@ -554,11 +559,13 @@ func (r *eventRewriter) rewrite(event []byte) ([]byte, error) {
 		if !ok {
 			if original != "" {
 				r.announced[original] = true
+				return append(event, r.takeHeld(original)...), nil
 			}
 			return event, nil
 		}
 		if original != "" {
 			r.converted[original] = true
+			r.takeHeld(original)
 		}
 		payload["item"], _ = json.Marshal(rewritten)
 		return emit(name)
@@ -572,9 +579,7 @@ func (r *eventRewriter) rewrite(event []byte) ([]byte, error) {
 		if id == "" || r.announced[id] {
 			return event, nil
 		}
-		// No output_item event named this item, so nothing says whether it is a
-		// converted call. Hold the delta until the .done (which carries the tool
-		// name) decides: dropped for a converted call, released for any other.
+		// An output_item event or arguments .done must identify the tool before its deltas can be relayed.
 		if r.heldSize+len(event) > maxResponsesEvent {
 			return nil, ErrResponsesEventTooLarge
 		}
@@ -602,6 +607,8 @@ func (r *eventRewriter) rewrite(event []byte) ([]byte, error) {
 		}
 		return emit(customDone)
 	case "response.completed", "response.done", "response.incomplete", "response.failed":
+		// Unpaired deltas may belong to converted tools and cannot outlive the terminal event.
+		r.held, r.heldSize = nil, 0
 		// response.incomplete is what kenari sends on max_output_tokens, when a
 		// call may be half emitted; it carries the same output as completed.
 		var response map[string]json.RawMessage
