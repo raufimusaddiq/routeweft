@@ -65,6 +65,10 @@ func TestProbesTakeServingsTargetAndHeaders(t *testing.T) {
 		wantHeaders               map[string]string
 		wantNoHeaders             []string
 	}{
+		{"qoder signs the resolved probe URL", "qoder", "openai-chat",
+			routing.ProviderSettings{UserID: "fixture-user", MachineID: "stored-machine"},
+			"https://api3.qoder.sh/chat/completions",
+			map[string]string{"Cosy-User": "fixture-user", "Cosy-Machineid": "stored-machine", "Cosy-Sigpath": "/chat/completions"}, nil},
 		{"azure deployment url and api-key", "azure", "openai-chat",
 			routing.ProviderSettings{AzureEndpoint: "https://acme.openai.azure.com/", Deployment: "d1", APIVersion: "2025-01-01", Organization: "org-1"},
 			"https://acme.openai.azure.com/openai/deployments/d1/chat/completions?api-version=2025-01-01",

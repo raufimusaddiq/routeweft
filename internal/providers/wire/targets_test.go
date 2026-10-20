@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -290,5 +291,26 @@ func TestHookRefusalIsATargetError(t *testing.T) {
 	var refused *TargetError
 	if !errors.As(err, &refused) {
 		t.Fatalf("want *TargetError, got %T %v", err, err)
+	}
+}
+
+func TestRequestHeadersLeaveExistingHooksUnchanged(t *testing.T) {
+	for _, id := range providerIDs() {
+		if For(id).RequestHeaders != nil {
+			continue
+		}
+		provider := ref(id, "openai-chat", "https://example.invalid", routing.ProviderSettings{})
+		request, err := http.NewRequest(http.MethodPost, provider.BaseURL+"/chat/completions", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header = OpenAIHeaders(provider)
+		before := request.Header.Clone()
+		if err := ApplyRequestHeaders(provider, request, []byte(`{}`)); err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		if !reflect.DeepEqual(request.Header, before) {
+			t.Errorf("%s: body-aware hook changed existing headers", id)
+		}
 	}
 }

@@ -12,7 +12,7 @@ import (
 type ProviderSettings struct {
 	ProfileARN, AuthMethod                                              string
 	BaseURL, AzureEndpoint, APIVersion, Deployment, Organization        string
-	Region, WorkspaceID, DeviceID, AgentID                              string
+	Region, WorkspaceID, DeviceID, MachineID, AgentID                   string
 	Email, UserID, SystemID, OrganizationID, DefaultOrganizationID, UID string
 	OrgID                                                               string // Kilo Code organization (stored as orgId)
 	ProjectID                                                           string // Vertex partner GCP project (stored as projectId)

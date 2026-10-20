@@ -2,6 +2,7 @@ package wire
 
 import (
 	"errors"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -76,7 +77,7 @@ func (t Target) URL(validate func(string) (*url.URL, error)) (*url.URL, error) {
 	return base, nil
 }
 
-// TargetError is a provider Target hook refusing a route: a required setting is
+// TargetError is a provider hook refusing a route: a required setting is
 // missing, or the model has no endpoint on the wire the route carries. It says
 // nothing about the account's health or the request, so a caller falls through to
 // the next candidate and, if none serves, reports Err to the operator.
@@ -286,4 +287,16 @@ func vertexPartnerTarget(provider routing.ProviderRef) (Target, error) {
 		return Target{}, errors.New("vertex-partner projectId is not a valid GCP project id")
 	}
 	return Target{Endpoint: "v1/projects/" + project + "/locations/global/endpoints/openapi/chat/completions"}, nil
+}
+
+// ApplyRequestHeaders runs after body normalization and URL resolution so signatures cover the wire bytes.
+func ApplyRequestHeaders(provider routing.ProviderRef, request *http.Request, body []byte) error {
+	if hook := For(provider.ProviderID).RequestHeaders; hook != nil {
+		headers, err := hook(provider, body, request.URL.String())
+		if err != nil {
+			return &TargetError{Err: err}
+		}
+		set(request.Header, headers)
+	}
+	return nil
 }

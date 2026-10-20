@@ -163,3 +163,14 @@ func TestCosyUserInfoCiphertextIsPinned(t *testing.T) {
 		t.Fatalf("info %s, want %s", got, want)
 	}
 }
+
+func BenchmarkCosyHeaders(b *testing.B) {
+	body := []byte(`{"model":"fixture","messages":[{"role":"user","content":"hi"}]}`)
+	creds := CosyCredentials{UserID: "fixture-user", AuthToken: "fixture-token", MachineID: "stored-machine"}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, err := BuildCosyHeaders(body, "https://example.invalid/algo/api/chat", creds); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

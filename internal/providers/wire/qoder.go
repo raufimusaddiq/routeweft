@@ -20,12 +20,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-)
 
-// This file is the pure COSY request builder for qoder
-// (open-sse/shared/qoder/cosy.js at the pin). It is NOT wired: nothing in the
-// hook table calls it, because the signature covers the exact outbound body and
-// URL and the Hook.OpenAIHeaders shape sees neither. See docs/PARITY.md.
+	"github.com/raufimusaddiq/routeweft/internal/routing"
+)
 
 // COSY header constants (open-sse/shared/qoder/constants.js:67-74). The gateway
 // matches these against the values used at signing time.
@@ -276,4 +273,15 @@ func cosyPublicKey() (*rsa.PublicKey, error) {
 		return nil, errors.New("cosy: public key is not RSA")
 	}
 	return pub, nil
+}
+
+func qoderHeaders(provider routing.ProviderRef, body []byte, requestURL string) (map[string]string, error) {
+	settings := provider.Connection.Settings
+	if strings.TrimSpace(settings.MachineID) == "" {
+		return nil, fmt.Errorf("qoder: %w; re-run Qoder sign-in to create a connection with machineId", ErrCosyMachineID)
+	}
+	return BuildCosyHeaders(body, requestURL, CosyCredentials{
+		UserID: strings.TrimSpace(settings.UserID), AuthToken: strings.TrimSpace(provider.APIToken),
+		Name: provider.Connection.Name, Email: settings.Email, MachineID: settings.MachineID,
+	})
 }

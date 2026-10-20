@@ -594,6 +594,10 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 		result.Error = "provider authentication mode is not supported for model probes"
 		return result
 	}
+	if err := wire.ApplyRequestHeaders(route, request, encoded); err != nil {
+		result.Error = err.Error()
+		return result
+	}
 	client := http.Client{Timeout: timeout, Transport: h.probeTransport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	if _, native := h.opts.DiscoveryClient.HTTP.(*http.Client); !native {
 		client.Transport = roundTripperFromClient(h.opts.DiscoveryClient.HTTP)
