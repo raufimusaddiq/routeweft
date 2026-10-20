@@ -25,8 +25,8 @@ var trackedURLGaps = map[string]string{
 	// Missing wires, not URL defects: Routeweft declares no such transport.
 	"qoder/openai-chat": "#115 cluster G: qoder has its own envelope wire; the registry URL is not an OpenAI Chat endpoint",
 	// The registry baseUrl is only a base; the oracle executor builds the sent URL.
-	"opencode/openai-chat":       "#115 cluster B: executor builds the URL (opencode.js:16)",
-	"vertex-partner/openai-chat": "#115 cluster C: executor builds the URL (vertex-partner.js:21)",
+	"opencode/openai-chat":       "#115 PR-E2: registry base is the host only; wire.opencodeTarget adds zen/v1/chat/completions (executors/opencode.js:471-476)",
+	"vertex-partner/openai-chat": "#115 PR-E2: registry base is the host only; wire.vertexPartnerTarget adds the settings-supplied project path (executors/vertex.js:76-81)",
 	"zed/openai-chat":            "#115 cluster B: executor builds the URL (zed.js:25)",
 }
 

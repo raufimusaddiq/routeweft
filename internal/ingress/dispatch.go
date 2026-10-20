@@ -168,6 +168,15 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			}
 			request, err := h.newUpstreamRequest(r, snapshot, provider, outbound.Endpoint, outbound.Body, outbound.Headers)
 			if err != nil {
+				var refused *wire.TargetError
+				if errors.As(err, &refused) {
+					// The provider's hook refused this route (a missing setting, a model
+					// served on another wire): the next candidate may still serve.
+					if translationErr == nil {
+						translationErr = &dispatchError{502, "request_translation_failed", refused.Error()}
+					}
+					break
+				}
 				return nil, provider, &dispatchError{502, "upstream_configuration_error", "provider URL or endpoint is not allowed"}
 			}
 			used++
