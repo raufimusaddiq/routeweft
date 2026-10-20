@@ -260,3 +260,24 @@ func TestMessagesRequestToChatKeepsClientStreamOptions(t *testing.T) {
 		t.Fatalf("the client's stream_options must win: %s", got)
 	}
 }
+
+// A request whose only content the conversion would drop must still be a valid
+// Chat request: the url image is forwarded, and an otherwise empty list keeps a
+// turn.
+func TestMessagesRequestToChatNeverProducesAnEmptyMessageList(t *testing.T) {
+	got, err := MessagesRequestToChat([]byte(`{"model":"m","max_tokens":16,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"url","url":"https://x/y.png"}}]}]}`), "m", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	equalJSON(t, got, `{"model":"m","max_tokens":16,"stream":false,"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://x/y.png"}}]}]}`)
+	got, err = MessagesRequestToChat([]byte(`{"model":"m","messages":[{"role":"user","content":[{"type":"thinking","thinking":"x"}]}]}`), "m", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	equalJSON(t, got, `{"model":"m","stream":false,"messages":[{"role":"user","content":[{"type":"text","text":""}]}]}`)
+	body, _ := concerns.WireObject([]byte(`{"model":"m","messages":[{"role":"system","content":"only a system prompt"}]}`))
+	encoded, _, err := ChatRequestToMessages(body, "m", false, true, false)
+	if err != nil || !strings.Contains(string(encoded), `"role":"user"`) {
+		t.Fatalf("a Chat request with no turns still needs one for Anthropic: %s %v", encoded, err)
+	}
+}

@@ -183,8 +183,8 @@ func convertMessage(message map[string]any) []any {
 			}
 			parts = append(parts, part)
 		case "image":
-			if source := concerns.Object(block["source"]); concerns.Text(source["type"]) == "base64" {
-				parts = append(parts, imagePart(source))
+			if part := imagePart(concerns.Object(block["source"])); part != nil {
+				parts = append(parts, part)
 			}
 		case "tool_use":
 			input := block["input"]
@@ -235,8 +235,19 @@ func convertMessage(message map[string]any) []any {
 	return nil
 }
 
+// imagePart converts an Anthropic image source. A url source is forwarded as is,
+// because Chat takes remote URLs natively; the pin drops it
+// (claude-to-openai.js:177-186), which can leave a request with no content.
 func imagePart(source map[string]any) map[string]any {
-	return map[string]any{"type": "image_url", "image_url": map[string]any{"url": dataURI(source["media_type"], source["data"])}}
+	switch concerns.Text(source["type"]) {
+	case "base64":
+		return map[string]any{"type": "image_url", "image_url": map[string]any{"url": dataURI(source["media_type"], source["data"])}}
+	case "url":
+		if url := concerns.Text(source["url"]); url != "" {
+			return map[string]any{"type": "image_url", "image_url": map[string]any{"url": url}}
+		}
+	}
+	return nil
 }
 
 // toolResultContent is claude-to-openai.js:200-218. The Chat `tool` role is
@@ -251,8 +262,8 @@ func toolResultContent(content any) (string, []any) {
 			block := concerns.Object(raw)
 			switch concerns.Text(block["type"]) {
 			case "image":
-				if source := concerns.Object(block["source"]); concerns.Text(source["type"]) == "base64" {
-					images = append(images, imagePart(source))
+				if part := imagePart(concerns.Object(block["source"])); part != nil {
+					images = append(images, part)
 				}
 			case "text":
 				texts = append(texts, block["text"])

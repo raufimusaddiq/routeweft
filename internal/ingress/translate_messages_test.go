@@ -294,3 +294,49 @@ func TestChainStreamsReleasesAStalledFirstLeg(t *testing.T) {
 		t.Fatal("chainStreams did not return while the first leg was blocked on the source")
 	}
 }
+
+// A candidate whose wire cannot express the request is skipped, not fatal: the
+// request succeeds on the next candidate whatever the order.
+func TestTranslationFailureMovesToTheNextCandidate(t *testing.T) {
+	var contacted []string
+	var mu sync.Mutex
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		contacted = append(contacted, r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, upstreamBodies[openai.ResponsesProtocol][false])
+	}))
+	defer upstream.Close()
+	manager := newManager(t)
+	_, key, _ := manager.CreateAPIKey(context.Background(), "test")
+	mux := http.NewServeMux()
+	New(manager, Options{
+		AllowPrivateUpstreams: true,
+		TranslateMessages: func(request *anthropic.MessagesRequest, target string) (ChatTranslation, error) {
+			if target == openai.ChatProtocol {
+				return ChatTranslation{}, errors.New("cannot express this request for Chat")
+			}
+			return TranslateMessages(request, target)
+		},
+		Candidates: func(*runtime.RuntimeSnapshot, string) ([]routing.Account, bool) {
+			return []routing.Account{{ID: "chat", Enabled: true}, {ID: "responses", Enabled: true}}, true
+		},
+		AccountProvider: func(_ *runtime.RuntimeSnapshot, _, account, _ string) (routing.ProviderRef, bool) {
+			protocol := openai.ChatProtocol
+			if account == "responses" {
+				protocol = openai.ResponsesProtocol
+			}
+			return routing.ProviderRef{ProviderID: "test", ConnectionID: account, BaseURL: upstream.URL, Protocol: protocol}, true
+		},
+	}).Attach(mux)
+	r := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(fmt.Sprintf(clientRequests[anthropic.MessagesProtocol].body, false)))
+	r.Header.Set("Authorization", "Bearer "+key)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	mu.Lock()
+	defer mu.Unlock()
+	if w.Code != 200 || len(contacted) != 1 || contacted[0] != "/responses" {
+		t.Fatalf("status %d contacted %v body %s", w.Code, contacted, w.Body)
+	}
+}

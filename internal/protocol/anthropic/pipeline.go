@@ -45,6 +45,11 @@ func MessagesRequestToChat(raw []byte, model string, stream bool) ([]byte, error
 		chat["stream_options"] = map[string]any{"include_usage": true}
 	}
 	openai.FilterChatBody(chat, false)
+	if len(concerns.Items(chat["messages"])) == 0 {
+		// Nothing survived conversion. An empty list is not a valid Chat request
+		// and must not be sent as if it were one.
+		chat["messages"] = []any{map[string]any{"role": "user", "content": []any{map[string]any{"type": "text", "text": ""}}}}
+	}
 	return json.Marshal(chat)
 }
 
@@ -62,7 +67,13 @@ func ChatRequestToMessages(body map[string]any, model string, stream, repair, cl
 		concerns.FixMissingToolResponses(body)
 	}
 	result, names := ChatToMessages(body, model, stream)
-	result["messages"] = EnsureTrailingUserTurn(result["messages"].([]any), clientEndsAssistant)
+	messages := result["messages"].([]any)
+	if len(messages) == 0 {
+		// Anthropic needs at least one message; say so with the pin's own
+		// placeholder instead of sending an empty list.
+		messages = append(messages, map[string]any{"role": "user", "content": []any{map[string]any{"type": "text", "text": TrailingUserPlaceholder}}})
+	}
+	result["messages"] = EnsureTrailingUserTurn(messages, clientEndsAssistant)
 	encoded, err := json.Marshal(result)
 	return encoded, names, err
 }

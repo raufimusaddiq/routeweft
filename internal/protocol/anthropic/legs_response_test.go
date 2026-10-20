@@ -521,3 +521,21 @@ func TestStreamFailureWithNonObjectPayload(t *testing.T) {
 		t.Fatalf("%q %q", chat.String(), messages.String())
 	}
 }
+
+// Nothing in must never be a 200 with nothing out.
+func TestEmptyChatResponsesAreFailuresNotSuccesses(t *testing.T) {
+	var out bytes.Buffer
+	if err := ChatStreamToMessages(context.Background(), strings.NewReader("data: [DONE]\n\n"), &out); err == nil {
+		t.Fatal("an empty stream must return an error")
+	}
+	if names := eventNames(out.String()); len(names) != 1 || names[0] != "error" {
+		t.Fatalf("an empty stream must end with an error event: %v", names)
+	}
+	if _, err := ChatResponseToMessages([]byte(`{"id":"x","choices":[]}`)); err == nil {
+		t.Fatal("a body with no choices is not a Messages response")
+	}
+	native := `{"id":"m","type":"message","content":[]}`
+	if got, err := ChatResponseToMessages([]byte(native)); err != nil || string(got) != native {
+		t.Fatalf("a body that already is a Messages response passes: %s %v", got, err)
+	}
+}

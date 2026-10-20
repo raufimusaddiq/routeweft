@@ -99,7 +99,11 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 		}
 		outbound, err := prepare(provider)
 		if err != nil {
-			return nil, provider, &dispatchError{502, "request_translation_failed", err.Error()}
+			// The request cannot be expressed for this candidate's wire, which says
+			// nothing about the account's health: try the next candidate rather
+			// than let candidate order decide whether the request succeeds.
+			lastErr = &dispatchError{502, "request_translation_failed", err.Error()}
+			continue
 		}
 		for retry := 0; retry < 2 && used < maxAccountAttempts; retry++ {
 			if err := r.Context().Err(); err != nil {

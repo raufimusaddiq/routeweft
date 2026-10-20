@@ -840,11 +840,13 @@ reviewed choice that needs owner sign-off, and none is silent.
 | V8 | `utils/usageTracking.js:20-57,343-404`, `utils/stream.js:101-104,238-249,414-419`, `nonStreamingHandler.js:422` add 2000 tokens to real prompt usage and replace missing usage with a chars/4 estimate, in what the client receives. | Neither. A stream without a usage chunk stays `usage_observed=0`. | An estimate or buffer is not a measurement (SPEC 21.1). Posted on #119 for a decision. |
 | V9 | No `stream_options` on a translated stream (only `executors/iflow.js:100-102` injects it). | `stream_options.include_usage` is set on a translated Messages to Chat stream unless the client set `stream_options` itself (owner decision, #119). | `ResponsesToChat` already does this; without it the Messages client gets zero usage. Native Chat is untouched (#122). |
 | V10 | `claude-to-openai.js:12` stamps a new `created` on every chunk. | One `created` per stream. | The OpenAI contract. |
+| V11 | `claude-to-openai.js:177-186` drops an image whose source is a `url`; a request left with no content becomes `messages: []`. | A `url` image is forwarded as an `image_url`, and a conversion that would leave no message keeps one empty text turn (`"Continue."` toward a Messages provider). | Chat takes remote URLs natively; an empty list is an invalid request that would be sent upstream or rejected as a 502 for a request Anthropic accepts. |
 
 Pin behavior mirrored on purpose, though it looks like a defect: a `developer`
 message is dropped by the Chat to Messages leg (`openai-to-claude.js:204-299`);
-a Messages image with a `url` source is dropped by the Messages to Chat leg
-(`claude-to-openai.js:177-186`); a non-streamed Messages text block has a
+a Chat stream that reports no usage is closed with a zero usage object because
+Messages requires one (`openai-to-claude.js:250`); non-streamed tool arguments
+that are not JSON become `{}` (`nonstream-to-claude.js:5-13`); a non-streamed Messages text block has a
 leading or trailing markdown JSON fence stripped (`nonStreamingHandler.js:277`);
 `chatcmpl-` ids are kept, only `chatcmpl_` and `resp_` become `msg_`
 (`nonstream-to-claude.js:18`); a negative `input_tokens` is not clamped; tool-id

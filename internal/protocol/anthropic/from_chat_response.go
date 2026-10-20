@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -64,6 +65,11 @@ func ChatStreamToMessages(ctx context.Context, src io.Reader, dst io.Writer) err
 	}
 	err := concerns.ReadEvents(ctx, src, func(kind string, chunk map[string]any) (bool, error) {
 		if kind == "[DONE]" {
+			if !state.started {
+				// The provider said it was done without saying anything. That is a
+				// failed request, not an empty answer.
+				return false, io.ErrUnexpectedEOF
+			}
 			return true, closeMessage()
 		}
 		if failure := concerns.Object(chunk["error"]); failure != nil {
@@ -316,7 +322,10 @@ func ChatResponseToMessages(body []byte) ([]byte, error) {
 	}
 	choices := concerns.Items(response["choices"])
 	if len(choices) == 0 {
-		return body, nil
+		if concerns.Text(response["type"]) == "message" {
+			return body, nil // already a Messages body
+		}
+		return nil, errors.New("upstream response has no choices")
 	}
 	choice := concerns.Object(choices[0])
 	message := concerns.Object(choice["message"])
