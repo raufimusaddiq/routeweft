@@ -80,26 +80,31 @@ func TestDispatchEndpointFallback(t *testing.T) {
 						if fallback && !exhaust && len(hosts) == len(want) {
 							code = 200
 						}
-						b := &endpointBody{Reader: strings.NewReader(`{"error":"fixture"}`)}
+						b := &endpointBody{Reader: strings.NewReader(`{"error":"fixture","host":"` + r.URL.Hostname() + `"}`)}
 						bodies = append(bodies, b)
-						return &http.Response{StatusCode: code, Header: make(http.Header), Body: b}, nil
+						return &http.Response{StatusCode: code, Header: http.Header{"X-Endpoint": []string{r.URL.Hostname()}}, Body: b}, nil
 					})}
 					r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 					r.Header.Set("Authorization", "Bearer "+key)
 					response, _, err := h.dispatchAttempts(r, snapshot, "kiro/test", "openai-chat", false, false, func(p routing.ProviderRef) (ChatTranslation, error) {
 						return ChatTranslation{Endpoint: "ignored", Body: []byte(`{"conversationState":{"future":true}}`), Headers: openAIProviderHeaders(p)}, nil
 					})
-					if fallback && exhaust {
-						var failure *dispatchError
-						if response != nil || !errors.As(err, &failure) || failure.code != "kiro_endpoints_exhausted" {
-							t.Fatalf("exhaustion: response %v error %v", response, err)
-						}
-					} else {
-						if err != nil || response == nil {
-							t.Fatalf("response %v error %v", response, err)
-						}
-						response.Body.Close()
+					if err != nil || response == nil {
+						t.Fatalf("response %v error %v", response, err)
 					}
+					wantStatus := status
+					if fallback && !exhaust {
+						wantStatus = 200
+					}
+					if response.StatusCode != wantStatus {
+						t.Fatalf("status %d, want %d", response.StatusCode, wantStatus)
+					}
+					body, readErr := io.ReadAll(response.Body)
+					response.Body.Close()
+					if readErr != nil || string(body) != `{"error":"fixture","host":"`+want[len(want)-1]+`"}` || response.Header.Get("X-Endpoint") != want[len(want)-1] {
+						t.Fatalf("body %q: %v", body, readErr)
+					}
+
 					if !reflect.DeepEqual(hosts, want) {
 						t.Fatalf("hosts %v, want %v", hosts, want)
 					}
@@ -118,10 +123,11 @@ func TestDispatchEndpointFallback(t *testing.T) {
 }
 
 func TestDispatchEndpointGlobalBoundAndCancellation(t *testing.T) {
-	for _, scenario := range []string{"global bound", "cancellation", "same-account retry"} {
+	for _, scenario := range []string{"global bound", "cancellation", "same-account retry", "later account refused"} {
 		t.Run(scenario, func(t *testing.T) {
 			cancelAfterFirst := scenario == "cancellation"
 			retryFirst := scenario == "same-account retry"
+			refuseLater := scenario == "later account refused"
 			manager := newManager(t)
 			_, key, err := manager.CreateAPIKey(context.Background(), "bound test")
 			if err != nil {
@@ -141,7 +147,11 @@ func TestDispatchEndpointGlobalBoundAndCancellation(t *testing.T) {
 					return []routing.Account{{ID: "a", Enabled: true}, {ID: "b", Enabled: true}, {ID: "c", Enabled: true}, {ID: "d", Enabled: true}}, true
 				},
 				AccountProvider: func(_ *runtime.RuntimeSnapshot, _, id, _ string) (routing.ProviderRef, bool) {
-					return routing.ProviderRef{ProviderID: "kiro", Protocol: "kiro", ConnectionID: id, APIToken: id, Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{AuthMethod: "api_key", BaseURL: "https://proxy.example"}}}, true
+					auth := "api_key"
+					if refuseLater && id != "a" {
+						auth = "external_idp"
+					}
+					return routing.ProviderRef{ProviderID: "kiro", Protocol: "kiro", ConnectionID: id, APIToken: id, Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{AuthMethod: auth, BaseURL: "https://proxy.example"}}}, true
 				},
 			})
 			hosts := []string{"proxy.example", "q.us-east-1.amazonaws.com", "codewhisperer.us-east-1.amazonaws.com", "runtime.us-east-1.kiro.dev"}
@@ -174,22 +184,33 @@ func TestDispatchEndpointGlobalBoundAndCancellation(t *testing.T) {
 			response, _, err := h.dispatchAttempts(r, snapshot, "kiro/test", "kiro", false, false, func(p routing.ProviderRef) (ChatTranslation, error) {
 				return ChatTranslation{Body: []byte(`{}`), Headers: openAIProviderHeaders(p)}, nil
 			})
-			if response != nil {
-				response.Body.Close()
-				t.Fatal("exhaustion returned a response")
-			}
 			want := 10
+			if refuseLater {
+				want = 4
+			}
 			if cancelAfterFirst {
 				want = 1
+				if response != nil {
+					response.Body.Close()
+					t.Fatal("cancelled request returned a response")
+				}
 				if !errors.Is(err, context.Canceled) {
 					t.Fatalf("cancellation: %v", err)
 				}
 			} else {
-				var failure *dispatchError
-				if !errors.As(err, &failure) || failure.code != "kiro_endpoints_exhausted" {
-					t.Fatalf("exhaustion: %v", err)
+				if err != nil || response == nil {
+					t.Fatalf("exhaustion: response %v error %v", response, err)
+				}
+				if response.StatusCode != 404 {
+					t.Fatalf("exhaustion status %d, want 404", response.StatusCode)
+				}
+				body, readErr := io.ReadAll(response.Body)
+				response.Body.Close()
+				if readErr != nil || string(body) != "not found" {
+					t.Fatalf("exhaustion body %q: %v", body, readErr)
 				}
 			}
+
 			if retryFirst && attemptsByAccount["Bearer a"] != 5 {
 				t.Fatalf("same-account retry bound: %v", attemptsByAccount)
 			}

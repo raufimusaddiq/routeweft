@@ -177,8 +177,18 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			if err := r.Context().Err(); err != nil {
 				return nil, provider, err
 			}
-			request, err := h.newUpstreamRequest(r, snapshot, provider, outbound.Endpoint, outbound.Body, outbound.Headers, endpointAttempt)
+			target, err := wire.ResolveTarget(provider, outbound.Endpoint, endpointAttempt)
+			var request *http.Request
+			if err == nil {
+				request, err = h.newUpstreamRequest(r, snapshot, provider, outbound.Endpoint, outbound.Body, outbound.Headers, target)
+			}
 			if err != nil {
+				if errors.Is(err, wire.ErrKiroEndpointsExhausted) {
+					if attemptResponse == nil {
+						failedAttempt(&dispatchError{502, "kiro_endpoints_exhausted", err.Error()}, nil, provider)
+					}
+					break
+				}
 				var credentialErr *wire.CredentialError
 				if errors.As(err, &credentialErr) {
 					h.recordClassification(provider.ConnectionID, routing.Classification{Outcome: routing.OutcomeAuthRefreshRequired}, time.Now())
@@ -221,18 +231,19 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				return response, provider, nil
 			}
 			if provider.ProviderID == "kiro" && (response.StatusCode == 401 || response.StatusCode == 403 || response.StatusCode == 404) {
-				response.Body.Close()
 				endpointAttempt++
-				_, nextErr := wire.ResolveTarget(provider, outbound.Endpoint, endpointAttempt)
-				if nextErr == nil && used < maxAccountAttempts {
+				if endpointAttempt < target.EndpointCount && used < maxAccountAttempts {
+					response.Body.Close()
 					// A host's auth rejection does not prove the credential is invalid on another surface.
 					continue
 				}
-				if nextErr != nil && !authFailureSeen && (response.StatusCode == 401 || response.StatusCode == 403) {
+				if endpointAttempt == target.EndpointCount && !authFailureSeen && (response.StatusCode == 401 || response.StatusCode == 403) {
 					authFailureSeen = true
 					h.recordClassification(provider.ConnectionID, routing.Classification{Outcome: routing.OutcomeAuthRefreshRequired}, time.Now())
 				}
-				failedAttempt(&dispatchError{502, "kiro_endpoints_exhausted", wire.ErrKiroEndpointsExhausted.Error()}, nil, provider)
+				kept := *response
+				kept.Header = response.Header.Clone()
+				failedAttempt(nil, &kept, provider)
 				break
 			}
 			prefix, readErr := io.ReadAll(io.LimitReader(response.Body, errorBodyPeek))

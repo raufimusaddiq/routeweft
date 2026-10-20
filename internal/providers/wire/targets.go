@@ -16,6 +16,7 @@ import (
 // decided; Query is encoded form values without the leading "?".
 type Target struct {
 	BaseURL, Endpoint, Query string
+	EndpointCount            int // Number of Kiro surfaces; zero for providers without endpoint fallback.
 }
 
 // NodeBase is the one rule for the base URL a connection is dialled at: the

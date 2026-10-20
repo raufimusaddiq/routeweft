@@ -126,5 +126,5 @@ func kiroEndpoint(provider routing.ProviderRef, index int) (Target, error) {
 	if index < 0 || index >= len(bases) {
 		return Target{}, &TargetError{Err: ErrKiroEndpointsExhausted}
 	}
-	return Target{BaseURL: bases[index], Endpoint: kiroOperation}, nil
+	return Target{BaseURL: bases[index], Endpoint: kiroOperation, EndpointCount: len(bases)}, nil
 }

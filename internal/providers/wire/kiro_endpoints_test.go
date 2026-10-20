@@ -21,7 +21,7 @@ func TestKiroEndpointOrderAndRegions(t *testing.T) {
 			want := []string{"https://q." + effective + ".amazonaws.com", "https://codewhisperer." + effective + ".amazonaws.com", "https://runtime.us-east-1.kiro.dev"}
 			for i, base := range want {
 				target, err := ResolveTarget(p, "ignored", i)
-				if err != nil || target.BaseURL != base || target.Endpoint != kiroOperation {
+				if err != nil || target.BaseURL != base || target.Endpoint != kiroOperation || target.EndpointCount != len(want) {
 					t.Fatalf("%s %s attempt %d: %+v %v", auth, region, i, target, err)
 				}
 				u, err := target.URL(transport.ValidatePublicURL)

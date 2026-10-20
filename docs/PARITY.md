@@ -1522,19 +1522,30 @@ SPEC 11/14/20, BDR-006/008/009.
 | Endpoint status fallback | `executors/kiro.js:336-341`; `config/kiroConstants.js:28` | Only 401/403/404 advance the endpoint index; 400/429/500 do not |
 | Auth boundary | `executors/kiro.js:247-265,293-313` | The same stored credential and TokenType cross Amazon and Kiro surfaces. An intermediate 401/403 is an endpoint/auth-surface rejection, not proof that refresh is required. Only exhausting all surfaces with a final 401/403 records auth-refresh-required, preserving the existing once-per-chain auth classification limit. A budget stop before all surfaces are tried does not invalidate the credential |
 | Target header | `executors/kiro.js:241-245` | Final request URL decides X-Amz-Target; it is removed before non-CodeWhisperer attempts, so prepared headers cannot retain a previous surface's target |
-| Exhaustion | `executors/base.js:127,183`; `executors/kiro.js:330-333` | `ErrKiroEndpointsExhausted` refuses an out-of-range index with an empty Target. Dispatch reports `kiro_endpoints_exhausted` after surface or request-budget exhaustion; it never wraps to candidate zero |
+| Exhaustion | `executors/base.js:157-163`; `executors/kiro.js:330-341` | `ErrKiroEndpointsExhausted` refuses an out-of-range index with an empty Target. Dispatch retains the last captured upstream response, including its status, headers and body, after surface or request-budget exhaustion. It synthesizes `kiro_endpoints_exhausted` only if no response was captured; it never wraps to candidate zero |
 
 `wire.ResolveTarget` is the only producer of inference targets. Its optional
 attempt index leaves other provider hooks and existing callers unchanged.
 `newUpstreamRequest` validates every selected target with the existing SSRF
 policy, applies final body normalization and endpoint-aware headers, and uses
-the existing pooled client. The dispatch loop advances only after receiving an
-eligible HTTP response and closes that response before advancing. No retry
-occurs after a successful response is returned, including streamed responses.
-Cancellation stops further attempts.
+the existing pooled client. Dispatch reuses the resolved target and its endpoint
+count, without rebuilding the candidate list solely to detect exhaustion. The
+loop advances only after receiving an eligible HTTP response and closes that
+response before advancing. It retains the final rejection for relay if no later
+account serves. No retry occurs after a successful response is returned,
+including streamed responses.
+Cancellation stops further attempts. Model probes explicitly resolve attempt 0
+through the same target rules; they do not walk serving's response-driven Kiro
+fallback. A failed initial-surface probe therefore does not establish that all
+serving surfaces fail. Specialized Kiro transport probes remain unsupported.
 
 Deliberate differences from the pin:
 
+- An out-of-range endpoint index fails closed instead of selecting the pin's
+  candidate-zero/config fallback (`executors/kiro.js:330-333`). Captured final
+  HTTP rejections retain their real status, headers and body, including model
+  404 and credential 401/403 responses, matching the pin: no fallback remains
+  (`executors/kiro.js:338-341`), so `executors/base.js:157-163` returns the response.
 - A stored connection `baseUrl` comes first; otherwise a non-default route base
   comes first. The catalog's legacy runtime default is treated as a built-in
   candidate, so it cannot defeat Q-first ordering. An explicitly stored runtime
@@ -1562,8 +1573,9 @@ Deliberate differences from the pin:
 header; `TestKiroConfiguredEndpointFirstAndBounded` checks configured precedence,
 deduplication, region validation and exhaustion. `TestDispatchEndpointFallback`
 asserts the exact sequence for each requested status, successful recovery,
-three/four-attempt exhaustion, unchanged payload/credential, no intermediate
-credential cooldown and body closure. `TestDispatchEndpointGlobalBoundAndCancellation`
+three/four-attempt exhaustion with the last upstream status/body/headers,
+unchanged payload/credential, no intermediate credential cooldown and body
+closure. `TestDispatchEndpointGlobalBoundAndCancellation`
 asserts ten attempts across accounts, the five-attempt account bound including
 the existing 408 retry, and one attempt on cancellation. The seam
 checks now require dispatch's retry decision to call `ResolveTarget` and reject
@@ -1576,8 +1588,10 @@ selection. Builds/tests ran concurrently; this measures resolver cost, not
 production latency or an end-to-end regression. Non-Kiro target behavior is
 unchanged.
 
-Validation with Go 1.22.12: build and vet pass; wire/ingress tests and race
-suites pass. The full race run passes every package except `control/api`, which
+Validation with Go 1.22.12: build and vet pass; wire/ingress/control API package
+tests and wire/ingress race suites pass. Review regressions also check the exact
+terminal status and retain the last rejection when later accounts are refused.
+The initial full race run passed every package except `control/api`, which
 hits the default ten-minute timeout during password hashing in the
 `TestStartNeedsNoPublicOriginUnlessTheFlowConsumesIt/qoder` fixture. That
 subtest passes alone under the race detector; no assertion or data-race failure
