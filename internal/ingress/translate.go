@@ -27,14 +27,9 @@ import (
 // pre-stream error handling in internal/providers/wire (executors/commandcode.js).
 // Vertex needs the project-scoped URL and the service-account or key
 // authentication that #115 PR-C's target hook supplies (executors/vertex.js:66-123);
-// until it does, a request routed there would fail at the last hop. Kiro needs
-// the account-aware body and headers (profile ARN, auth method) and the
-// EventStream Accept header from internal/providers/wire (PR 4d, done), its
-// Messages legs (PR 4c, done), and the endpoint binding that is still missing: the
-// three-host order, the region rewrite and the 401/403/404 endpoint fallback
-// (executors/kiro.js:299-341, kiroConstants.js:28; PARITY 6.10, 6.11). Serving
-// only the configured base URL would send traffic at a possibly wrong host, so
-// Kiro stays here until the PR that builds them. PR-C removes
+// until it does, a request routed there would fail at the last hop.
+// Kiro's legs and endpoint binding exist; public enablement remains a separate
+// decision (#119; PARITY 6.10-6.12). PR-C removes
 // the vertex entry together with TranslateChat's vertex arm, which is not built
 // here because the endpoint it would name is that hook's to compute.
 // Gemini CLI and Antigravity need the same hook: the Cloud Code URL and its

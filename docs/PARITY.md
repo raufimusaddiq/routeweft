@@ -783,7 +783,7 @@ The checklists in #75-#78 are normative follow-up scope for this inventory. Ever
 | IDs | Explicit gap / decision required | Authority | Owner |
 | --- | --- | --- | --- |
 | R01 | Native configured app account resolution/fallback/retry is implemented. Retained actual Combo/Fusion/capacity serving and pinned Fusion defaults remain open; no PRD 11 / BDR-011 waiver. | PRD 5/10/11; SPEC 8/13-16; Sprint 5.1 | #75 |
-| R02 | Chat/Responses, Messages<->Chat, Ollama (provider side), the Gemini and Vertex legs (Gemini routable, Vertex gated on #115 PR-C: see 6.7), the Kiro Chat and Messages legs (implemented, not routable: see 6.8, 6.11) and the Cursor and CommandCode conversion legs (not yet routable: see 6.5) are implemented (#119). The Gemini CLI and Antigravity legs are implemented and unrouted (see 6.9). The Cursor, CommandCode, Gemini CLI and Antigravity transports, count-tokens and provider compact behavior remain open under SPEC 9/10; #119 tracks each leg. | PRD 5; SPEC 9/10; Sprint 5.2 | #75 |
+| R02 | Chat/Responses, Messages<->Chat, Ollama (provider side), the Gemini and Vertex legs (Gemini routable, Vertex gated on #115 PR-C: see 6.7), the Kiro Chat and Messages legs (implemented, not routable: see 6.8, 6.12) and the Cursor and CommandCode conversion legs (not yet routable: see 6.5) are implemented (#119). The Gemini CLI and Antigravity legs are implemented and unrouted (see 6.9). The Cursor, CommandCode, Gemini CLI and Antigravity transports, count-tokens and provider compact behavior remain open under SPEC 9/10; #119 tracks each leg. | PRD 5; SPEC 9/10; Sprint 5.2 | #75 |
 | R03 | Serving pipeline slice resolved: normative per-attempt savers/final cache, bypass and fail-open tests in internal/app/transforms_test.go. Native helper parity stays R09. | PRD 12; SPEC 17/18; BDR-012; Sprint 5.3 | #75 |
 | R04 | Typed validation, native/custom/Cloudflare transports, streams/cancel and shared usage are implemented; internal/app/systemone_test.go. R11 adds pinned handler comparison; no broad-provider claim. | PRD 5/14; SPEC 10/28; #73 explicit System One | #75 |
 | R05 | Historical aliases, Ollama tags and id/kind/access catalog semantics are implemented (SPEC 34). Legacy /api/v1 is retained with identical inference auth/CORS; media kinds stay excluded. | PRD-API-001-004; SPEC 34 | #75 |
@@ -1143,7 +1143,7 @@ with available Chat pivots that must lose to the direct pair. It preserves the
 source request bytes, including a Messages-only system field and a nested
 extension. It proves incremental output, failure terminals, no replay,
 non-2xx status/body preservation and upstream cancellation. It is a framing and
-dispatch test, not a Kiro translator or live-provider qualification. The two Kiro Chat legs are PR 4b (6.8); the two Messages legs are PR 4c (6.11).
+dispatch test, not a Kiro translator or live-provider qualification. The two Kiro Chat legs are PR 4b (6.8); the two Messages legs are PR 4c (6.12).
 
 Framing provenance, all at oracle `1c3b9f47837d42ea64992063309064af755a14a3`:
 
@@ -1285,7 +1285,7 @@ This PR builds the two Chat legs of the Kiro wire: `request openai-chat>kiro` (`
 
 **The response leg is not where the ticket says.** `kiro-to-openai.js:37-55` returns the chunks it is given, because the pin's executor already turned the EventStream into Chat chunks (`executors/kiro.js:629-1190`, `transformEventStreamToSSE`); the raw-event branch below it (`:57-181`) reads `usageEvent` and `done`, which that transform never emits, so no real stream reaches it. The leg is therefore the executor transform, reading frames with `concerns.ReadEventStream` instead of the pin's parser (`:1216-1300`). Where the ticket and the pin disagree, the pin wins.
 
-**Routing.** Kiro stays in `ingress.unwired`: its transport needed the account-aware body and headers from `internal/providers/wire` (6.10), and without the Messages legs (6.11) a Messages client would pivot through Chat where the pin has a direct pair. It is still unwired for the endpoint binding named in 6.10 and 6.11. The legs receive the raw upstream body: ingress passes `response.Body` to `translation.Stream` (`ingress/openai.go:211-215`) and the whole body to `translation.Response` (`:231-242`), and the Kiro wire hook (6.10) does not wrap responses, so the legs still read EventStream directly.
+**Routing.** Kiro stays in `ingress.unwired`: its transport needed the account-aware body and headers from `internal/providers/wire` (6.10), and without the Messages legs (6.12) a Messages client would pivot through Chat where the pin has a direct pair. It is still unwired for the endpoint binding named in 6.10 and 6.11. The legs receive the raw upstream body: ingress passes `response.Body` to `translation.Stream` (`ingress/openai.go:211-215`) and the whole body to `translation.Response` (`:231-242`), and the Kiro wire hook (6.10) does not wrap responses, so the legs still read EventStream directly.
 
 #### Request, Chat to Kiro
 
@@ -1311,7 +1311,7 @@ This PR builds the two Chat legs of the Kiro wire: `request openai-chat>kiro` (`
 | `max_tokens`, else `max_completion_tokens` | carried to `inferenceConfig.maxTokens` | the pin sends a fixed 32000 (`:311`). Absent sends nothing: whether Kiro applies a default is not verifiable offline. Zero, negative, fractional and non-numbers are refused |
 | thinking intent: `reasoning_effort`, `reasoning.effort`, `thinking`, `output_config.effort`, `enable_thinking`, `thinking_budget`, `thinkingConfig`, the `model(level)` suffix, `-thinking`, a `<thinking_mode>` tag in a system or user message | carried | `kiroConstants.js:44-259` and `thinkingUnified.js:34-103`, ported inside the Kiro package: the budget prefix and, for Claude 4.6+ and GPT 5.6, `additionalModelRequestFields`. Unknown effort values and unrecognized parenthesized model overrides are refused instead of falling back to a default budget or dropping the suffix. The Gemini envelope shapes nested under `generationConfig` and `request` are refused as unknown fields |
 | `-agentic` model suffix | carried | the pin's chunked-write prompt, verbatim, in front of the first user turn |
-| `anthropic-beta: interleaved-thinking` | **Messages only** | a Chat client has no such header and `ChatRequest` carries none; the Messages leg reads it (6.11) |
+| `anthropic-beta: interleaved-thinking` | **Messages only** | a Chat client has no such header and `ChatRequest` carries none; the Messages leg reads it (6.12) |
 | `tool_choice` other than absent, `null`, `"auto"`; `parallel_tool_calls:false` | **refused** | Kiro has neither; the pin ignores both. Non-boolean `parallel_tool_calls` is also refused |
 | `stop`, `seed`, `logit_bias`, `top_logprobs`, `logprobs:true`, `n` other than numeric `1`, audio, `functions`, `function_call`, `web_search_options`, `prediction`, `response_format` other than text, non-zero `presence_penalty` / `frequency_penalty`, any field not listed here | **refused** | Kiro's request has no equivalent. A zero penalty is the identity |
 | `stream`, `stream_options`, `user`, `store`, `metadata`, `service_tier`, `prompt_cache_key`, `prompt_cache_retention`, `safety_identifier` | advisory | the answer is the same without them |
@@ -1361,7 +1361,7 @@ Kiro does not accept some keywords. Each row below is a decision, and `RequestIn
 
 **Known gaps, each its own follow-up under #119.** *Kiro saver view:* conversation history and the current message have no saver view; the transform order is unchanged. *Token estimates:* the pin's `contextUsagePercentage × context window` and `chars/4` estimates (`:1102-1113`) are not reported; no usage is better than an invented one. *Credits:* `meteringEvent` credits (`:895-905`) are counted, not reported, and no `kiro_credits` key is added to `usage`. *Time context:* see above.
 
-**Wire prerequisites for #135 (header/body hooks in 6.10; region/order/fallback remain pending).** `profileArn` in the body and `x-amzn-codewhisperer-profile-arn` in the headers, account-aware: API-key, IdC and external-IdP accounts never use the shared default (`openai-to-kiro.js:325-341`, `executors/kiro.js:276-279`); the auth headers `TokenType`, `x-amz-sso-bearer`, `x-amzn-kiro-agent-mode`, `X-Amz-Target` for `codewhisperer.*` hosts and `Accept: application/vnd.amazon.eventstream` (`:235-282`); the three-host order and region rewrite (`:299-328`); endpoint-fallback statuses 401/403/404 (`kiroConstants.js:28`).
+**Wire prerequisites for #135 (header/body hooks in 6.10; endpoint binding complete in 6.11).** `profileArn` in the body and `x-amzn-codewhisperer-profile-arn` in the headers, account-aware: API-key, IdC and external-IdP accounts never use the shared default (`openai-to-kiro.js:325-341`, `executors/kiro.js:276-279`); the auth headers `TokenType`, `x-amz-sso-bearer`, `x-amzn-kiro-agent-mode`, `X-Amz-Target` for `codewhisperer.*` hosts and `Accept: application/vnd.amazon.eventstream` (`:235-282`); the three-host order and region rewrite (`:299-328`); endpoint-fallback statuses 401/403/404 (`kiroConstants.js:28`).
 
 The request guards also refuse unread tool, call, content-part and thinking keys (including empty values), malformed thinking configurations, and strict tool-output guarantees. Supplied IDs are validated before shared repair can rewrite them. Known response events enumerate the keys they read or treat as bookkeeping; mixed nested and flat envelopes, multiple reasoning values and conflicting object tool fragments fail rather than select one and lose another.
 
@@ -1485,12 +1485,13 @@ credential.
 | POST operation | `providers/registry/kiro.js:19-23`; `executors/kiro.js:330-334` | `generateAssistantResponse` under the configured base; the Target hook overrides a caller's endpoint |
 | Body profileArn | `translator/request/openai-to-kiro.js:325-341,419-421`; `translator/request/claude-to-kiro.js:248-255` | Stored value replaces any caller value. For `api_key` only, a missing/blank stored profile removes any client-supplied profile and emits neither body field nor profile header, matching the pin's account-bound omission. Other auth methods still fail closed without a stored profile; no shared OAuth/social default is used. An already matching profile preserves the original bytes |
 | Other body fields | `executors/kiro.js:344-346`; `translator/request/openai-to-kiro.js:398-430` | Executor leaves the body alone. Conversation state, inference config and additional model fields belong to the existing request leg; the hook adds no other account field |
-| anthropic-beta / interleaved thinking | `config/kiroConstants.js:44,144-158`; `translator/request/claude-to-kiro.js:238-242`; `executors/kiro.js:235-282` | The pin sends **no outbound beta header**. It reads original inbound headers only after body thinking configuration returns no setting. A string beta value containing `interleaved-thinking`, case-insensitively, selects the default budget 16000. Explicit body thinking, including disabled, wins. The inbound Messages behavior is the Messages request leg's (PR 4c, 6.11); no fabricated outbound header is added, and `TestKiroWireRequestConstruction` pins that none is forwarded |
-| Endpoint ordering and region | `executors/kiro.js:299-334` | Pin orders Q, other Amazon surfaces, then Kiro runtime, and rewrites Amazon regions from stored `region` (default `us-east-1`). This PR keeps the configured base; automatic surface selection remains a binding prerequisite |
-| Endpoint fallback | `executors/kiro.js:336-341`; `config/kiroConstants.js:28` | Pin adds 401/403/404 to endpoint fallback. No new endpoint retry loop in this hook PR; binding must provide the bounded surface fallback |
+| anthropic-beta / interleaved thinking | `config/kiroConstants.js:44,144-158`; `translator/request/claude-to-kiro.js:238-242`; `executors/kiro.js:235-282` | The pin sends **no outbound beta header**. It reads original inbound headers only after body thinking configuration returns no setting. A string beta value containing `interleaved-thinking`, case-insensitively, selects the default budget 16000. Explicit body thinking, including disabled, wins. The inbound Messages behavior is the Messages request leg's (PR 4c, 6.12); no fabricated outbound header is added, and `TestKiroWireRequestConstruction` pins that none is forwarded |
+| Endpoint ordering and region | `executors/kiro.js:299-334` | Pin orders Q, other Amazon surfaces, then Kiro runtime, and rewrites Amazon regions from stored `region` (default `us-east-1`). PR 4e completes the bounded surface binding in 6.11; the configured connection base takes precedence over the built-in order |
+| Endpoint fallback | `executors/kiro.js:336-341`; `config/kiroConstants.js:28` | Pin adds 401/403/404 to endpoint fallback. PR 4e implements response-driven, bounded endpoint fallback in 6.11 |
 
-**Binding remains closed.** *(Kiro still stays in `ingress.unwired` after PR 4c; see 6.11.)* **Blocking items for the unwire:** the three-host order, the region rewrite and the 401/403/404 endpoint fallback in `wire/targets.go` (rows above). This PR does not claim provider readiness, endpoint
-failover, the saver view or live-provider qualification. It retains the existing
+**Endpoint binding is complete in PR 4e (6.11).** Public routing remains closed:
+Messages legs (PR 4c, 6.12) are merged, and Kiro remains in `ingress.unwired`.
+Neither PR claims provider readiness, the saver view or live-provider qualification. It retains the existing
 Chat/direct-leg/EventStream tests, tests every emitted header and auth/host
 condition, refuses missing/invalid settings and missing credentials, and checks
 that other providers receive none of the Kiro-specific headers. Both credential
@@ -1506,7 +1507,106 @@ and 10.49 microseconds with the Kiro profile injection; allocation cost was
 1000 B / 14 allocations versus 1312 B / 20 allocations. Other checks were
 running concurrently, so these timings do not establish production latency.
 
-### 6.11 Kiro Messages legs: where Routeweft differs from the pin (#119, PR 4c)
+### 6.11 Kiro endpoint binding (#119, PR 4e)
+
+Oracle: `1c3b9f47837d42ea64992063309064af755a14a3`; paths below are
+under `open-sse/`. This completes endpoint selection and fallback, not public
+routing or provider qualification. Contracts: PRD-API-005, PRD-ROUTE-003,
+SPEC 11/14/20, BDR-006/008/009.
+
+| Behavior | Pin evidence | Routeweft binding |
+|---|---|---|
+| Three hosts | `providers/registry/kiro.js:19-24` | Q, CodeWhisperer and Kiro runtime, each serving `generateAssistantResponse` |
+| Actual order | `executors/kiro.js:299-327` | Q first, CodeWhisperer second, runtime last for every auth method; the earlier auth-specific prose in that file does not describe the returned order |
+| Region | `executors/kiro.js:315-319` | Stored `region`, trimmed, defaults to `us-east-1`; Q and CodeWhisperer use that region. Runtime stays `runtime.us-east-1.kiro.dev`. No operation-path rewrite. The pin's region fixture is `eu-west-1` (`tests/unit/kiro-api-key-endpoint-routing.test.js:39-45`); local fixtures also exercise `us-west-2`, `eu-central-1` and `ap-southeast-1`. These fixtures establish URL construction, not regional service availability |
+| Endpoint status fallback | `executors/kiro.js:336-341`; `config/kiroConstants.js:28` | Only 401/403/404 advance the endpoint index; 400/429/500 do not |
+| Auth boundary | `executors/kiro.js:247-265,293-313` | The same stored credential and TokenType cross Amazon and Kiro surfaces. An intermediate 401/403 is an endpoint/auth-surface rejection, not proof that refresh is required. Only exhausting all surfaces with a final 401/403 records auth-refresh-required, preserving the existing once-per-chain auth classification limit. A budget stop before all surfaces are tried does not invalidate the credential |
+| Target header | `executors/kiro.js:241-245` | Final request URL decides X-Amz-Target; it is removed before non-CodeWhisperer attempts, so prepared headers cannot retain a previous surface's target |
+| Exhaustion | `executors/base.js:157-163`; `executors/kiro.js:330-341` | `ErrKiroEndpointsExhausted` refuses an out-of-range index with an empty Target. Dispatch retains the last captured upstream response, including its status, headers and body, after surface or request-budget exhaustion. It synthesizes `kiro_endpoints_exhausted` only if no response was captured; it never wraps to candidate zero |
+
+`wire.ResolveTarget` is the only producer of inference targets. Its optional
+attempt index leaves other provider hooks and existing callers unchanged.
+`newUpstreamRequest` validates every selected target with the existing SSRF
+policy, applies final body normalization and endpoint-aware headers, and uses
+the existing pooled client. Dispatch reuses the resolved target and its endpoint
+count, without rebuilding the candidate list solely to detect exhaustion. The
+loop advances only after receiving an eligible HTTP response and closes that
+response before advancing. It retains the final rejection for relay if no later
+account serves. No retry occurs after a successful response is returned,
+including streamed responses.
+Cancellation stops further attempts. Model probes explicitly resolve attempt 0
+through the same target rules; they do not walk serving's response-driven Kiro
+fallback. A failed initial-surface probe therefore does not establish that all
+serving surfaces fail. Specialized Kiro transport probes remain unsupported.
+
+Deliberate differences from the pin:
+
+- An out-of-range endpoint index fails closed instead of selecting the pin's
+  candidate-zero/config fallback (`executors/kiro.js:330-333`). Captured final
+  HTTP rejections retain their real status, headers and body, including model
+  404 and credential 401/403 responses, matching the pin: no fallback remains
+  (`executors/kiro.js:338-341`), so `executors/base.js:157-163` returns the response.
+- A stored connection `baseUrl` comes first; otherwise a non-default route base
+  comes first. The catalog's legacy runtime default is treated as a built-in
+  candidate, so it cannot defeat Q-first ordering. An explicitly stored runtime
+  base still takes precedence. The pin ignores connection `baseUrl` here
+  (`executors/kiro.js:299-300,330-333`; `executors/base.js:22-24`). Configured
+  Q/CodeWhisperer hosts receive the same region rewrite; custom proxy bases keep
+  their host and path. A trailing operation segment is not duplicated. Exact
+  duplicate bases are removed. Invalid configured URLs fail validation; they
+  do not silently fall through to an official host.
+- Region must have AWS region syntax before entering a hostname. The pin
+  interpolates its trimmed string directly (`executors/kiro.js:315-319`). No
+  region-availability assertion or live discovery is added.
+- The candidate list has at most four entries, three without a custom base.
+  401/403/404 advance monotonically through that list. The existing single
+  same-account 408/409 retry remains available, giving at most five wire attempts
+  per account (four without a custom base). All accounts share the existing
+  ten-wire-attempt cap (SPEC 14).
+  The pin inherits 429 host fallback (`executors/base.js:83-84`) despite the
+  zero same-URL 429 retry setting (`providers/registry/kiro.js:26-28`), and
+  advances URLs after network errors (`executors/base.js:173-180`). Per this
+  PR's contract, neither case advances Kiro endpoints; existing account fallback
+  remains available. No token refresh is attempted inside endpoint fallback.
+
+`TestKiroEndpointOrderAndRegions` checks all three targets and the final target
+header; `TestKiroConfiguredEndpointFirstAndBounded` checks configured precedence,
+deduplication, region validation and exhaustion. `TestDispatchEndpointFallback`
+asserts the exact sequence for each requested status, successful recovery,
+three/four-attempt exhaustion with the last upstream status/body/headers,
+unchanged payload/credential, no intermediate credential cooldown and body
+closure. `TestDispatchEndpointGlobalBoundAndCancellation`
+asserts ten attempts across accounts, the five-attempt account bound including
+the existing 408 retry, and one attempt on cancellation. The seam
+checks now require dispatch's retry decision to call `ResolveTarget` and reject
+Kiro host literals in inference consumers outside the wire package.
+
+Local Go 1.22.12 resolution benchmark (`go test ./internal/providers/wire -run
+'^$' -bench BenchmarkKiroResolveTarget -benchmem -count=3`): median 8.09
+microseconds, approximately 240 B and 3 allocations for default Kiro target
+selection. Builds/tests ran concurrently; this measures resolver cost, not
+production latency or an end-to-end regression. Non-Kiro target behavior is
+unchanged.
+
+Validation with Go 1.22.12: build and vet pass; wire/ingress/control API package
+tests and wire/ingress race suites pass. Review regressions also check the exact
+terminal status and retain the last rejection when later accounts are refused.
+The initial full race run passed every package except `control/api`, which
+hits the default ten-minute timeout during password hashing in the
+`TestStartNeedsNoPublicOriginUnlessTheFlowConsumesIt/qoder` fixture. That
+subtest passes alone under the race detector; no assertion or data-race failure
+was reported. No password or timeout policy was changed.
+
+Kiro stays in `ingress.unwired`. The direct Messages legs (PR 4c, 6.12) are
+merged. Removing the gate still requires agreement to enable public routing
+and one coherent
+change to the ingress translation arms, reachability declarations and actual-app
+streaming/non-streaming, fallback and cancellation fixtures. Endpoint binding
+alone does not certify the outstanding saver view, onboarding/refresh/model/
+quota workflows or provider readiness. No SQLite schema/storage changes, new
+service/dependency, live provider call or production prompt fixture is involved.
+
+### 6.12 Kiro Messages legs: where Routeweft differs from the pin (#119, PR 4c)
 
 This PR builds the two Messages legs of the Kiro wire: `request anthropic-messages>kiro` (`translator/request/claude-to-kiro.js:231-366`, registered `:366`) and `response kiro>anthropic-messages` (`translator/response/kiro-to-claude.js:57-285`, registered `:285`). The pin dispatches both directly, with no Chat pivot (`translator/index.js:106-108`, `:208-213`), and so does `hub.Route`. The code is `internal/protocol/kiro` (`messages_request.go`, `messages_response.go`).
 
@@ -1559,7 +1659,7 @@ This PR builds the two Messages legs of the Kiro wire: `request anthropic-messag
 
 **Not ported from the Chat route:** the Read-tool argument repair that `openai-to-claude.js:14-47` does for other providers. The pin's Kiro leg does not do it either (`kiro-to-claude.js:203-215` sends the buffered arguments as they came), so a Kiro tool input is never edited.
 
-**Routing: Kiro stays in `ingress.unwired`, and why.** The four legs exist and `TranslateChat`, `TranslateResponses` and `TranslateMessages` each have a Kiro arm (Responses goes through Chat, as the pin does, `translator/index.js:116-125`; compact is not translated). The arms are correct work and what makes the later unwire safe, but nothing may route to Kiro yet. **Blocking items for the unwire, all in `internal/providers/wire/targets.go` and the next PR's, not this one's:** (1) the three-host order, Q then other Amazon surfaces then the Kiro runtime (`executors/kiro.js:299-334`); (2) the region rewrite of Amazon hosts from the stored `region`, default `us-east-1` (same lines); (3) the 401/403/404 endpoint fallback (`executors/kiro.js:336-341`, `kiroConstants.js:28`). Without them Routeweft would serve Kiro from only the connection's configured base URL, which can be the wrong host for the account and fail, a silent wrong answer in place of a loud "not yet". 6.10 lists the same three as binding prerequisites. `TestKiroLegsAreDeclaredButKiroStaysUnwired` pins that the legs are declared, Messages uses the direct leg, and `CanTranslate` is false for all three client wires; `TestEveryProviderIsReachableOrTracked` keeps `kiro` tracked as unreachable. The saver view, token estimates, credits and live-provider qualification remain the follow-ups of 6.8.
+**Routing after PR 4e: Kiro stays in `ingress.unwired`.** The four legs exist and `TranslateChat`, `TranslateResponses` and `TranslateMessages` each have a Kiro arm (Responses goes through Chat, as the pin does, `translator/index.js:116-125`; compact is not translated). Endpoint ordering, regionalization and response-driven fallback are now the binding in 6.11; public enablement remains a separate decision. `TestKiroLegsAreDeclaredButKiroStaysUnwired` pins that the legs are declared, Messages uses the direct leg, and `CanTranslate` is false for all three client wires; `TestEveryProviderIsReachableOrTracked` keeps `kiro` tracked as unreachable. The saver view, token estimates, credits and live-provider qualification remain the follow-ups of 6.8.
 
 Validation: sanitized synthetic EventStream fixtures and the pinned leg inventory (`trackedLegGaps` is now empty). Every refusal row has a test that names the field; request and response cross-products are in `messages_request_test.go` and `messages_response_test.go`. No live provider calls were made. No SQLite schema, credential or runtime-dependency change. Security: no new network surface; the inbound `Anthropic-Beta` header is read for one decision and never forwarded or logged.
 
