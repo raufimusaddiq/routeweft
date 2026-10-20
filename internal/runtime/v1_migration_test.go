@@ -356,3 +356,46 @@ func TestV1PlanMalformedCapacityAdapterFailsOnlyItself(t *testing.T) {
 		t.Fatalf("other settings lost: %v", plan.Settings)
 	}
 }
+
+// The same invariant for plain strings, which pinShape-free formatting leaks:
+// a sentinel string in every field that accepts one must reach no plan field.
+func TestV1PlanNoRefusalOrNoteEchoesStringValues(t *testing.T) {
+	const s = "SENTINEL-sk-live-123"
+	document := `{
+ "settings": {
+  "fallbackStrategy": "` + s + `", "comboStrategy": "` + s + `", "outboundNoProxy": "*` + s + `",
+  "headroomEnabled": "` + s + `", "headroomTimeoutMs": "` + s + `", "pxpipeMinChars": "` + s + `",
+  "cavemanLevel": "` + s + `", "ponytailLevel": "` + s + `", "headroomUrl": "` + s + `", "outboundProxyUrl": "` + s + `",
+  "observabilityMaxJsonSize": "` + s + `", "observabilityMaxRecords": "` + s + `", "stickyRoundRobinLimit": "` + s + `",
+  "comboStickyRoundRobinLimit": "` + s + `", "quotaVisibility": "` + s + `", "dnsToolEnabled": "` + s + `",
+  "capacityAdapter": {"vision": {"models": ["` + s + `"], "enabled": "` + s + `"}, "pdf": "` + s + `", "` + `zz": {}},
+  "providerStrategies": {"p": {"fallbackStrategy": "` + s + `", "stickyRoundRobinLimit": "` + s + `"}, "q": "` + s + `"},
+  "comboStrategies": {"c": {"fallbackStrategy": "` + s + `", "judgeModel": 7}, "f": {"fallbackStrategy": "fusion", "fusionTuning": "` + s + `"},
+   "g": {"fallbackStrategy": "fusion", "fusionTuning": {"minPanel": "` + s + `", "stragglerGraceMs": "` + s + `", "panelHardTimeoutMs": "` + s + `"}}}
+ },
+ "modelAliases": {"a": "` + s + `"},
+ "combos": [{"name":"c","kind":"` + s + `","models":["openai/x"]},{"name":"f","models":["openai/x"]},{"name":"g","models":["openai/x"]},{"name":"empty","models":[]}]
+}`
+	plan, err := PlanV1Migration([]byte(document))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(plan)
+	if strings.Contains(string(encoded), s) {
+		t.Fatalf("plan echoes a string value: %s", encoded)
+	}
+	if len(plan.Refused) < 10 || len(plan.Notes) < 5 {
+		t.Fatalf("string input reached too few paths: refused=%d notes=%d", len(plan.Refused), len(plan.Notes))
+	}
+	for _, key := range []string{"fallbackStrategy", "comboStrategy", "outboundNoProxy", "headroomEnabled", "quotaVisibility"} {
+		if _, stored := plan.Settings[key]; stored {
+			t.Errorf("%s stored from an invalid value", key)
+		}
+	}
+	if !strings.Contains(refusal(plan, "combos.empty"), "route nowhere") {
+		t.Fatalf("empty combo not refused: %+v", plan.Refused)
+	}
+	if !hasNote(plan, "combos.f: fusion has no judgeModel") {
+		t.Fatalf("notes=%v", plan.Notes)
+	}
+}

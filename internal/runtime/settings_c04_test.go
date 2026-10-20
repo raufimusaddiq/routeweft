@@ -64,7 +64,7 @@ func TestC04CapacityAdapterRoundRobinStoredAndResolved(t *testing.T) {
 	if video.Enabled || video.Strategy() != routing.StrategyFillFirst || len(video.Pool) != 0 {
 		t.Fatalf("video=%+v", video)
 	}
-	if !strings.Contains(strings.Join(notes, "\n"), `"noslash" has no provider prefix`) {
+	if !strings.Contains(strings.Join(notes, "\n"), `a model has no provider prefix`) {
 		t.Fatalf("notes=%v", notes)
 	}
 	if got := snapshot.CapacityAdapter("smell"); got.Enabled {
@@ -97,7 +97,7 @@ func TestC04NoProxyImportAndCompile(t *testing.T) {
 	if settings["noProxy"] != `["localhost",".internal.example"]` {
 		t.Fatalf("noProxy=%q", settings["noProxy"])
 	}
-	if !strings.Contains(strings.Join(noProxyNotes, "\n"), `"*.skip" never matches`) {
+	if !strings.Contains(strings.Join(noProxyNotes, "\n"), `a wildcard-prefixed entry never matches`) {
 		t.Fatalf("notes=%v", noProxyNotes)
 	}
 	applyImported(t, manager, settings)
@@ -300,7 +300,7 @@ func TestC04PinRoundRobinMapsToSticky(t *testing.T) {
 		t.Fatalf("combos=%s", settings["comboStrategies"])
 	}
 	joined := strings.Join(notes, "\n")
-	for _, want := range []string{`providerStrategies.c: field "proxyPoolId"`, `field "rotateStrategy"`, `comboStrategies.y: fallbackStrategy "fusion"`, `field "judgeModel"`, `field "fusionTuning"`, `comboStrategies.z: field "stickyRoundRobinLimit"`} {
+	for _, want := range []string{`providerStrategies.c: field "proxyPoolId"`, `field "rotateStrategy"`, `comboStrategies.y: fallbackStrategy has no Routeweft equivalent`, `field "judgeModel"`, `field "fusionTuning"`, `comboStrategies.z: field "stickyRoundRobinLimit"`} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("notes missing %q:\n%s", want, joined)
 		}

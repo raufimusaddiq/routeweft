@@ -84,7 +84,7 @@ func ImportPinSettings(pin map[string]json.RawMessage) (settings map[string]stri
 			// "*.host" entry never matched there either; carrying it would store
 			// a pattern that can never match.
 			if strings.HasPrefix(entry, "*") && entry != "*" {
-				note("outboundNoProxy: %q never matches (use %q), not carried", entry, strings.TrimPrefix(entry, "*"))
+				note("outboundNoProxy: a wildcard-prefixed entry never matches (drop the leading *), not carried")
 				continue
 			}
 			list = append(list, entry)
@@ -135,7 +135,7 @@ func ImportPinSettings(pin map[string]json.RawMessage) (settings map[string]stri
 			case "round-robin":
 				settings["providerStrategy"] = pinRoundRobinStrategy(providerSticky)
 			default:
-				note("fallbackStrategy %q is not a Routeweft provider strategy, not carried", strategy)
+				note("fallbackStrategy is not a Routeweft provider strategy, not carried")
 			}
 		}
 	}
@@ -150,7 +150,7 @@ func ImportPinSettings(pin map[string]json.RawMessage) (settings map[string]stri
 			case "round-robin":
 				settings["comboStrategy"] = pinRoundRobinStrategy(comboSticky)
 			default:
-				note("comboStrategy %q is a per-combo fusion flag in Routeweft, not carried", strategy)
+				note("comboStrategy is not a Routeweft global combo strategy (fusion is a per-Combo flag), not carried")
 			}
 		}
 	}
@@ -211,7 +211,7 @@ func importCapacityAdapter(pinName string, raw json.RawMessage) (encoded string,
 		// Legacy array form: treated as enabled, fallback (capacityAdapter.js:19-21).
 		var items []json.RawMessage
 		if err := json.Unmarshal(raw, &items); err != nil {
-			return bad("legacy array is malformed (%v)", err)
+			return bad("legacy array is malformed")
 		}
 		enabled = true
 		for _, item := range items {
@@ -220,7 +220,7 @@ func importCapacityAdapter(pinName string, raw json.RawMessage) (encoded string,
 	case len(raw) > 0 && raw[0] == '{':
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &fields); err != nil {
-			return bad("entry is malformed (%v)", err)
+			return bad("entry is malformed")
 		}
 		// enabled !== false: a missing flag means enabled (capacityAdapter.js:24).
 		enabled = true
@@ -251,7 +251,7 @@ func importCapacityAdapter(pinName string, raw json.RawMessage) (encoded string,
 	for _, model := range models {
 		provider, id, ok := strings.Cut(model, "/")
 		if !ok || provider == "" || id == "" {
-			notes = append(notes, fmt.Sprintf("capacityAdapter.%s: %q has no provider prefix, not carried", pinName, model))
+			notes = append(notes, fmt.Sprintf("capacityAdapter.%s: a model has no provider prefix, not carried", pinName))
 			continue
 		}
 		if _, dup := seen[model]; dup {
@@ -304,7 +304,7 @@ func importStrategyOverrides(key string, raw json.RawMessage, combo bool, global
 		case strategy == "round-robin":
 			entry["fallbackStrategy"] = pinRoundRobinStrategy(limit)
 		default:
-			notes = append(notes, fmt.Sprintf("%s.%s: fallbackStrategy %q has no Routeweft equivalent here (Combo fusion is a Combo flag), not carried", key, name, strategy))
+			notes = append(notes, fmt.Sprintf("%s.%s: fallbackStrategy has no Routeweft equivalent here (Combo fusion is a Combo flag), not carried", key, name))
 		}
 		for field := range fields {
 			switch field {

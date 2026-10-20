@@ -276,7 +276,10 @@ func v1SettingText(kind string, raw json.RawMessage) (string, bool) {
 		return formatUint(v), ok
 	case "string":
 		var v string
-		return v, json.Unmarshal(raw, &v) == nil && string(bytes.TrimSpace(raw)) != "null"
+		if json.Unmarshal(raw, &v) != nil || string(bytes.TrimSpace(raw)) == "null" {
+			return "", false
+		}
+		return v, true
 	default: // object
 		var v map[string]json.RawMessage
 		if json.Unmarshal(raw, &v) != nil || v == nil {
@@ -445,6 +448,10 @@ func (p *V1Plan) planCombos(raw json.RawMessage, settings map[string]json.RawMes
 		if bad {
 			continue
 		}
+		if len(combo.Members) == 0 {
+			refuse(path, "has no models and would route nowhere, combo not carried")
+			continue
+		}
 		p.applyFusion(&combo, row.Kind, perCombo[row.Name], refuse)
 		p.Combos = append(p.Combos, combo)
 	}
@@ -462,7 +469,7 @@ func (p *V1Plan) dropSupersededFusionNotes() {
 				continue
 			}
 			prefix := "comboStrategies." + combo.Name + ": "
-			if strings.HasPrefix(note, prefix+`field "judgeModel"`) || strings.HasPrefix(note, prefix+`field "fusionTuning"`) || strings.HasPrefix(note, prefix+`fallbackStrategy "fusion"`) {
+			if strings.HasPrefix(note, prefix+`field "judgeModel"`) || strings.HasPrefix(note, prefix+`field "fusionTuning"`) || strings.HasPrefix(note, prefix+`fallbackStrategy has no Routeweft equivalent`) {
 				superseded = true
 			}
 		}
@@ -494,6 +501,9 @@ func (p *V1Plan) applyFusion(combo *Combo, kind string, raw json.RawMessage, ref
 		return
 	}
 	combo.FusionEnabled, combo.JudgeModel = true, strings.TrimSpace(entry.Judge)
+	if combo.JudgeModel == "" {
+		p.Notes = append(p.Notes, path+": fusion has no judgeModel; the first panel member judges, as in the pin")
+	}
 	if len(entry.Tuning) == 0 || isEmptyJSON(entry.Tuning) {
 		return
 	}
@@ -542,12 +552,12 @@ func (p *V1Plan) ApplyCatalog(ctx context.Context, manager *Manager) []V1Item {
 	sort.Strings(aliases)
 	for _, alias := range aliases {
 		if err := manager.PutAlias(ctx, alias, p.Aliases[alias]); err != nil {
-			failed = append(failed, V1Item{Path: "modelAliases." + alias, Reason: fmt.Sprintf("%v; %s", err, v1ComboNeedsBase)})
+			failed = append(failed, V1Item{Path: "modelAliases." + alias, Reason: "not accepted by the catalog (unknown or duplicate member, or name conflict); " + v1ComboNeedsBase})
 		}
 	}
 	for _, combo := range p.Combos {
 		if _, err := manager.PutCombo(ctx, combo); err != nil {
-			failed = append(failed, V1Item{Path: "combos." + combo.Name, Reason: fmt.Sprintf("%v; %s", err, v1ComboNeedsBase)})
+			failed = append(failed, V1Item{Path: "combos." + combo.Name, Reason: "not accepted by the catalog (unknown or duplicate member, or name conflict); " + v1ComboNeedsBase})
 		}
 	}
 	return failed
