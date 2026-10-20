@@ -21,6 +21,16 @@ type ResponseOptions struct {
 	// request that continues this conversation. An empty Scope keeps none.
 	Signatures *Signatures
 	Scope      string
+	// Wire is the protocol the upstream speaks, when the caller knows it: one of
+	// the constants of this package (Protocol, GeminiCLIProtocol,
+	// AntigravityProtocol, VertexProtocol). The two Cloud Code wires store
+	// signatures under FamilyScope in their request legs, so their response leg
+	// must read back from the same place. The wire decides that, never the
+	// payload: a Cloud Code upstream that answered unwrapped would otherwise
+	// store one family's signature where no request leg looks, and tenant
+	// isolation would follow a key the upstream controls. Empty means the plain
+	// Gemini wire.
+	Wire string
 }
 
 // fallbackModel is what the pin reports when neither the response nor the
@@ -75,9 +85,16 @@ func finishFor(reason, message string) (string, error) {
 // order.
 func (s *responseState) consume(chunk map[string]any) ([]map[string]any, error) {
 	response := chunk
+	scope := s.options.Scope
 	if wrapped := concerns.Object(chunk["response"]); wrapped != nil {
-		// The Cloud Code envelope Gemini CLI and Antigravity send (:45).
+		// Cloud Code wraps every chunk (:45).
 		response = wrapped
+	}
+	if s.options.Wire == GeminiCLIProtocol || s.options.Wire == AntigravityProtocol {
+		// The Cloud Code request legs store under FamilyScope, so the response leg
+		// reads back from there. The wire decides this, not the envelope: see
+		// ResponseOptions.Wire.
+		scope = FamilyScope(scope, s.options.Model)
 	}
 	if raw, present := response["error"]; present && raw != nil {
 		if object := concerns.Object(raw); object != nil {
@@ -120,7 +137,7 @@ func (s *responseState) consume(chunk map[string]any) ([]map[string]any, error) 
 		if part == nil {
 			return nil, failure("upstream_invalid", "Gemini sent a part that is not an object")
 		}
-		partDeltas, err := s.part(part)
+		partDeltas, err := s.part(part, scope)
 		if err != nil {
 			return nil, err
 		}
@@ -136,7 +153,7 @@ func (s *responseState) consume(chunk map[string]any) ([]map[string]any, error) 
 	return deltas, nil
 }
 
-func (s *responseState) part(part map[string]any) ([]map[string]any, error) {
+func (s *responseState) part(part map[string]any, scope string) ([]map[string]any, error) {
 	for key := range part {
 		switch key {
 		case "text", "thought", "thoughtSignature", "thought_signature", "functionCall", "inlineData", "inline_data":
@@ -180,7 +197,7 @@ func (s *responseState) part(part map[string]any) ([]map[string]any, error) {
 			id = concerns.GenerateToolCallID(0, s.calls, original)
 		}
 		if s.pendingSig != "" {
-			s.options.Signatures.Put(s.options.Scope, id, original, concerns.JSONText(concerns.ToolInput(argumentText)), s.pendingSig)
+			s.options.Signatures.Put(scope, id, original, concerns.JSONText(concerns.ToolInput(argumentText)), s.pendingSig)
 			s.pendingSig = ""
 		}
 		deltas = append(deltas, map[string]any{"tool_calls": []any{map[string]any{

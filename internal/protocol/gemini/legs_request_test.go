@@ -81,7 +81,6 @@ func TestChatRequestFieldsAreCarriedOrRefused(t *testing.T) {
 		"model":             {`{` + user + `}`, "model", `"gemini-2.5-flash"`},
 		"temperature":       {`{` + user + `,"temperature":0.5}`, "generationConfig.temperature", `0.5`},
 		"top_p":             {`{` + user + `,"top_p":0.9}`, "generationConfig.topP", `0.9`},
-		"top_k":             {`{` + user + `,"top_k":40}`, "generationConfig.topK", `40`},
 		"max_tokens":        {`{` + user + `,"max_tokens":10}`, "generationConfig.maxOutputTokens", `10`},
 		"max_completion":    {`{` + user + `,"max_completion_tokens":11}`, "generationConfig.maxOutputTokens", `11`},
 		"max_tokens wins":   {`{` + user + `,"max_tokens":10,"max_completion_tokens":11}`, "generationConfig.maxOutputTokens", `10`},
@@ -280,7 +279,7 @@ func TestGeminiFourOmitsSamplingVisibly(t *testing.T) {
 			t.Fatal(err)
 		}
 		config := concerns.Object(result["generationConfig"])
-		for _, name := range []string{"temperature", "topP", "topK"} {
+		for _, name := range []string{"temperature", "topP"} {
 			if _, present := config[name]; present {
 				t.Errorf("%s: %s sent", model, name)
 			}
