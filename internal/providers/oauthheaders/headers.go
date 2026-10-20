@@ -7,10 +7,12 @@ package oauthheaders
 
 import "strings"
 
-// iFlow identifies as its CLI on every request.
-const (
-	iflowUserAgent = "iFlow-Cli"
-)
+// IflowUserAgent is the User-Agent every iFlow request carries
+// (open-sse/providers/registry/iflow.js:19-21). It is exported because iFlow's
+// request signature is computed over the User-Agent actually sent
+// (open-sse/executors/iflow.js:31,49), so the signer and the header must read one
+// constant: a signature over a different string is rejected upstream.
+const IflowUserAgent = "iFlow-Cli"
 
 // GitHub Copilot requires the VS Code chat fingerprint on both the chat and
 // responses endpoints; the credential token is added by the dispatch layer.
@@ -44,7 +46,7 @@ const (
 func Headers(providerID string) map[string]string {
 	switch providerID {
 	case "iflow":
-		return map[string]string{"User-Agent": iflowUserAgent}
+		return map[string]string{"User-Agent": IflowUserAgent}
 	case "github":
 		return map[string]string{
 			"copilot-integration-id":              CopilotIntegrationID,

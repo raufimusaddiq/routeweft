@@ -69,6 +69,11 @@ type Hook struct {
 	// reports how Routeweft should account for it. It never changes the status or
 	// body the client sees.
 	ClassifyError func(status int, body []byte, now time.Time) (routing.Classification, bool)
+	// RequireCredential refuses a request whose connection carries no credential,
+	// for a provider whose every request is authenticated by a signature over that
+	// credential (iflow). Without it the request would be sent unsigned, which the
+	// gateway answers with an unrelated error.
+	RequireCredential bool
 }
 
 var hooks = map[string]Hook{
@@ -91,6 +96,7 @@ var hooks = map[string]Hook{
 	"glm":              {Target: betaQuery},
 	"kimi":             {OpenAIHeaders: kimiDeviceHeaders, MessagesHeaders: kimiDeviceHeaders, Target: betaQuery},
 	"kilocode":         {OpenAIHeaders: kilocodeOrgHeaders},
+	"iflow":            {OpenAIHeaders: iflowHeaders, RequireCredential: true},
 	"github":           githubHook,
 	"kimchi":           {Finalize: kimchiBody},
 	"cline":            clineHook,
@@ -192,6 +198,10 @@ func set(headers http.Header, values map[string]string) {
 
 // ForcesStream reports whether the provider only answers streams.
 func ForcesStream(providerID string) bool { return For(providerID).ForceStream }
+
+// RequiresCredential reports whether a request to provider must carry a
+// credential, so a caller can refuse it instead of sending an unsigned one.
+func RequiresCredential(providerID string) bool { return For(providerID).RequireCredential }
 
 // ClassifyError reports the provider's own account of a failed response, when it
 // has one for this body.
