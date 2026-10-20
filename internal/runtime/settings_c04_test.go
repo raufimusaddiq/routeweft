@@ -262,7 +262,8 @@ func TestC04PinRoundRobinMapsToSticky(t *testing.T) {
 			"c":{"fallbackStrategy":"fill-first","proxyPoolId":"p","rotateStrategy":"round-robin"}},
 		"comboStrategies":{
 			"x":{"fallbackStrategy":"round-robin"},
-			"y":{"fallbackStrategy":"fusion","judgeModel":"m","fusionTuning":{"minPanel":2}}}}`))
+			"y":{"fallbackStrategy":"fusion","judgeModel":"m","fusionTuning":{"minPanel":2}},
+			"z":{"fallbackStrategy":"fallback","stickyRoundRobinLimit":5}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,11 +280,11 @@ func TestC04PinRoundRobinMapsToSticky(t *testing.T) {
 	if _, kept := providers["c"]["proxyPoolId"]; kept {
 		t.Fatal("unsupported field stored")
 	}
-	if settings["comboStrategies"] != `{"x":{"fallbackStrategy":"round-robin"}}` {
+	if settings["comboStrategies"] != `{"x":{"fallbackStrategy":"round-robin"},"z":{"fallbackStrategy":"fallback"}}` {
 		t.Fatalf("combos=%s", settings["comboStrategies"])
 	}
 	joined := strings.Join(notes, "\n")
-	for _, want := range []string{`providerStrategies.c: field "proxyPoolId"`, `field "rotateStrategy"`, `comboStrategies.y: fallbackStrategy "fusion"`, `field "judgeModel"`, `field "fusionTuning"`} {
+	for _, want := range []string{`providerStrategies.c: field "proxyPoolId"`, `field "rotateStrategy"`, `comboStrategies.y: fallbackStrategy "fusion"`, `field "judgeModel"`, `field "fusionTuning"`, `comboStrategies.z: field "stickyRoundRobinLimit"`} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("notes missing %q:\n%s", want, joined)
 		}

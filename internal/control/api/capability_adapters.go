@@ -24,7 +24,7 @@ type adapterPoolEntry struct {
 // silently resetting it to fallback.
 type adapterConfig struct {
 	Enabled    bool               `json:"enabled"`
-	RoundRobin *bool              `json:"roundRobin,omitempty"`
+	RoundRobin *bool              `json:"roundRobin"`
 	Pool       []adapterPoolEntry `json:"pool"`
 }
 
@@ -35,7 +35,10 @@ func parseAdapterConfig(raw string) adapterConfig {
 		var decoded adapterConfig
 		if err := json.Unmarshal([]byte(raw), &decoded); err == nil {
 			config.Enabled = decoded.Enabled
-			config.RoundRobin = decoded.RoundRobin
+			// Values stored before C04 have no roundRobin key; keep the default.
+			if decoded.RoundRobin != nil {
+				config.RoundRobin = decoded.RoundRobin
+			}
 			if decoded.Pool != nil {
 				config.Pool = decoded.Pool
 			}

@@ -8,14 +8,14 @@ const providerStrategies = ['fill-first', 'round-robin', 'sticky-round-robin']
 const comboStrategies = ['fallback', 'round-robin', 'sticky-round-robin']
 
 // An override is a strategy name or an object carrying fallbackStrategy (and, for
-// providers, stickyRoundRobinLimit); the server rejects every other field.
-function strategyEntryValid(item: unknown, allowed: string[]): boolean {
+// providers only, stickyRoundRobinLimit); the server rejects every other field.
+function strategyEntryValid(item: unknown, allowed: string[], sticky: boolean): boolean {
   if (typeof item === 'string') return allowed.includes(item)
   if (!item || typeof item !== 'object' || Array.isArray(item)) return false
   const { fallbackStrategy, stickyRoundRobinLimit, ...rest } = item as Record<string, unknown>
   return Object.keys(rest).length === 0 &&
     (fallbackStrategy === undefined || (typeof fallbackStrategy === 'string' && allowed.includes(fallbackStrategy))) &&
-    (stickyRoundRobinLimit === undefined || (typeof stickyRoundRobinLimit === 'number' && Number.isInteger(stickyRoundRobinLimit) && stickyRoundRobinLimit >= 0))
+    (stickyRoundRobinLimit === undefined || (sticky && typeof stickyRoundRobinLimit === 'number' && Number.isInteger(stickyRoundRobinLimit) && stickyRoundRobinLimit >= 0))
 }
 
 async function responseError(response: Response, fallback: string) {
@@ -129,8 +129,8 @@ export function Settings({ onUnauthorized }: Props) {
         const parsed: unknown = JSON.parse(display)
         if (kind === 'string-array' && (!Array.isArray(parsed) || parsed.some(item => typeof item !== 'string'))) throw new Error('Enter a JSON array of strings.')
         if (kind === 'object' && (!parsed || Array.isArray(parsed) || typeof parsed !== 'object')) throw new Error('Enter a JSON object.')
-        if (setting === 'providerStrategies' && Object.values(parsed as Record<string, unknown>).some(item => !strategyEntryValid(item, providerStrategies))) throw new Error(`Provider strategies must be one of: ${providerStrategies.join(', ')}, or an object with fallbackStrategy and stickyRoundRobinLimit.`)
-        if (setting === 'comboStrategies' && Object.values(parsed as Record<string, unknown>).some(item => !strategyEntryValid(item, comboStrategies))) throw new Error(`Combo strategies must be one of: ${comboStrategies.join(', ')}, or an object with fallbackStrategy.`)
+        if (setting === 'providerStrategies' && Object.values(parsed as Record<string, unknown>).some(item => !strategyEntryValid(item, providerStrategies, true))) throw new Error(`Provider strategies must be one of: ${providerStrategies.join(', ')}, or an object with fallbackStrategy and stickyRoundRobinLimit.`)
+        if (setting === 'comboStrategies' && Object.values(parsed as Record<string, unknown>).some(item => !strategyEntryValid(item, comboStrategies, false))) throw new Error(`Combo strategies must be one of: ${comboStrategies.join(', ')}, or an object with fallbackStrategy.`)
         if (setting === 'dnsToolEnabled' && Object.values(parsed as Record<string, unknown>).some(item => typeof item !== 'boolean')) throw new Error('DNS tool flags must map provider IDs to true or false.')
         void save({ [setting]: JSON.stringify(parsed) }, `${label} saved.`)
       } catch (cause) {

@@ -237,7 +237,13 @@ func importStrategyOverrides(key string, raw json.RawMessage, combo bool, global
 		}
 		for field := range fields {
 			switch field {
-			case "fallbackStrategy", "stickyRoundRobinLimit":
+			case "fallbackStrategy":
+			case "stickyRoundRobinLimit":
+				// Provider entries consume it above; the pin's combo entries have
+				// no such field and Routeweft's per-combo limit is on the Combo.
+				if combo {
+					notes = append(notes, fmt.Sprintf("%s.%s: field %q is not supported by Routeweft, not carried", key, name, field))
+				}
 			default:
 				notes = append(notes, fmt.Sprintf("%s.%s: field %q is not supported by Routeweft, not carried", key, name, field))
 			}

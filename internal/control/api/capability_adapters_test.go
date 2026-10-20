@@ -131,3 +131,25 @@ func TestCapabilityAdapterRoundRobinRoundTrips(t *testing.T) {
 		t.Fatalf("compiled=%+v", got)
 	}
 }
+
+// Values written before C04 have no roundRobin key; GET and PUT must treat them
+// as fallback instead of dereferencing a nil flag.
+func TestCapabilityAdapterPreC04StoredValueDoesNotPanic(t *testing.T) {
+	handler, mux, store, _, cookie := newProvidersAPI(t, false, nil)
+	defer store.Close()
+	ctx := context.Background()
+	if err := handler.opts.ProviderCatalog.PutModel(ctx, runtime.Model{ProviderID: "openai", ID: "gpt-a", Source: "custom"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handler.opts.Settings.SetSettings(ctx, map[string]string{"capacityAdapterVision": `{"enabled":true,"pool":[{"providerId":"openai","modelId":"gpt-a"}]}`}, nil); err != nil {
+		t.Fatal(err)
+	}
+	read := doJSON(t, mux, cookie, http.MethodGet, "/admin/v1/capability-adapters", "")
+	if read.Code != http.StatusOK || !containsAll(read.Body.String(), `"roundRobin":false`, `"strategy":"fallback"`, `"modelId":"gpt-a"`) {
+		t.Fatalf("get status=%d body=%s", read.Code, read.Body.String())
+	}
+	put := doJSON(t, mux, cookie, http.MethodPut, "/admin/v1/capability-adapters/vision", `{"enabled":true,"pool":[{"providerId":"openai","modelId":"gpt-a"}]}`)
+	if put.Code != http.StatusOK || !containsAll(put.Body.String(), `"roundRobin":false`) {
+		t.Fatalf("put status=%d body=%s", put.Code, put.Body.String())
+	}
+}

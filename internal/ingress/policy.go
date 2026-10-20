@@ -365,15 +365,6 @@ func (h *Handler) StickyLimitFor(snapshot *runtime.RuntimeSnapshot, provider str
 	return snapshot.ProviderStickyLimitFor(provider)
 }
 
-// StickyLimit returns how many requests one sticky starting candidate serves
-// before the cursor advances.
-func (h *Handler) StickyLimit(snapshot *runtime.RuntimeSnapshot) uint64 {
-	if h.opts.StickyLimit != 0 {
-		return routing.StickyRotations(h.opts.StickyLimit)
-	}
-	return snapshot.ProviderStickyLimit()
-}
-
 // recordClassification updates RuntimeState cooldown visibility from an
 // upstream response. It is intentionally memory-first (SPEC §14).
 func (h *Handler) recordClassification(account string, classification routing.Classification, now time.Time) {
