@@ -61,7 +61,20 @@ func ImportPinSettings(pin map[string]json.RawMessage) (settings map[string]stri
 		if json.Unmarshal(raw, &text) != nil {
 			return nil, nil, fmt.Errorf("outboundNoProxy must be a string")
 		}
-		list := canonicalNoProxy(strings.Split(text, ","))
+		var list []string
+		for _, entry := range canonicalNoProxy(strings.Split(text, ",")) {
+			// The pin has no wildcard-prefix form (proxyFetch.js:19-23), so a
+			// "*.host" entry never matched there either; carrying it would store
+			// a pattern that can never match.
+			if strings.HasPrefix(entry, "*") && entry != "*" {
+				note("outboundNoProxy: %q never matches (use %q), not carried", entry, strings.TrimPrefix(entry, "*"))
+				continue
+			}
+			list = append(list, entry)
+		}
+		if list == nil {
+			list = []string{}
+		}
 		encoded, _ := json.Marshal(list)
 		settings["noProxy"] = string(encoded)
 	}
@@ -225,8 +238,11 @@ func importStrategyOverrides(key string, raw json.RawMessage, combo bool, global
 			}
 		}
 		var strategy string
-		_ = json.Unmarshal(fields["fallbackStrategy"], &strategy)
+		_, hasStrategy := fields["fallbackStrategy"]
+		strategyErr := json.Unmarshal(fields["fallbackStrategy"], &strategy)
 		switch {
+		case hasStrategy && (strategyErr != nil || string(bytes.TrimSpace(fields["fallbackStrategy"])) == "null"):
+			notes = append(notes, fmt.Sprintf("%s.%s: fallbackStrategy %s is not a string, not carried", key, name, bytes.TrimSpace(fields["fallbackStrategy"])))
 		case strategy == "":
 		case strategy == "fill-first" && !combo, strategy == "fallback" && combo:
 			entry["fallbackStrategy"] = strategy

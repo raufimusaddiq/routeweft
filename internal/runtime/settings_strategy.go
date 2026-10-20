@@ -28,65 +28,98 @@ type strategyOverride struct {
 // proxyPoolId/rotateStrategy (no-auth proxy rotation), judgeModel and
 // fusionTuning are owned by other items (PARITY 5.2).
 func parseStrategyOverrides(raw string, combo bool) (map[string]strategyOverride, error) {
-	var entries map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(raw), &entries); err != nil || entries == nil {
-		return nil, fmt.Errorf("must be a JSON object")
+	out, errs, err := parseStrategyOverridesEach(raw, combo)
+	if err != nil {
+		return nil, err
 	}
-	out := make(map[string]strategyOverride, len(entries))
-	for name, value := range entries {
-		var override strategyOverride
-		value = bytes.TrimSpace(value)
-		if len(value) > 0 && value[0] == '"' {
-			if err := json.Unmarshal(value, &override.Strategy); err != nil {
-				return nil, fmt.Errorf("%q: invalid strategy", name)
-			}
-		} else {
-			var fields map[string]json.RawMessage
-			if err := json.Unmarshal(value, &fields); err != nil || fields == nil {
-				return nil, fmt.Errorf("%q: must be a strategy string or object", name)
-			}
-			keys := make([]string, 0, len(fields))
-			for key := range fields {
-				keys = append(keys, key)
-			}
-			sort.Strings(keys)
-			for _, key := range keys {
-				switch {
-				case key == "fallbackStrategy":
-					if err := json.Unmarshal(fields[key], &override.Strategy); err != nil {
-						return nil, fmt.Errorf("%q: fallbackStrategy must be a string", name)
-					}
-				case key == "stickyRoundRobinLimit" && !combo:
-					var limit int64
-					if err := json.Unmarshal(fields[key], &limit); err != nil || limit < 0 {
-						return nil, fmt.Errorf("%q: stickyRoundRobinLimit must be a non-negative integer", name)
-					}
-					override.StickyLimit = uint64(limit)
-				default:
-					return nil, fmt.Errorf("%q: field %q is not supported", name, key)
-				}
-			}
-		}
-		if combo {
-			if _, err := parseComboStrategy(override.Strategy); err != nil {
-				return nil, fmt.Errorf("%q: unsupported strategy %q", name, override.Strategy)
-			}
-		} else if _, err := routing.ParseStrategy(override.Strategy); err != nil {
-			return nil, fmt.Errorf("%q: unsupported strategy %q", name, override.Strategy)
-		}
-		out[name] = override
+	for _, name := range sortedKeys(errs) {
+		return nil, errs[name]
 	}
 	return out, nil
 }
 
+func sortedKeys(errs map[string]error) []string {
+	keys := make([]string, 0, len(errs))
+	for key := range errs {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// parseStrategyOverridesEach validates entry by entry: out holds the valid
+// entries, errs the rejected ones, and err is set only when raw is not an object.
+func parseStrategyOverridesEach(raw string, combo bool) (out map[string]strategyOverride, errs map[string]error, err error) {
+	var entries map[string]json.RawMessage
+	if json.Unmarshal([]byte(raw), &entries) != nil || entries == nil {
+		return nil, nil, fmt.Errorf("must be a JSON object")
+	}
+	out = make(map[string]strategyOverride, len(entries))
+	errs = make(map[string]error)
+	for name, value := range entries {
+		override, entryErr := parseStrategyOverride(name, value, combo)
+		if entryErr != nil {
+			errs[name] = entryErr
+			continue
+		}
+		out[name] = override
+	}
+	return out, errs, nil
+}
+
+func parseStrategyOverride(name string, value json.RawMessage, combo bool) (strategyOverride, error) {
+	var override strategyOverride
+	value = bytes.TrimSpace(value)
+	if len(value) > 0 && value[0] == '"' {
+		if err := json.Unmarshal(value, &override.Strategy); err != nil {
+			return strategyOverride{}, fmt.Errorf("%q: invalid strategy", name)
+		}
+	} else {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(value, &fields); err != nil || fields == nil {
+			return strategyOverride{}, fmt.Errorf("%q: must be a strategy string or object", name)
+		}
+		keys := make([]string, 0, len(fields))
+		for key := range fields {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			switch {
+			case key == "fallbackStrategy":
+				if err := json.Unmarshal(fields[key], &override.Strategy); err != nil {
+					return strategyOverride{}, fmt.Errorf("%q: fallbackStrategy must be a string", name)
+				}
+			case key == "stickyRoundRobinLimit" && !combo:
+				var limit int64
+				if err := json.Unmarshal(fields[key], &limit); err != nil || limit < 0 {
+					return strategyOverride{}, fmt.Errorf("%q: stickyRoundRobinLimit must be a non-negative integer", name)
+				}
+				override.StickyLimit = uint64(limit)
+			default:
+				return strategyOverride{}, fmt.Errorf("%q: field %q is not supported", name, key)
+			}
+		}
+	}
+	if combo {
+		if _, err := parseComboStrategy(override.Strategy); err != nil {
+			return strategyOverride{}, fmt.Errorf("%q: unsupported strategy %q", name, override.Strategy)
+		}
+	} else if _, err := routing.ParseStrategy(override.Strategy); err != nil {
+		return strategyOverride{}, fmt.Errorf("%q: unsupported strategy %q", name, override.Strategy)
+	}
+	return override, nil
+}
+
 // strategyOverridesTolerant is the snapshot-side reader: configuration already
-// passed validation, but a malformed historical value must not fail a request.
+// passed validation, but one malformed historical entry is skipped on its own
+// instead of discarding every other override.
 func strategyOverridesTolerant(raw string, combo bool) map[string]strategyOverride {
-	parsed, err := parseStrategyOverrides(raw, combo)
+	out, _, err := parseStrategyOverridesEach(raw, combo)
 	if err != nil {
 		return map[string]strategyOverride{}
 	}
-	return parsed
+	return out
 }
 
 // pinRoundRobinLimit maps a pin round-robin selection onto Routeweft's split

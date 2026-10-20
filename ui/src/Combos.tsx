@@ -5,7 +5,7 @@ import { buildChoices, describeFailure, keysAllowingCombo, memberFromInput, memb
 type Member = { providerId: string; modelId: string; position: number; selected: boolean }
 type Combo = { id: string; name: string; strategy: string; stickyLimit: number; judgeModel: string; fusionEnabled: boolean; members: Member[] }
 type StoredKey = { id: string; name: string; access?: AccessState }
-type Adapter = { capability: string; enabled: boolean; pool: { providerId: string; modelId: string }[] }
+type Adapter = { capability: string; enabled: boolean; roundRobin?: boolean; pool: { providerId: string; modelId: string }[] }
 type Props = { onUnauthorized: () => void }
 
 // vision and audio-input are the initially visible capacity adapters; pdf and
@@ -152,8 +152,8 @@ export function Combos({ onUnauthorized }: Props) {
     await action(combo.id, 'Combo deleted.', () => send(`/combos/${encodeURIComponent(combo.id)}`, 'DELETE').then(() => { if (draft.id === combo.id) { setEditing(false); setDraft(blankCombo) } }))
   }
 
-  async function saveAdapter(capability: string, enabled: boolean, pool: Adapter['pool']) {
-    await action(`adapter-${capability}`, `${capability} adapter saved.`, () => send(`/capability-adapters/${encodeURIComponent(capability)}`, 'PUT', { enabled, pool }).then(() => undefined))
+  async function saveAdapter(capability: string, enabled: boolean, pool: Adapter['pool'], roundRobin?: boolean) {
+    await action(`adapter-${capability}`, `${capability} adapter saved.`, () => send(`/capability-adapters/${encodeURIComponent(capability)}`, 'PUT', roundRobin === undefined ? { enabled, pool } : { enabled, pool, roundRobin }).then(() => undefined))
   }
 
   function adapterFor(capability: string) {
@@ -209,6 +209,7 @@ export function Combos({ onUnauthorized }: Props) {
         const pick = adapterPick[capability] || ''
         return <div className="adapter-section" key={capability}>
           <div className="adapter-header"><div><strong>{capability}</strong><small>{adapter.enabled ? (adapter.pool.length ? `${adapter.pool.length} pool member${adapter.pool.length === 1 ? '' : 's'}` : 'Enabled · empty pool is a no-op') : 'Disabled'}</small></div><button className="button-secondary" type="button" disabled={busy === `adapter-${capability}`} onClick={() => void saveAdapter(capability, !adapter.enabled, adapter.pool)}>{adapter.enabled ? 'Disable' : 'Enable'}</button></div>
+          <label className="combo-toggle"><input type="checkbox" checked={!!adapter.roundRobin} disabled={busy === `adapter-${capability}`} onChange={event => void saveAdapter(capability, adapter.enabled, adapter.pool, event.target.checked)} />Rotate through the pool (round-robin){adapter.roundRobin && !adapter.enabled ? ' · applies once enabled' : ''}</label>
           {adapter.pool.length > 0 && <ul className="adapter-pool">{adapter.pool.map(member => <li key={`${member.providerId}/${member.modelId}`}><code>{member.providerId} / {member.modelId}</code><button className="button-danger" type="button" disabled={busy === `adapter-${capability}`} onClick={() => void saveAdapter(capability, adapter.enabled, adapter.pool.filter(item => item !== member))}>Remove</button></li>)}</ul>}
           <div className="member-picker"><input aria-label={`Add ${capability} adapter member`} list="combo-model-choices" autoComplete="off" placeholder="provider/model" value={pick} onChange={event => setAdapterPick({ ...adapterPick, [capability]: event.target.value })} /><button className="button-secondary" type="button" disabled={!pick.trim()} onClick={() => { const member = memberFromInput(pick, choices.filter(choice => choice.kind === 'model')); if (!member) { setError(`“${pick.trim()}” is not a known model.`); return } void saveAdapter(capability, adapter.enabled, [...adapter.pool, member]); setAdapterPick({ ...adapterPick, [capability]: '' }) }}>Add to pool</button></div>
         </div>

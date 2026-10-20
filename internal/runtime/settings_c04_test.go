@@ -86,17 +86,20 @@ func TestC04CapacityAdapterLegacyRoutweftValueDefaultsToFallback(t *testing.T) {
 func TestC04NoProxyImportAndCompile(t *testing.T) {
 	manager, store := newTestManager(t)
 	defer store.Close()
-	settings, _, err := ImportPinSettings(rawPin(t, `{"outboundNoProxy":" Localhost, .Internal.Example ,,*.skip ,"}`))
+	settings, noProxyNotes, err := ImportPinSettings(rawPin(t, `{"outboundNoProxy":" Localhost, .Internal.Example ,,*.skip ,"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings["noProxy"] != `["localhost",".internal.example","*.skip"]` {
+	if settings["noProxy"] != `["localhost",".internal.example"]` {
 		t.Fatalf("noProxy=%q", settings["noProxy"])
+	}
+	if !strings.Contains(strings.Join(noProxyNotes, "\n"), `"*.skip" never matches`) {
+		t.Fatalf("notes=%v", noProxyNotes)
 	}
 	applyImported(t, manager, settings)
 	snapshot, _ := manager.Load()
 	_, _, got := snapshot.OutboundProxy()
-	if want := []string{"localhost", ".internal.example", "*.skip"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"localhost", ".internal.example"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("compiled=%v want %v", got, want)
 	}
 	// Routeweft's own value is canonicalized the same way at compile time.
@@ -327,5 +330,37 @@ func TestC04UnconsumedFlagsAreReportedNotStored(t *testing.T) {
 		if IsWritableSetting(key) {
 			t.Fatalf("%s must stay unwritable until something consumes it", key)
 		}
+	}
+}
+
+// A non-string fallbackStrategy is reported, never silently dropped.
+func TestC04ImportReportsNonStringFallbackStrategy(t *testing.T) {
+	for _, document := range []string{
+		`{"providerStrategies":{"openai":{"fallbackStrategy":5}}}`,
+		`{"providerStrategies":{"openai":{"fallbackStrategy":null}}}`,
+		`{"comboStrategies":{"auto":{"fallbackStrategy":["round-robin"]}}}`,
+	} {
+		_, notes, err := ImportPinSettings(rawPin(t, document))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(notes) != 1 || !strings.Contains(notes[0], "is not a string, not carried") {
+			t.Errorf("%s: notes=%v", document, notes)
+		}
+	}
+}
+
+// One malformed stored entry is skipped alone; the other overrides survive.
+func TestC04TolerantReaderSkipsOnlyTheBadEntry(t *testing.T) {
+	raw := `{"openai":{"fallbackStrategy":"round-robin"},"bad":{"proxyPoolId":"x"},"claude":"sticky-round-robin","worse":7}`
+	got := strategyOverridesTolerant(raw, false)
+	if len(got) != 2 || got["openai"].Strategy != "round-robin" || got["claude"].Strategy != "sticky-round-robin" {
+		t.Fatalf("got=%v", got)
+	}
+	if _, err := parseStrategyOverrides(raw, false); err == nil {
+		t.Fatal("the write-side validator must still reject the document")
+	}
+	if got := strategyOverridesTolerant(`[]`, false); len(got) != 0 {
+		t.Fatalf("non-object: %v", got)
 	}
 }
