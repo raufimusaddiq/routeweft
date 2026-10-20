@@ -16,8 +16,8 @@ import (
 // provider leaves it in the PR that lands its wire's legs. The last four have no
 // leg at the oracle either, so closing them is an adapter decision, not a leg.
 var unreachableProviders = map[string]string{
-	"antigravity":    "#119 PR 5b Gemini CLI and Antigravity",
-	"gemini-cli":     "#119 PR 5b Gemini CLI and Antigravity",
+	"antigravity":    "#119 Antigravity: legs landed, URL, auth and project id are the wire hook's (ingress.unwired)",
+	"gemini-cli":     "#119 Gemini CLI: legs landed, URL, auth and project id are the wire hook's (ingress.unwired)",
 	"vertex":         "#119 Gemini family: legs landed, URL and auth are #115 PR-C's (ingress.unwired)",
 	"kiro":           "#119 Kiro",
 	"cursor":         "#119 Cursor: legs landed, protobuf/h2 transport not built (ingress.unwired)",

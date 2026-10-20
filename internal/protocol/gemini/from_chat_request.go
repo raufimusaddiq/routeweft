@@ -27,6 +27,11 @@ type RequestOptions struct {
 	// earlier responses carried. An empty Scope, or a nil cache, replays none.
 	Signatures *Signatures
 	Scope      string
+	// OmitPlaceholderSignature leaves a call that holds no real signature
+	// unsigned instead of sending PlaceholderSignature. The Claude models behind
+	// Antigravity are signed by a different backend than Gemini's, and a signature
+	// of the other family is rejected (PARITY 6.8 A6).
+	OmitPlaceholderSignature bool
 }
 
 var (
@@ -157,7 +162,9 @@ func number(body map[string]any, name string) (any, bool, error) {
 // generationConfig carries the sampling and output controls (:85-98).
 func generationConfig(body map[string]any, model string) (map[string]any, error) {
 	config := map[string]any{}
-	sampling := map[string]string{"temperature": "temperature", "top_p": "topP", "top_k": "topK"}
+	// top_k is not read: OpenAI Chat defines no such field, and the family has one
+	// rule for it (PARITY 6.8 F1). The pin forwarded it (:90-95).
+	sampling := map[string]string{"temperature": "temperature", "top_p": "topP"}
 	for field, target := range sampling {
 		value, present, err := number(body, field)
 		if err != nil {

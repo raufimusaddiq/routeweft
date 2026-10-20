@@ -392,3 +392,33 @@ func TestTranslatedRequestWithoutUsageIsUnobserved(t *testing.T) {
 		}
 	}
 }
+
+// Gemini CLI and Antigravity have their conversion legs and no way to be reached:
+// the Cloud Code URL and its ?alt=sse query, the OAuth bearer, the client headers
+// and the project id the envelope names are the wire hook's (executors/gemini-cli.js,
+// executors/antigravity.js), and the legs refuse to invent a project. Until a PR
+// binds them, no client wire may translate to either. That PR removes, together:
+// the two ingress.unwired entries, the TranslateChat/TranslateResponses/
+// TranslateMessages arms it adds for them, their unreachableProviders entries
+// and this test.
+func TestCloudCodeWiresAreNotTranslatableUntilTheyAreBound(t *testing.T) {
+	for _, wire := range []string{geminiwire.GeminiCLIProtocol, geminiwire.AntigravityProtocol} {
+		if !hub.Has(openai.ChatProtocol, wire, hub.Request) || !hub.Has(wire, openai.ChatProtocol, hub.Response) {
+			t.Fatalf("the %s legs are expected to exist; the gate is the only thing keeping it unrouted", wire)
+		}
+		if !unwired[wire] {
+			t.Fatalf("%s left ingress.unwired before its URL, auth and project id were bound", wire)
+		}
+		for _, client := range []string{openai.ChatProtocol, openai.ResponsesProtocol, anthropic.MessagesProtocol} {
+			if CanTranslate(client, wire) {
+				t.Errorf("%s client claims to reach %s", client, wire)
+			}
+			if reaches(client, []registry.Protocol{registry.Protocol(wire)}) {
+				t.Errorf("%s client reaches the %s provider", client, wire)
+			}
+		}
+		if _, ok := unreachableProviders[wire]; !ok {
+			t.Errorf("%s is not tracked in unreachableProviders", wire)
+		}
+	}
+}

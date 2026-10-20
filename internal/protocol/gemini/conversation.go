@@ -169,7 +169,7 @@ func (c *conversation) assistant(message map[string]any, last bool) error {
 		}
 		arguments := concerns.ToolInput(function["arguments"])
 		signature, cached := c.options.Signatures.Get(c.options.Scope, id, name, concerns.JSONText(arguments))
-		if !cached && position == 0 {
+		if !cached && position == 0 && !c.options.OmitPlaceholderSignature {
 			// The first call of a turn needs a signature; a sibling stays
 			// unsigned when none was kept (:187-190).
 			signature, cached = PlaceholderSignature, true

@@ -56,7 +56,9 @@ type Leg struct {
 // are too: a Chat client reaches them through the request leg and reads the
 // response leg, while the pin's gemini>Chat request leg serves a Gemini client
 // and has no response leg back, so it is not routable on its own (the pin
-// registers no openai>gemini response leg).
+// registers no openai>gemini response leg). Gemini CLI and Antigravity are the
+// same wires in the Cloud Code envelope: both are provider wires, and
+// Antigravity alone has the response leg a client of its own would read.
 var legs = []Leg{
 	{anthropic.MessagesProtocol, openai.ChatProtocol, Request},
 	{openai.ChatProtocol, anthropic.MessagesProtocol, Request},
@@ -77,6 +79,13 @@ var legs = []Leg{
 	{gemini.Protocol, openai.ChatProtocol, Request},
 	{gemini.Protocol, openai.ChatProtocol, Response},
 	{gemini.VertexProtocol, openai.ChatProtocol, Response},
+	{openai.ChatProtocol, gemini.GeminiCLIProtocol, Request},
+	{gemini.GeminiCLIProtocol, openai.ChatProtocol, Request},
+	{gemini.GeminiCLIProtocol, openai.ChatProtocol, Response},
+	{openai.ChatProtocol, gemini.AntigravityProtocol, Request},
+	{gemini.AntigravityProtocol, openai.ChatProtocol, Request},
+	{gemini.AntigravityProtocol, openai.ChatProtocol, Response},
+	{openai.ChatProtocol, gemini.AntigravityProtocol, Response},
 }
 
 // Legs returns a copy of the implemented legs.

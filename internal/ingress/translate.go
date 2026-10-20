@@ -29,8 +29,15 @@ import (
 // until it does, a request routed there would fail at the last hop. PR-C removes
 // the vertex entry together with TranslateChat's vertex arm, which is not built
 // here because the endpoint it would name is that hook's to compute.
+// Gemini CLI and Antigravity need the same hook: the Cloud Code URL and its
+// ?alt=sse query, the OAuth bearer and client headers, and the project id the
+// envelope names, which the legs refuse to invent (executors/gemini-cli.js,
+// executors/antigravity.js).
 // A provider leaves this list in the PR that binds its wire.
-var unwired = map[string]bool{cursor.Protocol: true, commandcode.Protocol: true, geminiwire.VertexProtocol: true}
+var unwired = map[string]bool{
+	cursor.Protocol: true, commandcode.Protocol: true, geminiwire.VertexProtocol: true,
+	geminiwire.GeminiCLIProtocol: true, geminiwire.AntigravityProtocol: true,
+}
 
 // geminiSignatures keeps the thought signatures Gemini attached to its function
 // calls so the next request of the conversation can send them back. In memory
