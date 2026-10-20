@@ -325,7 +325,7 @@ func contentBlocks(message map[string]any, names *concerns.ToolNames) ([]any, er
 						blocks = append(blocks, map[string]any{"type": "text", "text": text})
 					}
 				case "tool_use":
-					blocks = append(blocks, map[string]any{"type": "tool_use", "id": part["id"], "name": part["name"], "input": part["input"]})
+					blocks = append(blocks, map[string]any{"type": "tool_use", "id": part["id"], "name": part["name"], "input": concerns.ToolInput(part["input"])})
 				case "thinking":
 					if concerns.Text(part["signature"]) == "" {
 						continue
@@ -352,13 +352,7 @@ func contentBlocks(message map[string]any, names *concerns.ToolNames) ([]any, er
 				return nil, unsupported("tool call type %q", kind)
 			}
 			function := concerns.Object(call["function"])
-			input := function["arguments"]
-			if text, ok := input.(string); ok {
-				var parsed any
-				if err := json.Unmarshal([]byte(text), &parsed); err == nil {
-					input = parsed
-				}
-			}
+			input := concerns.ToolInput(function["arguments"])
 			blocks = append(blocks, map[string]any{"type": "tool_use", "id": call["id"], "name": names.Safe(concerns.Text(function["name"])), "input": input})
 		}
 	}

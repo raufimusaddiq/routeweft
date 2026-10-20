@@ -110,6 +110,9 @@ func MessagesStreamToChat(ctx context.Context, src io.Reader, dst io.Writer, nam
 			delta := concerns.Object(event["delta"])
 			if reason := concerns.Text(delta["stop_reason"]); reason != "" {
 				state.finish = concerns.ToOpenAIFinish(reason, concerns.FinishFormatClaude)
+				if state.finish == concerns.FinishToolCalls && state.nextToolIndex == 0 {
+					return false, &upstreamError{value: map[string]any{"type": "api_error", "message": "upstream stopped for tool use but sent no tool call"}}
+				}
 				// A refusal produces no content blocks. Surface Anthropic's own
 				// explanation so the client shows why the turn is empty.
 				if note := concerns.Text(concerns.Object(delta["stop_details"])["explanation"]); reason == "refusal" && note != "" {
@@ -304,6 +307,8 @@ func MessagesResponseToChat(body []byte, names *concerns.ToolNames) ([]byte, err
 	finish := concerns.ToOpenAIFinish(reason, concerns.FinishFormatClaude)
 	if len(calls) > 0 {
 		finish = concerns.FinishToolCalls
+	} else if finish == concerns.FinishToolCalls {
+		return nil, errors.New("upstream stopped for tool use but sent no tool call")
 	}
 	// The pin strips reasoning only when there is content to show instead.
 	if message["content"] != "" && message["content"] != nil {

@@ -127,3 +127,23 @@ func ParseDataURI(url any) (mediaType, data string, ok bool) {
 	}
 	return match[1], match[2], true
 }
+
+// ToolInput is the `input` of a tool_use block: always a JSON object. A Chat
+// call's arguments arrive as a string that may be empty (a no-argument tool),
+// absent, malformed, or valid JSON that is not an object; none of those can be
+// sent as `input`, so each is `{}` (nonstream-to-claude.js:5-13 for the first
+// three; the last follows from the same rule).
+func ToolInput(value any) map[string]any {
+	switch v := value.(type) {
+	case map[string]any:
+		return v
+	case string:
+		if v == "" {
+			return map[string]any{}
+		}
+		if parsed, err := WireObject([]byte(v)); err == nil {
+			return parsed
+		}
+	}
+	return map[string]any{}
+}

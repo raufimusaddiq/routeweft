@@ -277,7 +277,11 @@ func TestChatStreamToMessages(t *testing.T) {
 
 func TestChatStreamToMessagesFinishReasonsAndBareEnd(t *testing.T) {
 	for chat, want := range map[string]string{"stop": "end_turn", "length": "max_tokens", "content_filter": "refusal", "tool_calls": "tool_use"} {
-		stream := `data: {"id":"chatcmpl-abcdefgh","model":"m","choices":[{"delta":{"content":"x"},"finish_reason":"` + chat + `"}]}` + "\n\n"
+		part := `{"content":"x"}`
+		if chat == "tool_calls" {
+			part = `{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"t","arguments":"{}"}}]}`
+		}
+		stream := `data: {"id":"chatcmpl-abcdefgh","model":"m","choices":[{"delta":` + part + `,"finish_reason":"` + chat + `"}]}` + "\n\n"
 		var out bytes.Buffer
 		// Ending without [DONE] after finish_reason is a complete answer.
 		if err := ChatStreamToMessages(context.Background(), strings.NewReader(stream), &out); err != nil {
@@ -410,8 +414,8 @@ func TestChatResponseToMessages(t *testing.T) {
 	_ = json.Unmarshal(got, &result)
 	content := result["content"].([]any)
 	second := content[3].(map[string]any)
-	if strings.HasPrefix(second["id"].(string), "toolu_") == false {
-		t.Fatalf("a call with no id gets a generated toolu_ id: %v", second)
+	if second["id"] != "call_msg0_tc1_y" {
+		t.Fatalf("a call with no id gets a generated, deterministic id: %v", second)
 	}
 	content[3].(map[string]any)["id"] = "generated"
 	result["content"] = content
@@ -537,5 +541,99 @@ func TestEmptyChatResponsesAreFailuresNotSuccesses(t *testing.T) {
 	native := `{"id":"m","type":"message","content":[]}`
 	if got, err := ChatResponseToMessages([]byte(native)); err != nil || string(got) != native {
 		t.Fatalf("a body that already is a Messages response passes: %s %v", got, err)
+	}
+}
+
+// A Chat tool call becomes a tool_use whose input is always an object, whatever
+// the arguments were: empty, absent, malformed, or valid JSON that is no object.
+// The request and response halves share one rule.
+func TestToolInputIsAlwaysAnObject(t *testing.T) {
+	for name, arguments := range map[string]string{
+		"empty":     `"arguments":""`,
+		"absent":    `"name":"now"`,
+		"malformed": `"arguments":"{not json"`,
+		"array":     `"arguments":"[1,2]"`,
+		"string":    `"arguments":"\"x\""`,
+		"object":    `"arguments":"{\"a\":1}"`,
+	} {
+		call := `{"id":"call_1","type":"function","function":{"name":"now",` + strings.TrimPrefix(strings.TrimPrefix(arguments, `"name":"now"`), `,`) + `}}`
+		if arguments == `"name":"now"` {
+			call = `{"id":"call_1","type":"function","function":{"name":"now"}}`
+		}
+		body, _ := concerns.WireObject([]byte(`{"model":"m","messages":[{"role":"user","content":"a"},{"role":"assistant","tool_calls":[` + call + `]},{"role":"tool","tool_call_id":"call_1","content":"r"}]}`))
+		got, _, err := ChatRequestToMessages(body, "m", false, true, false)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var result map[string]any
+		_ = json.Unmarshal(got, &result)
+		use := concerns.Object(concerns.Items(concerns.Object(concerns.Items(result["messages"])[1])["content"])[0])
+		if _, isObject := use["input"].(map[string]any); !isObject {
+			t.Errorf("request leg, %s: input is %v, want an object", name, use["input"])
+		}
+		response, err := ChatResponseToMessages([]byte(`{"id":"x","choices":[{"finish_reason":"tool_calls","message":{"tool_calls":[` + call + `]}}]}`))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		_ = json.Unmarshal(response, &result)
+		if _, isObject := concerns.Object(concerns.Items(result["content"])[0])["input"].(map[string]any); !isObject {
+			t.Errorf("response leg, %s: input is not an object: %s", name, response)
+		}
+	}
+}
+
+// A streamed call with no id still runs; arguments for a call that never named
+// itself, and a terminal that promises tools that are not there, are failures.
+func TestChatStreamToMessagesToolCallEdgeCases(t *testing.T) {
+	var out bytes.Buffer
+	stream := `data: {"id":"chatcmpl-abcdefgh","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"now","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}` + "\n\n" + "data: [DONE]\n\n"
+	if err := ChatStreamToMessages(context.Background(), strings.NewReader(stream), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"id":"call_msg0_tc0_now"`) || !strings.Contains(out.String(), `"stop_reason":"tool_use"`) {
+		t.Fatalf("an id-less call gets a generated id and still runs: %s", out.String())
+	}
+	for name, stream := range map[string]string{
+		"arguments only":  `data: {"id":"chatcmpl-abcdefgh","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{}"}}]},"finish_reason":"tool_calls"}]}` + "\n\n" + "data: [DONE]\n\n",
+		"no tools at all": `data: {"id":"chatcmpl-abcdefgh","choices":[{"delta":{"content":"x"},"finish_reason":"tool_calls"}]}` + "\n\n" + "data: [DONE]\n\n",
+	} {
+		out.Reset()
+		if err := ChatStreamToMessages(context.Background(), strings.NewReader(stream), &out); err == nil {
+			t.Errorf("%s: must fail", name)
+		}
+		if names := eventNames(out.String()); names[len(names)-1] != "error" || strings.Contains(out.String(), "tool_use") {
+			t.Errorf("%s: must end in an error event and claim no tool use: %v", name, names)
+		}
+	}
+	if _, err := ChatResponseToMessages([]byte(`{"choices":[{"finish_reason":"tool_calls","message":{"content":"x"}}]}`)); err == nil {
+		t.Error("buffered: tool_calls with no calls must fail")
+	}
+	// And the other direction agrees.
+	out.Reset()
+	stop := `data: {"type":"message_start","message":{"id":"m"}}` + "\n\n" + `data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}` + "\n\n" + `data: {"type":"message_stop"}` + "\n\n"
+	if err := MessagesStreamToChat(context.Background(), strings.NewReader(stop), &out, nil); err == nil || strings.Contains(out.String(), `"finish_reason":"tool_calls"`) {
+		t.Errorf("tool_use with no tool block must fail: %v %s", err, out.String())
+	}
+	if _, err := MessagesResponseToChat([]byte(`{"id":"m","stop_reason":"tool_use","content":[{"type":"text","text":"x"}]}`), nil); err == nil {
+		t.Error("buffered: tool_use with no tool block must fail")
+	}
+}
+
+// Fields both halves read must agree: a tool named proxy_x keeps its name in the
+// stream and buffered, and array-form content is text in both.
+func TestChatResponseHalvesAgree(t *testing.T) {
+	var out bytes.Buffer
+	stream := `data: {"id":"chatcmpl-abcdefgh","choices":[{"delta":{"content":[{"type":"text","text":"hi"}],"tool_calls":[{"index":0,"id":"c1","function":{"name":"proxy_search","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}` + "\n\n" + "data: [DONE]\n\n"
+	if err := ChatStreamToMessages(context.Background(), strings.NewReader(stream), &out); err != nil {
+		t.Fatal(err)
+	}
+	buffered, err := ChatResponseToMessages([]byte(`{"id":"x","choices":[{"finish_reason":"tool_calls","message":{"content":[{"type":"text","text":"hi"}],"tool_calls":[{"id":"c1","type":"function","function":{"name":"proxy_search","arguments":"{}"}}]}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, text := range map[string]string{"stream": out.String(), "buffered": string(buffered)} {
+		if !strings.Contains(text, `"name":"proxy_search"`) || !strings.Contains(text, `"hi"`) {
+			t.Errorf("%s: %s", name, text)
+		}
 	}
 }

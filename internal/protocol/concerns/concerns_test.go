@@ -211,3 +211,31 @@ func TestDataURIAndExtractText(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+// An id-less call gets an id, and an id-less result answers the oldest call
+// still waiting, in both shapes alike.
+func TestEnsureToolCallIDsFillsAbsentIDs(t *testing.T) {
+	chat := decode(t, `{"messages":[
+		{"role":"assistant","tool_calls":[{"function":{"name":"a"}},{"function":{"name":"b"}}]},
+		{"role":"tool","content":"ra"},{"role":"tool","content":"rb"}]}`)
+	messages := Items(chat["messages"])
+	EnsureToolCallIDs(chat)
+	calls := Items(Object(messages[0])["tool_calls"])
+	first, second := Text(Object(calls[0])["id"]), Text(Object(calls[1])["id"])
+	if first == "" || second == "" || first == second || Object(messages[1])["tool_call_id"] != first || Object(messages[2])["tool_call_id"] != second {
+		t.Fatalf("chat shape: %v %v %v %v", first, second, Object(messages[1])["tool_call_id"], Object(messages[2])["tool_call_id"])
+	}
+	claude := decode(t, `{"messages":[
+		{"role":"assistant","content":[{"type":"tool_use","name":"a","input":{}},{"type":"tool_use","name":"b","input":{}}]},
+		{"role":"user","content":[{"type":"tool_result","content":"ra"},{"type":"tool_result","content":"rb"}]}]}`)
+	messages = Items(claude["messages"])
+	EnsureToolCallIDs(claude)
+	uses, results := Items(Object(messages[0])["content"]), Items(Object(messages[1])["content"])
+	if Text(Object(uses[0])["id"]) == "" || Object(results[0])["tool_use_id"] != Object(uses[0])["id"] || Object(results[1])["tool_use_id"] != Object(uses[1])["id"] {
+		t.Fatalf("messages shape: %v %v", uses, results)
+	}
+	FixMissingToolResponses(claude)
+	if len(Items(claude["messages"])) != 2 {
+		t.Fatalf("every call is answered, so nothing is inserted: %v", claude["messages"])
+	}
+}

@@ -34,6 +34,11 @@ func ChatStreamToMessages(ctx context.Context, src io.Reader, dst io.Writer) err
 		if !state.started || state.closed {
 			return nil
 		}
+		if state.finishSeen && state.finish == concerns.FinishToolCalls && !state.toolsOpened {
+			// A terminal that says a tool was called, with no tool to run, describes
+			// work that is not there.
+			return &upstreamError{value: map[string]any{"type": "api_error", "message": "upstream finished for tool calls but sent none"}}
+		}
 		state.closed = true
 		if !state.finishSeen {
 			// The provider ended without saying why. Close what is open and report
@@ -85,6 +90,9 @@ func ChatStreamToMessages(ctx context.Context, src io.Reader, dst io.Writer) err
 		choice := concerns.Object(choices[0])
 		delta := concerns.Object(choice["delta"])
 		events := state.events(chunk, delta, choice)
+		if state.err != nil {
+			return false, state.err
+		}
 		for _, event := range events {
 			if err := writer.Event(concerns.Text(event["type"]), event); err != nil {
 				return false, err
@@ -100,7 +108,10 @@ func ChatStreamToMessages(ctx context.Context, src io.Reader, dst io.Writer) err
 	if err != nil {
 		return failMessagesStream(writer, ctx, err)
 	}
-	return closeMessage()
+	if err := closeMessage(); err != nil {
+		return failMessagesStream(writer, ctx, err)
+	}
+	return nil
 }
 
 // failMessagesStream ends a Messages stream with an error event. A cancelled
@@ -127,6 +138,8 @@ type chatToolBlock struct {
 
 type chatStreamState struct {
 	started, closed, finishSeen bool
+	toolsOpened                 bool
+	err                         error
 	id                          string
 	model                       any
 	nextBlock                   int
@@ -191,7 +204,7 @@ func (s *chatStreamState) events(chunk, delta, choice map[string]any) []map[stri
 		events = append(events, map[string]any{"type": "content_block_delta", "index": s.thinkingBlock,
 			"delta": map[string]any{"type": "thinking_delta", "thinking": reasoning}})
 	}
-	if content := concerns.Text(delta["content"]); content != "" {
+	if content := concerns.ExtractText(delta["content"], ""); content != "" {
 		s.stopThinking(&events)
 		if !s.textOpen {
 			s.textBlock, s.textOpen, s.textClosed = s.nextBlock, true, false
@@ -210,18 +223,30 @@ func (s *chatStreamState) events(chunk, delta, choice map[string]any) []map[stri
 		}
 		function := concerns.Object(call["function"])
 		// GLM and Fireworks repeat the id with a null name on every argument
-		// chunk; the block opens once per index.
-		if id := concerns.Text(call["id"]); id != "" && s.toolCalls[index] == nil {
+		// chunk; the block opens once per index. A call that arrives without an id
+		// still has to run, so it gets a generated one; arguments for a call that
+		// never named itself cannot be attributed to anything and fail the stream.
+		name, arguments := concerns.Text(function["name"]), concerns.Text(function["arguments"])
+		id := concerns.Text(call["id"])
+		if s.toolCalls[index] == nil && (id != "" || name != "") {
+			if id == "" {
+				id = concerns.GenerateToolCallID(0, int(index), name)
+			}
 			s.stopThinking(&events)
 			s.stopText(&events)
-			block := &chatToolBlock{id: id, name: concerns.Text(function["name"]), block: s.nextBlock}
+			block := &chatToolBlock{id: id, name: name, block: s.nextBlock}
 			s.nextBlock++
 			s.toolCalls[index] = block
 			s.toolOrder = append(s.toolOrder, index)
+			s.toolsOpened = true
 			events = append(events, map[string]any{"type": "content_block_start", "index": block.block,
-				"content_block": map[string]any{"type": "tool_use", "id": id, "name": strings.TrimPrefix(block.name, legacyToolPrefix), "input": map[string]any{}}})
+				"content_block": map[string]any{"type": "tool_use", "id": id, "name": block.name, "input": map[string]any{}}})
 		}
-		if arguments := concerns.Text(function["arguments"]); arguments != "" && s.toolCalls[index] != nil {
+		if arguments != "" {
+			if s.toolCalls[index] == nil {
+				s.err = &upstreamError{value: map[string]any{"type": "api_error", "message": "upstream sent tool call arguments for a call it never started"}}
+				return events
+			}
 			s.args[index] += arguments
 		}
 	}
@@ -249,9 +274,10 @@ func (s *chatStreamState) closeBlocks(events *[]map[string]any) {
 	s.toolCalls, s.toolOrder = map[int64]*chatToolBlock{}, nil
 }
 
-// legacyToolPrefix is the "proxy_" prefix older request translators emitted; the
-// response strips it defensively (openai-to-claude.js:7-11).
-const legacyToolPrefix = "proxy_"
+// The pin strips a legacy "proxy_" prefix from every streamed tool name
+// (openai-to-claude.js:7-11,195-199). The request leg here never adds one, so the
+// strip could only rename a real tool called proxy_something, and the buffered
+// leg never stripped it; neither does the stream (PARITY V17).
 
 var integerText = regexp.MustCompile(`^\d+$`)
 var signedIntegerText = regexp.MustCompile(`^-?\d+$`)
@@ -266,7 +292,7 @@ func sanitizeToolArgs(name, arguments string) string {
 	if decoder.Decode(&args) != nil || args == nil {
 		return arguments
 	}
-	if strings.TrimPrefix(name, legacyToolPrefix) == "Read" {
+	if name == "Read" {
 		sanitizeReadArgs(args)
 	}
 	encoded, err := json.Marshal(args)
@@ -337,25 +363,30 @@ func ChatResponseToMessages(body []byte) ([]byte, error) {
 	if reasoning != "" {
 		content = append(content, map[string]any{"type": "thinking", "thinking": reasoning})
 	}
-	if text, ok := message["content"].(string); ok && text != "" {
+	if text := concerns.ExtractText(message["content"], ""); text != "" {
 		content = append(content, map[string]any{"type": "text", "text": text})
 	}
+	toolUses := 0
 	for _, raw := range concerns.Items(message["tool_calls"]) {
 		call := concerns.Object(raw)
 		function := concerns.Object(call["function"])
-		id := concerns.Text(call["id"])
-		if id == "" {
-			id = fmt.Sprintf("toolu_%d_%d", time.Now().UnixMilli(), len(content))
-		}
 		name := concerns.Text(function["name"])
 		if name == "" {
 			name = concerns.Text(call["name"])
 		}
+		id := concerns.Text(call["id"])
+		if id == "" {
+			id = concerns.GenerateToolCallID(0, toolUses, name)
+		}
+		toolUses++
 		arguments := function["arguments"]
 		if !concerns.Truthy(arguments) {
 			arguments = call["arguments"]
 		}
-		content = append(content, map[string]any{"type": "tool_use", "id": id, "name": name, "input": parseToolArguments(arguments)})
+		content = append(content, map[string]any{"type": "tool_use", "id": id, "name": name, "input": concerns.ToolInput(arguments)})
+	}
+	if concerns.Text(choice["finish_reason"]) == concerns.FinishToolCalls && toolUses == 0 {
+		return nil, errors.New("upstream finished for tool calls but sent none")
 	}
 	if len(content) == 0 {
 		content = append(content, map[string]any{"type": "text", "text": ""})
@@ -377,19 +408,4 @@ func ChatResponseToMessages(body []byte) ([]byte, error) {
 		"content": content, "stop_reason": concerns.FromOpenAIFinish(concerns.Text(choice["finish_reason"]), concerns.FinishFormatClaude),
 		"stop_sequence": nil, "usage": usage,
 	})
-}
-
-func parseToolArguments(value any) any {
-	if !concerns.Truthy(value) {
-		return map[string]any{}
-	}
-	text, ok := value.(string)
-	if !ok {
-		return value
-	}
-	var parsed any
-	if json.Unmarshal([]byte(text), &parsed) != nil {
-		return map[string]any{}
-	}
-	return parsed
 }

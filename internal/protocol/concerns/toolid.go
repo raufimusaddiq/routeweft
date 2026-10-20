@@ -37,15 +37,38 @@ func repairToolID(id any, generate func() string) any {
 }
 
 // EnsureToolCallIDs gives every tool call and tool result in a message list a
-// valid id and string arguments (concerns/toolCall.js:27-74). It mutates body.
+// valid id and string arguments (concerns/toolCall.js:27-74), in both the Chat
+// and the Messages shape. A call with no id gets a generated one; a result with
+// no id answers the oldest call of the preceding assistant turn that is still
+// unanswered, and only gets a generated id when there is none to answer. (The
+// pin repairs an invalid id but leaves an absent one; PARITY V16.) It mutates body.
 func EnsureToolCallIDs(body map[string]any) {
-	messages := Items(body["messages"])
-	for i, raw := range messages {
+	var pending []string
+	answer := func(id any, generate func() string) any {
+		if Truthy(id) {
+			repaired := repairToolID(id, generate)
+			for k, candidate := range pending {
+				if candidate == repaired {
+					pending = append(pending[:k:k], pending[k+1:]...)
+					break
+				}
+			}
+			return repaired
+		}
+		if len(pending) > 0 {
+			first := pending[0]
+			pending = pending[1:]
+			return first
+		}
+		return generate()
+	}
+	for i, raw := range Items(body["messages"]) {
 		message := Object(raw)
 		if message == nil {
 			continue
 		}
 		if Text(message["role"]) == "assistant" {
+			pending = nil
 			for j, rawCall := range Items(message["tool_calls"]) {
 				call := Object(rawCall)
 				if call == nil {
@@ -54,6 +77,7 @@ func EnsureToolCallIDs(body map[string]any) {
 				function := Object(call["function"])
 				name := Text(function["name"])
 				call["id"] = repairToolID(call["id"], func() string { return GenerateToolCallID(i, j, name) })
+				pending = append(pending, Text(call["id"]))
 				if !Truthy(call["type"]) {
 					call["type"] = "function"
 				}
@@ -64,8 +88,8 @@ func EnsureToolCallIDs(body map[string]any) {
 				}
 			}
 		}
-		if Text(message["role"]) == "tool" && Truthy(message["tool_call_id"]) {
-			message["tool_call_id"] = repairToolID(message["tool_call_id"], func() string { return GenerateToolCallID(i, 0, "") })
+		if Text(message["role"]) == "tool" {
+			message["tool_call_id"] = answer(message["tool_call_id"], func() string { return GenerateToolCallID(i, 0, "") })
 		}
 		for k, rawBlock := range Items(message["content"]) {
 			block := Object(rawBlock)
@@ -74,13 +98,12 @@ func EnsureToolCallIDs(body map[string]any) {
 			}
 			switch Text(block["type"]) {
 			case "tool_use":
-				if Truthy(block["id"]) {
-					block["id"] = repairToolID(block["id"], func() string { return GenerateToolCallID(i, k, Text(block["name"])) })
+				block["id"] = repairToolID(block["id"], func() string { return GenerateToolCallID(i, k, Text(block["name"])) })
+				if Text(message["role"]) == "assistant" {
+					pending = append(pending, Text(block["id"]))
 				}
 			case "tool_result":
-				if Truthy(block["tool_use_id"]) {
-					block["tool_use_id"] = repairToolID(block["tool_use_id"], func() string { return GenerateToolCallID(i, k, "") })
-				}
+				block["tool_use_id"] = answer(block["tool_use_id"], func() string { return GenerateToolCallID(i, k, "") })
 			}
 		}
 	}
