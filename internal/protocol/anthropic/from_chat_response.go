@@ -34,6 +34,24 @@ func ChatStreamToMessages(ctx context.Context, src io.Reader, dst io.Writer) err
 			return nil
 		}
 		state.closed = true
+		if !state.finishSeen {
+			// The provider ended without saying why. Close what is open and report
+			// what happened: a message with tool calls stopped for tool use, anything
+			// else stopped normally. It must not leave a block open or claim a reason
+			// it never had.
+			var events []map[string]any
+			finish := concerns.FinishStop
+			if len(state.toolCalls) > 0 {
+				finish = concerns.FinishToolCalls
+			}
+			state.closeBlocks(&events)
+			state.finish = finish
+			for _, event := range events {
+				if err := writer.Event(concerns.Text(event["type"]), event); err != nil {
+					return err
+				}
+			}
+		}
 		usage := state.usage
 		if usage == nil {
 			usage = map[string]any{"input_tokens": 0, "output_tokens": 0}
@@ -80,17 +98,14 @@ func ChatStreamToMessages(ctx context.Context, src io.Reader, dst io.Writer) err
 }
 
 // failMessagesStream ends a Messages stream with an error event. A cancelled
-// client gets nothing (spec §9.3).
+// client gets nothing (spec 9.3).
 func failMessagesStream(writer *concerns.SSEWriter, ctx context.Context, cause error) error {
 	if ctx.Err() != nil {
 		return cause
 	}
-	failure := map[string]any{"type": "api_error", "message": "upstream stream ended without a terminal event"}
-	if upstream, ok := cause.(*upstreamError); ok {
-		failure = upstream.value.(map[string]any)
-		if concerns.Text(failure["type"]) == "" {
-			failure = map[string]any{"type": "api_error", "message": concerns.Text(failure["message"])}
-		}
+	failure := streamFailureValue(cause)
+	if concerns.Text(failure["type"]) == "" {
+		failure = map[string]any{"type": "api_error", "message": concerns.Text(failure["message"])}
 	}
 	if err := writer.Event("error", map[string]any{"type": "error", "error": failure}); err != nil {
 		return err
@@ -205,21 +220,27 @@ func (s *chatStreamState) events(chunk, delta, choice map[string]any) []map[stri
 		}
 	}
 	if finish := concerns.Text(choice["finish_reason"]); finish != "" {
-		s.stopThinking(&events)
-		s.stopText(&events)
-		for _, index := range s.toolOrder {
-			tool := s.toolCalls[index]
-			if buffered := s.args[index]; buffered != "" {
-				events = append(events, map[string]any{"type": "content_block_delta", "index": tool.block,
-					"delta": map[string]any{"type": "input_json_delta", "partial_json": sanitizeToolArgs(tool.name, buffered)}})
-			}
-			events = append(events, map[string]any{"type": "content_block_stop", "index": tool.block})
-		}
-		s.args = map[int64]string{}
-		s.toolCalls, s.toolOrder = map[int64]*chatToolBlock{}, nil
+		s.closeBlocks(&events)
 		s.finish, s.finishSeen = finish, true
 	}
 	return events
+}
+
+// closeBlocks ends every open content block: thinking and text stop, and each
+// tool block flushes its buffered, sanitised arguments before it stops.
+func (s *chatStreamState) closeBlocks(events *[]map[string]any) {
+	s.stopThinking(events)
+	s.stopText(events)
+	for _, index := range s.toolOrder {
+		tool := s.toolCalls[index]
+		if buffered := s.args[index]; buffered != "" {
+			*events = append(*events, map[string]any{"type": "content_block_delta", "index": tool.block,
+				"delta": map[string]any{"type": "input_json_delta", "partial_json": sanitizeToolArgs(tool.name, buffered)}})
+		}
+		*events = append(*events, map[string]any{"type": "content_block_stop", "index": tool.block})
+	}
+	s.args = map[int64]string{}
+	s.toolCalls, s.toolOrder = map[int64]*chatToolBlock{}, nil
 }
 
 // legacyToolPrefix is the "proxy_" prefix older request translators emitted; the

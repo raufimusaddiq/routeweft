@@ -465,3 +465,59 @@ func TestRoundTripKeepsToolIDsFinishReasonsAndUsage(t *testing.T) {
 		t.Fatalf("finish reason and usage survive: %v", delta)
 	}
 }
+
+// A Chat provider that ends without a finish_reason must not leave a block open
+// or claim end_turn for a message that called a tool.
+func TestChatStreamToMessagesWithoutFinishReasonClosesEveryBlock(t *testing.T) {
+	cases := map[string]struct{ stream, stop string }{
+		"text": {`data: {"id":"chatcmpl-abcdefgh","choices":[{"delta":{"reasoning_content":"r"}}]}` + "\n\n" +
+			`data: {"id":"chatcmpl-abcdefgh","choices":[{"delta":{"content":"x"}}]}` + "\n\n" + "data: [DONE]\n\n", "end_turn"},
+		"tool": {`data: {"id":"chatcmpl-abcdefgh","choices":[{"delta":{"content":"x"}}]}` + "\n\n" +
+			`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"Read","arguments":"{\"file_path\":"}}]}}]}` + "\n\n" +
+			`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"a\"}"}}]}}]}` + "\n\n" + "data: [DONE]\n\n", "tool_use"},
+	}
+	for name, c := range cases {
+		var out bytes.Buffer
+		if err := ChatStreamToMessages(context.Background(), strings.NewReader(c.stream), &out); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		open := map[float64]bool{}
+		var stop any
+		var flushed string
+		for _, event := range sseData(t, out.String()) {
+			m := event.(map[string]any)
+			switch m["type"] {
+			case "content_block_start":
+				open[m["index"].(float64)] = true
+			case "content_block_stop":
+				delete(open, m["index"].(float64))
+			case "content_block_delta":
+				if d := m["delta"].(map[string]any); d["type"] == "input_json_delta" {
+					flushed += d["partial_json"].(string)
+				}
+			case "message_delta":
+				stop = m["delta"].(map[string]any)["stop_reason"]
+				if len(open) != 0 {
+					t.Errorf("%s: message_delta with blocks still open: %v", name, open)
+				}
+			}
+		}
+		if stop != c.stop || len(open) != 0 {
+			t.Errorf("%s: stop_reason %v want %s, open %v", name, stop, c.stop, open)
+		}
+		if name == "tool" && flushed != `{"file_path":"a"}` {
+			t.Errorf("the tool call's arguments must reach the client: %q", flushed)
+		}
+	}
+}
+
+// A payload that is not an object must not panic either failure writer.
+func TestStreamFailureWithNonObjectPayload(t *testing.T) {
+	cause := &upstreamError{value: "boom"}
+	var chat, messages bytes.Buffer
+	_ = failChatStream(&concerns.SSEWriter{Ctx: context.Background(), Dst: &chat}, context.Background(), cause)
+	_ = failMessagesStream(&concerns.SSEWriter{Ctx: context.Background(), Dst: &messages}, context.Background(), cause)
+	if !strings.Contains(chat.String(), "[DONE]") || !strings.Contains(messages.String(), "event: error") {
+		t.Fatalf("%q %q", chat.String(), messages.String())
+	}
+}

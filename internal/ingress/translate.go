@@ -56,6 +56,11 @@ func chainStreams(first, second streamFunc) streamFunc {
 		err := second(ctx, reader, dst)
 		_ = reader.CloseWithError(err)
 		cancel()
+		// The first leg may be parked reading the upstream body, which no context
+		// check can interrupt; closing the source unblocks it.
+		if closer, ok := src.(io.Closer); ok {
+			_ = closer.Close()
+		}
 		if firstErr := <-done; err == nil {
 			err = firstErr
 		}

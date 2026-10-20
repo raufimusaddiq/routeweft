@@ -776,42 +776,6 @@ Only rows marked **approved intentional** are justified by existing requirements
 | D12 | No cloud sync, tunnel/Tailscale/MITM lifecycle, removed legacy platform state | PRD 4.2/15; BDR-001/016. | Does not automatically exclude outbound proxy relay provisioning; R08 needs decision. |
 | D13 | No Redis/Postgres/remote cache bus/multi-replica topology; immutable snapshots + separate mutable state, pooled transports, bounded async telemetry | PRD 3/18/19; SPEC 5-8/20/21; BDR-004-008/013/017. | Same routing/cache/accounting outcomes still required; architecture is not evidence of end-to-end parity. |
 
-### 6.3 Conversion legs: where Routeweft differs from the pin (#119)
-
-Oracle paths are at `1c3b9f47`. These are not approved exceptions: each is a
-reviewed choice that needs owner sign-off, and none is silent.
-
-| ID | Pin behavior | Routeweft behavior | Why |
-| --- | --- | --- | --- |
-| V1 | `claude-to-openai.js:96-99` repeats the tool-call `id` on every argument delta. | The id is sent once, with the call's first chunk. | OpenAI clients and SDKs concatenate string fields while accumulating, so a repeated id reads back as `call_1call_1`; the matrix test caught it through the Chat to Responses leg. |
-| V2 | `claude-to-openai.js:183-187` (`message_stop` without a `stop_reason`) reports `prompt_tokens = input_tokens`, no cache. The merged path at `:127-170` folds cache in. | Both paths use the cache-folded figure. | One request must not report two prompt sizes; `:127-170` agrees with `canonicalizeUsage` (`utils/usageTracking.js:147-210`) and `openai-to-claude.js:89`. |
-| V3 | `nonStreamingHandler.js:303-309` (Messages body to Chat) reports `prompt_tokens = input_tokens`, no cache. | Cache-folded, as the stream leg. | Same as V2. |
-| V4 | `nonStreamingHandler.js:291-293` maps only `end_turn` and `tool_use`; `max_tokens` and `refusal` pass through unmapped. | `concerns.ToOpenAIFinish` (`finishReason.js:6-52`): `max_tokens` is `length`, `refusal` is `content_filter`. | The stream leg and the shared concern already say so. |
-| V5 | `nonstream-to-claude.js:25-28` (Chat body to Messages) sets `input_tokens = prompt_tokens || input_tokens`, dropping cache. | `input_tokens = prompt - cached - cache_creation` plus the cache fields, as `openai-to-claude.js:89-106`. | Same as V2. |
-| V6 | `openai-to-claude.js:72` drops any chunk without choices, and `:246-256` closes the message at `finish_reason`. A usage-only chunk after it is lost and the client sees zero usage. | The closing `message_delta` and `message_stop` wait for the end of the stream and carry the latest usage. Block events still flow as they arrive. | Otherwise a Chat provider that honours `include_usage` reports zero tokens to a Messages client. |
-| V7 | `response/claude-to-openai.js` has no case for an Anthropic `error` event; the stream just continues or stops. | Failure terminal in the client's protocol. | SPEC 9.3: a failed stream never claims success. |
-| V8 | `utils/usageTracking.js:20-57,343-404`, `utils/stream.js:101-104,238-249,414-419`, `nonStreamingHandler.js:422` add 2000 tokens to real prompt usage and replace missing usage with a chars/4 estimate, in what the client receives. | Neither. A stream without a usage chunk stays `usage_observed=0`. | An estimate or buffer is not a measurement (SPEC 21.1). Posted on #119 for a decision. |
-| V9 | No `stream_options` on a translated stream (only `executors/iflow.js:100-102` injects it). | `stream_options.include_usage` is set on a translated Messages to Chat stream unless the client set `stream_options` itself (owner decision, #119). | `ResponsesToChat` already does this; without it the Messages client gets zero usage. Native Chat is untouched (#122). |
-| V10 | `claude-to-openai.js:12` stamps a new `created` on every chunk. | One `created` per stream. | The OpenAI contract. |
-
-Pin behavior mirrored on purpose, though it looks like a defect: a `developer`
-message is dropped by the Chat to Messages leg (`openai-to-claude.js:204-299`);
-a Messages image with a `url` source is dropped by the Messages to Chat leg
-(`claude-to-openai.js:177-186`); a non-streamed Messages text block has a
-leading or trailing markdown JSON fence stripped (`nonStreamingHandler.js:277`);
-`chatcmpl-` ids are kept, only `chatcmpl_` and `resp_` become `msg_`
-(`nonstream-to-claude.js:18`); a negative `input_tokens` is not clamped; tool-id
-repair is skipped for a Responses-sourced body (`translator/index.js:82`, no
-`messages` yet); `stop_reason` is `end_turn` when a provider says `stop` while
-returning tool calls.
-
-Not ported by the Messages legs, tracked on #119: `prepareClaudeRequest`
-(`translator/formats/claude.js:485-707`: cache anchoring, tool-use ordering,
-thinking placeholders, built-in tool filtering, OAuth cloaking); thinking
-normalisation (`concerns/thinkingUnified.js`, which needs the model capability
-table, and with it the model-aware `max_tokens` ceiling at
-`openai-to-claude.js:25`); tool-name cloaking for OAuth (`index.js:165-176`).
-
 ### 6.2 Real gaps / decisions (all assigned)
 
 The checklists in #75-#78 are normative follow-up scope for this inventory. Every PARTIAL/MISSING row above maps to these gaps or an approved D row.
@@ -858,6 +822,42 @@ The checklists in #75-#78 are normative follow-up scope for this inventory. Ever
 | C08 | External token-sync/Caddy/retention evidence and ownership decisions; no invented endpoint/production execution | #73; RUNBOOK 7/10/13/14; #74 coordination | #78 |
 | C09 | Readiness/bootstrap/h2c/trusted-peer/shutdown/cancellation/accounting/race behavior evidence | PRD 17/19; SPEC 24/28/34 | #78 |
 | C10 | R11 adds production TLS CA trust and documented log-level handling. Trusted-proxy/verbose environment semantics still need a concrete SPEC contract; C09 owns their behavior. | PRD 18-20; SPEC 20/27/30; RUNBOOK | #78 |
+
+### 6.3 Conversion legs: where Routeweft differs from the pin (#119)
+
+Oracle paths are at `1c3b9f47`. These are not approved exceptions: each is a
+reviewed choice that needs owner sign-off, and none is silent.
+
+| ID | Pin behavior | Routeweft behavior | Why |
+| --- | --- | --- | --- |
+| V1 | `claude-to-openai.js:96-99` repeats the tool-call `id` on every argument delta. | The id is sent once, with the call's first chunk. | OpenAI clients and SDKs concatenate string fields while accumulating, so a repeated id reads back as `call_1call_1`; the matrix test caught it through the Chat to Responses leg. |
+| V2 | `claude-to-openai.js:183-187` (`message_stop` without a `stop_reason`) reports `prompt_tokens = input_tokens`, no cache. The merged path at `:127-170` folds cache in. | Both paths use the cache-folded figure. | One request must not report two prompt sizes; `:127-170` agrees with `canonicalizeUsage` (`utils/usageTracking.js:147-210`) and `openai-to-claude.js:89`. |
+| V3 | `nonStreamingHandler.js:303-309` (Messages body to Chat) reports `prompt_tokens = input_tokens`, no cache. | Cache-folded, as the stream leg. | Same as V2. |
+| V4 | `nonStreamingHandler.js:291-293` maps only `end_turn` and `tool_use`; `max_tokens` and `refusal` pass through unmapped. | `concerns.ToOpenAIFinish` (`finishReason.js:6-52`): `max_tokens` is `length`, `refusal` is `content_filter`. | The stream leg and the shared concern already say so. |
+| V5 | `nonstream-to-claude.js:25-28` (Chat body to Messages) sets `input_tokens = prompt_tokens || input_tokens`, dropping cache. | `input_tokens = prompt - cached - cache_creation` plus the cache fields, as `openai-to-claude.js:89-106`. | Same as V2. |
+| V6 | `openai-to-claude.js:72` drops any chunk without choices, and `:246-256` closes the message at `finish_reason`. A usage-only chunk after it is lost and the client sees zero usage. | The closing `message_delta` and `message_stop` wait for the end of the stream and carry the latest usage. Block events still flow as they arrive. | Otherwise a Chat provider that honours `include_usage` reports zero tokens to a Messages client. |
+| V7 | `response/claude-to-openai.js` has no case for an Anthropic `error` event; the stream just continues or stops. | Failure terminal in the client's protocol. | SPEC 9.3: a failed stream never claims success. |
+| V8 | `utils/usageTracking.js:20-57,343-404`, `utils/stream.js:101-104,238-249,414-419`, `nonStreamingHandler.js:422` add 2000 tokens to real prompt usage and replace missing usage with a chars/4 estimate, in what the client receives. | Neither. A stream without a usage chunk stays `usage_observed=0`. | An estimate or buffer is not a measurement (SPEC 21.1). Posted on #119 for a decision. |
+| V9 | No `stream_options` on a translated stream (only `executors/iflow.js:100-102` injects it). | `stream_options.include_usage` is set on a translated Messages to Chat stream unless the client set `stream_options` itself (owner decision, #119). | `ResponsesToChat` already does this; without it the Messages client gets zero usage. Native Chat is untouched (#122). |
+| V10 | `claude-to-openai.js:12` stamps a new `created` on every chunk. | One `created` per stream. | The OpenAI contract. |
+
+Pin behavior mirrored on purpose, though it looks like a defect: a `developer`
+message is dropped by the Chat to Messages leg (`openai-to-claude.js:204-299`);
+a Messages image with a `url` source is dropped by the Messages to Chat leg
+(`claude-to-openai.js:177-186`); a non-streamed Messages text block has a
+leading or trailing markdown JSON fence stripped (`nonStreamingHandler.js:277`);
+`chatcmpl-` ids are kept, only `chatcmpl_` and `resp_` become `msg_`
+(`nonstream-to-claude.js:18`); a negative `input_tokens` is not clamped; tool-id
+repair is skipped for a Responses-sourced body (`translator/index.js:82`, no
+`messages` yet); `stop_reason` is `end_turn` when a provider says `stop` while
+returning tool calls.
+
+Not ported by the Messages legs, tracked on #119: `prepareClaudeRequest`
+(`translator/formats/claude.js:485-707`: cache anchoring, tool-use ordering,
+thinking placeholders, built-in tool filtering, OAuth cloaking); thinking
+normalisation (`concerns/thinkingUnified.js`, which needs the model capability
+table, and with it the model-aware `max_tokens` ceiling at
+`openai-to-claude.js:25`); tool-name cloaking for OAuth (`index.js:165-176`).
 
 ### Production-incident drift explicitly dispositioned
 

@@ -176,7 +176,13 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(response.StatusCode)
 		scanner := &usageScanner{family: provider.Protocol}
-		err := translation.Stream(r.Context(), io.TeeReader(response.Body, scanner), w)
+		// The body stays closable so a chained conversion can stop a read that no
+		// context check could interrupt.
+		source := struct {
+			io.Reader
+			io.Closer
+		}{io.TeeReader(response.Body, scanner), response.Body}
+		err := translation.Stream(r.Context(), source, w)
 		usage, _ := scanner.usage()
 		status := response.StatusCode
 		if err != nil || !scanner.reportsUsage(r.Context().Err() == nil) {

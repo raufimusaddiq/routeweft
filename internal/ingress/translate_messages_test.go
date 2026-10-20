@@ -3,12 +3,15 @@ package ingress
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/concerns"
@@ -262,5 +265,32 @@ func TestUnconvertedWireIsStillSkipped(t *testing.T) {
 				t.Errorf("%s client claims to reach %s, which has no conversion leg", client, provider)
 			}
 		}
+	}
+}
+
+// A first leg parked reading the upstream must be released when the second leg
+// fails, or a stalled upstream parks the handler forever.
+func TestChainStreamsReleasesAStalledFirstLeg(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	first := func(_ context.Context, src io.Reader, _ io.Writer) error {
+		_, err := io.Copy(io.Discard, src)
+		return err
+	}
+	second := func(context.Context, io.Reader, io.Writer) error { return errors.New("second leg failed") }
+	done := make(chan error, 1)
+	go func() {
+		done <- chainStreams(first, second)(context.Background(), struct {
+			io.Reader
+			io.Closer
+		}{reader, reader}, io.Discard)
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("the failure must be returned")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("chainStreams did not return while the first leg was blocked on the source")
 	}
 }

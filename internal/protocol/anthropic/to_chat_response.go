@@ -158,18 +158,27 @@ func upstreamStreamError(event map[string]any) error {
 	return &upstreamError{value: failure}
 }
 
+// streamFailureValue is the error object a failed stream reports: the upstream's
+// own when it sent one, otherwise the generic incomplete-stream error. Both
+// protocols' failure terminals use it, so neither can disagree about a payload.
+func streamFailureValue(cause error) map[string]any {
+	var upstream *upstreamError
+	if errors.As(cause, &upstream) {
+		if value, ok := upstream.value.(map[string]any); ok {
+			return value
+		}
+		return map[string]any{"type": "api_error", "message": "upstream stream error"}
+	}
+	return map[string]any{"code": "upstream_incomplete", "message": "upstream stream ended without a terminal event"}
+}
+
 // failChatStream ends a Chat stream with an error object and the terminal
-// marker. A cancelled client gets nothing (spec §9.3).
+// marker. A cancelled client gets nothing (spec 9.3).
 func failChatStream(writer *concerns.SSEWriter, ctx context.Context, cause error) error {
 	if ctx.Err() != nil {
 		return cause
 	}
-	var failure any = map[string]any{"code": "upstream_incomplete", "message": "upstream stream ended without a terminal event"}
-	var upstream *upstreamError
-	if errors.As(cause, &upstream) {
-		failure = upstream.value
-	}
-	if err := writer.Event("", map[string]any{"error": failure}); err != nil {
+	if err := writer.Event("", map[string]any{"error": streamFailureValue(cause)}); err != nil {
 		return err
 	}
 	if err := writer.Done(); err != nil {
