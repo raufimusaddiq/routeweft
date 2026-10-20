@@ -584,10 +584,25 @@ func (s *usageScanner) Write(chunk []byte) (int, error) {
 		if s.family == shared.FamilySystemOne && len(line) > 4<<20 {
 			continue
 		}
-		if !bytes.HasPrefix(line, []byte("data:")) {
+		var payload []byte
+		if s.family == shared.FamilyOllama {
+			// Ollama streams bare JSON lines, not SSE; done:true ends the stream
+			// and carries the counts.
+			if len(line) == 0 || line[0] != '{' {
+				continue
+			}
+			var last struct {
+				Done bool `json:"done"`
+			}
+			if json.Unmarshal(line, &last) == nil && last.Done {
+				s.complete = true
+			}
+			payload = line
+		} else if bytes.HasPrefix(line, []byte("data:")) {
+			payload = bytes.TrimSpace(line[len("data:"):])
+		} else {
 			continue
 		}
-		payload := bytes.TrimSpace(line[len("data:"):])
 		if bytes.Equal(payload, []byte("[DONE]")) {
 			s.complete = true
 			continue

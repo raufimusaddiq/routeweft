@@ -8,6 +8,7 @@ import (
 	"time"
 
 	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
+	ollamaadapter "github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
@@ -83,7 +84,7 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 			} else {
 				return ChatTranslation{}, fmt.Errorf("no translator registered for target protocol %q", plan.TargetProtocol)
 			}
-			if plan.TargetProtocol == openaiadapter.ChatProtocol || plan.TargetProtocol == openaiadapter.ResponsesProtocol {
+			if plan.TargetProtocol == openaiadapter.ChatProtocol || plan.TargetProtocol == openaiadapter.ResponsesProtocol || plan.TargetProtocol == ollamaadapter.Protocol {
 				if translated.Headers == nil {
 					translated.Headers = http.Header{}
 				}
