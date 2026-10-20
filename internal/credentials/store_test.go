@@ -287,3 +287,27 @@ func TestSealedSettingsLoadWithoutCredentialExposure(t *testing.T) {
 		t.Fatal("malformed sealed settings silently ignored")
 	}
 }
+
+func TestQoderMachineIDProjectsFromStoredConnection(t *testing.T) {
+	ctx := context.Background()
+	store, sealer := testStore(t)
+	node, err := store.PutNode(ctx, Node{Kind: NodeBuiltin, ProviderID: "qoder", Name: "Qoder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.PutConnection(ctx, Connection{NodeID: node.ID, Name: "Qoder", AuthKind: AuthOAuth, Identity: "fixture-user", Enabled: true,
+		Secret: Secret{AccessToken: "fixture-token", ProviderData: map[string]string{"machineId": "stored-machine", "userId": "fixture-user"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := LoadConfiguration(ctx, store.db, sealer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Connections) != 1 || config.Connections[0].Settings.MachineID != "stored-machine" || config.Connections[0].Settings.UserID != "fixture-user" {
+		t.Fatal("stored qoder identity did not reach runtime settings")
+	}
+	if !config.Connections[0].Secret.Empty() {
+		t.Fatal("configuration exposed credentials")
+	}
+}

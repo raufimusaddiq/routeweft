@@ -446,6 +446,9 @@ func (h *Handler) newUpstreamRequest(r *http.Request, snapshot *runtime.RuntimeS
 			request.Header.Add(name, value)
 		}
 	}
+	if err := wire.ApplyRequestHeaders(provider, request, body); err != nil {
+		return nil, err
+	}
 	return request, nil
 }
 

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -290,5 +292,18 @@ func TestHookRefusalIsATargetError(t *testing.T) {
 	var refused *TargetError
 	if !errors.As(err, &refused) {
 		t.Fatalf("want *TargetError, got %T %v", err, err)
+	}
+}
+
+func TestRequestHeaderHooksAreExactlyTheDeclaredProviders(t *testing.T) {
+	var got []string
+	for _, id := range Registered() {
+		if For(id).RequestHeaders != nil {
+			got = append(got, id)
+		}
+	}
+	sort.Strings(got)
+	if want := []string{"qoder"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("request header hooks %v, want %v", got, want)
 	}
 }
