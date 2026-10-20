@@ -44,19 +44,17 @@ var formatAliases = map[string]string{
 // trackedLegGaps are legs LiteRouter registers that Routeweft has not built yet,
 // keyed "kind from>to". Each is tracked work; the list only shrinks (ratchet).
 // Every leg is #119 scope; the value names the PR family that closes it. The
-// gemini and vertex legs landed in PR 5a; the gemini-cli and antigravity legs,
-// including the two the pin shares with gemini, are PR 5b.
+// Gemini/Vertex landed in PR 5a and Kiro Chat in PR 4b. Gemini CLI and
+// Antigravity, including the legs the pin shares with Gemini, are PR 5b.
 var trackedLegGaps = map[string]string{
-	"request anthropic-messages>kiro":  "#119 Kiro",
+	"request anthropic-messages>kiro":  "#119 PR 4c Kiro Messages",
 	"request antigravity>openai-chat":  "#119 PR 5b Gemini CLI and Antigravity",
 	"request gemini-cli>openai-chat":   "#119 PR 5b Gemini CLI and Antigravity",
 	"request openai-chat>antigravity":  "#119 PR 5b Gemini CLI and Antigravity",
 	"request openai-chat>gemini-cli":   "#119 PR 5b Gemini CLI and Antigravity",
-	"request openai-chat>kiro":         "#119 Kiro",
 	"response antigravity>openai-chat": "#119 PR 5b Gemini CLI and Antigravity",
 	"response gemini-cli>openai-chat":  "#119 PR 5b Gemini CLI and Antigravity",
-	"response kiro>anthropic-messages": "#119 Kiro",
-	"response kiro>openai-chat":        "#119 Kiro",
+	"response kiro>anthropic-messages": "#119 PR 4c Kiro Messages",
 	"response openai-chat>antigravity": "#119 PR 5b Gemini CLI and Antigravity",
 }
 
