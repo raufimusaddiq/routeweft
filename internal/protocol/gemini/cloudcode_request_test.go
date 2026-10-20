@@ -13,6 +13,14 @@ import (
 
 func cloudRequest(t *testing.T, wire, chat string, options RequestOptions, cloud CloudCodeOptions) (map[string]any, error) {
 	t.Helper()
+	result, _, err := cloudRequestRaw(t, wire, chat, options, cloud)
+	return result, err
+}
+
+// cloudRequestRaw returns the envelope bytes as well, for assertions that must
+// see the wire text rather than a decoded value.
+func cloudRequestRaw(t *testing.T, wire, chat string, options RequestOptions, cloud CloudCodeOptions) (map[string]any, string, error) {
+	t.Helper()
 	body, err := concerns.WireObject([]byte(chat))
 	if err != nil {
 		t.Fatalf("%s: %v", chat, err)
@@ -30,13 +38,13 @@ func cloudRequest(t *testing.T, wire, chat string, options RequestOptions, cloud
 		out, _, err = ChatRequestToGeminiCLI(body, options, cloud)
 	}
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	result, err := concerns.WireObject(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return result, nil
+	return result, string(out), nil
 }
 
 var bothWires = []string{GeminiCLIProtocol, AntigravityProtocol}
@@ -242,6 +250,22 @@ func TestCloudCodeSharesTheGeminiBase(t *testing.T) {
 	for _, wire := range bothWires {
 		if _, err := cloudRequest(t, wire, collide, RequestOptions{Repair: true}, CloudCodeOptions{}); err == nil {
 			t.Errorf("%s accepted colliding tool names", wire)
+		}
+	}
+}
+
+// generationConfig keeps an integer above 2^53 byte for byte through both
+// Cloud Code wires. The base leg emits json.Number; re-decoding it into
+// map[string]any through float64 would round the seed silently.
+func TestCloudCodeGenerationConfigKeepsExactIntegers(t *testing.T) {
+	const seed = `9007199254740993`
+	for _, wire := range bothWires {
+		_, raw, err := cloudRequestRaw(t, wire, `{`+user+`,"seed":`+seed+`}`, RequestOptions{Repair: true}, CloudCodeOptions{})
+		if err != nil {
+			t.Fatalf("%s: %v", wire, err)
+		}
+		if !strings.Contains(raw, `"seed":`+seed) {
+			t.Errorf("%s: the seed was rounded: %s", wire, raw)
 		}
 	}
 }

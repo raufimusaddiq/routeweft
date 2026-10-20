@@ -166,9 +166,12 @@ func chatRequestToCloudCode(body map[string]any, options RequestOptions, cloud C
 			request[key] = raw
 		}
 	}
+	// WireObject keeps numbers exact (UseNumber), so an integer above 2^53 in
+	// generationConfig (seed) survives to the wire as written. A plain
+	// json.Unmarshal into map[string]any rounds it through float64.
 	config := map[string]any{}
-	if raw, ok := fields["generationConfig"]; ok {
-		if err := json.Unmarshal(raw, &config); err != nil {
+	if raw, ok := fields["generationConfig"]; ok && string(raw) != "null" {
+		if config, err = concerns.WireObject(raw); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -228,9 +231,12 @@ func chatRequestToCloudCode(body map[string]any, options RequestOptions, cloud C
 // wire never sees them, so the leg does not pretend to send them (PARITY 6.9 A2).
 func antigravityPreflight(body map[string]any, claude bool) error {
 	messages, _ := body["messages"].([]any)
-	// Refusals run first and over the whole body: a request that is rejected
-	// must not leave the caller's map stripped (only matters on retry, but the
-	// mutation is ours, not the caller's).
+	// This function's own refusals run before its strip, so a request it rejects
+	// itself is left as the caller sent it. The maxOutputTokens ceiling is checked
+	// after it (chatRequestToCloudCode), so a body refused for that reason does
+	// reach here first and comes back stripped; that is harmless because
+	// TranslateChat rebuilds the map from the attempt's bytes every time, and this
+	// comment states the narrower guarantee rather than a wider one.
 	if claude {
 		for _, raw := range messages {
 			message := concerns.Object(raw)
