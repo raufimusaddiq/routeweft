@@ -20,7 +20,7 @@ var unreachableProviders = map[string]string{
 	"gemini-cli":     "#119 Gemini CLI: legs landed, URL, auth and project id are the wire hook's (ingress.unwired)",
 	"vertex":         "#119 Gemini family: legs landed, URL and auth are #115 PR-C's (ingress.unwired)",
 	"kiro":           "#119 Kiro: legs landed, three-host order, region rewrite and 401/403/404 endpoint fallback not built (ingress.unwired)",
-	"cursor":         "#119 Cursor: legs landed, protobuf/h2 transport not built (ingress.unwired)",
+	"cursor":         "#115 PR-L Cursor: legs and Connect-RPC transport (wire.CursorDo) landed; public enablement is a separate decision (ingress.unwired)",
 	"commandcode":    "#119 CommandCode: legs landed, wire hook not bound (ingress.unwired)",
 	"typesafe":       "no conversion leg exists at the pin: registry/typesafe.js:22 format \"systemone\" is not in translator/formats.js:2-15",
 	"qoder":          "no conversion leg exists at the pin: registry/qoder.js:19-26 declares no format; its wire is executor-level (shared/qoder/sse.js)",
