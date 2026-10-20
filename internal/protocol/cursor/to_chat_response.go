@@ -14,8 +14,9 @@ import (
 // functions do the same for the Chat the transport emits, and add the checks
 // the pin lacks: an error object is a failure, a stream that ends without a
 // finish chunk is a failure, and a finish for tool calls with no call behind it
-// is an error (SPEC 9.3). They add nothing: in particular no usage. Cursor
-// reports none, and the pin's estimate (executors/cursor.js:834,1087,1310) is
+// is an error (SPEC 9.3). They make nothing up: in particular no usage. A
+// usage the transport itself reports is passed through unchanged, and the
+// transport must not estimate one. Cursor reports none, and the pin's estimate (executors/cursor.js:834,1087,1310) is
 // deliberately not made, so an absent usage is "not reported", never zero
 // (PARITY 6.3 V8, 6.5 V32).
 

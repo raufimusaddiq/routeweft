@@ -39,6 +39,7 @@ type converter struct {
 	byID         map[string]*call
 	finishReason string
 	usage        map[string]any
+	pending      map[string]any // the event whose ids the next open aliases
 }
 
 // call is one tool call: the id the client was shown and what has been sent.
@@ -109,62 +110,51 @@ func (c *converter) handle(event map[string]any) (chunks []map[string]any, done 
 		}
 		return []map[string]any{c.chunk(map[string]any{"reasoning_content": text}, nil)}, false, nil
 	case "tool-input-start":
-		// One id space (PARITY V36): toolCallId when the event has it, else id.
-		id := concerns.Text(event["toolCallId"])
-		if id == "" {
-			id = concerns.Text(event["id"])
-		}
-		if id == "" {
-			id = concerns.GenerateToolCallID(0, len(c.calls), concerns.Text(event["toolName"]))
-		}
-		if c.byID[id] != nil {
+		// One id space (PARITY V36), resolved by ids/lookup for every branch below.
+		if c.lookup(event) != nil {
 			return nil, false, nil
 		}
-		return []map[string]any{c.open(id, concerns.Text(event["toolName"]), "")}, false, nil
+		return []map[string]any{c.open(c.register(event, c.primaryID(event, concerns.Text(event["toolName"]))), concerns.Text(event["toolName"]), "")}, false, nil
 	case "tool-input-delta":
-		id := concerns.Text(event["id"])
-		if id == "" {
-			id = concerns.Text(event["toolCallId"])
-		}
 		text, err := textField(event, kind, "delta", "inputTextDelta")
 		if err != nil || text == "" {
 			return nil, false, err
 		}
-		target := c.byID[id]
+		target := c.lookup(event)
 		if target == nil {
 			// The pin ignores it (:120-123), which loses part of a call's arguments.
-			return nil, false, fmt.Errorf("upstream sent tool input for an unknown call %q", id)
+			return nil, false, fmt.Errorf("upstream sent tool input for an unknown call %q", c.primaryID(event, ""))
 		}
 		return []map[string]any{c.arguments(target, text)}, false, nil
 	case "tool-call":
-		id := concerns.Text(event["toolCallId"])
 		name := concerns.Text(event["toolName"])
 		input, err := consolidated(event["input"])
 		if err != nil {
 			return nil, false, err
 		}
-		target := c.byID[id]
-		if target == nil && id != "" {
-			// A tool-call whose id differs from its tool-input-start is the same call
-			// under another name, not a second call (PARITY V36): the oldest call
-			// started under that tool name that is not yet consolidated.
+		target := c.lookup(event)
+		if target == nil && len(ids(event)) > 0 {
+			// A tool-call whose ids match no start is the same call under another
+			// name, not a second call (PARITY V36): the oldest call started under
+			// that tool name that is not yet consolidated.
 			for _, open := range c.calls {
 				if !open.done && open.name == name {
 					target = open
-					c.byID[id] = open
+					c.alias(event, open)
 					break
 				}
 			}
 		}
 		if target == nil {
-			if id == "" {
-				id = concerns.GenerateToolCallID(0, len(c.calls), name)
-			}
-			chunk := c.open(id, name, input)
+			chunk := c.open(c.register(event, c.primaryID(event, name)), name, input)
 			c.calls[len(c.calls)-1].done = true
 			return []map[string]any{chunk}, false, nil
 		}
+		c.alias(event, target)
 		target.done = true
+		// Arguments already streamed stand: the consolidated input is not compared
+		// with them, so a client that trusts `input` over the deltas would see
+		// the streamed fragment, which is what the upstream sent first.
 		if target.arguments == 0 && input != "" {
 			// The pin drops the consolidated input when only the start was seen
 			// (:136), leaving the call with no arguments.
@@ -226,11 +216,65 @@ func (c *converter) handle(event map[string]any) (chunks []map[string]any, done 
 	return nil, false, nil
 }
 
+// ids are the call ids an event carries: toolCallId, then id. Every branch that
+// resolves a call goes through these helpers, so no branch can read the fields
+// in another order (PARITY V36).
+func ids(event map[string]any) []string {
+	var found []string
+	for _, key := range []string{"toolCallId", "id"} {
+		if id := concerns.Text(event[key]); id != "" && (len(found) == 0 || found[0] != id) {
+			found = append(found, id)
+		}
+	}
+	return found
+}
+
+// lookup finds the call any of the event's ids names.
+func (c *converter) lookup(event map[string]any) *call {
+	for _, id := range ids(event) {
+		if found := c.byID[id]; found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+// primaryID is the id a new call is opened under: toolCallId, else id, else a
+// generated one.
+func (c *converter) primaryID(event map[string]any, name string) string {
+	if found := ids(event); len(found) > 0 {
+		return found[0]
+	}
+	return concerns.GenerateToolCallID(0, len(c.calls), name)
+}
+
+// register records every id of the event as naming the call that open is about
+// to create, and returns the primary id.
+func (c *converter) register(event map[string]any, primary string) string {
+	c.pending = event
+	return primary
+}
+
+// alias makes every id of the event name an existing call. An id that already
+// names another call is left alone: rebinding it would move that call's later
+// events onto this one.
+func (c *converter) alias(event map[string]any, target *call) {
+	for _, id := range ids(event) {
+		if c.byID[id] == nil {
+			c.byID[id] = target
+		}
+	}
+}
+
 func (c *converter) open(id, name, arguments string) map[string]any {
 	opened := &call{index: len(c.calls), id: id, name: name}
 	c.calls = append(c.calls, opened)
 	c.byID[id] = opened
 	opened.arguments = len(arguments)
+	if c.pending != nil {
+		c.alias(c.pending, opened)
+		c.pending = nil
+	}
 	return c.chunk(map[string]any{"tool_calls": []any{map[string]any{
 		"index": opened.index, "id": id, "type": "function", "function": map[string]any{"name": name, "arguments": arguments},
 	}}}, nil)

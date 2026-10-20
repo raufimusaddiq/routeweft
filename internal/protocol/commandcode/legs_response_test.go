@@ -149,6 +149,25 @@ func TestToolCallIDQuirk(t *testing.T) {
 		"start only, different id": {`{"type":"tool-input-start","id":"a","toolName":"f"}
 {"type":"tool-call","toolCallId":"b","toolName":"f","input":{"k":1}}
 `, []string{`{"k":1}`}, []string{"a"}},
+		"id-carrying tool-call": {`{"type":"tool-input-start","id":"a","toolName":"f"}
+{"type":"tool-input-delta","id":"a","delta":"{\"k\":1}"}
+{"type":"tool-call","id":"a","toolName":"f","input":{"k":1}}
+`, []string{`{"k":1}`}, []string{"a"}},
+		"start with both ids, delta on id": {`{"type":"tool-input-start","id":"a","toolCallId":"b","toolName":"f"}
+{"type":"tool-input-delta","id":"a","delta":"{\"k\":1}"}
+`, []string{`{"k":1}`}, []string{"b"}},
+		"start with both ids, delta on toolCallId, call on id": {`{"type":"tool-input-start","id":"a","toolCallId":"b","toolName":"f"}
+{"type":"tool-input-delta","toolCallId":"b","delta":"{\"k\":1}"}
+{"type":"tool-call","id":"a","toolName":"f","input":{"k":1}}
+`, []string{`{"k":1}`}, []string{"b"}},
+		"start on id, call with both ids": {`{"type":"tool-input-start","id":"a","toolName":"f"}
+{"type":"tool-input-delta","id":"a","delta":"{}"}
+{"type":"tool-call","id":"a","toolCallId":"b","toolName":"f","input":{}}
+{"type":"tool-call","toolCallId":"b","toolName":"f","input":{}}
+`, []string{"{}"}, []string{"a"}},
+		"id-only tool-call, no start": {`{"type":"tool-call","id":"z","toolName":"f","input":{"k":1}}
+{"type":"tool-call","id":"z","toolName":"f","input":{"k":1}}
+`, []string{`{"k":1}`}, []string{"z"}},
 		"tool-call only": {`{"type":"tool-call","toolCallId":"b","toolName":"f","input":"{\"s\":1}"}
 `, []string{`{"s":1}`}, []string{"b"}},
 		"tool-call only, no input": {`{"type":"tool-call","toolCallId":"b","toolName":"f"}
