@@ -10,6 +10,9 @@ import (
 	"testing"
 
 	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/commandcode"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/cursor"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/hub"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
@@ -142,5 +145,21 @@ func TestOllamaScannerBoundsAnUnterminatedLine(t *testing.T) {
 	_, _ = scanner.Write([]byte("tail\n" + `{"done":true,"prompt_eval_count":3,"eval_count":4}` + "\n"))
 	if usage, found := scanner.usage(); !found || usage.InputTokens != 3 || usage.OutputTokens != 4 || !scanner.reportsUsage(true) {
 		t.Fatalf("usage %+v found=%v", usage, found)
+	}
+}
+
+// Cursor and CommandCode have conversion legs but no transport that can send to
+// them, so a request must not be routed to either. A provider leaves ingress.unwired
+// in the PR that binds its wire.
+func TestUnwiredProviderWiresAreNotTranslatable(t *testing.T) {
+	for _, target := range []string{cursor.Protocol, commandcode.Protocol} {
+		for _, source := range []string{openai.ChatProtocol, openai.ResponsesProtocol, anthropic.MessagesProtocol} {
+			if !hub.CanTranslate(source, target) {
+				t.Errorf("the legs for %s must be declared in the hub", target)
+			}
+			if CanTranslate(source, target) {
+				t.Errorf("%s -> %s is routable but nothing can send to %s", source, target, target)
+			}
+		}
 	}
 }

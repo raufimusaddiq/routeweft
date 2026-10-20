@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/commandcode"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/cursor"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/gemini"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
@@ -11,16 +13,18 @@ import (
 )
 
 // The implemented pairs are exactly those reachable through the Chat hub among
-// Chat, Responses and Messages, plus Ollama as a provider wire (the pin has a
-// Chat>Ollama request leg and an Ollama>Chat response leg and no client side);
+// Chat, Responses and Messages, plus Ollama, Cursor and CommandCode as provider
+// wires (the pin has a Chat>X request leg and an X>Chat response leg and no
+// client side);
 // Gemini and System One have no legs yet (#119 tracks them), so they must stay
 // unreachable rather than appear to work.
 func TestCanTranslateCoversChatResponsesMessages(t *testing.T) {
 	converted := map[string]bool{openai.ChatProtocol: true, openai.ResponsesProtocol: true, anthropic.MessagesProtocol: true}
-	protocols := []string{openai.ChatProtocol, openai.ResponsesProtocol, anthropic.MessagesProtocol, gemini.Protocol, ollama.Protocol, systemone.Protocol}
+	protocols := []string{openai.ChatProtocol, openai.ResponsesProtocol, anthropic.MessagesProtocol, gemini.Protocol, ollama.Protocol, cursor.Protocol, commandcode.Protocol, systemone.Protocol}
+	providerWires := map[string]bool{ollama.Protocol: true, cursor.Protocol: true, commandcode.Protocol: true}
 	for _, source := range protocols {
 		for _, target := range protocols {
-			want := source != target && converted[source] && (converted[target] || target == ollama.Protocol)
+			want := source != target && converted[source] && (converted[target] || providerWires[target])
 			got := CanTranslate(source, target)
 			if source == target {
 				got = false

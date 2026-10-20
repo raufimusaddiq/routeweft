@@ -783,7 +783,7 @@ The checklists in #75-#78 are normative follow-up scope for this inventory. Ever
 | IDs | Explicit gap / decision required | Authority | Owner |
 | --- | --- | --- | --- |
 | R01 | Native configured app account resolution/fallback/retry is implemented. Retained actual Combo/Fusion/capacity serving and pinned Fusion defaults remain open; no PRD 11 / BDR-011 waiver. | PRD 5/10/11; SPEC 8/13-16; Sprint 5.1 | #75 |
-| R02 | Chat/Responses, Messages<->Chat and Ollama (provider side) translation are implemented (#119). The Gemini family, Kiro, Cursor and CommandCode legs, count-tokens and provider compact behavior remain open under SPEC 9/10; #119 tracks each leg. | PRD 5; SPEC 9/10; Sprint 5.2 | #75 |
+| R02 | Chat/Responses, Messages<->Chat, Ollama (provider side), and the Cursor and CommandCode conversion legs (not yet routable: see 6.5) are implemented (#119). The Gemini family and Kiro legs, the Cursor and CommandCode transports, count-tokens and provider compact behavior remain open under SPEC 9/10; #119 tracks each leg. | PRD 5; SPEC 9/10; Sprint 5.2 | #75 |
 | R03 | Serving pipeline slice resolved: normative per-attempt savers/final cache, bypass and fail-open tests in internal/app/transforms_test.go. Native helper parity stays R09. | PRD 12; SPEC 17/18; BDR-012; Sprint 5.3 | #75 |
 | R04 | Typed validation, native/custom/Cloudflare transports, streams/cancel and shared usage are implemented; internal/app/systemone_test.go. R11 adds pinned handler comparison; no broad-provider claim. | PRD 5/14; SPEC 10/28; #73 explicit System One | #75 |
 | R05 | Historical aliases, Ollama tags and id/kind/access catalog semantics are implemented (SPEC 34). Legacy /api/v1 is retained with identical inference auth/CORS; media kinds stay excluded. | PRD-API-001-004; SPEC 34 | #75 |
@@ -837,7 +837,7 @@ reviewed choice that needs owner sign-off, and none is silent.
 | V5 | `nonstream-to-claude.js:25-28` (Chat body to Messages) sets `input_tokens = prompt_tokens || input_tokens`, dropping cache. | `input_tokens = prompt - cached - cache_creation` plus the cache fields, as `openai-to-claude.js:89-106`. | Same as V2. |
 | V6 | `openai-to-claude.js:72` drops any chunk without choices, and `:246-256` closes the message at `finish_reason`. A usage-only chunk after it is lost and the client sees zero usage. | The closing `message_delta` and `message_stop` wait for the end of the stream and carry the latest usage. Block events still flow as they arrive. | Otherwise a Chat provider that honours `include_usage` reports zero tokens to a Messages client. |
 | V7 | `response/claude-to-openai.js` has no case for an Anthropic `error` event; the stream just continues or stops. | Failure terminal in the client's protocol. | SPEC 9.3: a failed stream never claims success. |
-| V8 | `utils/usageTracking.js:20-57,343-404`, `utils/stream.js:101-104,238-249,414-419`, `nonStreamingHandler.js:422` add 2000 tokens to real prompt usage and replace missing usage with a chars/4 estimate, in what the client receives. | Neither. A stream without a usage chunk stays `usage_observed=0`. | An estimate or buffer is not a measurement (SPEC 21.1). Posted on #119 for a decision. |
+| V8 | `utils/usageTracking.js:20-57,343-404`, `utils/stream.js:101-104,238-249,414-419`, `nonStreamingHandler.js:422` add 2000 tokens to real prompt usage and replace missing usage with a chars/4 estimate, in what the client receives. | Neither. A stream without a usage chunk stays `usage_observed=0`. Cursor is the case in point: its wire reports no usage and the pin's executor estimates it (`executors/cursor.js:834,1087,1310`); Routeweft deliberately does not (6.5 V32), so for Cursor a missing usage means "not reported", never "zero tokens used". | An estimate or buffer is not a measurement (SPEC 21.1). Posted on #119 for a decision; confirmed: no chars/4 estimate anywhere. |
 | V9 | No `stream_options` on a translated stream (only `executors/iflow.js:100-102` injects it). | `stream_options.include_usage` is set on a translated Messages to Chat stream unless the client set `stream_options` itself (owner decision, #119). | `ResponsesToChat` already does this; without it the Messages client gets zero usage. Native Chat is untouched (#122). |
 | V10 | `claude-to-openai.js:12` stamps a new `created` on every chunk. | One `created` per stream. | The OpenAI contract. |
 | V11 | `claude-to-openai.js:177-186` drops an image whose source is a `url`; a request left with no content becomes `messages: []`. | A `url` image is forwarded as an `image_url`, and a conversion that would leave no message keeps one empty text turn (`"Continue."` toward a Messages provider). | Chat takes remote URLs natively; an empty list is an invalid request that would be sent upstream or rejected as a 502 for a request Anthropic accepts. |
@@ -1014,6 +1014,95 @@ The Ollama wire sends thinking and Routeweft carries it: `message.thinking` is `
 #### Errors
 
 A translation error (refusal) moves the dispatcher to the next candidate. A non-2xx upstream answer is relayed with its status and body, as for every leg. A 2xx answer that cannot be converted is a 502 for a buffered body; for a stream it is a failure terminal (V28). A cancelled client gets no terminal.
+
+### 6.5 Cursor and CommandCode legs: where Routeweft differs from the pin (#119, PR 3)
+
+The pin's four legs are `request openai-chat>cursor` (`translator/request/openai-to-cursor.js:172-183`, registered `:185`), `response cursor>openai-chat` (`translator/response/cursor-to-openai.js:13-28`, `:30`), `request openai-chat>commandcode` (`translator/request/openai-to-commandcode.js:185-219`, `:221`) and `response commandcode>openai-chat` (`translator/response/commandcode-to-openai.js:52-181`, `:183`). None bypasses the hub (`translator/index.js:106-125`, `:208-235`), and the pin has no leg that makes either a *client* wire, so both are provider wires only (`internal/protocol/hub`).
+
+**Scope.** These are the legs, as pure Chat-body and Chat-stream converters (`internal/protocol/cursor`, `internal/protocol/commandcode`). Neither provider is routable yet, and `ingress.unwired` keeps it that way, so `TestEveryProviderIsReachableOrTracked` still lists both:
+
+- **Cursor** needs a transport the pin implements in its executor, not its translator: Connect-RPC protobuf over HTTP/2 (`executors/cursor.js:114-180`, `cursorProtobuf.js:616`) and its checksum headers (`utils/cursorChecksum.js`). The pin's response leg is the identity because that executor already decodes the reply into Chat chunks.
+- **CommandCode** needs behaviour that belongs in `internal/providers/wire` (owned by #115 PR-C): the per-request `x-session-id` and the registry headers (`executors/commandcode.js:28-40`), the always-streamed upstream (`:24`; a non-stream client is served by `CommandCodeResponseToChat`, which aggregates the NDJSON), and the pre-stream error inspection and 502/503/504 retry (`:42-61, 140-241`, `parseCommandCodeError` `:80-138`).
+
+#### Two kinds of "cannot carry"
+
+Every refusal below says which of these it is, because they are not the same claim:
+
+- **E, evidence.** The wire's own shape shows it cannot express the field. For Cursor the evidence is the pin's encoder and field list (`cursorProtobuf.js:17-189`, `executors/cursor.js:114-180`); the `.proto` itself is not available offline, so this is evidence about what the pin sends, and nothing stronger is claimed.
+- **U, not verifiable offline.** There is no evidence either way, so the field is refused rather than guessed. No row in this section says E when it means U.
+
+#### Differences
+
+| ID | Pin behavior | Routeweft behavior | Why |
+| --- | --- | --- | --- |
+| V31 | `openai-to-cursor.js:181` overwrites `max_tokens` with `DEFAULT_MIN_TOKENS` (32000), and the executor never reads it. | A client's `max_tokens`, `max_completion_tokens` and `max_output_tokens` are **not carried and not refused**; nothing resembling a limit reaches the output. | **E**: the pin's protobuf has no token-limit field. Refusing would break every client that always sends one. `TestMaxTokensIsNotCarriedAndNotRefused` fails if a later change starts honouring or refusing it. |
+| V32 | `executors/cursor.js:834,1087,1310` attach an estimate (`estimateUsage`, chars/4) as Cursor's usage. | No usage is made. The response leg returns what the transport emits and adds none; a chunk or body with no `usage` stays without one. | Cursor reports no usage on this wire. An estimate is not a measurement (V8): a missing usage is "not reported", never "zero tokens used", and `usage_observed` stays 0. The `cursor` registry row has no `ReportsUsage`, as at the pin (`registry/cursor.js`); `TestUsageCapabilityMatchesOracle` is untouched. |
+| V33 | `openai-to-commandcode.js:100-104` replaces tool-call arguments it cannot parse with `{}`. | Arguments that are not a JSON object (malformed, array, number, a JSON string) are refused. An empty string or absent arguments are `{}` (a tool with no parameters). | `{}` rewrites the history the model reads, with a 200. |
+| V34 | `openai-to-commandcode.js:192` sends `temperature: 0.3` when the client sent none. | No `temperature` is sent unless the client sent one (zero included). | The router inventing a sampling value is a behaviour no client asked for; the upstream's own default applies. `max_tokens` keeps the pin's default (64000) because the wire is Anthropic-style, where it is required. |
+| V35 | `openai-to-commandcode.js:203-218` fills `config.workingDir` and `config.environment` from `process.cwd()` and `process.platform`. | `"/"` and `"linux"`, constants. `date` is today (UTC). | **Security-visible.** The pin sends the router host's working directory and OS to a third party, and the value differs between deployments. Whether the upstream needs a realistic value is U; the constants are the minimum. |
+| V36 | `commandcode-to-openai.js:100,121,135` keys a call on `event.id` at `tool-input-start` and `toolCallId` at `tool-call`; a `tool-call` whose id differs from its start is emitted as a second call, and `tool-input-delta` for an unknown id is dropped (`:120-123`). | One id space. A start is keyed on `toolCallId` when present, else `id`. A `tool-call` that names a known id adds nothing; one with a different id is the **same call** as the oldest started call of that tool name not yet consolidated, so nothing is emitted twice and nothing is dropped. When only the start was seen, the consolidated `input` becomes the arguments (the pin leaves the call with none, `:136`). A `tool-input-delta` for a call never started fails the stream. | The id the client sees is the one the start carried: a streamed call cannot be renamed afterwards. A phantom second call, or lost argument bytes, is a wrong answer with a 200. Same-name parallel calls are matched oldest first. |
+| V37 | `concerns/usage.js:61-65` reads `inputTokens`, `outputTokens`, `totalTokens` only, and always attaches usage when the event has an object. | Those three as given (`total_tokens` is the upstream's when it sent a number, else prompt plus output), only when a count is positive. `cachedInputTokens` and `reasoningTokens`, when present and positive, travel as `usage.commandcode_observed.{cached_input_tokens,reasoning_tokens}`: observations beside the counts, **never** subtracted from them and not placed in `prompt_tokens_details`/`completion_tokens_details`, whose meaning is "a subset of". | It is not established that `inputTokens` is cache-inclusive, and a wrong subtraction corrupts every downstream cost figure. Our record is richer than the pin's, which ignores both. Reading `commandcode_observed` into the usage record is accounting work for the PR that binds the wire. |
+| V38 | `commandcode-to-openai.js:174-178` ignores every event type it does not list, a line that is not JSON (`:68-72`), and an event with no `type` (`:75`). | The pin's listed types, and `tool-input-end`, are ignored. Any other type is passed to the `unknown` callback (counted) and ignored, **unless** it carries `text`, `delta`, `textDelta`, `inputTextDelta`, `input`, `toolName` or `toolCallId`, in which case the stream fails. A typeless event is treated as unknown. A line that is not JSON fails the stream. A `text`/`delta`/`finishReason` of the wrong type fails it. | Forward compatibility is fine until it costs the client content: a new event type that silently dropped text is a confident wrong answer. |
+| V39 | `commandcode-to-openai.js:90-98` reads reasoning from `text` only. | `text`, else `delta` (the AI SDK's name for it). | The pin loses reasoning an upstream names `delta`. |
+| V28 (this wire) | The executor appends `[DONE]` on flush whatever came before (`executors/commandcode.js:303-309`); a stream that never sent `finish` looks successful, and `finish` with `tool-calls` is not checked against the calls made. | A stream that ends before `finish`, an `error` event, a `finish` for tool calls with no call, and every failure above end with an error object then `[DONE]`. A buffered body is an error. | SPEC 9.3. For Cursor the same checks apply to the Chat the transport emits (no finish, `[DONE]` before a finish, error object, tool finish without a call). |
+
+Same as for Ollama and carried over unchanged: V21 (`developer` is a system message; the pin drops it for Cursor and turns it into a user turn for CommandCode), V22 (`max_completion_tokens` is read by CommandCode), V23 (a remote image, audio, a file or an unknown part is refused, not dropped), V25 (stable generated ids) and V30 (`tool_choice` `none` withholds the tools; `required` or a named tool is refused; the output never names a `tool_choice`).
+
+Mirrored though odd, each asserted by a test:
+
+- **M6** `openai-to-cursor.js:84-90,92-101`: a system turn is a user turn `[System Instructions]\n…`, and a tool output is an XML `<tool_result>` block in a user turn (the pin's own comment: protobuf tool results made Cursor loop, `:3-7`).
+- **M7** `openai-to-cursor.js:126,158-165`: a user or assistant turn with no text (and no tool call) is dropped.
+- **M8** `openai-to-commandcode.js:137-139`: an assistant turn with tool calls and no reasoning carries a `{"type":"reasoning","text":" "}` block.
+- **M9** `commandcode-to-openai.js:84,108`: the first chunk carries `role: "assistant"`; a later `finish-step` replaces the finish reason of an earlier one, and `finish` uses `totalUsage`, else the last `finish-step` usage.
+
+#### Request fields, Chat to Cursor (`TestChatRequestFieldsAreCarriedOrRefused`)
+
+| Chat request field | Cursor | Class and why |
+| --- | --- | --- |
+| `model`, `stream`, `messages` | carried | pin |
+| text parts (`text`, `refusal`); `system`, `developer` (V21), `user`, `assistant`, `tool` roles | carried (M6) | pin |
+| `tools` (function tools) | carried | pin (MCP tools, `executors/cursor.js:168`) |
+| assistant `tool_calls` | carried (the executor flattens them to text, `:95-99`) | pin |
+| `reasoning_effort`; `reasoning.effort` (`summary` tolerated) | carried as `reasoning_effort` | pin (`:618`) |
+| `tool_choice` absent or `auto` (nothing to send); `none` (withholds the tools) | carried | V30 |
+| `max_tokens`, `max_completion_tokens` | **not carried, not refused** | **E**, V31 |
+| `top_logprobs`, `store`, `metadata`, `user`, `stream_options`, `prompt_cache_key`, `service_tier`, `modalities` (text only), `parallel_tool_calls`, empty `stop` / `logit_bias` / `response_format` / `tools` | not carried | bookkeeping or caching hints that change nothing about the answer |
+| `temperature`, `top_p`, `seed`, `presence_penalty`, `frequency_penalty` (any non-null value, zero included) | refused | **U** |
+| `stop`, `logit_bias` (any non-empty shape), `response_format` other than text, `strict` on a function tool, `reasoning` keys other than `effort`/`summary` | refused | **U** |
+| `tool_choice` `required`, a named function, or any other value | refused | **U**: the pin strips it (`:176`) and the field list has none |
+| `n>1`, `logprobs:true`, audio output, `audio`, `functions`, `function_call` | refused | **E**: the executor emits one choice, text and tool calls only (`executors/cursor.js:833,859`) |
+| `image_url`, `input_audio`, `file`, unknown parts, in any role; a non-function tool; unknown roles; a non-function tool call; a tool call without an id or name; nothing left after conversion | refused | **E** for parts (the agent path takes text, `:81-90`, and the legacy field list has no image field); structural otherwise |
+
+#### Request fields, Chat to CommandCode
+
+| Chat request field | CommandCode | Class and why |
+| --- | --- | --- |
+| `model`, `stream`, `messages`, `max_tokens`, `top_p`, `temperature` (only when given: V34) | carried (`params`) | pin |
+| `max_completion_tokens`, then `max_output_tokens`, when `max_tokens` is absent | carried | V22 |
+| `system`, `developer` roles | carried (`params.system`, joined with a blank line) | pin; V21 |
+| text parts; `image_url` data URI in a user turn | carried (`image` block with `mimeType` and `mediaType`) | pin |
+| `tool` message, assistant `tool_calls`, assistant `reasoning_content`/`thought`/`reasoning` | carried (`tool-result` with the name resolved from the call, `unknown_tool` when there is none; `tool-call`; `reasoning`) | pin; V33 |
+| `tools` (function tools; the pin's bare `{name, input_schema\|parameters}` shape) | carried (`{name, description, input_schema}`) | pin |
+| `tool_choice` absent or `auto`; `none` | carried / withholds the tools | V30 |
+| `top_logprobs`, `store`, `metadata`, `user`, `stream_options`, `prompt_cache_key`, `service_tier`, `modalities` (text only), `parallel_tool_calls` | not carried | as for Cursor |
+| `seed`, `presence_penalty`, `frequency_penalty` (any non-null value); `stop`, `logit_bias`, `reasoning_effort`, `reasoning` (any non-empty); `response_format` other than text; `strict` on a function tool; `tool_choice` `required` or a named function | refused | **U** |
+| `n>1`, `logprobs:true`, audio output, `audio`, `functions`, `function_call` | refused | **U** for this wire (no evidence it can); the pin drops them |
+| remote or malformed `image_url`; an image in any turn but a user's; audio, file and unknown parts; non-function tools and tool calls; arguments that are not an object (V33); a tool result without an id | refused | V23 (a remote image is an outbound fetch this wire does not make); structural otherwise |
+
+#### Response fields, to Chat
+
+| Upstream | Chat | Notes |
+| --- | --- | --- |
+| Cursor: the Chat chunks/body the transport emits | the same, as received | identity (V32: no usage made) |
+| Cursor: `error` object with no `choices` | failure | |
+| CommandCode `text-delta` (`text`, else `delta`) | `content` | |
+| CommandCode `reasoning-delta` (`text`, else `delta`: V39) | `reasoning_content` | |
+| CommandCode `tool-input-start` / `-delta` / `tool-call` | `tool_calls[]` (`index`, `id` once, `type`, `function`) | V36 |
+| CommandCode `finish-step` / `finish` `finishReason` | `finish_reason`: `stop`/`error` to `stop`, `length`, `tool-calls`/`tool_use` to `tool_calls`, `content-filter` to `content_filter`, anything else as given (`finishReason.js:20-29`) | not forced to `tool_calls` when calls were made |
+| CommandCode `totalUsage` / `usage` | `usage` | V37 |
+| CommandCode `error` | failure `[CommandCode error: …]` | V28 |
+| `start`, `start-step`, `*-start`, `*-end`, `tool-input-end`, `provider-metadata`, `message-metadata` | not carried | no client-visible content |
+| any other type | counted; fails the stream if it carries content | V38 |
 
 ## 7. Validation, limits and completion
 

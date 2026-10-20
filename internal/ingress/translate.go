@@ -7,15 +7,25 @@ import (
 	"io"
 
 	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/commandcode"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/concerns"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/cursor"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/hub"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 )
 
+// unwired are provider wires whose conversion legs exist (internal/protocol/hub)
+// but whose transport does not: nothing here can send to them yet, so a request
+// must not be routed to one. Cursor needs a Connect-RPC protobuf transport over
+// HTTP/2 (executors/cursor.js); CommandCode needs its headers, forced stream and
+// pre-stream error handling in internal/providers/wire (executors/commandcode.js).
+// A provider leaves this list in the PR that binds its wire.
+var unwired = map[string]bool{cursor.Protocol: true, commandcode.Protocol: true}
+
 // CanTranslate declares the implemented protocol pairs, independent of providers.
 func CanTranslate(source, target string) bool {
-	return source != target && hub.CanTranslate(source, target)
+	return source != target && !unwired[target] && hub.CanTranslate(source, target)
 }
 
 func (h *Handler) translationAvailable(source, target string, compact bool) bool {
