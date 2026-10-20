@@ -25,6 +25,7 @@ type codebuddyRig struct {
 	seen     []map[string]any
 	headers  []http.Header
 	outcomes []RequestOutcome
+	accounts []string
 }
 
 // newCodeBuddyRig serves a CodeBuddy provider from a scripted upstream; nothing
@@ -56,10 +57,17 @@ func newCodeBuddyRig(t *testing.T, providerID string, upstream http.HandlerFunc)
 		State:                 rig.state,
 		TranslateChat:         TranslateChat, TranslateResponses: TranslateResponses, TranslateMessages: TranslateMessages,
 		Candidates: func(*runtime.RuntimeSnapshot, string) ([]routing.Account, bool) {
-			return []routing.Account{{ID: "acct", Enabled: true}}, true
+			if len(rig.accounts) == 0 {
+				return []routing.Account{{ID: "acct", Enabled: true}}, true
+			}
+			var out []routing.Account
+			for _, id := range rig.accounts {
+				out = append(out, routing.Account{ID: id, Enabled: true})
+			}
+			return out, true
 		},
 		AccountProvider: func(_ *runtime.RuntimeSnapshot, _, account, _ string) (routing.ProviderRef, bool) {
-			return routing.ProviderRef{ProviderID: providerID, ConnectionID: account, BaseURL: server.URL + "/v2", Protocol: "openai-chat", UpstreamModel: "glm-5.2", APIToken: "secret"}, true
+			return routing.ProviderRef{ProviderID: providerID, ConnectionID: account, BaseURL: server.URL + "/v2/" + account, Protocol: "openai-chat", UpstreamModel: "glm-5.2", APIToken: "secret"}, true
 		},
 		OnRequestComplete: func(o RequestOutcome) { rig.mu.Lock(); rig.outcomes = append(rig.outcomes, o); rig.mu.Unlock() },
 	})
@@ -287,7 +295,7 @@ func TestCodeBuddyIntlSendsCallerSystemPromptNotAMadeUpOne(t *testing.T) {
 	}
 }
 
-func TestCodeBuddyTranslatedStreamsDoNotRequestUsageByDefault(t *testing.T) {
+func TestCodeBuddyTranslatedStreamsKeepUsageOptIn(t *testing.T) {
 	for _, tc := range []struct{ path, body string }{
 		{"/v1/messages", `{"model":"x","stream":true,"max_tokens":16,"messages":[{"role":"user","content":"ping"}]}`},
 		{"/v1/responses", `{"model":"x","stream":true,"input":"ping"}`},
@@ -298,11 +306,47 @@ func TestCodeBuddyTranslatedStreamsDoNotRequestUsageByDefault(t *testing.T) {
 			t.Fatalf("%s: %d %s", tc.path, w.Code, w.Body)
 		}
 		rig.mu.Lock()
-		_, set := rig.seen[0]["stream_options"]
+		options, _ := rig.seen[0]["stream_options"].(map[string]any)
 		rig.mu.Unlock()
-		if set {
-			t.Fatalf("%s opted in to usage", tc.path)
+		if options["include_usage"] != true {
+			t.Fatalf("%s did not opt in to usage: %v", tc.path, options)
 		}
+	}
+}
+
+func TestCodeBuddyFoldFailureFallsBackToHealthyCandidate(t *testing.T) {
+	rig := newCodeBuddyRig(t, "codebuddy-cn", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if strings.HasPrefix(r.URL.Path, "/v2/bad/") {
+			fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\",\"surprise\":1}}]}\n\ndata: [DONE]\n\n")
+			return
+		}
+		sseUpstream(codebuddySSE)(w, r)
+	})
+	rig.accounts = []string{"bad", "good"}
+	w := rig.post("/v1/chat/completions", `{"model":"x","messages":[{"role":"user","content":"ping"}]}`)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "pong") {
+		t.Fatalf("status %d body %s", w.Code, w.Body)
+	}
+	rig.mu.Lock()
+	calls := len(rig.seen)
+	rig.mu.Unlock()
+	if calls != 2 {
+		t.Fatalf("upstream calls %d, want the bad then the good candidate", calls)
+	}
+	if _, cooling := rig.state.CooldownUntil("bad", time.Now()); !cooling {
+		t.Fatal("the account whose stream could not be folded was not classified")
+	}
+}
+
+func TestCodeBuddyInbandStreamErrorRelaysParsedMessage(t *testing.T) {
+	rig := newCodeBuddyRig(t, "codebuddy-cn", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"error\":{\"message\":\"model overloaded\",\"code\":9}}\n\n")
+	})
+	w := rig.post("/v1/chat/completions", `{"model":"x","messages":[{"role":"user","content":"ping"}]}`)
+	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "model overloaded") || strings.Contains(w.Body.String(), `\"code\"`) {
+		t.Fatalf("status %d body %s", w.Code, w.Body)
 	}
 }
 

@@ -493,22 +493,6 @@ func jsonEqual(t *testing.T, a, b string) bool {
 	return string(left) == string(right)
 }
 
-func TestCodeBuddyRestoresOnlyCallerStreamOptions(t *testing.T) {
-	for _, value := range []string{"", `null`, `{}`, `[]`, `0`, `false`, `""`, `{"include_usage":false}`, `{"include_usage":true,"future":0}`} {
-		original := `{}`
-		if value != "" {
-			original = `{"stream_options":` + value + `}`
-		}
-		for _, id := range codebuddyIDs {
-			out := RestoreStreamOptions(routing.ProviderRef{ProviderID: id, Protocol: chat}, []byte(`{"stream":true,"stream_options":{"include_usage":true}}`), []byte(original))
-			var fields Body
-			if err := json.Unmarshal(out, &fields); err != nil || string(fields["stream_options"]) != value {
-				t.Fatalf("%s caller %s: %s (%v)", id, original, out, err)
-			}
-		}
-	}
-}
-
 func TestResponseStreamRewritesLinesLargerThanItsReadBuffer(t *testing.T) {
 	line := `data: {"choices":[{"delta":{"content":"` + strings.Repeat("x", 64<<10) + `","tool_calls":[]}}]}` + "\n"
 	out, err := io.ReadAll(ResponseStream("codebuddy-cn", &countingCloser{Reader: strings.NewReader(line)}))

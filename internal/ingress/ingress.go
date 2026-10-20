@@ -313,7 +313,6 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 			}
 			attempt.Scope = translationScope(r, provider)
 			translated, err = h.opts.TranslateMessages(&attempt, plan.TargetProtocol)
-			translated.Body = wire.RestoreStreamOptions(provider, translated.Body, request.Raw)
 			if translated.Headers == nil {
 				translated.Headers = http.Header{}
 			}
