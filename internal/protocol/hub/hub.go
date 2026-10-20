@@ -14,6 +14,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/protocol/commandcode"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/cursor"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/gemini"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/kiro"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 )
@@ -58,7 +59,10 @@ type Leg struct {
 // and has no response leg back, so it is not routable on its own (the pin
 // registers no openai>gemini response leg). Gemini CLI and Antigravity are the
 // same wires in the Cloud Code envelope: both are provider wires, and
-// Antigravity alone has the response leg a client of its own would read.
+// Antigravity alone has the response leg a client of its own would read. Kiro is
+// a provider wire with a Chat request leg and a Chat response leg; its two
+// Messages legs are PR 4c, until which a Messages client would pivot through
+// Chat where the pin has a direct pair, so ingress keeps Kiro unwired.
 var legs = []Leg{
 	{anthropic.MessagesProtocol, openai.ChatProtocol, Request},
 	{openai.ChatProtocol, anthropic.MessagesProtocol, Request},
@@ -86,6 +90,8 @@ var legs = []Leg{
 	{gemini.AntigravityProtocol, openai.ChatProtocol, Request},
 	{gemini.AntigravityProtocol, openai.ChatProtocol, Response},
 	{openai.ChatProtocol, gemini.AntigravityProtocol, Response},
+	{openai.ChatProtocol, kiro.Protocol, Request},
+	{kiro.Protocol, openai.ChatProtocol, Response},
 }
 
 // Legs returns a copy of the implemented legs.

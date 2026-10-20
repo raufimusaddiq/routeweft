@@ -61,10 +61,15 @@ func TestCloudCodeEnvelopeShape(t *testing.T) {
 		if at(result, "request.requestType") != nil || at(result, "requestType") != nil {
 			t.Errorf("%s sends requestType, which the pin comment says earns a 429 (:360-363)", wire)
 		}
-		// safetySettings: kept for the CLI, absent for Antigravity (:364-367).
-		_, has := concerns.Object(result["request"])["safetySettings"]
+		// safetySettings: the five OFF for the CLI, absent for Antigravity (:364-367).
+		settings, has := concerns.Object(result["request"])["safetySettings"]
 		if has != (wire == GeminiCLIProtocol) {
 			t.Errorf("%s safetySettings present=%v", wire, has)
+		}
+		if has {
+			if got := asJSON(settings); got != asJSON(defaultSafetySettings) || strings.Contains(got, "null") {
+				t.Errorf("%s safetySettings = %s", wire, got)
+			}
 		}
 	}
 }
@@ -174,7 +179,7 @@ func TestCloudCodeToolConfigKeepsTheClientsChoice(t *testing.T) {
 
 // The pin's phase 5 gave every empty object schema a required "reason" argument
 // the client never declared and the response never removed. It is omitted, and
-// a tool with no properties is declared without parameters (PARITY 6.8 A3).
+// a tool with no properties is declared without parameters (PARITY 6.9 A3).
 func TestNoReasonArgumentIsInjected(t *testing.T) {
 	for _, wire := range bothWires {
 		for name, tool := range map[string]string{
@@ -195,7 +200,7 @@ func TestNoReasonArgumentIsInjected(t *testing.T) {
 }
 
 // top_k is not read by any wire of the family: Chat defines no such field
-// (PARITY 6.8 F1). The request is still served.
+// (PARITY 6.9 F1). The request is still served.
 func TestTopKIsNotCarriedByAnyWire(t *testing.T) {
 	for _, wire := range []string{GeminiProtocolForTest, GeminiCLIProtocol, AntigravityProtocol} {
 		var result map[string]any
@@ -341,7 +346,7 @@ func TestAntigravityClaudeFamily(t *testing.T) {
 }
 
 // Signatures: the placeholder goes to the Gemini family only; a Claude call with
-// no held signature is unsigned (PARITY 6.8 A6).
+// no held signature is unsigned (PARITY 6.9 A6).
 func TestPlaceholderSignatureIsGeminiFamilyOnly(t *testing.T) {
 	chat := `{"messages":[{"role":"user","content":"a"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"r"}]}`
 	for model, want := range map[string]any{"gemini-3-flash": PlaceholderSignature, "claude-opus-4-6-thinking": nil, "gpt-oss-120b-medium": PlaceholderSignature} {

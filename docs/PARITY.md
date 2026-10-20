@@ -783,7 +783,7 @@ The checklists in #75-#78 are normative follow-up scope for this inventory. Ever
 | IDs | Explicit gap / decision required | Authority | Owner |
 | --- | --- | --- | --- |
 | R01 | Native configured app account resolution/fallback/retry is implemented. Retained actual Combo/Fusion/capacity serving and pinned Fusion defaults remain open; no PRD 11 / BDR-011 waiver. | PRD 5/10/11; SPEC 8/13-16; Sprint 5.1 | #75 |
-| R02 | Chat/Responses, Messages<->Chat, Ollama (provider side), the Gemini and Vertex legs (Gemini routable, Vertex gated on #115 PR-C: see 6.7) and the Cursor and CommandCode conversion legs (not yet routable: see 6.5) are implemented (#119). The Gemini CLI and Antigravity legs are implemented and unrouted (see 6.8). The Kiro legs, the Cursor, CommandCode, Gemini CLI and Antigravity transports, count-tokens and provider compact behavior remain open under SPEC 9/10; #119 tracks each leg. | PRD 5; SPEC 9/10; Sprint 5.2 | #75 |
+| R02 | Chat/Responses, Messages<->Chat, Ollama (provider side), the Gemini and Vertex legs (Gemini routable, Vertex gated on #115 PR-C: see 6.7), the Kiro Chat legs (not yet routable: see 6.8) and the Cursor and CommandCode conversion legs (not yet routable: see 6.5) are implemented (#119). The Gemini CLI and Antigravity legs are implemented and unrouted (see 6.9). The Kiro Messages legs, the Cursor, CommandCode, Gemini CLI and Antigravity transports, count-tokens and provider compact behavior remain open under SPEC 9/10; #119 tracks each leg. | PRD 5; SPEC 9/10; Sprint 5.2 | #75 |
 | R03 | Serving pipeline slice resolved: normative per-attempt savers/final cache, bypass and fail-open tests in internal/app/transforms_test.go. Native helper parity stays R09. | PRD 12; SPEC 17/18; BDR-012; Sprint 5.3 | #75 |
 | R04 | Typed validation, native/custom/Cloudflare transports, streams/cancel and shared usage are implemented; internal/app/systemone_test.go. R11 adds pinned handler comparison; no broad-provider claim. | PRD 5/14; SPEC 10/28; #73 explicit System One | #75 |
 | R05 | Historical aliases, Ollama tags and id/kind/access catalog semantics are implemented (SPEC 34). Legacy /api/v1 is retained with identical inference auth/CORS; media kinds stay excluded. | PRD-API-001-004; SPEC 34 | #75 |
@@ -1141,8 +1141,7 @@ with available Chat pivots that must lose to the direct pair. It preserves the
 source request bytes, including a Messages-only system field and a nested
 extension. It proves incremental output, failure terminals, no replay,
 non-2xx status/body preservation and upstream cancellation. It is a framing and
-dispatch test, not a Kiro translator or live-provider qualification. All four
-Kiro conversion gaps remain tracked until PRs 4b/4c implement them.
+dispatch test, not a Kiro translator or live-provider qualification. The two Kiro Chat legs are PR 4b (6.8); the two Messages legs remain tracked for PR 4c.
 
 Framing provenance, all at oracle `1c3b9f47837d42ea64992063309064af755a14a3`:
 
@@ -1203,7 +1202,7 @@ credential flow, stored usage convention, database schema or dependency changes.
 
 ### 6.7 Gemini and Vertex legs: where Routeweft differs from the pin (#119, PR 5a)
 
-The pin registers five legs for these two wires, plus seven for Gemini CLI and Antigravity (PR 5b). This section is the five: `request openai-chat>gemini` (`translator/request/openai-to-gemini.js:314-316`, registered `:529`), `request openai-chat>vertex` (`openai-to-vertex.js:37-40`, `:42`), `request gemini>openai-chat` (`gemini-to-openai.js:9-72`, `:150`), `response gemini>openai-chat` (`response/gemini-to-openai.js:41-156`, `:159`) and `response vertex>openai-chat` (`:162`). None bypasses the hub (`translator/index.js:106-125`, `:208-235`). The pin shares one request function (`:150-151`) and one response function (`:159-162`) between Gemini and Gemini CLI, and the response function across all four wires; PR 5a implements them and PR 5b (6.8) registers the rest. The pin has **no** `openai-chat>gemini` response leg, so the `gemini>openai-chat` request leg, which serves a Gemini *client*, has nothing to convert the answer back with: it is built because the ratchet demands it, and it is not routable (`TestGeminiIsTranslatableFromConvertedClients`).
+The pin registers five legs for these two wires, plus seven for Gemini CLI and Antigravity (PR 5b). This section is the five: `request openai-chat>gemini` (`translator/request/openai-to-gemini.js:314-316`, registered `:529`), `request openai-chat>vertex` (`openai-to-vertex.js:37-40`, `:42`), `request gemini>openai-chat` (`gemini-to-openai.js:9-72`, `:150`), `response gemini>openai-chat` (`response/gemini-to-openai.js:41-156`, `:159`) and `response vertex>openai-chat` (`:162`). None bypasses the hub (`translator/index.js:106-125`, `:208-235`). The pin shares one request function (`:150-151`) and one response function (`:159-162`) between Gemini and Gemini CLI, and the response function across all four wires; PR 5a implements them and PR 5b (6.9) registers the rest. The pin has **no** `openai-chat>gemini` response leg, so the `gemini>openai-chat` request leg, which serves a Gemini *client*, has nothing to convert the answer back with: it is built because the ratchet demands it, and it is not routable (`TestGeminiIsTranslatableFromConvertedClients`).
 
 **Routing.** Gemini becomes reachable from Chat, Responses and Messages clients. **Vertex does not** (G13). Gemini's URL is `v1beta/models/{model}:generateContent` or `:streamGenerateContent`, its credential `x-goog-api-key` (`registry/gemini.js:26-30`).
 
@@ -1217,7 +1216,7 @@ Two kinds of "cannot verify", kept apart as in 6.5: **E**, the wire shows it can
 | G2 | `config/defaultThinkingSignature.js` ships three captured base64 thought-signature blobs and `openai-to-gemini.js:162-171,187-190` attach them to replayed reasoning and to a turn's first function call; `services/thoughtSignatureStore.js` caches real ones in memory (1 h) and SQLite (7 days) keyed by session and tool-call id. | A signature a response carried is kept in a bounded, in-memory, TTL cache (`Signatures`: 2000 entries, one hour, least recently used evicted) and replayed on the next request. **Never persisted.** The key is the **scope** (authenticated client key id and provider connection id, length-prefixed), the call id, name and arguments; no scope means nothing is stored and nothing is found. When no signature is held the placeholder `skip_thought_signature_validator` is sent on a turn's first call and on replayed reasoning; a sibling call stays unsigned, as at the pin. The captured blobs are **not** copied. Vertex keeps the signature the response carried; the pin overwrote every signature with its Vertex blob. | A signature is a client's model state; served to another client it crosses a tenant boundary, and a generated id such as `call_msg0_tc0_lookup` repeats across clients. The captured constants are vendor values this repository has no right to impersonate. **That Google accepts the placeholder is U: not verified.** |
 | G3 | `formats/gemini.js:481-516` invents turns: `"..."` when the history starts with a model turn, `"Continue."` when it ends on one, and a `functionResponse` of `"Continue."` for each unanswered trailing call; `openai-to-gemini.js:224-237` answers a call mid-history with an empty result. | Mirrored, all four, **deliberately**: they are a shape requirement of the wire (it starts and ends on a user turn and pairs every call with a response), not something said to the user. Assistant prefill is **not** refused. `TestConversationShape` asserts each. | Refusing prefill would make a shape real clients send unroutable for no benefit. |
 | G4 | `thinkingUnified.js:307-317` applies `reasoning_effort`/`thinking` after translation, to `thinkingConfig`, from a model capability table. | `reasoning_effort`, `reasoning`, `thinking` and `generationConfig.thinkingConfig` are **not carried** (tracked on #125), as in 6.3. | This is "deferred", not "inexpressible": `thinkingConfig` carries them; choosing level or budget needs the table. Refusing would make every reasoning-capable client unroutable here. |
-| G5 | `formats/gemini.js:407-434` adds a required `reason` parameter to every empty-object schema, at any depth, as an "Antigravity requirement". | A tool that declares no properties is sent **with no `parameters`**; no parameter is invented (6.8 A3 decides it for the two Cloud Code wires: omitted there too). A nested `{"type":"object"}` with no properties is sent as it is. | The model would return an argument the client never declared, a wrong answer with a 200. **That Gemini accepts a declaration with no `parameters`, and a nested bare object, is U: not verified.** |
+| G5 | `formats/gemini.js:407-434` adds a required `reason` parameter to every empty-object schema, at any depth, as an "Antigravity requirement". | A tool that declares no properties is sent **with no `parameters`**; no parameter is invented (6.9 A3 decides it for the two Cloud Code wires: omitted there too). A nested `{"type":"object"}` with no properties is sent as it is. | The model would return an argument the client never declared, a wrong answer with a 200. **That Gemini accepts a declaration with no `parameters`, and a nested bare object, is U: not verified.** |
 | G6 | `openai-to-gemini.js:85-95`: for `gemini-4*` models `temperature`, `top_p` and `top_k` are silently left out (`isGemini4Model`, `providers/capabilities.js:752`). | **Left out, and recorded here as a named omission**: `temperature` and `top_p` for models matching `(^\|/)gemini-4($\|[-.])`. A malformed value is still refused. `TestGeminiFourOmitsSamplingVisibly` fails if it changes. | The pin's comment says Gemini 4 rejects them. **That is U: not verified here**; the ticket to verify it is #119. A drop nobody wrote down is the bug; this one is written down. |
 | G7 | `formats/gemini.js:77-80` sends a remote image as `fileData` with `mimeType: "image/*"`; an unknown part is skipped (`:62-106`). | A remote (`http`/`https`) `image_url` is **refused**, with an error that says fetching it is out of leg scope. Audio and `file` data URIs are carried as `inlineData`; `file_id` and every unknown part are refused. | Whether Gemini accepts `image/*` is U. A skipped part is a model that never saw it. |
 | G8 | `openai-to-gemini.js:82` and `formats/gemini.js:47-53` send all five `safetySettings` as `OFF` on every request. | Mirrored. | Gateway behaviour, not a client choice. Whether Vertex accepts `HARM_CATEGORY_CIVIC_INTEGRITY` is U. |
@@ -1242,7 +1241,7 @@ Mirrored though odd, each asserted by a test:
 | Chat request field | Gemini | Class and why |
 | --- | --- | --- |
 | `model`, `messages`, `max_tokens`, `temperature`, `top_p`, `tools`, `stream` (in the path) | carried | pin; G6 for Gemini 4 |
-| `top_k` | not carried | OpenAI Chat defines no `top_k`; one rule for the family (6.8 F1). The pin forwarded it (`openai-to-gemini.js:90-95`) |
+| `top_k` | not carried | OpenAI Chat defines no `top_k`; one rule for the family (6.9 F1). The pin forwarded it (`openai-to-gemini.js:90-95`) |
 | `max_completion_tokens` when `max_tokens` is absent; `stop` (a string or up to five strings); `seed`, `presence_penalty`, `frequency_penalty`; `response_format` `json_object` / `json_schema` | carried | V22; the pin drops the rest. `stop` over five, a non-string, `max_tokens` not a positive number, a non-number sampling value, a `json_schema` with no or empty schema, an unknown `response_format`: refused |
 | `tool_choice` | carried | V19: `none`, `required`, a named declared tool; an unknown value, an undeclared name or a non-function type is refused |
 | `system`, `developer` (all of them, joined), `user`, `assistant`, `tool` | carried | pin, G3, M13 |
@@ -1263,7 +1262,7 @@ Mirrored though odd, each asserted by a test:
 | a missing `role` | user | the pin reads anything but `user` as the assistant |
 | `functionResponse` parts | one `tool` message each, paired by id, else by name oldest first | the pin returns at the first and discards the rest of the content |
 | `thought:true` text | `reasoning_content` | the pin replays it as visible text |
-| `topK`, `safetySettings`, `labels`, `thinkingConfig` | not carried | no Chat field (6.8 F1) / G4 |
+| `topK`, `safetySettings`, `labels`, `thinkingConfig` | not carried | no Chat field (6.9 F1) / G4 |
 | `cachedContent`, `candidateCount>1`, `responseLogprobs`, `logprobs`, an unknown `responseMimeType`, tools other than `functionDeclarations` (`googleSearch`, `codeExecution`, `urlContext`), `fileData`, non-image `inlineData`, an unknown part field, an unknown `toolConfig` key or mode, more than one allowed function name, a `functionResponse` that answers no call, a non-text system part | refused | the answer would be wrong or the capability silently missing |
 
 #### Response, Gemini and Vertex to Chat (`TestFinishReasonsAreCompleteOrAFailure`, `TestStreamMatchesBuffered`, `TestTruncatedStreamsFail`)
@@ -1278,11 +1277,129 @@ Mirrored though odd, each asserted by a test:
 | a cancelled client | no terminal | |
 
 
-### 6.8 Gemini CLI and Antigravity legs: where Routeweft differs from the pin (#119, PR 5b)
+### 6.8 Kiro Chat legs: where Routeweft differs from the pin (#119, PR 4b)
+
+This PR builds the two Chat legs of the Kiro wire: `request openai-chat>kiro` (`translator/request/openai-to-kiro.js:308-447`, registered `:449`) and `response kiro>openai-chat` (registered `translator/response/kiro-to-openai.js:185`). The pin dispatches both directly, with no pivot (`translator/index.js:106-108`, `:208-213`). The two Messages legs (`claude-to-kiro.js:231-366`, `kiro-to-claude.js:57-285`) are PR 4c and stay in `trackedLegGaps`. The code is `internal/protocol/kiro`.
+
+**The response leg is not where the ticket says.** `kiro-to-openai.js:37-55` returns the chunks it is given, because the pin's executor already turned the EventStream into Chat chunks (`executors/kiro.js:629-1190`, `transformEventStreamToSSE`); the raw-event branch below it (`:57-181`) reads `usageEvent` and `done`, which that transform never emits, so no real stream reaches it. The leg is therefore the executor transform, reading frames with `concerns.ReadEventStream` instead of the pin's parser (`:1216-1300`). Where the ticket and the pin disagree, the pin wins.
+
+**Routing.** Kiro stays in `ingress.unwired`. Its transport needs the account-aware body and headers from `internal/providers/wire` (#135), and without PR 4c a Messages client would pivot through Chat where the pin has a direct pair. `hub.CanTranslate` is true for Chat and Responses clients and, until 4c, also for Messages; `TestKiroLegsExistButKiroStaysUnwired` pins that the ingress answer is false for all three. The legs receive the raw upstream body: ingress passes `response.Body` to `translation.Stream` (`ingress/openai.go:211-215`) and the whole body to `translation.Response` (`:231-242`), and `internal/providers/wire` has no Kiro hook, so no wire change is needed for the legs to read EventStream.
+
+#### Request, Chat to Kiro
+
+| Chat field | Disposition | Reason |
+| --- | --- | --- |
+| `messages[].content` (string, text parts) | carried | `openai-to-kiro.js:108-170`; text parts of one message join with a newline, messages of one turn with a blank line |
+| `system` / `developer` messages | carried as a user turn wrapped in `<instructions>` | Kiro has no system field (`:165-169`). The pin silently loses `developer` (`:94-100`); here it is a system message, as in every other leg |
+| `image_url` with a base64 data URI of an image type | carried as `images[{format, source.bytes}]` | `:118-124`; the format is the media subtype as in the pin. Whether Kiro accepts every subtype is not verifiable offline |
+| `image_url` with an `http(s)` URL | **refused** | Kiro takes bytes. The pin substitutes the text `[Image: url]` (`:125-128`) |
+| `image_url.detail` | advisory | a rendering hint Kiro has no field for |
+| other content parts, wrong-typed `content`, a part with no `type` | **refused** | the pin ignores them (`:129-136`) |
+| `tool_calls` | carried as `toolUses` | `:186-216`; arguments must be a JSON object, or empty for a tool that takes none |
+| malformed `tool_calls[].function.arguments` | **refused** | the pin flattens the call to text (`kiroConversation.js:129-134`) |
+| `tool` messages | carried as `toolResults` | `:158-164`; `is_error` or `status:"error"` give status error. Array content joins its text parts (the pin sends `""` for it, `:159`); non-text parts are refused |
+| tool-call/result pairing | **refused** when a call is unanswered, a result is orphaned, answers a call another turn made, or answers one twice | the pin repairs by flattening both sides to text (`:261-338`, `:373-391`). The error names the turn |
+| tool-call ids | carried; characters Kiro rejects are removed on both sides, a missing id is generated for the client's own body | `concerns.EnsureToolCallIDs`. **Refused** when the id is empty once cleaned, over 64 characters, or two calls end up with one id (the pin suffixes, `:208-223`) |
+| a call to a tool that is not among `tools` | **refused** | the pin flattens it (`:299-310`) |
+| `tools` (function) | carried as `toolSpecification` on the current message only | `kiroConversation.js:429-431` |
+| tool of another type, tool with no name, a name declared twice | **refused** | the pin ignores the type, skips the nameless tool (`:100`) and the second definition (`:103`). Byte-identical repeats are also refused |
+| tool names | valid names are sent unchanged; the rest are rewritten and put back on the response | `concerns.ToolNameRule{Strict: true}` with Kiro's rule. **Refused** when two names are one name once normalized (the pin suffixes `_2`, `:47-61`). The pin also renames valid names that begin or end with `_`; this does not |
+| tool description | carried; absent or empty becomes `Tool: <name>`; **refused** over 10237 characters | the pin truncates (`:108-111`). The limit is the pin's; whether Kiro enforces it is not verifiable offline |
+| `temperature`, `top_p` | carried, an explicit `0` as `0` | `:426-431`. Absent and `null` send nothing; a non-number is refused |
+| `max_tokens`, else `max_completion_tokens` | carried to `inferenceConfig.maxTokens` | the pin sends a fixed 32000 (`:311`). Absent sends nothing: whether Kiro applies a default is not verifiable offline. Zero, negative, fractional and non-numbers are refused |
+| thinking intent: `reasoning_effort`, `reasoning.effort`, `thinking`, `output_config.effort`, `enable_thinking`, `thinking_budget`, `thinkingConfig`, the `model(level)` suffix, `-thinking`, a `<thinking_mode>` tag in a system or user message | carried | `kiroConstants.js:44-259` and `thinkingUnified.js:34-103`, ported inside the Kiro package: the budget prefix and, for Claude 4.6+ and GPT 5.6, `additionalModelRequestFields`. Unknown effort values and unrecognized parenthesized model overrides are refused instead of falling back to a default budget or dropping the suffix. The Gemini envelope shapes nested under `generationConfig` and `request` are refused as unknown fields |
+| `-agentic` model suffix | carried | the pin's chunked-write prompt, verbatim, in front of the first user turn |
+| `anthropic-beta: interleaved-thinking` | **not readable by a leg** | the legs get no request headers (`ChatRequest` has none). Matters for the Messages legs; recorded on the ticket |
+| `tool_choice` other than absent, `null`, `"auto"`; `parallel_tool_calls:false` | **refused** | Kiro has neither; the pin ignores both. Non-boolean `parallel_tool_calls` is also refused |
+| `stop`, `seed`, `logit_bias`, `top_logprobs`, `logprobs:true`, `n` other than numeric `1`, audio, `functions`, `function_call`, `web_search_options`, `prediction`, `response_format` other than text, non-zero `presence_penalty` / `frequency_penalty`, any field not listed here | **refused** | Kiro's request has no equivalent. A zero penalty is the identity |
+| `stream`, `stream_options`, `user`, `store`, `metadata`, `service_tier`, `prompt_cache_key`, `prompt_cache_retention`, `safety_identifier` | advisory | the answer is the same without them |
+| message/part `cache_control`, message `annotations`, echoed `reasoning_content` / `reasoning` / `reasoning_details` / `refusal` | advisory | Kiro has no cache field or reasoning history. **Known gap:** prompt-cache anchoring does not reach Kiro (as at the pin) |
+| message `name` on user, assistant, system | **refused** | a participant name has no Kiro equivalent. Empty and wrong-typed names are also refused. On a `tool` message it is ignored: the call id pairs the result |
+| conversation starting or ending on an assistant turn; a user turn with no text and no tool result (an image alone) | **refused** | the pin invents `continue` user turns (`kiroConversation.js:181-186`, `:19-21`) |
+| consecutive turns of one role | carried, merged | Kiro alternates; no content is lost |
+| tool-results-only user turn, assistant turn with no text | placeholder `Tool results provided.` / `...` | structural: the wire needs some text; neither reads as an instruction (`:81`, `kiroConversation.js:15`) |
+
+**Deliberate divergences.** There is no session replay cache and the first user message is not frozen (`kiroSessionReplay.js:65-130`, `openai-to-kiro.js:359-376`): the pin keys it with no client dimension, so one client's prompt could be served to another. `conversationId` is a fresh random UUID for each request. The `[Context: Current time is …]` line the pin adds to every turn (`:356`) is not sent: it exists to keep the frozen message cacheable, nothing shows the wire needs it, and it would be a system fact the client never sent. The executor's integrity retry (`executors/kiro.js:437-505`) and its content heuristics (`:46-56`, `:185-197`) are not ported: a replay after output would repeat an answer already sent.
+
+#### Tool schema rows
+
+Kiro does not accept some keywords. Each row below is a decision, and `RequestInfo.Normalized` counts the rewrites so a test can assert them.
+
+| Schema content | Disposition | Consequence |
+| --- | --- | --- |
+| no `parameters`, `{}`, a missing root `type`, missing `properties` | `type:"object"` and empty `properties` are filled in | says the same thing |
+| root `type` other than `object` (including a list) | **refused** | a tool input is an object |
+| `additionalProperties: true` or `null`, at any depth | stripped | the JSON-schema default; carries nothing |
+| `additionalProperties: false`, at any depth | stripped, counted | **Kiro does not accept the keyword, so the model may emit a property the client did not declare; the client's own validator is the backstop.** It is a guarantee about what comes back, not a field the caller sent |
+| `additionalProperties` as a schema, including `{}`, at any depth | **refused** | it declares structure the model must know about; dropping it changes what the model can produce |
+| `required` naming an undeclared property (any depth, no `allOf`/`anyOf`/`oneOf`/`$ref`) | entry dropped, counted; duplicates collapse | the model cannot satisfy it either way. Not dropped where composition may declare the property |
+| `required: []`, at any depth | dropped | says nothing |
+| `required` that is not a list (any depth), or has an entry that is not a string | **refused** | |
+| a property that is *named* `additionalProperties` or `required`; `enum`, `const`, `default`, `examples` values | untouched | the pin's blind walk (`kiroConversation.js:63-74`) strips these too; here only schemas are visited |
+
+#### Response, Kiro EventStream to Chat
+
+| Event or condition | Disposition |
+| --- | --- |
+| `assistantResponseEvent{content}` | carried as `content`; a payload that is not an object, or a `content` that is not a string, fails the stream (the pin ignores both, `:808`) |
+| `<thinking>…</thinking>` in answer text | when the request injected thinking mode: the inside is `reasoning_content`, the tags are removed, one newline after the close is removed, and an unfinished tag is held back until the next frame (the pin drops the inside and leaks a split tag, `:810-828`). Otherwise the text is the model's own and passes through |
+| `reasoningContentEvent` | carried as `reasoning_content`, in the pin's three shapes (`:834-841`) |
+| `codeEvent{content}` | carried as `content` (`:842`) |
+| `toolUseEvent` | fragments joined per `toolUseId`; a name change, a fragment-type change, a missing name or input, a blank or non-string id, input that is not an object, and the `tool_call` wrapper without a nested name and `arguments` fail the stream (`:846-871`, `:746-753`). An empty input string is `{}`. Calls are emitted after the reader confirms the body is whole (`:1036`); one unusable call means none of the turn's calls are emitted and the stream ends with an error (the pin drops it and answers 200, `:739-759`) |
+| `messageStopEvent`, `metadataEvent` with a stop reason | the terminal. `end_turn`, `stop_sequence`, none: `stop`, or `tool_calls` if calls were made. `tool_use` with no call: failure. `max_tokens`: `length`, but failure with a call. `model_context_window_exceeded`: `length` only after output, otherwise failure. `refusal`, content-filter-like, `cancelled`, `pause_turn`, `malformed_model_output` and unknown reasons: failure (`:145-183`, `:1077-1120`). Failure reasons outrank reasons that can succeed; `tool_use` outranks `end_turn`, so a second terminal cannot hide a missing call |
+| `metricsEvent` | usage from `concerns.KiroUsage`: `inputTokens` is taken as cache-exclusive, the prompt is input + cache read + cache creation, the cache counts are `prompt_tokens_details`; explicit zero and cache-only counts are measurements; negative, fractional, out-of-range, conflicting alias counts or overflowing totals are not a measurement (the pin copies input into the prompt and spells the cache counts outside `prompt_tokens_details`, `:906-922`). Whether Kiro's `inputTokens` is cache-exclusive is the owner's decision, not verified offline |
+| `contextUsageEvent`, `meteringEvent`, `metadataEvent` without a stop reason | counted and ignored: the only events the pin reads for accounting and never for content |
+| any other event type | counted; **fails the stream, including an empty payload**. Nothing else is proven harmless: that needs a sanitized capture |
+| known event with an unread key holding a value | fails the stream; the pin ignores the key and the content in it may be text |
+| clean EOF with no stop event, truncation, corrupt bytes after the stop | failure; the pin counts clean EOF with output as success (`:1065-1075`) |
+| content after the stop event | failure; usage and bookkeeping after it are accepted |
+| `:message-type` `exception` / `error` | failure carrying the upstream message (`:793-803`) |
+| tool id absent | a stable generated id; the pin embeds the clock (`:854-855`) |
+| tool name | restored from the request's name map; a name not in the map passes through, as at the pin |
+
+**Known gaps, each its own follow-up under #119.** *Kiro saver view:* conversation history and the current message have no saver view; the transform order is unchanged. *Token estimates:* the pin's `contextUsagePercentage × context window` and `chars/4` estimates (`:1102-1113`) are not reported; no usage is better than an invented one. *Credits:* `meteringEvent` credits (`:895-905`) are counted, not reported, and no `kiro_credits` key is added to `usage`. *Time context:* see above. *Header-driven thinking:* `anthropic-beta` needs request headers in the Messages legs.
+
+**Wire hooks #135 needs (not implemented here).** `profileArn` in the body and `x-amzn-codewhisperer-profile-arn` in the headers, account-aware: API-key, IdC and external-IdP accounts never use the shared default (`openai-to-kiro.js:325-341`, `executors/kiro.js:276-279`); the auth headers `TokenType`, `x-amz-sso-bearer`, `x-amzn-kiro-agent-mode`, `X-Amz-Target` for `codewhisperer.*` hosts and `Accept: application/vnd.amazon.eventstream` (`:235-282`); the three-host order and region rewrite (`:299-328`); endpoint-fallback statuses 401/403/404 (`kiroConstants.js:28`).
+
+The request guards also refuse unread tool, call, content-part and thinking keys (including empty values), malformed thinking configurations, and strict tool-output guarantees. Supplied IDs are validated before shared repair can rewrite them. Known response events enumerate the keys they read or treat as bookkeeping; mixed nested and flat envelopes, multiple reasoning values and conflicting object tool fragments fail rather than select one and lose another.
+
+Guard coverage before push:
+
+| Input dimension | Crossed branches / expected result |
+| --- | --- |
+| Sampling values: absent, `null`, `0`, `0.0`, positive, string, bool, list | `temperature`, `top_p` and each `max_*` name; zero is emitted as `0`, absent and null send nothing, wrong types refuse; `max_tokens` wins, `null` falls to `max_completion_tokens` |
+| Message and content shapes: absent, `null`, empty, wrong type, populated, malformed part | all four roles; refused unless meaningful |
+| Tool history: unanswered, orphaned, wrong id, twice answered, undeclared, bad arguments (invalid / array / number), duplicate id, id equal once cleaned, unusable id, 65-character id, image result | each refused with the turn named; the whole conversation served |
+| Tool names and descriptions: collision with a valid name, with each other, empty twice, same name different definition, identical repeat (refused), 10237 / 10238 characters | refused or served accordingly |
+| Schema rows above, flat and nested | each row asserted, with its count |
+| Thinking: every source, suffix and model family | prefix, flag, upstream model and extra fields asserted |
+| Event payloads: absent, `null`, empty, string, number, list, object, wrong-typed field, unread key | every known event; error or carried |
+| Stop reasons ×  with and without output, with and without calls | one outcome each |
+| Thinking tag split | every split of the sample into two and into three frames, and byte by byte; plus tag edges |
+| Truncation, trailing garbage, missing stop, post-stop content, source error, cancellation | failure terminal, nothing written after a cancel |
+| Buffered and streamed | the same answer |
+
+Validation for PR 4b uses sanitized synthetic EventStream fixtures and the pinned
+leg inventory. The converter benchmark (three-frame text/usage/stop response,
+Go 1.22.12, shared host under load) measured 0.779–0.890 ms/op, about 13.1 KB/op
+and 197 allocations/op across three runs. This is a new, gated path with no
+previous Kiro converter baseline; it does not establish production latency.
+No SQLite schema, provider inventory, credentials or runtime dependency changes.
+No live provider calls were made.
+
+`go build ./...` and the normal Go suite (`go test -p 1 ./...`) pass. Race tests
+pass for Kiro, concerns, hub, ingress and the pinned parity suite. The broad
+`go test -race ./...` run on this host hit the existing runbook's ten-second
+readiness deadline and the app package's ten-minute total deadline; the normal
+versions pass, and the app test active at the deadline passes separately under
+race. These broad-run timeouts remain a validation limitation, not a green race
+suite claim.
+
+### 6.9 Gemini CLI and Antigravity legs: where Routeweft differs from the pin (#119, PR 5b)
 
 Seven legs, all through the Chat hub (none bypasses it): `request openai-chat>gemini-cli` (`translator/request/openai-to-gemini.js:319-340`, `:343-376`, registered `:530`), `request openai-chat>antigravity` (`:518-526`, registered `:531`; Claude models `:379-509`, `request/openai-to-claude.js:17-201,341-392`), `request gemini-cli>openai-chat` (`request/gemini-to-openai.js:9-147`, registered `:151`), `request antigravity>openai-chat` (`request/antigravity-to-openai.js:11-230`, registered `:242`), `response gemini-cli>openai-chat` and `response antigravity>openai-chat` (`response/gemini-to-openai.js:41-156`, registered `:160-161`; the same function as 6.7, which already reads the `{"response": ...}` envelope) and `response openai-chat>antigravity` (`response/openai-to-antigravity.js:9-120`, registered `:123`). The pin has no `openai-chat>gemini-cli` response leg, so `gemini-cli>openai-chat` serves a Gemini CLI client with nothing to answer it, as `gemini>openai-chat` does (6.7); it is built because the ratchet demands it.
 
-**Both wires are unrouted.** `gemini-cli` and `antigravity` are in `ingress.unwired`, as Vertex, Cursor and CommandCode are. Binding either needs the Cloud Code URL and its `?alt=sse` query, the OAuth bearer, the client headers, and the project id the envelope names (`executors/gemini-cli.js:10-35`, `executors/antigravity.js:118-135`): the wire hook's. When a wire is bound, `ingress.unwired`, the missing `TranslateChat`/`TranslateResponses`/`TranslateMessages` arms, `unreachableProviders` and `TestCloudCodeWiresAreNotTranslatableUntilTheyAreBound` all come out together. **Streaming is SSE** (`streamGenerateContent?alt=sse`, `Accept: text/event-stream`); neither wire uses AWS EventStream, so the reader from PR 4a is not consumed here.
+**Both wires are unrouted.** `gemini-cli` and `antigravity` are in `ingress.unwired`, as Vertex, Cursor, CommandCode and Kiro are. Binding either needs the Cloud Code URL and its `?alt=sse` query, the OAuth bearer, the client headers, and the project id the envelope names (`executors/gemini-cli.js:10-35`, `executors/antigravity.js:118-135`): the wire hook's. When a wire is bound, `ingress.unwired`, the missing `TranslateChat`/`TranslateResponses`/`TranslateMessages` arms, `unreachableProviders` and `TestCloudCodeWiresAreNotTranslatableUntilTheyAreBound` all come out together. **Streaming is SSE** (`streamGenerateContent?alt=sse`, `Accept: text/event-stream`); neither wire uses AWS EventStream, so the reader from PR 4a is not consumed here.
 
 Not legs, so not here: URL, headers, OAuth refresh, retry and backoff, the IDE-format `requestId` rebuild (`executors/antigravity.js:100-111`), the image-generation path (`:144-189`; out of scope, AGENTS 2), the tool-group merge (`:237-259`), the competing-client prompt rewrites (`config/appConstants.js:175-183`) and `cloakTools` (dead at the pin: `translator/index.js:178-185` is commented out).
 
@@ -1310,7 +1427,7 @@ U = not verifiable offline (no live call exists in this repository); E = the wir
 | R3 | An unknown `finish_reason` becomes `STOP` (`:93`). | `stop`, `tool_calls`, `function_call` are `STOP`; `length` `MAX_TOKENS`; `content_filter` `SAFETY`. **Any other reason, or a non-string, fails the stream.** | An unknown future reason silently becoming success is the class 6.7 G12 stops. |
 | R4 | A usage chunk with no `choices` is stored (`:13-17`) but a finish chunk already sent never carries it, so the usual `stream_options` order loses usage entirely. | The finish is held until `[DONE]` or the end of the body; usage seen before, with or after it rides the finish once. No usage chunk means no `usageMetadata`, never zeros. | `usage_observed` exists so absent is not zero. |
 | R5 | `candidatesTokenCount = completion_tokens` and `thoughtsTokenCount = reasoning_tokens` (`:108-113`), counting reasoning twice. | `candidatesTokenCount = completion_tokens - reasoning_tokens` (never below 0); the total is the upstream's, else prompt plus completion. | Chat counts reasoning inside completion; Gemini counts it beside (`concerns/usage.js:38`). |
-| R6 | `responseId` is `resp_<clock>` when the chunk has no id (`:25`); more than one choice, a choice index other than 0, `delta.images` and `delta.refusal` are ignored. | `resp_unknown`; a second choice, an index other than 0 and a refusal **fail the stream**; `delta.images` data URIs are sent as `inlineData` and any other image URL fails. Content after the finish fails. | Nothing dropped silently; deterministic output. |
+| R6 | `responseId` is `resp_<clock>` when the chunk has no id (`:25`); more than one choice, a choice index other than 0, `delta.images` and `delta.refusal` are ignored. | `resp_unknown`; a second choice, a non-numeric or non-zero index, a `choices` that is not a list and a `usage` that is not an object **fail the stream**; `delta.images` data URIs are sent as `inlineData` and any other image URL fails. `delta.refusal` is typed: absent, `null`, `false` and `""` are silence, a non-empty string or `true` is a refusal and **fails the stream**, and any other type fails as a shape the leg cannot read. A repeated finish chunk with an empty delta keeps the first finish and the parts it held. Content after the finish fails. | Nothing dropped silently; deterministic output. `false` is how a Chat provider says "no refusal", and a `any`-to-`""` comparison read it as one. |
 | R7 | A broken stream ends however the stream function ends. | An error object the client can read (`{"error": ...}`, the upstream's own when it sent one), never a finish and never `[DONE]` (`utils/stream.js:467`: Gemini-family clients reject the sentinel). A cancelled client gets nothing. | SPEC 9.3. |
 
 #### Request fields, Chat to Gemini CLI and Antigravity (`TestCloudCode*`, `TestAntigravity*`)
@@ -1362,7 +1479,7 @@ const pages = [...pageSection.matchAll(/^\| `([^`]+page\.js)` \|/gm)]
 assert.deepEqual(pages, files.filter(p => /^src\/app\/(?:.*\/)?page\.js$/.test(p)).sort());
 assert.equal(pages.length, 16);
 const routeRows = text.split('### Public rewrites')[0].split('\n').filter(line => /^\| \d+ \|/.test(line));
-for (const [status, count] of Object.entries({"PRESENT":28,"PARTIAL":39,"MISSING":30})) {
+for (const [status, count] of Object.entries({"PRESENT":32,"PARTIAL":39,"MISSING":26})) {
   assert.equal(routeRows.filter(line => line.includes('| ' + status + ' |')).length, count);
 }
 assert.match(text, /013d26a2014c16e0e4f2a35aa9acf2fa5bfd4e7c/);
@@ -1378,3 +1495,57 @@ JS
 - Local Go race attempt: **not run**, executable unavailable (`go: command not found`). No production/oracle runtime calls made. Documentation changes do not alter runtime, hot-path benchmarks, SQLite schema or security implementation.
 - Local UI `npm ci`, `npm run typecheck` and `npm run build` passed. `npm audit` reports one existing high-severity transitive `source-map-js` advisory (GHSA-68fv-2mgg-jv7q); no dependency changes made in this inventory-only PR.
 - This document's inventory checks and PR CI results are recorded in the PR handoff. Passing CI validates the documentation head against existing checks only; #73 and #74 remain blocked on real parity work and reviewed divergence sign-off.
+
+## CodeBuddy CN and international wire (#115 PR D)
+
+Reference: LiteRouter `1c3b9f47837d42ea64992063309064af755a14a3`,
+`open-sse/executors/codebuddy-{cn,intl}.js`, `codebuddy-error.js`,
+`providers/registry/codebuddy-{cn,intl}.js`, `utils/reasoningContentInjector.js`
+and `services/usage/codebuddy-cn.js`. Verification uses scripted endpoints only.
+
+Both existing providers force Chat streaming at the final wire seam. A client
+requesting JSON receives a bounded folded completion, including all choices,
+reasoning, refusal, tool calls and any reported usage. A malformed, truncated,
+oversized or unrepresentable stream fails before a JSON success is exposed.
+Only the enumerated chunk fields `object` and `obfuscation` are ignored and
+counted as transport metadata. Other unknown chunk, choice, delta, tool-call or
+function fields fail folding. Native streaming carries content through and strips
+only empty delta `tool_calls` arrays, after a byte pre-check; long lines beyond
+1 MiB pass through unchanged. No request tools are hidden or replaced.
+
+Owner-approved differences from the pin:
+
+- Chat sends Routeweft's own User-Agent and no CodeBuddy identity X-headers.
+  Onboarding, token polling, refresh and usage also use Routeweft's User-Agent;
+  onboarding and refresh retain their required handshake X-headers.
+  If the gateway requires the removed identity headers, CodeBuddy is dropped,
+  not softened. This is an accepted outcome, with no impersonation fallback.
+- International keeps caller system messages at the front in order, maps
+  developer to system, and turns user strings (including empty strings) into
+  typed text blocks. It fabricates neither an identity prompt nor a message.
+- CN carries system prompts verbatim, including agent prompts over 2000
+  characters. Upstream content-filter rejections retain their real status/body.
+- Explicit reasoning summaries survive. An absent summary defaults to `auto`
+  only for a nonempty string reasoning effort. `none`/`off` omit effort, as in
+  the pin; matching also tolerates case and surrounding whitespace.
+- The single-space assistant reasoning placeholder is restricted to CodeBuddy
+  Kimi tool-call history and DeepSeek assistant history. Existing nonempty
+  reasoning and malformed values remain for the gateway to judge.
+- Code 6004 (numeric or numeric string), or limit text, sets internal quota
+  cooldown accounting without rewriting the client-visible status or body.
+  Non-string messages cannot hide 6004. Valid future reset timestamps override
+  generic cooldowns; invalid/past timestamps supply no reset. Error relay keeps
+  the full body, including when later fallback accounts cannot serve.
+- CodeBuddy does not inherit translators' default `stream_options.include_usage`.
+  Caller stream options, including null, empty and zero values, survive.
+  When the gateway omits usage, accounting remains explicitly unobserved.
+
+The usage reader now posts to the pinned billing path
+`/v2/billing/meter/get-user-resource` for each domain; the old plugin billing
+path had no support in the pinned registry. No provider is added, removed or
+marked ready, and no runtime dependency or storage migration is introduced.
+
+Remaining limits: gateway acceptance of Routeweft identity and international
+requests without a caller system prompt is unverified offline. Omitted usage
+cannot be recovered. Broader thinking-format translation remains #119. These
+fixtures establish wire behavior, not live-provider qualification or GA readiness.

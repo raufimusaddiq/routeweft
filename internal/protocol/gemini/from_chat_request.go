@@ -30,7 +30,7 @@ type RequestOptions struct {
 	// OmitPlaceholderSignature leaves a call that holds no real signature
 	// unsigned instead of sending PlaceholderSignature. The Claude models behind
 	// Antigravity are signed by a different backend than Gemini's, and a signature
-	// of the other family is rejected (PARITY 6.8 A6).
+	// of the other family is rejected (PARITY 6.9 A6).
 	OmitPlaceholderSignature bool
 }
 
@@ -163,7 +163,7 @@ func number(body map[string]any, name string) (any, bool, error) {
 func generationConfig(body map[string]any, model string) (map[string]any, error) {
 	config := map[string]any{}
 	// top_k is not read: OpenAI Chat defines no such field, and the family has one
-	// rule for it (PARITY 6.8 F1). The pin forwarded it (:90-95).
+	// rule for it (PARITY 6.9 F1). The pin forwarded it (:90-95).
 	sampling := map[string]string{"temperature": "temperature", "top_p": "topP"}
 	for field, target := range sampling {
 		value, present, err := number(body, field)

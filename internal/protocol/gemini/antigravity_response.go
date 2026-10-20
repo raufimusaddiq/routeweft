@@ -23,7 +23,7 @@ const (
 )
 
 // antigravityFinish is the finish_reason mapping of openai-to-antigravity.js:85-94.
-// A reason it does not list is a failure, not STOP (PARITY 6.8 R3).
+// A reason it does not list is a failure, not STOP (PARITY 6.9 R3).
 func antigravityFinish(reason string) (string, error) {
 	switch reason {
 	case "stop", "tool_calls", "function_call":

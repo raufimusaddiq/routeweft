@@ -17,7 +17,7 @@ import (
 // GeminiCLIProtocol and AntigravityProtocol are the two Cloud Code Assist wires:
 // the Gemini GenerateContent body inside an envelope that names a project
 // (translator/request/openai-to-gemini.js:343-376). Neither is routable yet; the
-// legs land behind ingress.unwired (PARITY 6.8).
+// legs land behind ingress.unwired (PARITY 6.9).
 const (
 	GeminiCLIProtocol   = "gemini-cli"
 	AntigravityProtocol = "antigravity"
@@ -25,7 +25,7 @@ const (
 
 // MaxAntigravityOutputTokens is the ceiling the pin's executor clamps to
 // (executors/antigravity.js:22,277-279). The leg refuses above it: a silent
-// clamp answers a different request than the one asked (PARITY 6.8 A5).
+// clamp answers a different request than the one asked (PARITY 6.9 A5).
 const MaxAntigravityOutputTokens = 64000
 
 // CloudCodeOptions are the envelope fields a leg cannot know. The caller
@@ -124,7 +124,7 @@ func ChatRequestToGeminiCLI(body map[string]any, options RequestOptions, cloud C
 // body by a different route (:379-509), which drops images, documents, thinking,
 // the tool choice and every sampling control but the temperature, and
 // overrides an explicit temperature of 0 with 1; here one path serves both and
-// what the pin dropped is refused (PARITY 6.8 A4). It mutates body.
+// what the pin dropped is refused (PARITY 6.9 A4). It mutates body.
 func ChatRequestToAntigravity(body map[string]any, options RequestOptions, cloud CloudCodeOptions) ([]byte, *concerns.ToolNames, error) {
 	return chatRequestToCloudCode(body, options, cloud, AntigravityProtocol)
 }
@@ -217,7 +217,7 @@ func chatRequestToCloudCode(body map[string]any, options RequestOptions, cloud C
 // and strips what its executor strips. reasoning_content is removed from replayed
 // assistant turns because the pin's executor deletes every thought part and
 // signature-only part before sending (executors/antigravity.js:203-207): the
-// wire never sees them, so the leg does not pretend to send them (PARITY 6.8 A2).
+// wire never sees them, so the leg does not pretend to send them (PARITY 6.9 A2).
 func antigravityPreflight(body map[string]any, claude bool) error {
 	messages, _ := body["messages"].([]any)
 	// Refusals run first and over the whole body: a request that is rejected
@@ -256,7 +256,7 @@ func antigravityPreflight(body map[string]any, claude bool) error {
 
 // cloudCodeRouting are envelope fields that say where a request goes or who sent
 // it. The gateway has already decided both, so a client's value is not used;
-// that is a stated reason, not a drop (PARITY 6.8 C1).
+// that is a stated reason, not a drop (PARITY 6.9 C1).
 var cloudCodeRouting = map[string]bool{"project": true, "model": true, "userAgent": true, "requestId": true, "user_prompt_id": true}
 
 // cloudCodeInner are the keys of the Gemini body. In an envelope they live under
@@ -312,7 +312,7 @@ func unwrapCloudCode(body map[string]any) (map[string]any, error) {
 // (gemini-to-openai.js:9-147, registered :151): the same conversion as a Gemini
 // client's, which the pin shares. It also accepts the Cloud Code envelope, which
 // the pin reads as an empty conversation (:43). It is not routable on its own:
-// the pin has no response leg back (PARITY 6.8).
+// the pin has no response leg back (PARITY 6.9).
 func GeminiCLIRequestToChat(body map[string]any, model string, stream bool) ([]byte, error) {
 	inner, err := unwrapCloudCode(body)
 	if err != nil {
@@ -325,7 +325,7 @@ func GeminiCLIRequestToChat(body map[string]any, model string, stream bool) ([]b
 // (translator/request/antigravity-to-openai.js:11-230, registered :242). On top of
 // the Gemini conversion it carries thinkingConfig as reasoning_effort (:36-40),
 // lowercases a tool schema's types and drops enumDescriptions (:89-116). topK is
-// not carried, as for every wire in the family (PARITY 6.8 F1).
+// not carried, as for every wire in the family (PARITY 6.9 F1).
 func AntigravityRequestToChat(body map[string]any, model string, stream bool) ([]byte, error) {
 	inner, err := unwrapCloudCode(body)
 	if err != nil {

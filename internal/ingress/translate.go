@@ -14,6 +14,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/protocol/cursor"
 	geminiwire "github.com/raufimusaddiq/routeweft/internal/protocol/gemini"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/hub"
+	kiroadapter "github.com/raufimusaddiq/routeweft/internal/protocol/kiro"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
@@ -26,7 +27,11 @@ import (
 // pre-stream error handling in internal/providers/wire (executors/commandcode.js).
 // Vertex needs the project-scoped URL and the service-account or key
 // authentication that #115 PR-C's target hook supplies (executors/vertex.js:66-123);
-// until it does, a request routed there would fail at the last hop. PR-C removes
+// until it does, a request routed there would fail at the last hop. Kiro needs
+// the account-aware body and headers (profile ARN, auth method, region) and the
+// EventStream Accept header from internal/providers/wire (#135), and its Messages
+// legs (PR 4c): until then a Messages client would pivot through Chat where the
+// pin has a direct pair. PR-C removes
 // the vertex entry together with TranslateChat's vertex arm, which is not built
 // here because the endpoint it would name is that hook's to compute.
 // Gemini CLI and Antigravity need the same hook: the Cloud Code URL and its
@@ -36,7 +41,9 @@ import (
 // A provider leaves this list in the PR that binds its wire.
 var unwired = map[string]bool{
 	cursor.Protocol: true, commandcode.Protocol: true, geminiwire.VertexProtocol: true,
-	geminiwire.GeminiCLIProtocol: true, geminiwire.AntigravityProtocol: true,
+	kiroadapter.Protocol:           true,
+	geminiwire.GeminiCLIProtocol:   true,
+	geminiwire.AntigravityProtocol: true,
 }
 
 // geminiSignatures keeps the thought signatures Gemini attached to its function
@@ -186,6 +193,10 @@ func chainBodies(first, second func([]byte) ([]byte, error)) func([]byte) ([]byt
 	}
 }
 
+// kiroEndpoint is the pin's transport path under each of its three hosts
+// (providers/registry/kiro.js:19-23).
+const kiroEndpoint = "generateAssistantResponse"
+
 // ollamaEndpoint is Ollama's chat path under the provider's base URL.
 const ollamaEndpoint = "api/chat"
 
@@ -235,6 +246,21 @@ func TranslateChat(request *openai.ChatRequest, target string) (ChatTranslation,
 			return ChatTranslation{}, err
 		}
 		return geminiTranslation(parsed, request.Model, request.Scope, request.Stream, true, nil, nil)
+	case kiroadapter.Protocol:
+		parsed, err := concerns.WireObject(request.Raw)
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		body, names, info, err := kiroadapter.ChatRequestToKiro(parsed, kiroadapter.RequestOptions{Model: request.Model, Repair: true})
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		options := kiroadapter.ResponseOptions{Model: request.Model, Names: names, ThinkingTags: info.ThinkingTags}
+		return ChatTranslation{Endpoint: kiroEndpoint, Body: body,
+			Response: func(body []byte) ([]byte, error) { return kiroadapter.KiroResponseToChat(body, options) },
+			Stream: func(ctx context.Context, src io.Reader, dst io.Writer) error {
+				return kiroadapter.KiroStreamToChat(ctx, src, dst, options)
+			}}, nil
 	}
 	return ChatTranslation{}, fmt.Errorf("no Chat translator for %q", target)
 }

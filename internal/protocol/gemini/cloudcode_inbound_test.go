@@ -114,7 +114,7 @@ func TestCloudCodeEnvelopeOnTheClientLegs(t *testing.T) {
 }
 
 // topK is not carried by any wire of the family, and the thinkingConfig rule
-// belongs to Antigravity alone (PARITY 6.8 F1, F2).
+// belongs to Antigravity alone (PARITY 6.9 F1, F2).
 func TestInboundTopKAndThinking(t *testing.T) {
 	for _, wire := range bothWires {
 		got, err := cloudInbound(t, wire, `{`+hello+`,"generationConfig":{"topK":3,"topP":0.5}}`)
