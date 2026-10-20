@@ -105,7 +105,9 @@ func NewKeyIndex(entries []Entry) *KeyIndex {
 		if entry.Hash != "" {
 			entry.allowSet = make(map[string]struct{}, len(entry.Allow))
 			for _, allowed := range entry.Allow {
-				entry.allowSet[allowed] = struct{}{}
+				if allowed != "" {
+					entry.allowSet[allowed] = struct{}{}
+				}
 			}
 			byHash[entry.Hash] = entry
 		}
@@ -123,6 +125,17 @@ func (i *KeyIndex) Lookup(presented string) (Entry, bool) {
 		return Entry{}, false
 	}
 	return entry, true
+}
+
+// LookupAny returns the entry for a presented key whatever its state. It is
+// for deciding what a key may reach, never for authenticating it: a paused or
+// disabled restricted key must not widen to unrestricted.
+func (i *KeyIndex) LookupAny(presented string) (Entry, bool) {
+	if i == nil || presented == "" {
+		return Entry{}, false
+	}
+	entry, ok := i.byHash[Hash(presented)]
+	return entry, ok
 }
 
 // Records returns copy-safe records for runtime mutation persistence. Hashes

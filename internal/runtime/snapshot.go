@@ -27,6 +27,7 @@ type RuntimeSnapshot struct {
 	keys                *auth.KeyIndex
 	models              map[string]Model
 	aliases             map[string]ModelRef
+	keyAccess           map[string]keyGrants
 	disabledModels      map[string]struct{}
 	combos              map[string]Combo
 	poolBindings        map[string]string
