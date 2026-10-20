@@ -21,11 +21,29 @@ var ephemeral1h = func() map[string]any { return map[string]any{"type": "ephemer
 // (translator/request/openai-to-claude.js:17-201). The returned ToolNames maps
 // the names sent upstream back to the ones the client declared; the response
 // legs need it.
-func ChatToMessages(body map[string]any, model string, stream bool) (map[string]any, *concerns.ToolNames) {
+func ChatToMessages(body map[string]any, model string, stream bool) (map[string]any, *concerns.ToolNames, error) {
+	if err := rejectUncarriable(body); err != nil {
+		return nil, nil, err
+	}
 	names := concerns.NewToolNames(concerns.ChatToolNames(body))
-	result := map[string]any{"model": model, "max_tokens": AdjustMaxTokens(body, 0), "stream": stream}
+	limits := body
+	if !concerns.Truthy(body["max_tokens"]) && concerns.Truthy(body["max_completion_tokens"]) {
+		// The budget the caller asked for, under its current name. The pin reads
+		// only max_tokens and would send the default 64000 (PARITY V12).
+		limits = map[string]any{"max_tokens": body["max_completion_tokens"], "tools": body["tools"]}
+	}
+	result := map[string]any{"model": model, "max_tokens": AdjustMaxTokens(limits, 0), "stream": stream}
 	if temperature, ok := body["temperature"]; ok {
 		result["temperature"] = temperature
+	}
+	if topP, ok := body["top_p"]; ok {
+		result["top_p"] = topP
+	}
+	if stop := stopSequences(body["stop"]); len(stop) > 0 {
+		result["stop_sequences"] = stop
+	}
+	if user := concerns.Text(body["user"]); user != "" {
+		result["metadata"] = map[string]any{"user_id": user}
 	}
 	messages := []any{}
 	var systemParts []string
@@ -33,10 +51,15 @@ func ChatToMessages(body map[string]any, model string, stream bool) (map[string]
 		var others []map[string]any
 		for _, raw := range source {
 			message := concerns.Object(raw)
-			if concerns.Text(message["role"]) == "system" {
+			switch role := concerns.Text(message["role"]); role {
+			case "system", "developer":
+				// The pin drops a developer message (openai-to-claude.js:204-299);
+				// Chat treats it as a system message, so does this (PARITY V12).
 				systemParts = append(systemParts, concerns.ExtractText(message["content"], "\n"))
-			} else {
+			case "user", "assistant", "tool":
 				others = append(others, message)
+			default:
+				return nil, nil, unsupported("message role %q", role)
 			}
 		}
 		var role string
@@ -52,7 +75,10 @@ func ChatToMessages(body map[string]any, model string, stream bool) (map[string]
 			if r := concerns.Text(message["role"]); r == "user" || r == "tool" {
 				next = "user"
 			}
-			blocks := contentBlocks(message, names)
+			blocks, err := contentBlocks(message, names)
+			if err != nil {
+				return nil, nil, err
+			}
 			var results, rest []any
 			hasToolUse := false
 			for _, raw := range blocks {
@@ -137,12 +163,64 @@ func ChatToMessages(body map[string]any, model string, stream bool) (map[string]
 				last["cache_control"] = ephemeral1h()
 			}
 		}
-		result["tools"] = converted
+		if len(converted) > 0 {
+			// Anthropic rejects an empty tools array, and a tool_choice with no tools.
+			result["tools"] = converted
+		}
 	}
-	if concerns.Truthy(body["tool_choice"]) {
-		result["tool_choice"] = toolChoiceFromChat(body["tool_choice"], names)
+	if result["tools"] != nil {
+		if concerns.Truthy(body["tool_choice"]) {
+			result["tool_choice"] = toolChoiceFromChat(body["tool_choice"], names)
+		}
+		if parallel, ok := body["parallel_tool_calls"].(bool); ok && !parallel {
+			choice, _ := result["tool_choice"].(map[string]any)
+			if choice == nil {
+				choice = map[string]any{"type": "auto"}
+			}
+			if concerns.Text(choice["type"]) != "none" {
+				choice["disable_parallel_tool_use"] = true
+			}
+			result["tool_choice"] = choice
+		}
 	}
-	return result, names
+	return result, names, nil
+}
+
+// rejectUncarriable refuses a Chat request that asks for something Anthropic
+// cannot do, instead of answering without it. Dropped hints that only shape
+// sampling (seed, penalties, logit_bias, top_logprobs) are recorded in PARITY 6.3.
+func rejectUncarriable(body map[string]any) error {
+	if n := concerns.Int(body["n"]); n > 1 {
+		return unsupported("n=%d: Anthropic returns one completion", n)
+	}
+	if concerns.Truthy(body["logprobs"]) {
+		return unsupported("logprobs: Anthropic reports none")
+	}
+	for _, modality := range concerns.Items(body["modalities"]) {
+		if concerns.Text(modality) == "audio" {
+			return unsupported("audio output")
+		}
+	}
+	for _, field := range []string{"audio", "functions", "function_call"} {
+		if concerns.Truthy(body[field]) {
+			return unsupported("request field %q (use tools)", field)
+		}
+	}
+	return nil
+}
+
+// stopSequences accepts a Chat stop value, a string or a list of strings.
+func stopSequences(stop any) []any {
+	if text, ok := stop.(string); ok && text != "" {
+		return []any{text}
+	}
+	var sequences []any
+	for _, raw := range concerns.Items(stop) {
+		if text, ok := raw.(string); ok && text != "" {
+			sequences = append(sequences, text)
+		}
+	}
+	return sequences
 }
 
 // markLastAssistant puts a cache breakpoint on the last cacheable block of the
@@ -166,8 +244,9 @@ func markLastAssistant(messages []any) {
 	}
 }
 
-// contentBlocks is openai-to-claude.js:204-302.
-func contentBlocks(message map[string]any, names *concerns.ToolNames) []any {
+// contentBlocks is openai-to-claude.js:204-302. A part Anthropic cannot take is
+// an error: dropping it would answer a question about content the model never saw.
+func contentBlocks(message map[string]any, names *concerns.ToolNames) ([]any, error) {
 	var blocks []any
 	switch concerns.Text(message["role"]) {
 	case "tool":
@@ -181,7 +260,7 @@ func contentBlocks(message map[string]any, names *concerns.ToolNames) []any {
 		}
 		for _, raw := range concerns.Items(message["content"]) {
 			part := concerns.Object(raw)
-			switch concerns.Text(part["type"]) {
+			switch kind := concerns.Text(part["type"]); kind {
 			case "text":
 				if concerns.Truthy(part["text"]) {
 					blocks = append(blocks, map[string]any{"type": "text", "text": part["text"]})
@@ -198,17 +277,29 @@ func contentBlocks(message map[string]any, names *concerns.ToolNames) []any {
 					blocks = append(blocks, map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": mediaType, "data": data}})
 				} else if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
 					blocks = append(blocks, map[string]any{"type": "image", "source": map[string]any{"type": "url", "url": url}})
+				} else {
+					return nil, unsupported("image_url that is neither a data URI nor an http(s) URL")
 				}
 			case "image":
-				if concerns.Truthy(part["source"]) {
-					blocks = append(blocks, map[string]any{"type": "image", "source": part["source"]})
+				if !concerns.Truthy(part["source"]) {
+					return nil, unsupported("image part with no source")
 				}
+				blocks = append(blocks, map[string]any{"type": "image", "source": part["source"]})
 			case "file":
-				if file := concerns.Object(part["file"]); file != nil {
-					if mediaType, data, ok := concerns.ParseDataURI(file["file_data"]); ok && mediaType == "application/pdf" {
-						blocks = append(blocks, map[string]any{"type": "document", "source": map[string]any{"type": "base64", "media_type": mediaType, "data": data}})
-					}
+				// OpenAI file part to Claude document (PDF only; Claude rejects
+				// other types). The reverse is documentPart.
+				file := concerns.Object(part["file"])
+				mediaType, data, ok := concerns.ParseDataURI(file["file_data"])
+				if !ok || mediaType != "application/pdf" {
+					return nil, unsupported("file part that is not an inline PDF (file_id and other types cannot be carried)")
 				}
+				document := map[string]any{"type": "document", "source": map[string]any{"type": "base64", "media_type": mediaType, "data": data}}
+				if name := concerns.Text(file["filename"]); name != "" {
+					document["title"] = name
+				}
+				blocks = append(blocks, document)
+			default:
+				return nil, unsupported("user content part %q", kind)
 			}
 		}
 	case "assistant":
@@ -218,10 +309,14 @@ func contentBlocks(message map[string]any, names *concerns.ToolNames) []any {
 		if parts := concerns.Items(message["content"]); parts != nil {
 			for _, raw := range parts {
 				part := concerns.Object(raw)
-				switch concerns.Text(part["type"]) {
+				switch kind := concerns.Text(part["type"]); kind {
 				case "text":
 					if concerns.Truthy(part["text"]) {
 						blocks = append(blocks, map[string]any{"type": "text", "text": part["text"]})
+					}
+				case "refusal":
+					if text := concerns.Text(part["refusal"]); text != "" {
+						blocks = append(blocks, map[string]any{"type": "text", "text": text})
 					}
 				case "tool_use":
 					blocks = append(blocks, map[string]any{"type": "tool_use", "id": part["id"], "name": part["name"], "input": part["input"]})
@@ -233,6 +328,8 @@ func contentBlocks(message map[string]any, names *concerns.ToolNames) []any {
 						}
 					}
 					blocks = append(blocks, thinking)
+				default:
+					return nil, unsupported("assistant content part %q", kind)
 				}
 			}
 		} else if concerns.Truthy(message["content"]) {
@@ -242,8 +339,8 @@ func contentBlocks(message map[string]any, names *concerns.ToolNames) []any {
 		}
 		for _, raw := range concerns.Items(message["tool_calls"]) {
 			call := concerns.Object(raw)
-			if concerns.Text(call["type"]) != "function" {
-				continue
+			if kind := concerns.Text(call["type"]); kind != "function" {
+				return nil, unsupported("tool call type %q", kind)
 			}
 			function := concerns.Object(call["function"])
 			input := function["arguments"]
@@ -256,7 +353,7 @@ func contentBlocks(message map[string]any, names *concerns.ToolNames) []any {
 			blocks = append(blocks, map[string]any{"type": "tool_use", "id": call["id"], "name": names.Safe(concerns.Text(function["name"])), "input": input})
 		}
 	}
-	return blocks
+	return blocks, nil
 }
 
 // toolChoiceFromChat is openai-to-claude.js:310-338. Anthropic only accepts

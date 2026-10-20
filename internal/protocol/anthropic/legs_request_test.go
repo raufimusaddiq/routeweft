@@ -149,9 +149,8 @@ func TestMessagesRequestToChatDropsCacheControl(t *testing.T) {
 // Claude Code system prompt is injected first, system messages become one
 // cached block, consecutive turns merge, tool results get their own user turn,
 // the last assistant block and the last tool carry cache breakpoints, and
-// MCP-style tool names are rewritten for the upstream. A developer message is
-// dropped: the pin's block builder handles only tool, user and assistant
-// (openai-to-claude.js:204-299) and only system feeds the system prompt.
+// MCP-style tool names are rewritten for the upstream. A developer message joins
+// the system prompt (the pin drops it, PARITY V12).
 func TestChatRequestToMessages(t *testing.T) {
 	request := `{
 	  "model":"client-model","max_tokens":2000,"temperature":0.5,
@@ -177,7 +176,7 @@ func TestChatRequestToMessages(t *testing.T) {
 	  "model":"upstream","max_tokens":32000,"stream":false,"temperature":0.5,
 	  "system":[
 	    {"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude."},
-	    {"type":"text","text":"Be brief.\nYou must respond with valid JSON. Respond ONLY with a JSON object, no other text.","cache_control":{"type":"ephemeral","ttl":"1h"}}
+	    {"type":"text","text":"Be brief.\ndev note\nYou must respond with valid JSON. Respond ONLY with a JSON object, no other text.","cache_control":{"type":"ephemeral","ttl":"1h"}}
 	  ],
 	  "messages":[
 	    {"role":"user","content":[{"type":"text","text":"hi"},{"type":"text","text":"again"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}},{"type":"image","source":{"type":"url","url":"https://example.invalid/x.png"}}]},
@@ -231,7 +230,7 @@ func TestChatRequestToMessagesToolChoiceAndBuiltInTools(t *testing.T) {
 		`{"function":{"name":"a.b"}}`:  `{"type":"tool","name":"a_b"}`,
 	}
 	for choice, want := range cases {
-		body, _ := concerns.WireObject([]byte(`{"model":"m","messages":[{"role":"user","content":"x"}],"tool_choice":` + choice + `}`))
+		body, _ := concerns.WireObject([]byte(`{"model":"m","messages":[{"role":"user","content":"x"}],"tools":[{"type":"function","function":{"name":"a.b"}}],"tool_choice":` + choice + `}`))
 		got, _, err := ChatRequestToMessages(body, "m", false, true, false)
 		if err != nil {
 			t.Fatal(err)
@@ -279,5 +278,156 @@ func TestMessagesRequestToChatNeverProducesAnEmptyMessageList(t *testing.T) {
 	encoded, _, err := ChatRequestToMessages(body, "m", false, true, false)
 	if err != nil || !strings.Contains(string(encoded), `"role":"user"`) {
 		t.Fatalf("a Chat request with no turns still needs one for Anthropic: %s %v", encoded, err)
+	}
+}
+
+// Every field a Messages request can carry, converted to Chat: carried, not
+// carried for a stated reason, or refused. This table is the proof that none is
+// silently dropped; PARITY 6.3 records the reasons.
+func TestMessagesRequestFieldsAreCarriedOrRefused(t *testing.T) {
+	base := `"model":"m","messages":[{"role":"user","content":"hi"}]`
+	carried := map[string]struct{ extra, want string }{
+		"max_tokens":       {`"max_tokens":9`, `"max_tokens":9`},
+		"temperature":      {`"temperature":0.3`, `"temperature":0.3`},
+		"top_p":            {`"top_p":0.5`, `"top_p":0.5`},
+		"stop_sequences":   {`"stop_sequences":["END"]`, `"stop":["END"]`},
+		"metadata.user_id": {`"metadata":{"user_id":"u1"}`, `"user":"u1"`},
+		"system":           {`"system":"be brief"`, `"content":"be brief"`},
+		"tools":            {`"tools":[{"name":"t","input_schema":{"type":"object"}}]`, `"name":"t"`},
+		"tool_choice":      {`"tool_choice":{"type":"any"}`, `"tool_choice":"required"`},
+		"disable_parallel": {`"tools":[{"name":"t"}],"tool_choice":{"type":"auto","disable_parallel_tool_use":true}`, `"parallel_tool_calls":false`},
+		"reasoning_effort": {`"reasoning_effort":"high"`, `"reasoning_effort":"high"`},
+		"stream":           {`"stream":true`, `"stream":true`},
+	}
+	for name, c := range carried {
+		got, err := MessagesRequestToChat([]byte(`{`+base+`,`+c.extra+`}`), "m", strings.Contains(c.extra, `"stream":true`))
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if !strings.Contains(string(got), c.want) {
+			t.Errorf("%s: %s not carried into %s", name, c.want, got)
+		}
+	}
+	// Not carried, deliberately (PARITY 6.3): they shape sampling or billing, not
+	// content, and Chat has no equivalent that OpenAI-compatible upstreams accept.
+	for _, field := range []string{`"top_k":5`, `"service_tier":"auto"`, `"thinking":{"type":"enabled","budget_tokens":1024}`, `"output_config":{"effort":"high"}`} {
+		got, err := MessagesRequestToChat([]byte(`{`+base+`,`+field+`}`), "m", false)
+		if err != nil || strings.Contains(string(got), strings.Split(field, ":")[0]) {
+			t.Errorf("%s must be accepted and not forwarded: %s %v", field, got, err)
+		}
+	}
+	// Refused: serving the rest would be a confident wrong answer.
+	refused := []string{
+		`"mcp_servers":[{"name":"s","url":"https://x"}]`,
+		`"container":"c1"`,
+		`"context_management":{"edits":[]}`,
+		`"messages":[{"role":"user","content":[{"type":"text","text":"a"},{"type":"audio","source":{}}]}]`,
+		`"messages":[{"role":"user","content":[{"type":"document","source":{"type":"url","url":"https://x/a.pdf"}}]}]`,
+		`"messages":[{"role":"user","content":[{"type":"image","source":{"type":"file","file_id":"f"}}]}]`,
+		`"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"search_result"}]}]}]`,
+	}
+	for _, field := range refused {
+		raw := `{"model":"m",` + field + `}`
+		if !strings.Contains(field, `"messages"`) {
+			raw = `{` + base + `,` + field + `}`
+		}
+		if _, err := MessagesRequestToChat([]byte(raw), "m", false); err == nil || !strings.HasPrefix(err.Error(), "unsupported:") {
+			t.Errorf("%s must be refused, got %v", field, err)
+		}
+	}
+}
+
+// A document reaches the model, in both directions, and does not vanish.
+func TestDocumentBlocksAreCarriedBothWays(t *testing.T) {
+	got, err := MessagesRequestToChat([]byte(`{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"summarise this"},{"type":"document","title":"spec.pdf","source":{"type":"base64","media_type":"application/pdf","data":"JVBERi0="}},{"type":"document","source":{"type":"text","media_type":"text/plain","data":"plain body"}}]}]}`), "m", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	equalJSON(t, got, `{"model":"m","stream":false,"messages":[{"role":"user","content":[{"type":"text","text":"summarise this"},{"type":"file","file":{"filename":"spec.pdf","file_data":"data:application/pdf;base64,JVBERi0="}},{"type":"text","text":"plain body"}]}]}`)
+	var chat map[string]any
+	_ = json.Unmarshal(got, &chat)
+	back, _, err := ChatRequestToMessages(chat, "m", false, true, false)
+	if err != nil || !strings.Contains(string(back), `"type":"document"`) || !strings.Contains(string(back), `"title":"spec.pdf"`) || !strings.Contains(string(back), `"data":"JVBERi0="`) {
+		t.Fatalf("the document must survive the round trip: %s %v", back, err)
+	}
+}
+
+// Every field a Chat request can carry, converted to Messages.
+func TestChatRequestFieldsAreCarriedOrRefused(t *testing.T) {
+	base := `"model":"m","messages":[{"role":"user","content":"hi"}]`
+	carried := map[string]struct{ extra, want string }{
+		"max_tokens":            {`"max_tokens":100`, `"max_tokens":100`},
+		"max_completion_tokens": {`"max_completion_tokens":100`, `"max_tokens":100`},
+		"temperature":           {`"temperature":0.3`, `"temperature":0.3`},
+		"top_p":                 {`"top_p":0.5`, `"top_p":0.5`},
+		"stop string":           {`"stop":"END"`, `"stop_sequences":["END"]`},
+		"stop list":             {`"stop":["A","B"]`, `"stop_sequences":["A","B"]`},
+		"user":                  {`"user":"u1"`, `"metadata":{"user_id":"u1"}`},
+		"n=1":                   {`"n":1`, `"model":"m"`},
+		"tool_choice":           {`"tools":[{"type":"function","function":{"name":"t"}}],"tool_choice":"required"`, `"tool_choice":{"type":"any"}`},
+		"parallel false":        {`"tools":[{"type":"function","function":{"name":"t"}}],"parallel_tool_calls":false`, `"disable_parallel_tool_use":true`},
+		"response_format":       {`"response_format":{"type":"json_object"}`, `valid JSON`},
+	}
+	for name, c := range carried {
+		body, _ := concerns.WireObject([]byte(`{` + base + `,` + c.extra + `}`))
+		got, _, err := ChatRequestToMessages(body, "m", false, true, false)
+		if err != nil || !strings.Contains(string(got), c.want) {
+			t.Errorf("%s: want %s in %s (%v)", name, c.want, got, err)
+		}
+	}
+	// max_tokens wins over max_completion_tokens when both are set.
+	body, _ := concerns.WireObject([]byte(`{` + base + `,"max_tokens":50,"max_completion_tokens":900}`))
+	if got, _, _ := ChatRequestToMessages(body, "m", false, true, false); !strings.Contains(string(got), `"max_tokens":50`) {
+		t.Errorf("max_tokens must win: %s", got)
+	}
+	// An empty tools array is not forwarded, and neither is a tool_choice that
+	// has no tools to choose from.
+	body, _ = concerns.WireObject([]byte(`{` + base + `,"tools":[],"tool_choice":"auto"}`))
+	got, _, err := ChatRequestToMessages(body, "m", false, true, false)
+	if err != nil || strings.Contains(string(got), `"tools"`) || strings.Contains(string(got), `"tool_choice"`) {
+		t.Errorf("empty tools: %s %v", got, err)
+	}
+	// Not carried, deliberately (PARITY 6.3): Anthropic has no equivalent and none
+	// of them changes what is asked.
+	for _, field := range []string{`"seed":7`, `"presence_penalty":0.5`, `"frequency_penalty":0.5`, `"logit_bias":{"1":2}`, `"top_logprobs":2`, `"store":true`, `"metadata":{"a":"b"}`, `"prompt_cache_key":"k"`, `"service_tier":"auto"`, `"stream_options":{"include_usage":true}`, `"reasoning_effort":"low"`} {
+		body, _ := concerns.WireObject([]byte(`{` + base + `,` + field + `}`))
+		got, _, err := ChatRequestToMessages(body, "m", false, true, false)
+		key := strings.Split(field, ":")[0]
+		if err != nil || (key != `"metadata"` && strings.Contains(string(got), key)) {
+			t.Errorf("%s must be accepted and not forwarded: %s %v", field, got, err)
+		}
+	}
+	// Refused.
+	for _, field := range []string{
+		`"n":2`, `"logprobs":true`, `"modalities":["text","audio"]`, `"audio":{"voice":"x"}`, `"functions":[{"name":"f"}]`,
+		`"messages":[{"role":"function","content":"x"}]`,
+		`"messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"x","format":"wav"}}]}]`,
+		`"messages":[{"role":"user","content":[{"type":"file","file":{"file_id":"f1"}}]}]`,
+		`"messages":[{"role":"user","content":[{"type":"file","file":{"file_data":"data:text/plain;base64,QQ=="}}]}]`,
+		`"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"ftp://x/y"}}]}]`,
+		`"messages":[{"role":"assistant","tool_calls":[{"id":"c","type":"custom","custom":{"name":"x"}}]}]`,
+	} {
+		raw := `{"model":"m",` + field + `}`
+		if !strings.Contains(field, `"messages"`) {
+			raw = `{` + base + `,` + field + `}`
+		}
+		body, _ := concerns.WireObject([]byte(raw))
+		if _, _, err := ChatRequestToMessages(body, "m", false, true, false); err == nil || !strings.HasPrefix(err.Error(), "unsupported:") {
+			t.Errorf("%s must be refused, got %v", field, err)
+		}
+	}
+	// A developer message is instructions, not nothing.
+	body, _ = concerns.WireObject([]byte(`{"model":"m","messages":[{"role":"developer","content":"obey"},{"role":"user","content":"hi"}]}`))
+	if got, _, _ := ChatRequestToMessages(body, "m", false, true, false); !strings.Contains(string(got), `obey`) {
+		t.Errorf("developer content vanished: %s", got)
+	}
+}
+
+// A non-string text block inside a tool_result is JSON, not Go's map syntax.
+func TestToolResultNestedObjectIsJSON(t *testing.T) {
+	got, err := MessagesRequestToChat([]byte(`{"model":"m","messages":[{"role":"user","content":"a"},{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"x","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"text","text":{"k":[1,2]}}]}]}]}`), "m", false)
+	if err != nil || !strings.Contains(string(got), `{\"k\":[1,2]}`) || strings.Contains(string(got), "map[") {
+		t.Fatalf("%s %v", got, err)
 	}
 }

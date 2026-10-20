@@ -46,13 +46,31 @@ func AdjustMaxTokens(body map[string]any, ceiling int64) int64 {
 // (translator/request/claude-to-openai.js:14-94). body is the client's Messages
 // request, model the upstream model. The leg mutates body's message content the
 // way the pin does (a bare content object becomes a one-element array).
-func MessagesToChat(body map[string]any, model string, stream bool) map[string]any {
+func MessagesToChat(body map[string]any, model string, stream bool) (map[string]any, error) {
+	for _, field := range []string{"mcp_servers", "container", "context_management"} {
+		// These change what the server does with the request; a Chat upstream
+		// cannot honour them, so serving the rest would be a confident wrong answer.
+		if concerns.Truthy(body[field]) {
+			return nil, unsupported("request field %q has no Chat equivalent", field)
+		}
+	}
 	result := map[string]any{"model": model, "messages": []any{}, "stream": stream}
 	if concerns.Truthy(body["max_tokens"]) {
 		result["max_tokens"] = AdjustMaxTokens(body, 0)
 	}
 	if temperature, ok := body["temperature"]; ok {
 		result["temperature"] = temperature
+	}
+	// Carried although the pin drops them (PARITY V12): sampling and identity
+	// controls a Chat upstream understands.
+	if topP, ok := body["top_p"]; ok {
+		result["top_p"] = topP
+	}
+	if stop := concerns.Items(body["stop_sequences"]); len(stop) > 0 {
+		result["stop"] = stop
+	}
+	if user := concerns.Text(concerns.Object(body["metadata"])["user_id"]); user != "" {
+		result["user"] = user
 	}
 	messages := []any{}
 	if concerns.Truthy(body["system"]) {
@@ -73,7 +91,10 @@ func MessagesToChat(body map[string]any, model string, stream bool) map[string]a
 		}
 	}
 	for _, raw := range concerns.Items(body["messages"]) {
-		converted := convertMessage(concerns.Object(raw))
+		converted, err := convertMessage(concerns.Object(raw))
+		if err != nil {
+			return nil, err
+		}
 		messages = append(messages, converted...)
 	}
 	fixMissingToolResponses(&messages)
@@ -92,6 +113,9 @@ func MessagesToChat(body map[string]any, model string, stream bool) map[string]a
 	}
 	if concerns.Truthy(body["tool_choice"]) {
 		result["tool_choice"] = toolChoiceToChat(body["tool_choice"])
+		if concerns.Truthy(concerns.Object(body["tool_choice"])["disable_parallel_tool_use"]) {
+			result["parallel_tool_calls"] = false
+		}
 	}
 	reasoning := concerns.Object(body["reasoning"])
 	if effort, ok := body["reasoning_effort"]; ok {
@@ -102,7 +126,14 @@ func MessagesToChat(body map[string]any, model string, stream bool) map[string]a
 	if value, ok := body["reasoning"]; ok {
 		result["reasoning"] = value
 	}
-	return result
+	return result, nil
+}
+
+// unsupported is a request the leg refuses rather than serve with content or
+// meaning silently removed. The dispatcher treats it as a translation failure
+// and tries the next candidate.
+func unsupported(format string, args ...any) error {
+	return fmt.Errorf("unsupported: "+format, args...)
 }
 
 func stripBillingHeader(text string) string { return billingHeader.ReplaceAllString(text, "") }
@@ -118,7 +149,7 @@ func jsText(value any) string {
 	if number, ok := value.(json.Number); ok {
 		return number.String()
 	}
-	return fmt.Sprint(value)
+	return concerns.JSONText(value)
 }
 
 func inputSchema(value any) any {
@@ -144,10 +175,12 @@ func dataURI(mediaType, data any) string {
 }
 
 // convertMessage is claude-to-openai.js:144-270: zero, one or several Chat
-// messages for one Messages message.
-func convertMessage(message map[string]any) []any {
+// messages for one Messages message. A block the leg cannot carry is an error,
+// never a silent drop; the few blocks that are deliberately not carried are
+// named below and recorded in PARITY 6.3.
+func convertMessage(message map[string]any) ([]any, error) {
 	if message == nil {
-		return nil
+		return nil, nil
 	}
 	if content := message["content"]; content != nil {
 		if object := concerns.Object(content); object != nil {
@@ -157,25 +190,25 @@ func convertMessage(message map[string]any) []any {
 	role := concerns.Text(message["role"])
 	if role == "system" {
 		if text := systemReminderText(message["content"]); text != "" {
-			return []any{map[string]any{"role": "user", "content": text}}
+			return []any{map[string]any{"role": "user", "content": text}}, nil
 		}
-		return nil
+		return nil, nil
 	}
 	chatRole := "assistant"
 	if role == "user" || role == "tool" {
 		chatRole = "user"
 	}
 	if text, ok := message["content"].(string); ok {
-		return []any{map[string]any{"role": chatRole, "content": text}}
+		return []any{map[string]any{"role": chatRole, "content": text}}, nil
 	}
 	blocks := concerns.Items(message["content"])
 	if blocks == nil {
-		return nil
+		return nil, nil
 	}
 	var parts, toolCalls, toolResults []any
 	for _, raw := range blocks {
 		block := concerns.Object(raw)
-		switch concerns.Text(block["type"]) {
+		switch kind := concerns.Text(block["type"]); kind {
 		case "text":
 			part := map[string]any{"type": "text"}
 			if text, ok := block["text"]; ok {
@@ -183,9 +216,17 @@ func convertMessage(message map[string]any) []any {
 			}
 			parts = append(parts, part)
 		case "image":
-			if part := imagePart(concerns.Object(block["source"])); part != nil {
-				parts = append(parts, part)
+			part := imagePart(concerns.Object(block["source"]))
+			if part == nil {
+				return nil, unsupported("image source %q", concerns.Text(concerns.Object(block["source"])["type"]))
 			}
+			parts = append(parts, part)
+		case "document":
+			part, err := documentPart(block)
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, part)
 		case "tool_use":
 			input := block["input"]
 			if !concerns.Truthy(input) {
@@ -201,7 +242,10 @@ func convertMessage(message map[string]any) []any {
 			}
 			toolCalls = append(toolCalls, call)
 		case "tool_result":
-			content, images := toolResultContent(block["content"])
+			content, images, err := toolResultContent(block["content"])
+			if err != nil {
+				return nil, err
+			}
 			result := map[string]any{"role": "tool", "content": content}
 			if id, ok := block["tool_use_id"]; ok {
 				result["tool_call_id"] = id
@@ -211,28 +255,58 @@ func convertMessage(message map[string]any) []any {
 				parts = append(parts, map[string]any{"type": "text", "text": "[Image from tool result " + jsText(block["tool_use_id"]) + "]"})
 				parts = append(parts, images...)
 			}
+		case "thinking", "redacted_thinking":
+			// Signed by Anthropic and meaningless to another provider; the pin drops
+			// them too (claude-to-openai.js has no case).
+		case "server_tool_use", "web_search_tool_result":
+			// Server-executed intermediate blocks of an earlier turn. The model's
+			// own text already reflects them and no Chat tool can replay them.
+		default:
+			return nil, unsupported("content block type %q", kind)
 		}
 	}
 	if len(toolResults) > 0 {
-		if len(parts) > 0 {
-			return append(toolResults, map[string]any{"role": "user", "content": collapseTextParts(parts)})
+		if len(toolCalls) > 0 {
+			return nil, unsupported("a message that holds both tool_use and tool_result")
 		}
-		return toolResults
+		if len(parts) > 0 {
+			return append(toolResults, map[string]any{"role": "user", "content": collapseTextParts(parts)}), nil
+		}
+		return toolResults, nil
 	}
 	if len(toolCalls) > 0 {
 		assistant := map[string]any{"role": "assistant", "tool_calls": toolCalls}
 		if len(parts) > 0 {
 			assistant["content"] = collapseTextParts(parts)
 		}
-		return []any{assistant}
+		return []any{assistant}, nil
 	}
 	if len(parts) > 0 {
-		return []any{map[string]any{"role": chatRole, "content": collapseTextParts(parts)}}
+		return []any{map[string]any{"role": chatRole, "content": collapseTextParts(parts)}}, nil
 	}
 	if len(blocks) == 0 {
-		return []any{map[string]any{"role": chatRole, "content": ""}}
+		return []any{map[string]any{"role": chatRole, "content": ""}}, nil
 	}
-	return nil
+	return nil, nil
+}
+
+// documentPart maps an Anthropic document to a Chat file part, so a PDF reaches
+// a model that can read one instead of vanishing (the pin has no case). A source
+// that cannot be carried is an error: answering about a document the model never
+// saw is worse than failing.
+func documentPart(block map[string]any) (map[string]any, error) {
+	source := concerns.Object(block["source"])
+	switch concerns.Text(source["type"]) {
+	case "base64":
+		file := map[string]any{"file_data": dataURI(source["media_type"], source["data"])}
+		if title := concerns.Text(block["title"]); title != "" {
+			file["filename"] = title
+		}
+		return map[string]any{"type": "file", "file": file}, nil
+	case "text":
+		return map[string]any{"type": "text", "text": concerns.Text(source["data"])}, nil
+	}
+	return nil, unsupported("document source %q", concerns.Text(source["type"]))
 }
 
 // imagePart converts an Anthropic image source. A url source is forwarded as is,
@@ -252,39 +326,41 @@ func imagePart(source map[string]any) map[string]any {
 
 // toolResultContent is claude-to-openai.js:200-218. The Chat `tool` role is
 // text-only, so images a tool returned come back separately for the user turn.
-func toolResultContent(content any) (string, []any) {
+// is_error has no Chat equivalent and is not carried; the error text itself is.
+func toolResultContent(content any) (string, []any, error) {
 	if text, ok := content.(string); ok {
-		return text, nil
+		return text, nil, nil
 	}
 	if blocks := concerns.Items(content); blocks != nil {
-		var images, texts []any
+		var images []any
+		var texts []string
 		for _, raw := range blocks {
 			block := concerns.Object(raw)
-			switch concerns.Text(block["type"]) {
+			switch kind := concerns.Text(block["type"]); kind {
 			case "image":
-				if part := imagePart(concerns.Object(block["source"])); part != nil {
-					images = append(images, part)
+				part := imagePart(concerns.Object(block["source"]))
+				if part == nil {
+					return "", nil, unsupported("tool_result image source %q", concerns.Text(concerns.Object(block["source"])["type"]))
 				}
+				images = append(images, part)
 			case "text":
-				texts = append(texts, block["text"])
+				texts = append(texts, jsText(block["text"]))
+			default:
+				return "", nil, unsupported("tool_result content block type %q", kind)
 			}
 		}
-		var joined []string
-		for _, text := range texts {
-			joined = append(joined, jsText(text))
-		}
-		if result := strings.Join(joined, "\n"); result != "" {
-			return result, images
+		if result := strings.Join(texts, "\n"); result != "" {
+			return result, images, nil
 		}
 		if len(images) > 0 {
-			return "", images
+			return "", images, nil
 		}
-		return concerns.JSONText(content), images
+		return concerns.JSONText(content), images, nil
 	}
 	if concerns.Truthy(content) {
-		return concerns.JSONText(content), nil
+		return concerns.JSONText(content), nil, nil
 	}
-	return "", nil
+	return "", nil, nil
 }
 
 // systemReminderText wraps a mid-conversation system message so it ends as a

@@ -34,7 +34,10 @@ func MessagesRequestToChat(raw []byte, model string, stream bool) ([]byte, error
 	}
 	concerns.EnsureToolCallIDs(body)
 	concerns.FixMissingToolResponses(body)
-	chat := MessagesToChat(body, model, stream)
+	chat, err := MessagesToChat(body, model, stream)
+	if err != nil {
+		return nil, err
+	}
 	if options, set := body["stream_options"]; set {
 		// A client that set stream_options chose; its value is forwarded as is.
 		chat["stream_options"] = options
@@ -66,7 +69,10 @@ func ChatRequestToMessages(body map[string]any, model string, stream, repair, cl
 		concerns.EnsureToolCallIDs(body)
 		concerns.FixMissingToolResponses(body)
 	}
-	result, names := ChatToMessages(body, model, stream)
+	result, names, err := ChatToMessages(body, model, stream)
+	if err != nil {
+		return nil, nil, err
+	}
 	messages := result["messages"].([]any)
 	if len(messages) == 0 {
 		// Anthropic needs at least one message; say so with the pin's own

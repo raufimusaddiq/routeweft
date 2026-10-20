@@ -841,13 +841,47 @@ reviewed choice that needs owner sign-off, and none is silent.
 | V9 | No `stream_options` on a translated stream (only `executors/iflow.js:100-102` injects it). | `stream_options.include_usage` is set on a translated Messages to Chat stream unless the client set `stream_options` itself (owner decision, #119). | `ResponsesToChat` already does this; without it the Messages client gets zero usage. Native Chat is untouched (#122). |
 | V10 | `claude-to-openai.js:12` stamps a new `created` on every chunk. | One `created` per stream. | The OpenAI contract. |
 | V11 | `claude-to-openai.js:177-186` drops an image whose source is a `url`; a request left with no content becomes `messages: []`. | A `url` image is forwarded as an `image_url`, and a conversion that would leave no message keeps one empty text turn (`"Continue."` toward a Messages provider). | Chat takes remote URLs natively; an empty list is an invalid request that would be sent upstream or rejected as a 502 for a request Anthropic accepts. |
+| V12 | The pin drops `top_p`, `stop_sequences`, `metadata.user_id`, `disable_parallel_tool_use`, `document` blocks, a Chat `developer` message, `max_completion_tokens`, `stop`, `user`, `parallel_tool_calls`, and sends an empty `tools` array (`claude-to-openai.js:52-103`, `openai-to-claude.js:17-201,204-299`). | Each is carried, or refused with a translation error so the candidate is skipped. | A dropped document or instruction is a confident wrong answer with a 200. See the field tables below. |
 
-Pin behavior mirrored on purpose, though it looks like a defect: a `developer`
-message is dropped by the Chat to Messages leg (`openai-to-claude.js:204-299`);
-a Chat stream that reports no usage is closed with a zero usage object because
+#### Request fields, both directions (`TestMessagesRequestFieldsAreCarriedOrRefused`, `TestChatRequestFieldsAreCarriedOrRefused`, `TestDocumentBlocksAreCarriedBothWays`)
+
+Every field is **carried**, **not carried for a stated reason** (the request is still served; nothing it asks for is lost), or **refused** (translation error, so the dispatcher tries the next candidate). None is dropped silently.
+
+| Messages request field | Chat | Why |
+| --- | --- | --- |
+| `model`, `messages`, `system`, `stream`, `max_tokens`, `temperature` | carried | pin |
+| `top_p`, `stop_sequences` (to `stop`), `metadata.user_id` (to `user`) | carried | V12; the pin drops them |
+| `tools`, `tool_choice`, `tool_choice.disable_parallel_tool_use` (to `parallel_tool_calls:false`) | carried | pin, V12 for the flag |
+| `reasoning`, `reasoning_effort` | carried | pin |
+| `thinking`, `output_config` | not carried | thinking normalisation needs the capability table (#125) |
+| `top_k`, `service_tier` | not carried | sampling/billing hints; OpenAI-compatible upstreams reject unknown parameters |
+| `mcp_servers`, `container`, `context_management` | refused | they change what the server does; serving the rest is a wrong answer |
+| block `text`, `image` (base64, url), `tool_use`, `tool_result` | carried | pin, V11 for url |
+| block `document` (base64 to `file`, text source to `text`) | carried | V12; the pin drops it |
+| block `document` with url/content/file source; image with a file source; unknown block types | refused | the model would not see it |
+| block `thinking`, `redacted_thinking` | not carried | signed by Anthropic, meaningless to another provider (the pin drops them) |
+| block `server_tool_use`, `web_search_tool_result` | not carried | server-executed intermediate blocks of an earlier turn; the model's text reflects them |
+| `tool_result.is_error`, `cache_control` | not carried | no Chat equivalent; the error text itself is carried |
+| a message holding both `tool_use` and `tool_result` | refused | invalid in Anthropic and ambiguous in Chat |
+
+| Chat request field | Messages | Why |
+| --- | --- | --- |
+| `model`, `messages`, `stream`, `temperature`, `response_format` (system prompt), `tools`, `tool_choice` | carried | pin |
+| `max_tokens`; `max_completion_tokens` when `max_tokens` is absent | carried | V12; the pin reads only `max_tokens` and sends 64000 |
+| `top_p`, `stop` (string or list), `user` (to `metadata.user_id`), `parallel_tool_calls:false` | carried | V12 |
+| `developer` role | carried (as system) | V12; the pin drops the message |
+| `tools:[]`, and a `tool_choice` with no tools | omitted | Anthropic rejects both |
+| part `text`, `image_url` (data URI, http(s)), `image`, `file` (inline PDF to `document`), `refusal` | carried | pin, V12 for `file` title and `refusal` |
+| `reasoning_effort`, `reasoning` | not carried | thinking normalisation (#125) |
+| `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `top_logprobs`, `store`, `metadata`, `prompt_cache_key`, `service_tier`, `stream_options` | not carried | no Anthropic equivalent; none changes what is asked |
+| `n>1`, `logprobs:true`, `modalities` with audio, `audio`, `functions`, `function_call` | refused | Anthropic cannot do what was asked |
+| part `input_audio`, `audio_url`, unknown part types; `file` that is not an inline PDF (file_id, other types); `image_url` that is neither data URI nor http(s); unknown roles; tool calls that are not `function` | refused | the model would not see it |
+
+Pin behavior mirrored on purpose, though it looks like a defect: a Chat stream that reports no usage is closed with a zero usage object because
 Messages requires one (`openai-to-claude.js:250`); non-streamed tool arguments
-that are not JSON become `{}` (`nonstream-to-claude.js:5-13`); a non-streamed Messages text block has a
-leading or trailing markdown JSON fence stripped (`nonStreamingHandler.js:277`);
+that are not JSON become `{}` (`nonstream-to-claude.js:5-13`); a non-streamed
+Messages text block has a leading or trailing markdown JSON fence stripped
+(`nonStreamingHandler.js:277`);
 `chatcmpl-` ids are kept, only `chatcmpl_` and `resp_` become `msg_`
 (`nonstream-to-claude.js:18`); a negative `input_tokens` is not clamped; tool-id
 repair is skipped for a Responses-sourced body (`translator/index.js:82`, no
