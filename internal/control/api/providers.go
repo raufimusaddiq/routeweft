@@ -333,6 +333,9 @@ func (h *Handler) handleDeleteConnection(w http.ResponseWriter, r *http.Request)
 	if h.opts.CredentialRegistry != nil {
 		h.opts.CredentialRegistry.Forget(id)
 	}
+	if h.opts.Runtime != nil {
+		h.opts.Runtime.State().ForgetAccount(id)
+	}
 	if h.opts.PoolBindings != nil {
 		if _, err := h.opts.PoolBindings.RefreshPoolBindings(r.Context()); err != nil {
 			writeError(w, http.StatusInternalServerError, "connection_publish_failed", "connection deleted but runtime proxy bindings could not be refreshed")

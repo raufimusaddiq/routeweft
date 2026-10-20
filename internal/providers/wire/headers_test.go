@@ -102,3 +102,34 @@ func TestOnlyDeclaredProvidersChangedHeaders(t *testing.T) {
 		}
 	}
 }
+
+// TestCodexAccountBindingHeader pins the C06 item-1 mapping: the account the
+// connection is bound to rides every Codex request, with v1's precedence
+// workspaceId, chatgptAccountId, then the connection's account ID
+// (executors/codex.js:234-240), and nothing is sent for an unbound connection.
+func TestCodexAccountBindingHeader(t *testing.T) {
+	cases := []struct {
+		name     string
+		settings routing.ProviderSettings
+		account  string
+		want     string
+	}{
+		{"unbound", routing.ProviderSettings{}, "", ""},
+		{"blank values", routing.ProviderSettings{WorkspaceID: " ", ChatGPTAccountID: "  "}, " ", ""},
+		{"chatgpt account", routing.ProviderSettings{ChatGPTAccountID: "acct-chatgpt"}, "", "acct-chatgpt"},
+		{"workspace wins", routing.ProviderSettings{WorkspaceID: "ws-1", ChatGPTAccountID: "acct-chatgpt"}, "acct-col", "ws-1"},
+		{"chatgpt beats account column", routing.ProviderSettings{ChatGPTAccountID: "acct-chatgpt"}, "acct-col", "acct-chatgpt"},
+		{"account column last", routing.ProviderSettings{}, "acct-col", "acct-col"},
+	}
+	for _, tc := range cases {
+		r := ref("codex", responses, "https://c.example", tc.settings)
+		r.Connection.AccountID = tc.account
+		got := OpenAIHeaders(r)
+		if got.Get("ChatGPT-Account-ID") != tc.want {
+			t.Errorf("%s: header %q want %q", tc.name, got.Get("ChatGPT-Account-ID"), tc.want)
+		}
+		if got.Get("Originator") == "" {
+			t.Errorf("%s: Codex identity headers lost: %v", tc.name, got)
+		}
+	}
+}

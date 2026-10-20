@@ -12,8 +12,10 @@ import (
 // FusionConfig bounds one Fusion request (SPEC §16). Negative limits are
 // rejected; zero uses the default except Grace, where zero stops at quorum.
 type FusionConfig struct {
-	// MinPanelQuorum is the successful panel count required before a judge
-	// synthesis replaces the direct answer.
+	// MinPanelQuorum is the successful panel count that opens the straggler
+	// grace window. It never fails a request: fewer successes after the grace
+	// or hard timeout still answer directly (one) or fail only at zero, as v1
+	// does (open-sse/services/combo.js:518,562,609-620).
 	MinPanelQuorum int
 	// Grace is how long to wait for stragglers after quorum is reached.
 	Grace time.Duration
@@ -27,9 +29,12 @@ type FusionConfig struct {
 	MaxConcurrent int
 }
 
-// DefaultFusionConfig is the minimum viable Fusion budget.
+// DefaultFusionConfig carries the pinned v1 panel timing (min 2, grace 8s,
+// hard 90s: FUSION_DEFAULTS, open-sse/services/combo.js:472-476) so the same
+// Combo behaves the same way. The byte, fan-out and concurrency caps are
+// Routeweft-owned (SPEC §16); v1 has none.
 func DefaultFusionConfig() FusionConfig {
-	return FusionConfig{MinPanelQuorum: 1, Grace: 250 * time.Millisecond, HardTimeout: 30 * time.Second, MaxResponseBytes: 1 << 20, MaxPanels: 8, MaxConcurrent: 8}
+	return FusionConfig{MinPanelQuorum: 2, Grace: 8 * time.Second, HardTimeout: 90 * time.Second, MaxResponseBytes: 1 << 20, MaxPanels: 8, MaxConcurrent: 8}
 }
 
 // PanelCandidate is one Fusion panel route target.
@@ -100,15 +105,18 @@ func (f *Fusion) Run(ctx context.Context, candidates []PanelCandidate, judge str
 	panelCtx, cancel := context.WithTimeout(ctx, config.HardTimeout)
 	defer cancel()
 	results := f.fanOut(panelCtx, candidates, config.MaxResponseBytes)
-	answers, graceTimer := collectAnswers(panelCtx, results, config)
+	// The gate cannot exceed the panel size, or the grace window never opens
+	// (combo.js:562).
+	gate := config
+	if gate.MinPanelQuorum > len(candidates) {
+		gate.MinPanelQuorum = len(candidates)
+	}
+	answers, graceTimer := collectAnswers(panelCtx, results, gate)
 	if graceTimer != nil {
 		defer graceTimer.Stop()
 	}
 	if len(answers) == 0 {
 		return "", ErrFusionNoPanels
-	}
-	if len(answers) < config.MinPanelQuorum {
-		return "", ErrFusionQuorum
 	}
 	if len(answers) == 1 {
 		return answers[0], nil
@@ -121,9 +129,6 @@ func (f *Fusion) Run(ctx context.Context, candidates []PanelCandidate, judge str
 
 // ErrFusionNoPanels reports that every panel call failed or timed out.
 var ErrFusionNoPanels = errors.New("fusion: no panel produced an answer")
-
-// ErrFusionQuorum reports fewer successes than the configured quorum.
-var ErrFusionQuorum = errors.New("fusion: panel quorum not met")
 
 // ErrFusionBusy reports that the concurrency cap rejected this request.
 var ErrFusionBusy = errors.New("fusion: concurrency limit reached")
@@ -232,7 +237,7 @@ func (f *Fusion) freezeConfig() (FusionConfig, error) {
 		return FusionConfig{}, errors.New("fusion: limits must not be negative")
 	}
 	if config.MinPanelQuorum == 0 {
-		config.MinPanelQuorum = 1
+		config.MinPanelQuorum = DefaultFusionConfig().MinPanelQuorum
 	}
 	if config.HardTimeout == 0 {
 		config.HardTimeout = DefaultFusionConfig().HardTimeout
