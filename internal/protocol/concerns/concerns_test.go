@@ -3,6 +3,8 @@ package concerns
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -348,5 +350,49 @@ func TestUncarriableChatNamesWhatTheWireCannotDo(t *testing.T) {
 	}
 	if got := UncarriableChat(decode(t, `{"n":1,"logprobs":false,"modalities":["text"]}`), "Ollama"); got != "" {
 		t.Errorf("%q", got)
+	}
+}
+
+func TestPresentAsksForSomething(t *testing.T) {
+	for value, want := range map[string]bool{
+		`null`: false, `false`: false, `true`: true, `""`: false, `"x"`: true, `{}`: false, `{"a":1}`: true,
+		`[]`: false, `[1]`: true, `0`: true, `1.5`: true,
+	} {
+		decoded, err := WireObject([]byte(`{"v":` + value + `}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := Present(decoded["v"]); got != want {
+			t.Errorf("Present(%s) = %v, want %v", value, got, want)
+		}
+	}
+}
+
+func TestCommandCodeUsageNeverDoesArithmeticOnTheExtras(t *testing.T) {
+	raw, _ := WireObject([]byte(`{"inputTokens":130,"outputTokens":42,"cachedInputTokens":100,"reasoningTokens":7}`))
+	usage, extra, observed := CommandCodeUsage(raw)
+	if !observed || usage.Prompt != 130 || usage.Completion != 42 || usage.Total != 172 || usage.Cached != 0 || usage.Reasoning != 0 {
+		t.Errorf("usage = %+v", usage)
+	}
+	if extra.CachedInput != 100 || extra.Reasoning != 7 {
+		t.Errorf("extra = %+v", extra)
+	}
+	for _, empty := range []string{`{}`, `{"inputTokens":0,"outputTokens":0}`, `{"inputTokens":"3"}`, `{"cachedInputTokens":5}`} {
+		raw, _ := WireObject([]byte(empty))
+		if _, _, observed := CommandCodeUsage(raw); observed {
+			t.Errorf("%s was observed", empty)
+		}
+	}
+}
+
+func TestReadLinesLenient(t *testing.T) {
+	var got []string
+	err := ReadLinesLenient(context.Background(), strings.NewReader("data: {\"a\":1}\n\n[DONE]\ndata: [DONE]\n{\"a\":2}\ndata:{\"a\":3}"),
+		func(line map[string]any) (bool, error) { got = append(got, JSONText(line["a"])); return false, nil })
+	if !errors.Is(err, io.ErrUnexpectedEOF) || strings.Join(got, ",") != "1,2,3" {
+		t.Errorf("err=%v got=%v", err, got)
+	}
+	if err := ReadLines(context.Background(), strings.NewReader("data: {\"a\":1}\n"), func(map[string]any) (bool, error) { return false, nil }); err == nil || errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Errorf("the strict reader must refuse SSE framing: %v", err)
 	}
 }

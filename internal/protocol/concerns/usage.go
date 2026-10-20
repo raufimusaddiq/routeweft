@@ -74,3 +74,30 @@ func OllamaUsage(raw map[string]any) (usage Usage, observed bool) {
 	}
 	return Usage{Prompt: prompt, Completion: output, Total: prompt + output, Cached: Int(raw["prompt_eval_cached_count"])}, true
 }
+
+// CommandCodeObservations are the counts a CommandCode usage object carries
+// beyond the three the pin reads. They are reported as the upstream gave them
+// and never subtracted from anything: it is not established that inputTokens is
+// cache-inclusive, and a wrong subtraction corrupts every cost figure.
+type CommandCodeObservations struct {
+	CachedInput int64
+	Reasoning   int64
+}
+
+// CommandCodeUsage reads a CommandCode (AI SDK) usage object
+// (concerns/usage.js:61-65): inputTokens is the prompt, outputTokens the output,
+// and totalTokens the upstream total when it sent one. observed is false when no
+// count is positive, so an unmeasured zero is never recorded. cachedInputTokens
+// and reasoningTokens, which the pin ignores, come back as observations only.
+func CommandCodeUsage(raw map[string]any) (usage Usage, extra CommandCodeObservations, observed bool) {
+	input, output := Int(raw["inputTokens"]), Int(raw["outputTokens"])
+	total := input + output
+	if IsNumber(raw["totalTokens"]) {
+		total = Int(raw["totalTokens"])
+	}
+	if input <= 0 && output <= 0 && total <= 0 {
+		return Usage{}, CommandCodeObservations{}, false
+	}
+	return Usage{Prompt: input, Completion: output, Total: total},
+		CommandCodeObservations{CachedInput: Int(raw["cachedInputTokens"]), Reasoning: Int(raw["reasoningTokens"])}, true
+}

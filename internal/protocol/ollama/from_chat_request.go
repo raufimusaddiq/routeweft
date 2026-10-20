@@ -74,7 +74,7 @@ func ChatRequestToOllama(body map[string]any, model string, stream, repair bool)
 	if format != nil {
 		result["format"] = format
 	}
-	if present(body["logit_bias"]) {
+	if concerns.Present(body["logit_bias"]) {
 		return nil, unsupported("logit_bias: Ollama has no equivalent")
 	}
 	tools, hasTools := body["tools"].([]any)
@@ -93,24 +93,6 @@ func ChatRequestToOllama(body map[string]any, model string, stream, repair bool)
 		return nil, unsupported("tool_choice %s: Ollama cannot require a tool", concerns.JSONText(choice))
 	}
 	return json.Marshal(result)
-}
-
-// present reports whether a field asks for anything, whatever shape it has: an
-// empty object, list or string, null and false ask for nothing.
-func present(value any) bool {
-	switch v := value.(type) {
-	case nil:
-		return false
-	case map[string]any:
-		return len(v) > 0
-	case []any:
-		return len(v) > 0
-	case string:
-		return v != ""
-	case bool:
-		return v
-	}
-	return true
 }
 
 // stopSequences accepts a Chat stop value, a string or a list of strings.
