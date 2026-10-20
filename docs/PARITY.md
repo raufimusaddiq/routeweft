@@ -923,7 +923,7 @@ Registry quirks are applied to the final outbound body by `internal/providers/wi
 | `reasoningInject` and `stripUnsupportedParams` | minimax, minimax-cn; every provider | `utils/reasoningContentInjector.js`, `translator/concerns/paramSupport.js` | **deferred to #119** |
 | `cloakToolsOnOAuth` | claude | `providers/registry/claude.js:41` | **not shipped**: tool cloaking disguises the client to the provider; Routeweft sends its own identity (PR #123 precedent) |
 
-Divergence: when a kenari Responses body has system text but no user turn to fold it into, the pin drops the system messages and keeps the rest, silently losing their text. Routeweft leaves the body as received so the gateway's own error reaches the client.
+Divergences for kenari `responsesSystemRoleUnsupported`, all so no instruction is silently lost or ignored: a plain string `input` (which Routeweft accepts) is folded as one user turn where the pin leaves it alone, so `instructions` still reached kenari; with system text or `instructions` but no user turn the body is left as received where the pin drops the system messages; an item with no `type` but role `system` is folded where the pin looks only at `type: "message"`; and a body that would be left with an empty `input` is left as received. Every other `input` shape (empty array, non-message items, object, number) is byte-identical.
 
 ### Production-incident drift explicitly dispositioned
 

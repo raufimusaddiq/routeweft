@@ -147,3 +147,66 @@ func TestFinalizeLeavesEveryOtherProviderByteIdentical(t *testing.T) {
 		}
 	}
 }
+
+// Every legal Responses `input` shape (openai/responses.go accepts any non-null
+// value) either folds or comes back byte-identical, and a body the quirk changes
+// never carries a system role, `instructions`, or a null/empty `input`.
+func TestKenariFoldEnumeratesEveryInputShape(t *testing.T) {
+	const user = `{"type":"message","role":"user","content":"hi"}`
+	cases := []struct {
+		name, in string
+		want     string // empty: must come back byte-identical
+	}{
+		{"string input, instructions", `{"model":"m","instructions":"sys","input":"hi"}`,
+			`{"model":"m","input":[{"type":"message","role":"user","content":"sys\n\nhi"}]}`},
+		{"string input, blank instructions", `{"model":"m","instructions":"  ","input":"hi"}`, ""},
+		{"string input, no instructions", `{"model":"m","input":"hi"}`, ""},
+		{"empty string input, instructions", `{"model":"m","instructions":"sys","input":""}`,
+			`{"model":"m","input":[{"type":"message","role":"user","content":"sys\n\n"}]}`},
+		{"array, user only", `{"model":"m","input":[` + user + `]}`, ""},
+		{"array, instructions only", `{"model":"m","instructions":"sys","input":[` + user + `]}`,
+			`{"model":"m","input":[{"type":"message","role":"user","content":"sys\n\nhi"}]}`},
+		{"array, system then user", `{"model":"m","input":[{"type":"message","role":"system","content":"s"},` + user + `]}`,
+			`{"model":"m","input":[{"type":"message","role":"user","content":"s\n\nhi"}]}`},
+		{"array, typeless system and user",
+			`{"model":"m","input":[{"role":"system","content":"s"},{"role":"user","content":"hi"}]}`,
+			`{"model":"m","input":[{"role":"user","content":"s\n\nhi"}]}`},
+		{"array with non-message items", `{"model":"m","instructions":"sys","input":[{"type":"function_call_output","call_id":"c","output":"o"},` + user + `]}`,
+			`{"model":"m","input":[{"type":"function_call_output","call_id":"c","output":"o"},{"type":"message","role":"user","content":"sys\n\nhi"}]}`},
+		{"array, textless system plus user", `{"model":"m","input":[{"type":"message","role":"system","content":""},` + user + `]}`,
+			`{"model":"m","input":[` + user + `]}`},
+		{"empty array", `{"model":"m","input":[]}`, ""},
+		{"empty array, instructions", `{"model":"m","instructions":"sys","input":[]}`, ""},
+		{"only textless system", `{"model":"m","input":[{"type":"message","role":"system","content":""}]}`, ""},
+		{"only system with text", `{"model":"m","input":[{"type":"message","role":"system","content":"s"}]}`, ""},
+		{"system and non-message, no user", `{"model":"m","input":[{"type":"message","role":"system","content":"s"},{"type":"reasoning","id":"r"}]}`, ""},
+		{"assistant only, instructions", `{"model":"m","instructions":"sys","input":[{"type":"message","role":"assistant","content":"a"}]}`, ""},
+		{"object input", `{"model":"m","instructions":"sys","input":{"a":1}}`, ""},
+		{"number input", `{"model":"m","instructions":"sys","input":7}`, ""},
+		{"null input", `{"model":"m","instructions":"sys","input":null}`, ""},
+		{"no input", `{"model":"m","instructions":"sys"}`, ""},
+		{"non-string instructions", `{"model":"m","instructions":[1],"input":"hi"}`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := finalize(t, "kenari", responses, c.in)
+			if c.want == "" {
+				if got != c.in {
+					t.Fatalf("expected byte-identical\n got %s\n  in %s", got, c.in)
+				}
+				return
+			}
+			same(t, got, c.want)
+			var out struct {
+				Instructions json.RawMessage   `json:"instructions"`
+				Input        []json.RawMessage `json:"input"`
+			}
+			if err := json.Unmarshal([]byte(got), &out); err != nil || len(out.Input) == 0 || out.Instructions != nil {
+				t.Fatalf("invalid result %s (%v)", got, err)
+			}
+			if bytes.Contains([]byte(got), []byte(`"role":"system"`)) {
+				t.Fatalf("system role survived: %s", got)
+			}
+		})
+	}
+}

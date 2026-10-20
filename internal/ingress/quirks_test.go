@@ -132,6 +132,12 @@ func TestQuirksRunAfterTheSavers(t *testing.T) {
 // `instructions`, the field kenari's fold removes. With the quirk last, the
 // upstream carries the policy folded into the user turn and no `instructions`.
 func TestKenariFoldSurvivesTheRealPolicyInjector(t *testing.T) {
+	for _, input := range []string{`[{"type":"message","role":"user","content":"hi"}]`, `"hi"`} {
+		t.Run(input, func(t *testing.T) { kenariFoldWithRealInjector(t, input) })
+	}
+}
+
+func kenariFoldWithRealInjector(t *testing.T, input string) {
 	var upstreamBody string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
@@ -151,7 +157,7 @@ func TestKenariFoldSurvivesTheRealPolicyInjector(t *testing.T) {
 	})
 	recorder := httptest.NewRecorder()
 	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
-		`{"model":"m","input":[{"type":"message","role":"user","content":"hi"}]}`)))
+		`{"model":"m","input":`+input+`}`)))
 	if strings.Contains(upstreamBody, `"instructions"`) || !strings.Contains(upstreamBody, "[routeweft:caveman]") || !strings.Contains(upstreamBody, "hi") {
 		t.Fatalf("kenari body (status %d): %s", recorder.Code, upstreamBody)
 	}

@@ -141,20 +141,47 @@ func supportedToolTypes(allowed ...string) Finalize {
 // Responses endpoint rejects role "system": system messages and `instructions`
 // are folded into the first user turn (open-sse/executors/default.js:21-42,97).
 //
-// Divergence from the pin: when there is no user turn to fold into, the pin drops
-// the system messages and keeps the rest, silently losing their text. Here the
-// body is left as received so the gateway's own error reaches the client instead
-// of a request that quietly lost its instructions.
+// Every legal `input` shape either folds or is left byte-identical:
+//   - an array: system items are removed and their text, with `instructions`,
+//     goes ahead of the first user message;
+//   - a plain string (openai/responses.go accepts it): it is one user turn, so with
+//     `instructions` it becomes a one-message array carrying the folded text;
+//   - an empty array, no system text, no `instructions`: unchanged;
+//   - system text or `instructions` but no user turn to fold into: unchanged;
+//   - anything else (an object, a number): unchanged, the gateway decides.
+//
+// Divergences from the pin, all so no instruction is silently lost or ignored:
+// the pin leaves a string `input` alone, so `instructions` still reached kenari;
+// the pin drops system messages when there is no user turn, losing their text;
+// and an item with no `type` but role "system" (a legal EasyInputMessage) is
+// folded, where the pin looks only at type "message". The body is never emitted
+// with an empty `input`.
 func foldResponsesSystem(protocol string, body Body) bool {
 	if protocol != openaiadapter.ResponsesProtocol {
 		return false
 	}
+	var instructions string
+	_ = json.Unmarshal(body["instructions"], &instructions)
+	instructions = strings.TrimSpace(instructions)
+
 	var input []json.RawMessage
-	if json.Unmarshal(body["input"], &input) != nil {
-		return false
+	if err := json.Unmarshal(body["input"], &input); err != nil {
+		var text string
+		if json.Unmarshal(body["input"], &text) != nil || instructions == "" {
+			return false
+		}
+		turn, err := json.Marshal(map[string]string{"type": "message", "role": "user", "content": text})
+		if err != nil {
+			return false
+		}
+		input = []json.RawMessage{turn}
 	}
+
 	var texts []string
-	var rest []json.RawMessage
+	if instructions != "" {
+		texts = append(texts, instructions)
+	}
+	rest := make([]json.RawMessage, 0, len(input))
 	firstUser := -1
 	for _, raw := range input {
 		var item struct {
@@ -162,26 +189,25 @@ func foldResponsesSystem(protocol string, body Body) bool {
 			Role    string          `json:"role"`
 			Content json.RawMessage `json:"content"`
 		}
-		if json.Unmarshal(raw, &item) == nil && item.Type == "message" && item.Role == "system" {
+		isMessage := json.Unmarshal(raw, &item) == nil && (item.Type == "message" || item.Type == "")
+		if isMessage && item.Role == "system" {
 			if text := systemItemText(item.Content); text != "" {
 				texts = append(texts, text)
 			}
 			continue
 		}
-		if firstUser < 0 && item.Type == "message" && item.Role == "user" {
+		if isMessage && item.Role == "user" && firstUser < 0 {
 			firstUser = len(rest)
 		}
 		rest = append(rest, raw)
 	}
-	var instructions string
-	_ = json.Unmarshal(body["instructions"], &instructions)
-	if trimmed := strings.TrimSpace(instructions); trimmed != "" {
-		texts = append([]string{trimmed}, texts...)
-	}
 	switch {
-	case len(rest) == len(input) && len(texts) == 0:
+	case len(rest) == 0:
+		// Nothing would be left to send; the gateway should judge the original.
 		return false
 	case len(texts) > 0 && firstUser < 0:
+		return false
+	case len(texts) == 0 && len(rest) == len(input):
 		return false
 	}
 	if len(texts) > 0 {
