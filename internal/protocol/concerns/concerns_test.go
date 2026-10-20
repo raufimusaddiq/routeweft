@@ -396,3 +396,38 @@ func TestReadLinesLenient(t *testing.T) {
 		t.Errorf("the strict reader must refuse SSE framing: %v", err)
 	}
 }
+
+// A Strict rule never suffixes: two names that become one are an error, whichever
+// order they are declared in and whether the other is rewritten or already valid.
+// The default rule is unchanged and still suffixes.
+func TestStrictToolNameRuleRefusesCollisions(t *testing.T) {
+	strict := ToolNameRule{
+		Valid:    func(name string) bool { return name != "" && !strings.ContainsAny(name, " .") },
+		Sanitize: func(name string) string { return strings.NewReplacer(" ", "_", ".", "_").Replace(name) },
+		Max:      64,
+		Strict:   true,
+	}
+	for _, declared := range [][]string{{"a b", "a_b"}, {"a_b", "a b"}, {"a b", "a.b"}, {"a.b", "a b"}, {"a b", "a.b", "a_b"}} {
+		if _, err := NewToolNamesFor(strict, declared); err == nil {
+			t.Errorf("%q: collision served", declared)
+		}
+	}
+	names, err := NewToolNamesFor(strict, []string{"a b", "c.d", "plain", "a b"})
+	if err != nil {
+		t.Fatalf("no collision, but refused: %v", err)
+	}
+	if names.Safe("a b") != "a_b" || names.Original("a_b") != "a b" || names.Original("c_d") != "c.d" {
+		t.Error("rewrite is not reversible")
+	}
+	// A name met after construction is checked against everything already taken.
+	if _, err := names.SafeChecked("a.b"); err == nil {
+		t.Error("a late name collided with a rewrite and was served")
+	}
+	if _, err := names.SafeChecked("plain"); err != nil {
+		t.Errorf("a valid name is never a collision: %v", err)
+	}
+	loose := NewToolNames([]string{"a_b", "a b"})
+	if loose.Safe("a b") != "a_b_2" {
+		t.Errorf("the default rule must keep suffixing: %q", loose.Safe("a b"))
+	}
+}

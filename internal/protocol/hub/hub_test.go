@@ -20,8 +20,8 @@ import (
 // unreachable rather than appear to work.
 func TestCanTranslateCoversChatResponsesMessages(t *testing.T) {
 	converted := map[string]bool{openai.ChatProtocol: true, openai.ResponsesProtocol: true, anthropic.MessagesProtocol: true}
-	protocols := []string{openai.ChatProtocol, openai.ResponsesProtocol, anthropic.MessagesProtocol, gemini.Protocol, ollama.Protocol, cursor.Protocol, commandcode.Protocol, systemone.Protocol}
-	providerWires := map[string]bool{ollama.Protocol: true, cursor.Protocol: true, commandcode.Protocol: true}
+	protocols := []string{openai.ChatProtocol, openai.ResponsesProtocol, anthropic.MessagesProtocol, gemini.Protocol, gemini.VertexProtocol, ollama.Protocol, cursor.Protocol, commandcode.Protocol, systemone.Protocol}
+	providerWires := map[string]bool{gemini.Protocol: true, gemini.VertexProtocol: true, ollama.Protocol: true, cursor.Protocol: true, commandcode.Protocol: true}
 	for _, source := range protocols {
 		for _, target := range protocols {
 			want := source != target && converted[source] && (converted[target] || providerWires[target])

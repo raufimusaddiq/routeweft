@@ -17,6 +17,8 @@ type ResponsesRequest struct {
 	Compact bool
 	Raw     []byte
 	Fields  map[string]json.RawMessage
+	// Scope: see ChatRequest.Scope.
+	Scope string
 }
 
 // ParseResponsesRequest preserves source bytes for native dispatch. Compact is

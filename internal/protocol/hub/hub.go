@@ -13,6 +13,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/commandcode"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/cursor"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/gemini"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 )
@@ -51,7 +52,11 @@ type Leg struct {
 // so are Chat and Messages (internal/protocol/anthropic). Ollama is a provider
 // wire only: the pin has a Chat>Ollama request leg and an Ollama>Chat response
 // leg and nothing the other way, so a client never speaks it through the hub.
-// Cursor and CommandCode are provider wires of the same kind.
+// Cursor and CommandCode are provider wires of the same kind. Gemini and Vertex
+// are too: a Chat client reaches them through the request leg and reads the
+// response leg, while the pin's gemini>Chat request leg serves a Gemini client
+// and has no response leg back, so it is not routable on its own (the pin
+// registers no openai>gemini response leg).
 var legs = []Leg{
 	{anthropic.MessagesProtocol, openai.ChatProtocol, Request},
 	{openai.ChatProtocol, anthropic.MessagesProtocol, Request},
@@ -67,6 +72,11 @@ var legs = []Leg{
 	{cursor.Protocol, openai.ChatProtocol, Response},
 	{openai.ChatProtocol, commandcode.Protocol, Request},
 	{commandcode.Protocol, openai.ChatProtocol, Response},
+	{openai.ChatProtocol, gemini.Protocol, Request},
+	{openai.ChatProtocol, gemini.VertexProtocol, Request},
+	{gemini.Protocol, openai.ChatProtocol, Request},
+	{gemini.Protocol, openai.ChatProtocol, Response},
+	{gemini.VertexProtocol, openai.ChatProtocol, Response},
 }
 
 // Legs returns a copy of the implemented legs.
