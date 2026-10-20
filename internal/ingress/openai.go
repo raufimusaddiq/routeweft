@@ -195,16 +195,15 @@ func (h *Handler) writeRewrittenResponses(w http.ResponseWriter, r *http.Request
 		// Routeweft's refusal, not an upstream error, so it is recorded with the
 		// usage the upstream reported to keep spend reconcilable.
 		h.writeError(w, 502, wire.ErrCustomToolArguments.Error(), err.Error())
-		usage, _ := shared.ParseUsage(provider.Protocol, body)
-		h.emitOutcome(r, provider, 502, false, usage, started)
+		usage, observed := shared.ParseUsage(provider.Protocol, body)
+		h.emitTranslated(r, provider, 502, false, usage, observed, started)
 		return
 	}
 	copyResponseHeaders(w.Header(), response.Header)
-	w.Header().Del("Content-Length")
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(rewritten)
-	usage, _ := shared.ParseUsage(provider.Protocol, body)
-	h.emitOutcome(r, provider, response.StatusCode, false, usage, started)
+	usage, observed := shared.ParseUsage(provider.Protocol, body)
+	h.emitTranslated(r, provider, response.StatusCode, false, usage, observed, started)
 }
 
 // writeUnwrapped relays a non-stream response with the provider's gateway
