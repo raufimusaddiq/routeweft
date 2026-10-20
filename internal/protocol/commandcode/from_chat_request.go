@@ -174,7 +174,11 @@ func commandCodeTools(value any) ([]any, error) {
 		if concerns.Text(name) == "" {
 			return nil, unsupported("tool without a name")
 		}
-		if !concerns.Truthy(schema) {
+		if schema != nil && concerns.Object(schema) == nil {
+			return nil, unsupported("tool parameters must be an object")
+		}
+		if len(concerns.Object(schema)) == 0 {
+			// A tool with no parameters is a valid function tool.
 			schema = map[string]any{"type": "object"}
 		}
 		converted := map[string]any{"name": name, "input_schema": schema}

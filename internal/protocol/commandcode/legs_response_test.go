@@ -168,6 +168,23 @@ func TestToolCallIDQuirk(t *testing.T) {
 		"id-only tool-call, no start": {`{"type":"tool-call","id":"z","toolName":"f","input":{"k":1}}
 {"type":"tool-call","id":"z","toolName":"f","input":{"k":1}}
 `, []string{`{"k":1}`}, []string{"z"}},
+		"id-less tool-call after a start": {`{"type":"tool-input-start","id":"a","toolName":"f"}
+{"type":"tool-input-delta","id":"a","delta":"{\"k\":1}"}
+{"type":"tool-call","toolName":"f","input":{"k":1}}
+`, []string{`{"k":1}`}, []string{"a"}},
+		"id-less tool-call, start only": {`{"type":"tool-input-start","id":"a","toolName":"f"}
+{"type":"tool-call","toolName":"f","input":{"k":1}}
+`, []string{`{"k":1}`}, []string{"a"}},
+		"id-less tool-call of another tool": {`{"type":"tool-input-start","id":"a","toolName":"f"}
+{"type":"tool-call","toolName":"g","input":{}}
+`, []string{"{}", "{}"}, []string{"a", "call_msg0_tc1_g"}},
+		"id-less tool-call, no start": {`{"type":"tool-call","toolName":"f","input":{"k":1}}
+`, []string{`{"k":1}`}, []string{"call_msg0_tc0_f"}},
+		"two id-less calls, two starts": {`{"type":"tool-input-start","id":"a","toolName":"f"}
+{"type":"tool-input-start","id":"b","toolName":"f"}
+{"type":"tool-call","toolName":"f","input":{"n":1}}
+{"type":"tool-call","toolName":"f","input":{"n":2}}
+`, []string{`{"n":1}`, `{"n":2}`}, []string{"a", "b"}},
 		"tool-call only": {`{"type":"tool-call","toolCallId":"b","toolName":"f","input":"{\"s\":1}"}
 `, []string{`{"s":1}`}, []string{"b"}},
 		"tool-call only, no input": {`{"type":"tool-call","toolCallId":"b","toolName":"f"}
@@ -269,17 +286,19 @@ func TestUnknownEventTypes(t *testing.T) {
 
 func TestStreamFailures(t *testing.T) {
 	for name, c := range map[string]struct{ upstream, want string }{
-		"error event":          {`{"type":"text-delta","text":"a"}` + "\n" + `{"type":"error","error":"rate limit"}` + "\n", "[CommandCode error: rate limit]"},
-		"error object":         {`{"type":"error","error":{"message":"x","statusCode":429}}` + "\n", "[CommandCode error: {"},
-		"error message":        {`{"type":"error","message":"m"}` + "\n", "[CommandCode error: m]"},
-		"error nothing":        {`{"type":"error"}` + "\n", "[CommandCode error: unknown]"},
-		"no finish":            {`{"type":"text-delta","text":"a"}` + "\n", "upstream_incomplete"},
-		"empty":                {``, "upstream_incomplete"},
-		"truncated line":       {`{"type":"text-delta","te`, "invalid upstream stream event"},
-		"garbage line":         {"not json\n", "upstream_incomplete"},
-		"tool finish no call":  {`{"type":"finish","finishReason":"tool-calls"}` + "\n", "upstream_incomplete"},
-		"text of wrong type":   {`{"type":"text-delta","text":5}` + "\n", "upstream_incomplete"},
-		"reason of wrong type": {`{"type":"finish-step","finishReason":5}` + "\n", "upstream_incomplete"},
+		"error event":                 {`{"type":"text-delta","text":"a"}` + "\n" + `{"type":"error","error":"rate limit"}` + "\n", "[CommandCode error: rate limit]"},
+		"error object":                {`{"type":"error","error":{"message":"x","statusCode":429}}` + "\n", "[CommandCode error: {"},
+		"error message":               {`{"type":"error","message":"m"}` + "\n", "[CommandCode error: m]"},
+		"error nothing":               {`{"type":"error"}` + "\n", "[CommandCode error: unknown]"},
+		"no finish":                   {`{"type":"text-delta","text":"a"}` + "\n", "upstream_incomplete"},
+		"empty":                       {``, "upstream_incomplete"},
+		"truncated line":              {`{"type":"text-delta","te`, "invalid upstream stream event"},
+		"garbage line":                {"not json\n", "upstream_incomplete"},
+		"tool finish no call":         {`{"type":"finish","finishReason":"tool-calls"}` + "\n", "upstream_incomplete"},
+		"text of wrong type":          {`{"type":"text-delta","text":5}` + "\n", "upstream_incomplete"},
+		"reason of wrong type":        {`{"type":"finish-step","finishReason":5}` + "\n", "upstream_incomplete"},
+		"finish reason of wrong type": {`{"type":"finish","finishReason":42}` + "\n", "upstream_incomplete"},
+		"finish reason object":        {`{"type":"finish","finishReason":{"a":1}}` + "\n", "upstream_incomplete"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			events, done, err := stream(t, c.upstream)

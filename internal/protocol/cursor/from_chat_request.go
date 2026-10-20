@@ -146,6 +146,12 @@ func cursorTools(value any) ([]any, error) {
 		if concerns.Truthy(function["strict"]) {
 			return nil, unsupported("strict tool schema: not verifiable offline for Cursor")
 		}
+		// A tool with no parameters is a valid function tool, and the executor's
+		// encoder defaults them (cursorProtobuf.js:443); parameters that are not an
+		// object cannot be encoded as a schema.
+		if parameters := function["parameters"]; parameters != nil && concerns.Object(parameters) == nil {
+			return nil, unsupported("tool parameters must be an object")
+		}
 	}
 	return list, nil
 }
@@ -222,6 +228,11 @@ func cursorMessages(source []any) ([]any, error) {
 				return nil, err
 			}
 			id := concerns.Text(message["tool_call_id"])
+			if id == "" {
+				// The pin would send an empty <tool_call_id> (:94); the model cannot
+				// tell which call the result answers.
+				return nil, unsupported("tool result without a tool_call_id")
+			}
 			name := concerns.Text(message["name"])
 			if name == "" {
 				name = names[id]

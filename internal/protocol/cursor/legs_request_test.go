@@ -192,6 +192,14 @@ func TestToolsAreFunctionsOnly(t *testing.T) {
 		t.Run(name, func(t *testing.T) { mustRefuse(t, `{`+user+`,"tools":`+tools+`}`) })
 	}
 	mustConvert(t, `{`+user+`,"tools":[{"type":"function","function":{"name":"f","strict":false}}]}`)
+	// One rule for both legs: a named function with no parameters is a tool,
+	// parameters that are not an object are refused.
+	for _, parameters := range []string{``, `,"parameters":null`, `,"parameters":{}`, `,"parameters":{"type":"object"}`} {
+		mustConvert(t, `{`+user+`,"tools":[{"type":"function","function":{"name":"f"`+parameters+`}}]}`)
+	}
+	for _, parameters := range []string{`"x"`, `[]`, `7`, `true`} {
+		mustRefuse(t, `{`+user+`,"tools":[{"type":"function","function":{"name":"f","parameters":`+parameters+`}}]}`)
+	}
 }
 
 func TestReasoningEffort(t *testing.T) {
@@ -292,6 +300,19 @@ func TestMessageShapesAreRefused(t *testing.T) {
 		"calls not a list":  `{"messages":[{"role":"assistant","content":"","tool_calls":{"id":"c"}}]}`,
 	} {
 		t.Run(name, func(t *testing.T) { mustRefuse(t, body) })
+	}
+	// A tool result with no id is refused in a converted body, and given one in
+	// the client's own, as for CommandCode.
+	noID := `{"messages":[{"role":"tool","content":"r"},{"role":"user","content":"u"}]}`
+	parsed0, _ := concerns.WireObject([]byte(noID))
+	if _, err := ChatRequestToCursor(parsed0, "m", true, false); err == nil {
+		t.Error("a tool result with no id in a converted body must be refused")
+	}
+	for _, empty := range []string{`"tool_call_id":""`, `"tool_call_id":null`, `"name":"n"`} {
+		parsed0, _ = concerns.WireObject([]byte(`{"messages":[{"role":"tool","content":"r",` + empty + `},{"role":"user","content":"u"}]}`))
+		if _, err := ChatRequestToCursor(parsed0, "m", true, false); err == nil {
+			t.Errorf("%s: must be refused", empty)
+		}
 	}
 	// A call with no id is given one when the body is the client's own, and
 	// refused when it was converted from another shape and should have had one.

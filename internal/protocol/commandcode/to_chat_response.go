@@ -133,10 +133,11 @@ func (c *converter) handle(event map[string]any) (chunks []map[string]any, done 
 			return nil, false, err
 		}
 		target := c.lookup(event)
-		if target == nil && len(ids(event)) > 0 {
-			// A tool-call whose ids match no start is the same call under another
-			// name, not a second call (PARITY V36): the oldest call started under
-			// that tool name that is not yet consolidated.
+		if target == nil {
+			// A tool-call whose ids match no start, or that carries none, is the
+			// same call under another name, not a second call (PARITY V36): the
+			// oldest call started under that tool name that is not yet
+			// consolidated.
 			for _, open := range c.calls {
 				if !open.done && open.name == name {
 					target = open
@@ -175,6 +176,11 @@ func (c *converter) handle(event map[string]any) (chunks []map[string]any, done 
 		return nil, false, nil
 	case "finish":
 		reason := c.finishReason
+		if value := event["finishReason"]; value != nil {
+			if _, ok := value.(string); !ok {
+				return nil, false, malformed(kind, "finishReason")
+			}
+		}
 		if reason == "" {
 			text, _ := event["finishReason"].(string)
 			if text == "" {
@@ -188,6 +194,13 @@ func (c *converter) handle(event map[string]any) (chunks []map[string]any, done 
 		if err != nil {
 			return nil, false, err
 		}
+		// A call that never received arguments ends with `{}`: an empty string is
+		// not JSON, and the buffered leg says `{}` too.
+		for _, made := range c.calls {
+			if made.arguments == 0 {
+				chunks = append(chunks, c.arguments(made, "{}"))
+			}
+		}
 		final := c.chunk(map[string]any{}, reason)
 		raw := concerns.Object(event["totalUsage"])
 		if raw == nil {
@@ -196,7 +209,7 @@ func (c *converter) handle(event map[string]any) (chunks []map[string]any, done 
 		if usage, extra, observed := concerns.CommandCodeUsage(raw); observed {
 			final["usage"] = chatUsage(usage, extra)
 		}
-		return []map[string]any{final}, true, nil
+		return append(chunks, final), true, nil
 	case "error":
 		return nil, false, upstreamError(event)
 	}

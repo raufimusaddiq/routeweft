@@ -195,6 +195,18 @@ func TestToolsAreConverted(t *testing.T) {
 		t.Run(name, func(t *testing.T) { mustRefuse(t, `{`+user+`,"tools":`+tools+`}`) })
 	}
 	params(t, `{`+user+`,"tools":[{"type":"function","function":{"name":"f","strict":false}}]}`)
+	// One rule for both legs: a named function with no parameters is a tool (with
+	// an empty object schema), parameters that are not an object are refused.
+	for _, parameters := range []string{``, `,"parameters":null`, `,"parameters":{}`} {
+		got := asJSON(params(t, `{`+user+`,"tools":[{"type":"function","function":{"name":"f"`+parameters+`}}]}`)["tools"])
+		if got != `[{"input_schema":{"type":"object"},"name":"f"}]` {
+			t.Errorf("%q: tools = %s", parameters, got)
+		}
+	}
+	for _, parameters := range []string{`"x"`, `[]`, `7`, `true`} {
+		mustRefuse(t, `{`+user+`,"tools":[{"type":"function","function":{"name":"f","parameters":`+parameters+`}}]}`)
+		mustRefuse(t, `{`+user+`,"tools":[{"name":"f","input_schema":`+parameters+`}]}`)
+	}
 }
 
 func TestMessagesAreConverted(t *testing.T) {
@@ -290,6 +302,11 @@ func TestMessageShapesAreRefused(t *testing.T) {
 	}
 	if out, err := convertWith(t, call, true); err != nil || !strings.Contains(asJSON(out), `"toolCallId":"call_msg0_tc0_f"`) {
 		t.Errorf("the client's own body is repaired: %v %s", err, asJSON(out))
+	}
+	for _, empty := range []string{`"tool_call_id":""`, `"tool_call_id":null`, `"name":"n"`} {
+		if _, err := convertWith(t, `{"messages":[{"role":"tool","content":"r",`+empty+`},{"role":"user","content":"u"}]}`, false); err == nil {
+			t.Errorf("%s: must be refused", empty)
+		}
 	}
 	toolNoID := `{"messages":[{"role":"tool","content":"r"},{"role":"user","content":"u"}]}`
 	if _, err := convertWith(t, toolNoID, false); err == nil {
