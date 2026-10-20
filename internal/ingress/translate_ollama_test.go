@@ -127,3 +127,20 @@ func TestOllamaFinalLineWithoutNewlineIsAccounted(t *testing.T) {
 		})
 	}
 }
+
+// A line with no newline cannot grow the scanner's buffer without bound, and the
+// stream after it is still read.
+func TestOllamaScannerBoundsAnUnterminatedLine(t *testing.T) {
+	scanner := &usageScanner{family: "ollama"}
+	huge := strings.Repeat("x", 1<<20)
+	for i := 0; i < 6; i++ {
+		_, _ = scanner.Write([]byte(huge))
+	}
+	if len(scanner.buffer) > 5<<20 {
+		t.Fatalf("buffer grew to %d bytes", len(scanner.buffer))
+	}
+	_, _ = scanner.Write([]byte("tail\n" + `{"done":true,"prompt_eval_count":3,"eval_count":4}` + "\n"))
+	if usage, found := scanner.usage(); !found || usage.InputTokens != 3 || usage.OutputTokens != 4 || !scanner.reportsUsage(true) {
+		t.Fatalf("usage %+v found=%v", usage, found)
+	}
+}

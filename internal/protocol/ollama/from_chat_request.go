@@ -74,17 +74,16 @@ func ChatRequestToOllama(body map[string]any, model string, stream, repair bool)
 	if format != nil {
 		result["format"] = format
 	}
-	if concerns.Truthy(body["logit_bias"]) && len(concerns.Object(body["logit_bias"])) > 0 {
+	if present(body["logit_bias"]) {
 		return nil, unsupported("logit_bias: Ollama has no equivalent")
 	}
 	tools, hasTools := body["tools"].([]any)
 	switch choice := body["tool_choice"]; {
 	case !concerns.Truthy(choice), choice == "auto":
+		// Absent already means auto to Ollama, which has no tool_choice field, so
+		// the pin's verbatim forward (:51-54) is not sent (PARITY V30).
 		if hasTools {
 			result["tools"] = tools
-		}
-		if choice == "auto" {
-			result["tool_choice"] = choice
 		}
 	case choice == "none":
 		// Ollama has no tool_choice, so the pin's passthrough (:51-54) lets a
@@ -94,6 +93,24 @@ func ChatRequestToOllama(body map[string]any, model string, stream, repair bool)
 		return nil, unsupported("tool_choice %s: Ollama cannot require a tool", concerns.JSONText(choice))
 	}
 	return json.Marshal(result)
+}
+
+// present reports whether a field asks for anything, whatever shape it has: an
+// empty object, list or string, null and false ask for nothing.
+func present(value any) bool {
+	switch v := value.(type) {
+	case nil:
+		return false
+	case map[string]any:
+		return len(v) > 0
+	case []any:
+		return len(v) > 0
+	case string:
+		return v != ""
+	case bool:
+		return v
+	}
+	return true
 }
 
 // stopSequences accepts a Chat stop value, a string or a list of strings.

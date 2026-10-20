@@ -577,7 +577,7 @@ func (s *usageScanner) Write(chunk []byte) (int, error) {
 	for {
 		index := bytes.IndexByte(s.buffer, '\n')
 		if index < 0 {
-			if s.family == shared.FamilySystemOne && len(s.buffer) > 4<<20 {
+			if (s.family == shared.FamilySystemOne || s.family == shared.FamilyOllama) && len(s.buffer) > 4<<20 {
 				s.buffer = nil
 				s.skipping = true
 			}
@@ -585,7 +585,7 @@ func (s *usageScanner) Write(chunk []byte) (int, error) {
 		}
 		line := bytes.TrimSpace(s.buffer[:index])
 		s.buffer = s.buffer[index+1:]
-		if s.family == shared.FamilySystemOne && len(line) > 4<<20 {
+		if (s.family == shared.FamilySystemOne || s.family == shared.FamilyOllama) && len(line) > 4<<20 {
 			continue
 		}
 		var payload []byte
