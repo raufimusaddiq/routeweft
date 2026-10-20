@@ -3,6 +3,7 @@ package ingress
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -162,5 +163,68 @@ func kenariFoldWithRealInjector(t *testing.T, input string) {
 		`{"model":"m","input":`+input+`}`)))
 	if strings.Contains(upstreamBody, `"instructions"`) || !strings.Contains(upstreamBody, "[routeweft:caveman]") || !strings.Contains(upstreamBody, "hi") {
 		t.Fatalf("kenari body (status %d): %s", recorder.Code, upstreamBody)
+	}
+}
+
+// kenari answers a converted custom tool with a function_call; the Responses client
+// declared a custom tool and must get a custom_tool_call back, on a stream and off
+// it. Unreadable arguments are refused with a named error, not relayed.
+func TestKenariCustomToolResponseRewrite(t *testing.T) {
+	const request = `{"model":"m","stream":%t,"input":"hi","tools":[{"type":"custom","name":"exec"}]}`
+	const goodBody = `{"id":"r","object":"response","status":"completed","output":[{"type":"function_call","id":"fc_1","call_id":"c","name":"exec","arguments":"{\"input\":\"ls\"}"}],"usage":{"input_tokens":1,"output_tokens":1}}`
+	const goodStream = "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"c\",\"name\":\"exec\",\"arguments\":\"{\\\"input\\\":\\\"ls\\\"}\"}}\n\n" +
+		"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n"
+	cases := []struct {
+		name         string
+		stream       bool
+		upstream     string
+		status       int
+		contains     []string
+		doesNotCarry []string
+	}{
+		{"body", false, goodBody, 200, []string{`"type":"custom_tool_call"`, `"input":"ls"`, `"id":"ctc_1"`}, []string{`function_call"`, `arguments`}},
+		{"stream", true, goodStream, 200, []string{`"type":"custom_tool_call"`, `"input":"ls"`}, []string{`"type":"function_call"`}},
+		{"body refused", false, strings.Replace(goodBody, `{\"input\":\"ls\"}`, `ls`, 1), 502, []string{"kenari_custom_tool_arguments_invalid"}, []string{"custom_tool_call"}},
+		{"stream refused", true, strings.Replace(goodStream, "{\\\"input\\\":\\\"ls\\\"}", "ls", 1), 200, []string{"response.failed", "kenari_custom_tool_arguments_invalid"}, []string{"custom_tool_call"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var sent string
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				sent = string(raw)
+				if c.stream {
+					w.Header().Set("Content-Type", "text/event-stream")
+				} else {
+					w.Header().Set("Content-Type", "application/json")
+				}
+				_, _ = w.Write([]byte(c.upstream))
+			}))
+			defer upstream.Close()
+			mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true,
+				ProviderResolver: func(*runtime.RuntimeSnapshot, string) (routing.ProviderRef, bool) {
+					return routing.ProviderRef{ProviderID: "kenari", Protocol: openaiadapter.ResponsesProtocol, BaseURL: upstream.URL, Endpoint: "v1/responses", APIToken: "token"}, true
+				},
+			})
+			recorder := httptest.NewRecorder()
+			bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(fmt.Sprintf(request, c.stream))))
+			got := recorder.Body.String()
+			if !strings.Contains(sent, `"type":"function"`) || strings.Contains(sent, `"custom"`) {
+				t.Errorf("upstream request kept the custom tool: %s", sent)
+			}
+			if recorder.Code != c.status {
+				t.Errorf("status %d, want %d: %s", recorder.Code, c.status, got)
+			}
+			for _, want := range c.contains {
+				if !strings.Contains(got, want) {
+					t.Errorf("client body lacks %s: %s", want, got)
+				}
+			}
+			for _, bad := range c.doesNotCarry {
+				if strings.Contains(got, bad) {
+					t.Errorf("client body carries %s: %s", bad, got)
+				}
+			}
+		})
 	}
 }
