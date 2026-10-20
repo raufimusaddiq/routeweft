@@ -338,7 +338,7 @@ func TestMessagesStreamAsksChatProviderForUsage(t *testing.T) {
 // A provider whose wire has no leg yet is skipped rather than half-served.
 func TestUnconvertedWireIsStillSkipped(t *testing.T) {
 	for _, client := range []string{openai.ChatProtocol, openai.ResponsesProtocol, anthropic.MessagesProtocol} {
-		for _, provider := range []string{"kiro", "cursor", "antigravity", "vertex", "gemini-cli", "commandcode"} {
+		for _, provider := range []string{"cursor", "antigravity", "vertex", "gemini-cli", "commandcode"} {
 			if CanTranslate(client, provider) {
 				t.Errorf("%s client claims to reach %s, which has no conversion leg", client, provider)
 			}

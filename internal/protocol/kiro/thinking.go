@@ -225,10 +225,13 @@ func hasThinkingModeTag(body map[string]any) bool {
 	return containsThinkingTag(concerns.Text(body["system"]))
 }
 
-// resolveBudget is resolveKiroThinkingBudget (kiroConstants.js:144-169) without
-// its anthropic-beta header test: the legs are not given request headers (a
-// recorded gap for the Messages legs). ok is false when thinking is off.
-func resolveBudget(body map[string]any, model string) (budget int64, ok bool) {
+// resolveBudget is resolveKiroThinkingBudget (kiroConstants.js:144-169). beta is
+// the client's inbound anthropic-beta header, which only a Messages request has
+// (translator/request/claude-to-kiro.js:241 hands the pin's rawHeaders to it; the
+// pin sends no such header to Kiro). It is read after the body's own thinking
+// configuration, so explicit thinking, disabled included, wins over it. ok is
+// false when thinking is off.
+func resolveBudget(body map[string]any, model, beta string) (budget int64, ok bool) {
 	if config := extractThinking(body); config != nil {
 		switch config.mode {
 		case "none":
@@ -243,6 +246,9 @@ func resolveBudget(body map[string]any, model string) (budget int64, ok bool) {
 				return mapped, true
 			}
 		}
+		return defaultThinkingBudget, true
+	}
+	if strings.Contains(strings.ToLower(beta), "interleaved-thinking") {
 		return defaultThinkingBudget, true
 	}
 	if hasThinkingModeTag(body) {

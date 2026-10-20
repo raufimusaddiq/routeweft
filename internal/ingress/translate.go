@@ -28,10 +28,9 @@ import (
 // Vertex needs the project-scoped URL and the service-account or key
 // authentication that #115 PR-C's target hook supplies (executors/vertex.js:66-123);
 // until it does, a request routed there would fail at the last hop. Kiro needs
-// the account-aware body and headers (profile ARN, auth method, region) and the
-// EventStream Accept header from internal/providers/wire (#135), and its Messages
-// legs (PR 4c): until then a Messages client would pivot through Chat where the
-// pin has a direct pair. PR-C removes
+// the account-aware body and headers (profile ARN, auth method) and the
+// EventStream Accept header from internal/providers/wire (PR 4d), and its Messages
+// legs (PR 4c), which together took it out of this list. PR-C removes
 // the vertex entry together with TranslateChat's vertex arm, which is not built
 // here because the endpoint it would name is that hook's to compute.
 // Gemini CLI and Antigravity need the same hook: the Cloud Code URL and its
@@ -41,7 +40,6 @@ import (
 // A provider leaves this list in the PR that binds its wire.
 var unwired = map[string]bool{
 	cursor.Protocol: true, commandcode.Protocol: true, geminiwire.VertexProtocol: true,
-	kiroadapter.Protocol:           true,
 	geminiwire.GeminiCLIProtocol:   true,
 	geminiwire.AntigravityProtocol: true,
 }
@@ -267,7 +265,7 @@ func TranslateChat(request *openai.ChatRequest, target string) (ChatTranslation,
 
 // TranslateResponses keeps custom-tool response metadata local to this request.
 func TranslateResponses(request *openai.ResponsesRequest, target string) (ChatTranslation, error) {
-	if request.Compact || (target != openai.ChatProtocol && target != anthropic.MessagesProtocol && target != ollama.Protocol && target != geminiwire.Protocol) {
+	if request.Compact || (target != openai.ChatProtocol && target != anthropic.MessagesProtocol && target != ollama.Protocol && target != geminiwire.Protocol && target != kiroadapter.Protocol) {
 		return ChatTranslation{}, fmt.Errorf("no Responses translator for %q", target)
 	}
 	body, err := openai.ResponsesToChat(request)
@@ -302,6 +300,21 @@ func TranslateResponses(request *openai.ResponsesRequest, target string) (ChatTr
 			Response: chainBodies(ollama.OllamaResponseToChat, toResponses),
 			Stream:   chainStreams(ollamaStream(request.Model), toResponsesStream)}, nil
 	}
+	if target == kiroadapter.Protocol {
+		// Responses>Chat>Kiro through the registry functions (translator/index.js:116-125).
+		// The Chat body is this gateway's own, so its tool ids are not repaired a
+		// second time (Repair is only for the client's own Chat body).
+		kiroBody, names, info, err := kiroadapter.ChatRequestToKiro(chat, kiroadapter.RequestOptions{Model: request.Model})
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		options := kiroadapter.ResponseOptions{Model: request.Model, Names: names, ThinkingTags: info.ThinkingTags}
+		return ChatTranslation{Endpoint: kiroEndpoint, Body: kiroBody,
+			Response: chainBodies(func(body []byte) ([]byte, error) { return kiroadapter.KiroResponseToChat(body, options) }, toResponses),
+			Stream: chainStreams(func(ctx context.Context, src io.Reader, dst io.Writer) error {
+				return kiroadapter.KiroStreamToChat(ctx, src, dst, options)
+			}, toResponsesStream)}, nil
+	}
 	var raw map[string]any
 	if parsed, parseErr := concerns.WireObject(request.Raw); parseErr == nil {
 		raw = parsed
@@ -320,8 +333,26 @@ func TranslateResponses(request *openai.ResponsesRequest, target string) (ChatTr
 // TranslateMessages wires both halves of a Messages request served by a
 // provider that speaks Chat or Responses.
 func TranslateMessages(request *anthropic.MessagesRequest, target string) (ChatTranslation, error) {
-	if target != openai.ChatProtocol && target != openai.ResponsesProtocol && target != ollama.Protocol && target != geminiwire.Protocol {
+	if target != openai.ChatProtocol && target != openai.ResponsesProtocol && target != ollama.Protocol && target != geminiwire.Protocol && target != kiroadapter.Protocol {
 		return ChatTranslation{}, fmt.Errorf("no Messages translator for %q", target)
+	}
+	if target == kiroadapter.Protocol {
+		// The pin dispatches anthropic-messages>kiro directly, with no Chat pivot
+		// (translator/index.js:106-108).
+		parsed, err := concerns.WireObject(request.Raw)
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		body, names, info, err := kiroadapter.MessagesRequestToKiro(parsed, kiroadapter.RequestOptions{Model: request.Model, AnthropicBeta: request.AnthropicBeta})
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		options := kiroadapter.ResponseOptions{Model: request.Model, Names: names, ThinkingTags: info.ThinkingTags}
+		return ChatTranslation{Endpoint: kiroEndpoint, Body: body,
+			Response: func(body []byte) ([]byte, error) { return kiroadapter.KiroResponseToMessages(body, options) },
+			Stream: func(ctx context.Context, src io.Reader, dst io.Writer) error {
+				return kiroadapter.KiroStreamToMessages(ctx, src, dst, options)
+			}}, nil
 	}
 	if target == geminiwire.Protocol {
 		// Messages>Chat>Gemini through the registry functions alone, as for
