@@ -244,3 +244,34 @@ func TestPlanComboRRNeverPutsNonCapableFallbackFirst(t *testing.T) {
 		t.Fatalf("RR capability order=%+v", ordered)
 	}
 }
+
+// #78/C04: a provider's stickyRoundRobinLimit override wins over the global
+// limit for that provider only (pin auth.js:186); an Options override still
+// beats both, as before.
+func TestStickyLimitForAppliesProviderOverride(t *testing.T) {
+	manager := newManager(t)
+	if _, err := manager.SetSettings(context.Background(), map[string]string{
+		"stickyRoundRobinLimit": "4",
+		"providerStrategies":    `{"openai":{"fallbackStrategy":"sticky-round-robin","stickyRoundRobinLimit":9}}`,
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := manager.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(nil, Options{})
+	if got := handler.StickyLimitFor(snapshot, "openai"); got != 9 {
+		t.Fatalf("openai=%d want 9", got)
+	}
+	if got := handler.StickyLimitFor(snapshot, "anthropic"); got != 4 {
+		t.Fatalf("anthropic=%d want global 4", got)
+	}
+	if got := handler.StrategyFor(snapshot, "openai"); got != routing.StrategyStickyRR {
+		t.Fatalf("strategy=%v", got)
+	}
+	forced := New(nil, Options{StickyLimit: 2})
+	if got := forced.StickyLimitFor(snapshot, "openai"); got != 2 {
+		t.Fatalf("explicit option=%d want 2", got)
+	}
+}

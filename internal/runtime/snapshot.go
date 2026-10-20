@@ -21,6 +21,8 @@ type RuntimeSnapshot struct {
 	providerStrategy    routing.Strategy
 	providerStrategies  map[string]routing.Strategy
 	providerStickyLimit uint64
+	providerSticky      map[string]uint64
+	comboOverrides      map[string]string
 	version             uint64
 	configRevision      uint64
 	settings            map[string]string

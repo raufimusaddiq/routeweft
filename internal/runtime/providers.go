@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"slices"
@@ -259,12 +258,24 @@ func (s *RuntimeSnapshot) compileServingIndexes() {
 	if s.providerStrategy == "" {
 		s.providerStrategy = routing.StrategyFillFirst
 	}
-	var overrides map[string]string
-	json.Unmarshal([]byte(s.settings["providerStrategies"]), &overrides)
 	s.providerStrategies = make(map[string]routing.Strategy)
-	for provider, raw := range overrides {
-		if strategy, err := routing.ParseStrategy(raw); err == nil {
-			s.providerStrategies[provider] = strategy
+	s.providerSticky = make(map[string]uint64)
+	for provider, override := range strategyOverridesTolerant(s.settings["providerStrategies"], false) {
+		if override.Strategy != "" {
+			if strategy, err := routing.ParseStrategy(override.Strategy); err == nil {
+				s.providerStrategies[provider] = strategy
+			}
+		}
+		if override.StickyLimit > 0 {
+			s.providerSticky[provider] = override.StickyLimit
+		}
+	}
+	s.comboOverrides = make(map[string]string)
+	for name, override := range strategyOverridesTolerant(s.settings["comboStrategies"], true) {
+		if override.Strategy != "" {
+			if parsed, err := parseComboStrategy(override.Strategy); err == nil {
+				s.comboOverrides[name] = parsed
+			}
 		}
 	}
 	if value, err := strconv.ParseUint(strings.TrimSpace(s.settings["stickyRoundRobinLimit"]), 10, 64); err == nil {
@@ -277,4 +288,14 @@ func (s *RuntimeSnapshot) ProviderStrategyOverride(provider string) (routing.Str
 	strategy, ok := s.providerStrategies[provider]
 	return strategy, ok
 }
-func (s *RuntimeSnapshot) ProviderStickyLimit() uint64 { return s.providerStickyLimit }
+
+// ProviderStickyLimitFor resolves the per-provider stickyRoundRobinLimit
+// override over the global limit, as the pin does at auth.js:186
+// (`override.stickyRoundRobinLimit || settings.stickyRoundRobinLimit || 3`):
+// an override of 0 or absent inherits.
+func (s *RuntimeSnapshot) ProviderStickyLimitFor(provider string) uint64 {
+	if limit, ok := s.providerSticky[provider]; ok {
+		return limit
+	}
+	return s.providerStickyLimit
+}
