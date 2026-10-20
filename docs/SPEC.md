@@ -826,7 +826,7 @@ The record carries the upstream's reported figures. Input, output and cache coun
 
 A record says what is known and what is not:
 
-- `usage_observed = 0` means the upstream never reported usage (an abandoned stream that ended before the usage chunk, a Chat stream without `stream_options.include_usage`, a body with no `usage`). The token columns then hold no measurement and readers must not treat them as measured zero; the admin API omits the counts for such a row.
+- `usage_observed = 0` means the upstream never reported usage (an abandoned stream that ended before the usage chunk, a Chat stream without `stream_options.include_usage`, a body with no `usage`). The token columns then hold no measurement and readers must not treat them as measured zero; the admin API omits the counts for such a row and returns `usageUnobserved: true` (the live stream uses the same field, present only when true).
 - `termination` is empty for a request that ran to its end, `client_abandoned` when the client went away mid-flight, and `upstream_truncated` when the upstream stream ended without its terminal event.
 
 An abandoned stream is still recorded, because the upstream kept generating and was billed. Whatever usage had arrived is kept. The status stays what was sent to the client (a stream or body that began is `200`); the abandonment is carried by `termination`, never by an invented status.

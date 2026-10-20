@@ -100,7 +100,7 @@ func TestUsageRequestOmitsCountsForUnobservedUsage(t *testing.T) {
 			t.Fatalf("%s rendered for an unobserved request: %v", key, event)
 		}
 	}
-	if event["usageObserved"] != false || event["termination"] != "client_abandoned" {
+	if event["usageUnobserved"] != true || event["termination"] != "client_abandoned" {
 		t.Fatalf("event=%v", event)
 	}
 }

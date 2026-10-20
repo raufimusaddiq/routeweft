@@ -591,7 +591,7 @@ func scanUsageEvent(rows *sql.Rows) (map[string]any, error) {
 		for _, key := range []string{"inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"} {
 			delete(result, key)
 		}
-		result["usageObserved"] = false
+		result["usageUnobserved"] = true
 	}
 	if item.Termination != "" {
 		result["termination"] = item.Termination

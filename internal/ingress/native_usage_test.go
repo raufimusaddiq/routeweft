@@ -304,3 +304,47 @@ func TestTopLevelUsageCaptureIsBounded(t *testing.T) {
 		t.Fatalf("capture not bounded: ok=%v len=%d", ok, len(c.buf))
 	}
 }
+
+// The response, not the request flag, decides how usage is read. An upstream
+// that ignores stream:true and answers a JSON document is a normal success.
+func TestNativeStreamRequestAnsweredWithJSONIsAccountedFromTheBody(t *testing.T) {
+	body := `{"id":"c1","choices":[],"usage":{"prompt_tokens":11,"completion_tokens":3}}`
+	gateway, log := nativeGateway(t, openaiadapter.ChatProtocol, fixedBody("application/json", body))
+	response := post(t, gateway, "", "/v1/chat/completions", strings.Replace(chatRequest, "%s", `,"stream":true`, 1))
+	_, _ = io.Copy(io.Discard, response.Body)
+	response.Body.Close()
+	outcomes := log.wait(t)
+	if len(outcomes) != 1 {
+		t.Fatalf("outcomes=%d want exactly 1", len(outcomes))
+	}
+	o := outcomes[0]
+	if o.Termination != "" || o.UsageUnobserved || o.InputTokens != 11 || o.OutputTokens != 3 || o.Stream || o.Status != http.StatusOK {
+		t.Fatalf("outcome %+v want a completed non-stream success with 11/3", o)
+	}
+}
+
+func TestNativeNonStreamRequestAnsweredWithSSEIsAccountedFromTheStream(t *testing.T) {
+	gateway, log := nativeGateway(t, openaiadapter.ChatProtocol, fixedBody("text/event-stream", chatStreamWithUsage))
+	response := post(t, gateway, "", "/v1/chat/completions", strings.Replace(chatRequest, "%s", "", 1))
+	_, _ = io.Copy(io.Discard, response.Body)
+	response.Body.Close()
+	outcomes := log.wait(t)
+	if len(outcomes) != 1 {
+		t.Fatalf("outcomes=%d want exactly 1", len(outcomes))
+	}
+	o := outcomes[0]
+	if o.Termination != "" || o.UsageUnobserved || o.InputTokens != 30 || o.OutputTokens != 7 || o.CacheRead != 16 || !o.Stream {
+		t.Fatalf("outcome %+v", o)
+	}
+}
+
+func TestNativeResponsesStreamRequestAnsweredWithJSON(t *testing.T) {
+	gateway, log := nativeGateway(t, openaiadapter.ResponsesProtocol, fixedBody("application/json", responsesBody))
+	response := post(t, gateway, "", "/v1/responses", strings.Replace(responsesRequest, "%s", `,"stream":true`, 1))
+	_, _ = io.Copy(io.Discard, response.Body)
+	response.Body.Close()
+	outcomes := log.wait(t)
+	if len(outcomes) != 1 || outcomes[0].Termination != "" || outcomes[0].InputTokens != 200 || outcomes[0].CacheRead != 128 {
+		t.Fatalf("outcomes %+v", outcomes)
+	}
+}

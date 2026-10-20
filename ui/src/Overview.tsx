@@ -1,7 +1,7 @@
 import { BarChart, EditorialSkeleton, ErrorNotice, StackedBar } from './kit'
 import { useOverviewData } from './data'
 import { Caption, Dot, ErrCell, Fact, Main, Margin, Row, Statement, Status } from './editorial'
-import { ago, badRate, clock, isWeekend, num, outlier, pct, failureStatuses, latestWeekTotal, largest, observeSeries, observedAverage, sameDayLastWeek, weekOverWeek, providerTone, rate, share, statusTone, utcDay, weekendLighter } from './format'
+import { ago, badRate, clock, isWeekend, num, numOrDash, outlier, pct, failureStatuses, latestWeekTotal, largest, observeSeries, observedAverage, sameDayLastWeek, weekOverWeek, providerTone, rate, share, statusTone, utcDay, weekendLighter } from './format'
 
 type Props = { onUnauthorized: () => void }
 
@@ -146,7 +146,7 @@ export function Overview({ onUnauthorized }: Props) {
           {shown.length === 0
             ? <p className="ed-now-note">No requests recorded yet. Send a request through the gateway and it will appear here.</p>
             : <table className="ed-table log-table"><thead><tr><th scope="col">Route</th><th scope="col" className="num">Status</th><th scope="col" className="num">Tokens in / out</th><th scope="col" className="num">Latency</th><th scope="col" className="num">Time</th></tr></thead>
-              <tbody>{shown.map(event => <tr key={event.id}><td className="log-route">{event.providerId} / {event.modelId}</td><td className="num log-status"><Status tone={statusTone(event.status)}>{event.status}</Status></td><td className="num log-tokens">{num(event.inputTokens)} / {num(event.outputTokens)}</td><td className="num log-latency">{event.durationMs ?? 0} ms</td><td className="num log-time">{clock(event.createdAt)}</td></tr>)}</tbody></table>}
+              <tbody>{shown.map(event => <tr key={event.id}><td className="log-route">{event.providerId} / {event.modelId}</td><td className="num log-status"><Status tone={statusTone(event.status)}>{event.status}</Status></td><td className="num log-tokens">{numOrDash(event.inputTokens)} / {numOrDash(event.outputTokens)}</td><td className="num log-latency">{event.durationMs ?? 0} ms</td><td className="num log-time">{clock(event.createdAt)}</td></tr>)}</tbody></table>}
           <figcaption><Caption kicker="Log">Newest first, {num(overview.traffic.requests)} requests recorded in all.</Caption></figcaption>
         </figure>
       </Main>

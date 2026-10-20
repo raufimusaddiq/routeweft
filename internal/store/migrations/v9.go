@@ -1,7 +1,7 @@
 package migrations
 
-// v9 lets a usage record say what is known and what is not. termination is ”
-// for a request that ran to its natural end, 'client_abandoned' when the client
+// v9 lets a usage record say what is known and what is not. termination is the
+// empty string for a request that ran to its natural end, 'client_abandoned' when the client
 // went away mid-flight and 'upstream_truncated' when the upstream stream ended
 // without its terminal event. usage_observed=0 means the upstream never
 // reported usage for the request, so the token columns hold no measurement.

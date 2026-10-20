@@ -3,6 +3,7 @@ package ingress
 import (
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
@@ -31,25 +32,43 @@ func (h *Handler) relayNative(w http.ResponseWriter, r *http.Request, response *
 		return
 	}
 	tw := &trackedWriter{ResponseWriter: w}
+	// The response, not the request, says what is coming back: an upstream may
+	// ignore stream:true and answer a JSON document, or stream when not asked.
+	// Which relay forwards the bytes is unchanged (the request's flag); which
+	// reader measures them follows the response's Content-Type.
+	sse := responseIsSSE(response, stream)
 	var usage promptcache.Usage
 	var found, complete bool
 	var relayErr error
-	if stream {
-		scanner := &usageScanner{family: source}
+	var scanner *usageScanner
+	var capture *topLevelUsageCapture
+	if sse {
+		scanner = &usageScanner{family: source}
 		response.Body = struct {
 			io.Reader
 			io.Closer
 		}{Reader: io.TeeReader(response.Body, scanner), Closer: response.Body}
-		if source == openaiadapter.ChatProtocol {
-			h.copyStream(tw, r, response)
-		} else {
-			h.copyResponsesStream(tw, r, response)
-		}
+	} else {
+		capture = &topLevelUsageCapture{}
+		response.Body = struct {
+			io.Reader
+			io.Closer
+		}{Reader: io.TeeReader(response.Body, capture), Closer: response.Body}
+	}
+	switch {
+	case stream && source == openaiadapter.ChatProtocol:
+		h.copyStream(tw, r, response)
+	case stream:
+		h.copyResponsesStream(tw, r, response)
+	default:
+		_, relayErr = io.Copy(tw, response.Body)
+	}
+	if sse {
 		usage, found = scanner.usage()
 		complete = scanner.complete
 	} else {
-		capture := &topLevelUsageCapture{}
-		_, relayErr = io.Copy(tw, io.TeeReader(response.Body, capture))
+		// A JSON body has no terminal marker; the stream relays report no read
+		// error, so only the plain copy can prove truncation.
 		complete = relayErr == nil
 		if raw, ok := capture.value(); ok {
 			usage, found = shared.ParseUsage(source, append(append([]byte(`{"usage":`), raw...), '}'))
@@ -66,7 +85,17 @@ func (h *Handler) relayNative(w http.ResponseWriter, r *http.Request, response *
 	case !complete:
 		termination = TerminationUpstreamTruncated
 	}
-	h.publishOutcome(r, provider, response.StatusCode, stream, usage, started, termination, !found)
+	h.publishOutcome(r, provider, response.StatusCode, sse, usage, started, termination, !found)
+}
+
+// responseIsSSE reports whether the upstream answered an event stream. A
+// response with no Content-Type is taken to match what was asked for.
+func responseIsSSE(response *http.Response, requestedStream bool) bool {
+	mediaType := strings.ToLower(strings.TrimSpace(strings.SplitN(response.Header.Get("Content-Type"), ";", 2)[0]))
+	if mediaType == "" {
+		return requestedStream
+	}
+	return mediaType == "text/event-stream"
 }
 
 // trackedWriter remembers whether a write to the client failed, which is how a
