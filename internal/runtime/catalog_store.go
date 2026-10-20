@@ -119,6 +119,13 @@ func loadCatalog(ctx context.Context, db *sql.DB, config *Config) error {
 		if err := json.Unmarshal([]byte(allow), &entry.Allow); err != nil {
 			return fmt.Errorf("decode access allowlist for API key %q: %w", entry.ID, err)
 		}
+		// Re-validate what the store holds: an empty or oversized entry can only
+		// come from outside the admin API, and must not become a grant.
+		normalized, err := auth.NormalizeAllow(entry.Allow)
+		if err != nil {
+			return fmt.Errorf("invalid access allowlist for API key %q: %w", entry.ID, err)
+		}
+		entry.Allow = normalized
 		entry.Disabled = enabled == 0
 		entry.Paused = paused == 1
 		config.APIKeys = append(config.APIKeys, entry)
