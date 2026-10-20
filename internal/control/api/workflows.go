@@ -16,14 +16,29 @@ import (
 const probeTimeout = 20 * time.Second
 const workflowTimeout = 2 * time.Minute
 
-func (h *Handler) probeSecret(ctx context.Context, c credentials.Connection) (credentials.Secret, error) {
+func (h *Handler) probeCredential(ctx context.Context, c credentials.Connection) (string, error) {
 	if h.opts.CredentialRegistry != nil && c.ID != "" {
-		secret, err := h.opts.CredentialRegistry.Secret(ctx, c.ID)
+		var token string
+		var err error
+		if c.AuthKind == credentials.AuthCookie {
+			var secret credentials.Secret
+			secret, err = h.opts.CredentialRegistry.Secret(ctx, c.ID)
+			token = secret.Cookie
+		} else {
+			token, err = h.opts.CredentialRegistry.Credential(ctx, c.ID)
+		}
 		if !errors.Is(err, credentials.ErrNotFound) {
-			return secret, err
+			return token, err
 		}
 	}
-	return c.Secret, nil
+	if c.AuthKind == credentials.AuthCookie {
+		return c.Secret.Cookie, nil
+	}
+	spec, _ := h.providerSpec(c.ProviderID)
+	if token := c.Secret.ProviderData[spec.CredentialName]; token != "" {
+		return token, nil
+	}
+	return c.Secret.AccessToken, nil
 }
 
 type validationResult struct {
