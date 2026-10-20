@@ -685,6 +685,8 @@ arbitrary remote command endpoint.
    aliases and settings through Routeweft's own UI/API. Reissue client API keys;
    do not import v1 plaintext keys or assume digest/schema compatibility. Leave
    v1 history in v1; do not combine accounting histories during evaluation.
+   The full one-time policy (mapping, units, refusals, key reissue,
+   reauthorization, history) is `docs/V1_MIGRATION.md`.
    Snapshot publication and an independent restart must preserve the new config.
 4. Prefer separate provider identities/keys. If identities must be shared,
    designate exactly one refresh-token rotation owner and verify the provider's
