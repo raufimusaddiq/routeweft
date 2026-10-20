@@ -935,6 +935,8 @@ Every other `input` shape (empty array, non-message items, object, number) is by
 
 Applied by `internal/providers/wire` (Target, header and Finalize hooks). Pin `1c3b9f47837d42ea64992063309064af755a14a3`.
 
+One seam builds every upstream URL: `wire.NodeBase` (node base, else catalog default, else the base the connection names) and `wire.ResolveTarget` / `Target.URL` (target, endpoint, query). Serving, model probes, model discovery, catalog sync and route listings all use it, with the connection's own settings, so a probe tests the URL and headers a request would use. `TestEveryUpstreamBaseComesFromTheWireSeam` fails any function that reads a provider base URL field and is not listed with its reason, and `TestDialingFunctionsCallTheWireSeam` fails a dialling function that stops calling it. A route listing has no connection, so a node whose base comes from the connection (Azure) lists no routes.
+
 | Behaviour | Providers | Pin | Status |
 | --- | --- | --- | --- |
 | `{azureEndpoint}/openai/deployments/{dep}/chat/completions?api-version=`, `api-key` header, `OpenAI-Organization` | azure | `executors/azure.js:8-52` | ported; base URL comes from the connection (`runtime/providers.go`) |

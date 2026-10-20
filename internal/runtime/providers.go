@@ -14,6 +14,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/cloudflare"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
@@ -199,15 +200,9 @@ func (s *RuntimeSnapshot) AccountProvider(requested, account, source string, can
 	if !ok {
 		return routing.ProviderRef{}, false
 	}
-	// A node with no base URL of its own (Azure OpenAI) takes the one the
-	// connection names; a connection that names none is not selectable.
-	baseURL := config.node.BaseURL
-	if baseURL == "" {
-		baseURL = config.metadata.Settings.AzureEndpoint // azure.js:9
-		if baseURL == "" {
-			baseURL = config.metadata.Settings.BaseURL
-		}
-	}
+	// The base is wire.NodeBase's rule: the node's own, else the one the connection
+	// names (Azure OpenAI declares none); a connection with neither is not selectable.
+	baseURL := wire.NodeBase(config.node.BaseURL, "", config.metadata.Settings)
 	if config.node.ProviderID != model.ProviderID || !config.account.Enabled || len(config.node.Transports) == 0 || baseURL == "" {
 		return routing.ProviderRef{}, false
 	}

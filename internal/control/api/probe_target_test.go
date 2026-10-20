@@ -1,0 +1,182 @@
+package api
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
+	"github.com/raufimusaddiq/routeweft/internal/routing"
+)
+
+// A probe, a model listing and a route listing take the base, target, query and
+// headers serving would use, from the same seam (wire.NodeBase / ResolveTarget),
+// not from their own reading of the node and the catalog default.
+
+type recordedCall struct {
+	URL    string
+	Header http.Header
+}
+
+func recordingHandler(t *testing.T) (*Handler, func() []recordedCall) {
+	t.Helper()
+	h := New(Options{Providers: registry.Builtins()})
+	var mu sync.Mutex
+	var calls []recordedCall
+	h.opts.DiscoveryClient.HTTP = probeHTTPFunc(func(r *http.Request) (*http.Response, error) {
+		mu.Lock()
+		calls = append(calls, recordedCall{r.URL.String(), r.Header.Clone()})
+		mu.Unlock()
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"data":[{"id":"m1"}]}`))}, nil
+	})
+	return h, func() []recordedCall { mu.Lock(); defer mu.Unlock(); return append([]recordedCall(nil), calls...) }
+}
+
+func builtinConnection(provider string, settings routing.ProviderSettings, auth credentials.AuthKind) (credentials.Node, credentials.Connection) {
+	catalog, _ := registry.NewBuiltinCatalog()
+	spec, _ := catalog.Lookup(provider)
+	transports := make([]string, 0, len(spec.Transports))
+	for _, transport := range spec.Transports {
+		transports = append(transports, string(transport))
+	}
+	node := credentials.Node{ID: provider, Kind: credentials.NodeBuiltin, ProviderID: provider, Transports: transports}
+	connection := credentials.Connection{ID: provider + "-c", NodeID: provider, ProviderID: provider, AuthKind: auth, Enabled: true, Settings: settings,
+		Secret: credentials.Secret{AccessToken: "tok"}}
+	return node, connection
+}
+
+func TestProbesTakeServingsTargetAndHeaders(t *testing.T) {
+	catalog, _ := registry.NewBuiltinCatalog()
+	cases := []struct {
+		name, provider, transport string
+		settings                  routing.ProviderSettings
+		wantURL                   string
+		wantHeaders               map[string]string
+		wantNoHeaders             []string
+	}{
+		{"azure deployment url and api-key", "azure", "openai-chat",
+			routing.ProviderSettings{AzureEndpoint: "https://acme.openai.azure.com/", Deployment: "d1", APIVersion: "2025-01-01", Organization: "org-1"},
+			"https://acme.openai.azure.com/openai/deployments/d1/chat/completions?api-version=2025-01-01",
+			map[string]string{"Api-Key": "tok", "OpenAI-Organization": "org-1"}, []string{"Authorization"}},
+		{"kimi messages carries ?beta=true and the device", "kimi", "anthropic-messages",
+			routing.ProviderSettings{DeviceID: "dev-9"},
+			"https://api.kimi.com/coding/v1/messages?beta=true",
+			map[string]string{"X-Msh-Device-Id": "dev-9", "X-Api-Key": "tok"}, nil},
+		{"kimi chat has no query", "kimi", "openai-chat", routing.ProviderSettings{},
+			"https://api.kimi.com/coding/v1/chat/completions", map[string]string{"X-Msh-Device-Id": "routeweft"}, nil},
+		{"tokenplan region host and messages path", "xiaomi-tokenplan", "anthropic-messages",
+			routing.ProviderSettings{Region: " cn "},
+			"https://token-plan-cn.xiaomimimo.com/anthropic/v1/messages", map[string]string{"X-Api-Key": "tok"}, nil},
+		{"tokenplan chat", "xiaomi-tokenplan", "openai-chat", routing.ProviderSettings{Region: "ams"},
+			"https://token-plan-ams.xiaomimimo.com/v1/chat/completions", nil, nil},
+		{"kilocode organization header", "kilocode", "openai-chat", routing.ProviderSettings{OrgID: "org-7"},
+			"https://api.kilo.ai/api/openrouter/chat/completions", map[string]string{"X-Kilocode-Organizationid": "org-7"}, nil},
+		{"glm messages", "glm", "anthropic-messages", routing.ProviderSettings{},
+			"https://api.z.ai/api/anthropic/v1/messages?beta=true", nil, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h, calls := recordingHandler(t)
+			spec, _ := catalog.Lookup(c.provider)
+			node, connection := builtinConnection(c.provider, c.settings, credentials.AuthAPIKey)
+			result := h.testProviderModel(context.Background(), connection, node, spec, c.transport, "model-x", time.Second)
+			got := calls()
+			if len(got) != 1 {
+				t.Fatalf("probe made %d requests (result %+v)", len(got), result)
+			}
+			if got[0].URL != c.wantURL {
+				t.Fatalf("probe URL %s\nwant      %s", got[0].URL, c.wantURL)
+			}
+			for name, want := range c.wantHeaders {
+				if got[0].Header.Get(name) != want {
+					t.Errorf("header %s = %q want %q (%v)", name, got[0].Header.Get(name), want, got[0].Header)
+				}
+			}
+			for _, name := range c.wantNoHeaders {
+				if got[0].Header.Get(name) != "" {
+					t.Errorf("header %s must not be sent: %v", name, got[0].Header)
+				}
+			}
+		})
+	}
+}
+
+// Azure declares no base URL: with none on the connection the probe says so and
+// sends nothing; it must not fail with a generic outbound-policy error on "".
+func TestAzureProbeWithoutAnEndpointSendsNothing(t *testing.T) {
+	catalog, _ := registry.NewBuiltinCatalog()
+	spec, _ := catalog.Lookup("azure")
+	h, calls := recordingHandler(t)
+	node, connection := builtinConnection("azure", routing.ProviderSettings{Deployment: "d1"}, credentials.AuthAPIKey)
+	result := h.testProviderModel(context.Background(), connection, node, spec, "openai-chat", "model-x", time.Second)
+	if result.OK || len(calls()) != 0 || strings.Contains(result.Error, "outbound network policy") || result.Error == "" {
+		t.Fatalf("result %+v, calls %v", result, calls())
+	}
+	// A bad deployment is refused the same way.
+	node, connection = builtinConnection("azure", routing.ProviderSettings{AzureEndpoint: "https://acme.openai.azure.com", Deployment: "../x"}, credentials.AuthAPIKey)
+	if result := h.testProviderModel(context.Background(), connection, node, spec, "openai-chat", "model-x", time.Second); result.OK || len(calls()) != 0 {
+		t.Fatalf("bad deployment probed: %+v", result)
+	}
+}
+
+func TestModelListingsTakeServingsBase(t *testing.T) {
+	cases := []struct {
+		provider string
+		settings routing.ProviderSettings
+		wantHost string
+	}{
+		{"azure", routing.ProviderSettings{AzureEndpoint: "https://acme.openai.azure.com"}, "acme.openai.azure.com"},
+		{"xiaomi-tokenplan", routing.ProviderSettings{Region: "cn"}, "token-plan-cn.xiaomimimo.com"},
+		{"xiaomi-tokenplan", routing.ProviderSettings{}, "token-plan-sgp.xiaomimimo.com"},
+		{"kimi", routing.ProviderSettings{DeviceID: "dev-9"}, "api.kimi.com"},
+	}
+	for _, c := range cases {
+		t.Run(c.provider+"/"+c.wantHost, func(t *testing.T) {
+			h, calls := recordingHandler(t)
+			node, connection := builtinConnection(c.provider, c.settings, credentials.AuthAPIKey)
+			if _, err := h.fetchConnectionModelEntries(context.Background(), connection, node); err != nil {
+				t.Fatal(err)
+			}
+			got := calls()
+			if len(got) != 1 || !strings.Contains(got[0].URL, "//"+c.wantHost+"/") {
+				t.Fatalf("listing went to %+v, want host %s", got, c.wantHost)
+			}
+			if c.provider == "kimi" && got[0].Header.Get("X-Msh-Device-Id") != "dev-9" {
+				t.Errorf("listing lacked the connection's device: %v", got[0].Header)
+			}
+		})
+	}
+}
+
+func TestRouteListingUsesServingsTargets(t *testing.T) {
+	h, mux, _, creds, cookie := newProvidersAPI(t, false, nil)
+	h.opts.Providers = registry.Builtins()
+	for _, id := range []string{"kimi", "xiaomi-tokenplan", "azure"} {
+		node, _ := builtinConnection(id, routing.ProviderSettings{}, credentials.AuthAPIKey)
+		if _, err := creds.PutNode(context.Background(), credentials.Node{ID: id, Kind: credentials.NodeBuiltin, ProviderID: id, Name: id, Transports: node.Transports}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := func(id string) string {
+		w := doJSON(t, mux, cookie, "GET", "/admin/v1/provider-nodes/"+id+"/routes", "")
+		if w.Code != 200 {
+			t.Fatalf("%s routes: %d %s", id, w.Code, w.Body)
+		}
+		return w.Body.String()
+	}
+	if got := body("kimi"); !strings.Contains(got, `"anthropic-messages":"https://api.kimi.com/coding/v1/messages?beta=true"`) || !strings.Contains(got, `"openai-responses":"https://api.kimi.com/coding/v1/responses"`) {
+		t.Errorf("kimi routes %s", got)
+	}
+	if got := body("xiaomi-tokenplan"); !strings.Contains(got, `"anthropic-messages":"https://token-plan-sgp.xiaomimimo.com/anthropic/v1/messages"`) || !strings.Contains(got, `"openai-chat":"https://token-plan-sgp.xiaomimimo.com/v1/chat/completions"`) {
+		t.Errorf("tokenplan routes %s", got)
+	}
+	// An Azure route depends on the connection's endpoint and deployment: none to list.
+	if got := body("azure"); !strings.Contains(got, `"routes":{}`) {
+		t.Errorf("azure routes %s", got)
+	}
+}

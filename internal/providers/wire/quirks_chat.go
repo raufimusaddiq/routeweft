@@ -24,10 +24,6 @@ func jsTruthy(raw json.RawMessage) bool {
 	return true
 }
 
-func isObjectRaw(raw json.RawMessage) bool {
-	return strings.HasPrefix(strings.TrimSpace(string(raw)), "{")
-}
-
 func isArrayRaw(raw json.RawMessage) bool {
 	return strings.HasPrefix(strings.TrimSpace(string(raw)), "[")
 }

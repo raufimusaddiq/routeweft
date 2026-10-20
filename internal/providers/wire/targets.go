@@ -17,6 +17,61 @@ type Target struct {
 	BaseURL, Endpoint, Query string
 }
 
+// NodeBase is the one rule for the base URL a connection is dialled at: the
+// node's own, else the catalog default, else the base the connection names
+// (azureEndpoint, then baseUrl; an Azure node declares none). Serving, probes,
+// model discovery and route listings all take their base from here, so what a
+// probe tests is what a request would reach. Empty means the connection is not
+// dialable.
+func NodeBase(nodeBase, specDefault string, settings routing.ProviderSettings) string {
+	for _, candidate := range []string{nodeBase, specDefault, settings.AzureEndpoint, settings.BaseURL} {
+		if candidate = strings.TrimSpace(candidate); candidate != "" {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// DiscoveryBase is the base a model listing is requested from: the route's base
+// as the provider's Base hook sees it (a Token Plan region host), or the route's
+// own. Unlike ResolveTarget it needs no model, so it works for a provider whose
+// target is built per model (Azure deployments).
+func DiscoveryBase(provider routing.ProviderRef) string {
+	if base := For(provider.ProviderID).Base; base != nil {
+		return base(provider)
+	}
+	return provider.BaseURL
+}
+
+// URL validates the target's base with validate (the SSRF policy of the caller),
+// appends the endpoint, and sets the provider's query. It is the only place an
+// upstream URL is assembled.
+func (t Target) URL(validate func(string) (*url.URL, error)) (*url.URL, error) {
+	base, err := validate(t.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	if t.Endpoint != "" {
+		if strings.HasPrefix(t.Endpoint, "/") || strings.ContainsAny(t.Endpoint, "?#") {
+			return nil, errors.New("provider endpoint must be a relative path without query or fragment")
+		}
+		for _, segment := range strings.Split(t.Endpoint, "/") {
+			if segment == "." || segment == ".." {
+				return nil, errors.New("provider endpoint must not traverse paths")
+			}
+		}
+		base.Path = strings.TrimRight(base.Path, "/") + "/" + t.Endpoint
+	}
+	base.RawPath = ""
+	if t.Query != "" {
+		// The provider's own query: a declared suffix such as ?beta=true, or
+		// Azure's api-version. A base URL cannot carry one (the validators
+		// reject it), so nothing here can be smuggled in from configuration.
+		base.RawQuery = t.Query
+	}
+	return base, nil
+}
+
 // ResolveTarget applies the provider's Target hook to the route's own base URL
 // and endpoint. A provider with no hook is sent exactly where the route says.
 func ResolveTarget(provider routing.ProviderRef, endpoint string) (Target, error) {
@@ -111,6 +166,15 @@ const tokenplanDefaultRegion = "sgp"
 // back to the default region, as config/providers.js:18 does); a connection whose
 // base URL is not an official Xiaomi host keeps its own base.
 func tokenplanTarget(provider routing.ProviderRef) (Target, error) {
+	base := tokenplanBase(provider)
+	if provider.Protocol == anthropicadapter.MessagesProtocol {
+		return Target{BaseURL: strings.TrimSuffix(base, "/v1"), Endpoint: "anthropic/v1/messages"}, nil
+	}
+	return Target{BaseURL: base, Endpoint: "chat/completions"}, nil
+}
+
+// tokenplanBase is the host a Token Plan key is served from.
+func tokenplanBase(provider routing.ProviderRef) string {
 	base := strings.TrimRight(provider.BaseURL, "/")
 	if parsed, err := url.Parse(base); err == nil && strings.HasSuffix(parsed.Hostname(), ".xiaomimimo.com") {
 		base = tokenplanRegions[tokenplanDefaultRegion]
@@ -118,10 +182,7 @@ func tokenplanTarget(provider routing.ProviderRef) (Target, error) {
 			base = regional
 		}
 	}
-	if provider.Protocol == anthropicadapter.MessagesProtocol {
-		return Target{BaseURL: strings.TrimSuffix(base, "/v1"), Endpoint: "anthropic/v1/messages"}, nil
-	}
-	return Target{BaseURL: base, Endpoint: "chat/completions"}, nil
+	return base
 }
 
 // kimiDeviceHeaders: every Kimi transport runs the kimiHeaders hook

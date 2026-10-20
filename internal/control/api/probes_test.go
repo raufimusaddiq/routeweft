@@ -112,7 +112,7 @@ func TestProbeBudgetAndConnectionReuse(t *testing.T) {
 	discoveryClient.Timeout = time.Millisecond
 	discoveryTransport.ResponseHeaderTimeout = time.Millisecond
 	for i := 0; i < 2; i++ {
-		result := h.testProviderModel(context.Background(), credentials.Connection{AuthKind: credentials.AuthNone}, credentials.Node{}, registry.Spec{}, upstream.URL, "openai-chat", "manual", time.Second)
+		result := h.testProviderModel(context.Background(), credentials.Connection{AuthKind: credentials.AuthNone}, credentials.Node{BaseURL: upstream.URL}, registry.Spec{}, "openai-chat", "manual", time.Second)
 		if !result.OK || discoveryClient.Timeout != time.Millisecond || discoveryTransport.ResponseHeaderTimeout != time.Millisecond {
 			t.Fatalf("probe inherited or mutated discovery limits: %+v", result)
 		}
@@ -221,7 +221,7 @@ func TestProbeIndependentBudgetsAndFailureEnvelopes(t *testing.T) {
 		h.opts.DiscoveryClient.HTTP = probeHTTPFunc(func(*http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
 		})
-		r := h.testProviderModel(context.Background(), c, credentials.Node{ProviderID: "manual"}, registry.Spec{}, "http://127.0.0.1:1234", "openai-chat", "manual", time.Second)
+		r := h.testProviderModel(context.Background(), c, credentials.Node{ProviderID: "manual", BaseURL: "http://127.0.0.1:1234"}, registry.Spec{}, "openai-chat", "manual", time.Second)
 		if r.OK || r.Status != 502 || r.UpstreamStatus != 200 || r.ServedModelID != "" || strings.Contains(r.Error, "secret") {
 			t.Fatalf("error metadata claimed successful serving: %+v", r)
 		}
@@ -284,7 +284,7 @@ func TestProbeFirstTokenCancelsEveryNativeTransport(t *testing.T) {
 			h := New(Options{AllowPrivateUpstreams: true, DiscoveryClient: &discovery.Client{HTTP: upstream.Client()}})
 			c := credentials.Connection{Enabled: true, AuthKind: credentials.AuthNone}
 			node := credentials.Node{Kind: credentials.NodeGeneric, ProviderID: "synthetic"}
-			result := h.testProviderModel(context.Background(), c, node, registry.Spec{}, upstream.URL, tc.protocol, "manual:7b", time.Second)
+			result := h.testProviderModel(context.Background(), c, withBase(node, upstream.URL), registry.Spec{}, tc.protocol, "manual:7b", time.Second)
 			if !result.OK || result.Classification != "reachable" || result.ModelID != "manual:7b" || result.UpstreamModelID != "manual:7b" {
 				t.Fatalf("first token: %+v", result)
 			}
@@ -361,7 +361,7 @@ func TestProbeSlowVersusFailedAndCanceled(t *testing.T) {
 			if mode == "canceled" {
 				cancel()
 			}
-			result := h.testProviderModel(ctx, credentials.Connection{AuthKind: credentials.AuthNone}, credentials.Node{}, registry.Spec{}, upstream.URL, "openai-chat", "manual", 100*time.Millisecond)
+			result := h.testProviderModel(ctx, credentials.Connection{AuthKind: credentials.AuthNone}, credentials.Node{BaseURL: upstream.URL}, registry.Spec{}, "openai-chat", "manual", 100*time.Millisecond)
 			wantClass, wantStatus := "slow", 504
 			if mode == "hard-failure" {
 				wantClass, wantStatus = "failed", 502
@@ -471,4 +471,9 @@ func TestProbeAliasAttributionAcrossWorkflows(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"ok":false`) || !strings.Contains(w.Body.String(), "disabled") || strings.Contains(w.Body.String(), "servedModelId") {
 		t.Fatalf("disabled alias was sent literally: %d %s", w.Code, w.Body)
 	}
+}
+
+func withBase(node credentials.Node, base string) credentials.Node {
+	node.BaseURL = base
+	return node
 }

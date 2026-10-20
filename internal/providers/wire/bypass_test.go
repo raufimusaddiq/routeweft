@@ -1,0 +1,177 @@
+package wire
+
+import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+)
+
+// How a function that reads a provider base URL field (`.BaseURL`,
+// `.DefaultBaseURL`) relates to the wire seam.
+const (
+	// dials: it resolves or uses an upstream base, so its body must call
+	// wire.NodeBase, wire.ResolveTarget or wire.DiscoveryBase.
+	dials = "dials"
+	// sink: it dials the base its caller handed it (the caller is a "dials").
+	sink = "sink"
+	// config: it stores, validates or shows the value and never dials it.
+	config = "config"
+)
+
+type baseReader struct{ kind, reason string }
+
+// upstreamBaseReaders are the only non-test functions allowed to read a provider
+// base URL field. Every request that reaches an upstream (serving, probe, model
+// discovery, route listing) takes its base from wire.NodeBase and its URL from
+// wire.ResolveTarget / Target.URL, so a connection-supplied base, a region host, a
+// deployment path and a query appear on all of them. A function that reads one of
+// these fields and is not listed here is a new place that builds an upstream
+// base, and this test fails it; a "dials" entry that stops calling wire fails too.
+var upstreamBaseReaders = map[string]baseReader{
+	"runtime/providers.go:AccountProvider":           {dials, "serving route: wire.NodeBase"},
+	"control/api/providers.go:probeRef":              {dials, "probe/listing route: wire.NodeBase"},
+	"control/api/providers.go:testProviderModel":     {dials, "model probe: wire.ResolveTarget then Target.URL"},
+	"control/api/workflows.go:handleNodeRoutes":      {dials, "route listing: wire.NodeBase and wire.ResolveTarget"},
+	"providers/discovery/lifecycle.go:SyncSpec":      {dials, "catalog sync: wire.NodeBase"},
+	"credentials/resolver.go:ResolveForAccount":      {dials, "builds a ProviderRef: wire.NodeBase (no caller outside tests)"},
+	"providers/discovery/discovery.go:ModelEntries":  {sink, "dials the base its callers resolved with wire.NodeBase / wire.DiscoveryBase"},
+	"routing/plan.go:BuildPlan":                      {config, "requires a base to exist; does not build one"},
+	"runtime/providers.go:compileProviders":          {config, "fills a built-in node's stored base from its spec"},
+	"credentials/store.go:PutNode":                   {config, "stores the node"},
+	"credentials/store.go:GetNode":                   {config, "loads the node"},
+	"credentials/store.go:ListNodes":                 {config, "loads nodes"},
+	"control/api/providers.go:handlePutProviderNode": {config, "operator edits the node's own base URL"},
+	"control/api/providers.go:nodeJSON":              {config, "shows the node"},
+	"credentials/resolver.go:node":                   {config, "loads the node row"},
+	"control/api/providers.go:builtinNode":           {config, "seeds a built-in node from the catalog"},
+	"control/api/read_models.go:providers":           {config, "shows the catalog's default base URL"},
+	"control/api/read_models.go:providerNodes":       {config, "shows the node's base URL"},
+	"control/api/workflows.go:handleValidateNode":    {config, "validates an operator-supplied base URL against policy"},
+	"providers/generic/generic.go:Validate":          {config, "generic node validation"},
+	"providers/generic/generic.go:Endpoint":          {config, "generic node's own endpoint; no caller outside its package"},
+	"providers/generic/generic.go:DiscoverModels":    {config, "generic node; no caller outside its package"},
+}
+
+func callsWire(fn *ast.FuncDecl) bool {
+	calls := false
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			if id, ok := sel.X.(*ast.Ident); ok && id.Name == "wire" {
+				calls = true
+			}
+		}
+		return !calls
+	})
+	return calls
+}
+
+func TestEveryUpstreamBaseComesFromTheWireSeam(t *testing.T) {
+	root := filepath.Join("..", "..") // internal/
+	found := map[string]bool{}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || strings.HasSuffix(path, "_gen.go") {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		if strings.HasPrefix(rel, "providers/wire/") {
+			return nil // the seam itself
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			return err
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			reads := false
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if sel, ok := n.(*ast.SelectorExpr); ok && (sel.Sel.Name == "BaseURL" || sel.Sel.Name == "DefaultBaseURL") {
+					reads = true
+				}
+				return !reads
+			})
+			if reads {
+				name := rel + ":" + fn.Name.Name
+				found[name] = true
+				if entry, listed := upstreamBaseReaders[name]; listed && entry.kind == dials && !callsWire(fn) {
+					t.Errorf("%s is listed as dialling but no longer calls the wire seam", name)
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for name := range found {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if _, allowed := upstreamBaseReaders[name]; !allowed {
+			t.Errorf("%s reads a provider base URL but is not on the allowlist: build the upstream URL with wire.NodeBase and wire.ResolveTarget instead, or list it with the reason it never dials", name)
+		}
+	}
+	for name := range upstreamBaseReaders {
+		if !found[name] {
+			t.Errorf("allowlist entry %s no longer reads a base URL; remove it", name)
+		}
+	}
+}
+
+// The functions that dial an upstream must reach it through the seam even when
+// they never name a base URL field themselves, so they are pinned by name too.
+var mustCallWire = map[string][]string{
+	"ingress/ingress.go:newUpstreamRequest":                {"ResolveTarget"},
+	"control/api/providers.go:testProviderModel":           {"ResolveTarget"},
+	"control/api/providers.go:fetchConnectionModelEntries": {"DiscoveryBase"},
+	"control/api/workflows.go:handleNodeRoutes":            {"ResolveTarget", "NodeBase"},
+	"runtime/providers.go:AccountProvider":                 {"NodeBase"},
+}
+
+func TestDialingFunctionsCallTheWireSeam(t *testing.T) {
+	root := filepath.Join("..", "..")
+	for name, wanted := range mustCallWire {
+		file, function, _ := strings.Cut(name, ":")
+		parsed, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, filepath.FromSlash(file)), nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fn *ast.FuncDecl
+		for _, decl := range parsed.Decls {
+			if candidate, ok := decl.(*ast.FuncDecl); ok && candidate.Name.Name == function {
+				fn = candidate
+			}
+		}
+		if fn == nil {
+			t.Errorf("%s: function not found", name)
+			continue
+		}
+		for _, want := range wanted {
+			found := false
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == want {
+					if id, ok := sel.X.(*ast.Ident); ok && id.Name == "wire" {
+						found = true
+					}
+				}
+				return !found
+			})
+			if !found {
+				t.Errorf("%s no longer calls wire.%s: an upstream URL must be built with the seam", name, want)
+			}
+		}
+	}
+}

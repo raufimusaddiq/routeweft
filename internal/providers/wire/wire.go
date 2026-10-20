@@ -34,9 +34,14 @@ type Hook struct {
 	// MessagesHeaders are identity headers for Messages requests, applied after
 	// the credential and before the shared OAuth identity table.
 	MessagesHeaders func(routing.ProviderRef) map[string]string
-	// NoBearer leaves the Authorization credential header off Chat and Responses
-	// requests, for a provider whose credential travels in another header.
-	NoBearer bool
+	// NoOpenAIBearer leaves the bearer Authorization header off Chat and
+	// Responses requests, for a provider whose credential there travels in another
+	// header that OpenAIHeaders sets (Azure's api-key). It does not touch the
+	// Messages credential, which BearerMessages and MessagesHeaders own.
+	NoOpenAIBearer bool
+	// Base is the host a model listing is requested from, when it is not the
+	// route's base (a Token Plan region).
+	Base func(routing.ProviderRef) string
 	// Target resolves where the request goes when that depends on the
 	// connection, the model or the wire (a deployment path, a region, a query).
 	Target func(routing.ProviderRef) (Target, error)
@@ -65,8 +70,8 @@ var hooks = map[string]Hook{
 	"minimax-cn":       minimaxHook,
 	"deepseek":         {Finalize: supportedToolTypes("web_search_20250305", "web_search_20260209")},
 	"kenari":           {Finalize: foldResponsesSystem},
-	"azure":            {NoBearer: true, OpenAIHeaders: azureHeaders, Target: azureTarget},
-	"xiaomi-tokenplan": {Target: tokenplanTarget},
+	"azure":            {NoOpenAIBearer: true, OpenAIHeaders: azureHeaders, Target: azureTarget},
+	"xiaomi-tokenplan": {Target: tokenplanTarget, Base: tokenplanBase},
 	"glm":              {Target: betaQuery},
 	"kimi":             {OpenAIHeaders: kimiDeviceHeaders, MessagesHeaders: kimiDeviceHeaders, Target: betaQuery},
 	"kilocode":         {OpenAIHeaders: kilocodeOrgHeaders},
@@ -105,7 +110,7 @@ func Registered() []string {
 func OpenAIHeaders(provider routing.ProviderRef) http.Header {
 	headers := http.Header{}
 	hook := For(provider.ProviderID)
-	if provider.APIToken != "" && !hook.NoBearer {
+	if provider.APIToken != "" && !hook.NoOpenAIBearer {
 		headers.Set("Authorization", "Bearer "+provider.APIToken)
 	}
 	if hook.OpenAIHeaders != nil {
