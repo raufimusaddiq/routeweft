@@ -145,7 +145,13 @@ func upstreamRejects(provider string, header http.Header, body map[string]any, r
 		if messages, _ := body["messages"].([]any); len(messages) == 0 {
 			return "messages: at least one message is required"
 		}
+		var previous string
 		for _, message := range concerns.Items(body["messages"]) {
+			if role := concerns.Text(concerns.Object(message)["role"]); role == previous {
+				return "roles must alternate"
+			} else {
+				previous = role
+			}
 			for _, block := range concerns.Items(concerns.Object(message)["content"]) {
 				if b := concerns.Object(block); b["type"] == "thinking" && concerns.Text(b["signature"]) == "" {
 					return "thinking.signature: field required"
@@ -457,5 +463,47 @@ func TestTranslationErrorIsKeptWhenNothingWasAttempted(t *testing.T) {
 	mux.ServeHTTP(w, r)
 	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "request_translation_failed") {
 		t.Fatalf("status %d body %s", w.Code, w.Body)
+	}
+}
+
+// A Chat client's parallel tool round trip reaches a Messages provider as turns
+// that alternate, which the fake upstream enforces.
+func TestParallelToolResultsReachAMessagesProvider(t *testing.T) {
+	var rejected string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		if reason := upstreamRejects(anthropic.MessagesProtocol, r.Header, body, string(raw)); reason != "" {
+			rejected = reason
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, `{"error":{"message":%q}}`, reason)
+			return
+		}
+		fmt.Fprint(w, upstreamBodies[anthropic.MessagesProtocol][false])
+	}))
+	defer upstream.Close()
+	manager := newManager(t)
+	_, key, _ := manager.CreateAPIKey(context.Background(), "test")
+	mux := http.NewServeMux()
+	New(manager, Options{
+		AllowPrivateUpstreams: true, TranslateChat: TranslateChat,
+		Candidates: func(*runtime.RuntimeSnapshot, string) ([]routing.Account, bool) {
+			return []routing.Account{{ID: "a", Enabled: true}}, true
+		},
+		AccountProvider: func(_ *runtime.RuntimeSnapshot, _, account, _ string) (routing.ProviderRef, bool) {
+			return routing.ProviderRef{ProviderID: "test", ConnectionID: account, BaseURL: upstream.URL, Protocol: anthropic.MessagesProtocol}, true
+		},
+	}).Attach(mux)
+	body := `{"model":"test/model","messages":[{"role":"user","content":"q"},
+	  {"role":"assistant","tool_calls":[{"id":"a","type":"function","function":{"name":"x","arguments":"{}"}},{"id":"b","type":"function","function":{"name":"y","arguments":"{}"}}]},
+	  {"role":"tool","tool_call_id":"a","content":"ra"},{"role":"tool","tool_call_id":"b","content":"rb"},{"role":"user","content":"next"}]}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+key)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || rejected != "" {
+		t.Fatalf("status %d, upstream rejected %q: %s", w.Code, rejected, w.Body)
 	}
 }

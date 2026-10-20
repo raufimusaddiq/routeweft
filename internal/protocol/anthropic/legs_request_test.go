@@ -458,3 +458,66 @@ func TestChatRequestToMessagesSendsNothingTheUpstreamHasNotAgreedTo(t *testing.T
 		t.Errorf("top_p alone is carried: %s", got)
 	}
 }
+
+func roles(t *testing.T, encoded []byte) []string {
+	t.Helper()
+	var result map[string]any
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatal(err)
+	}
+	var list []string
+	for _, message := range concerns.Items(result["messages"]) {
+		list = append(list, concerns.Text(concerns.Object(message)["role"]))
+	}
+	return list
+}
+
+// Anthropic rejects consecutive turns of one role. Parallel tool results,
+// a result followed by text, and a split assistant turn all have to merge into
+// one turn, with the tool_result blocks first.
+func TestChatRequestToMessagesAlternatesRoles(t *testing.T) {
+	calls2 := `{"role":"assistant","tool_calls":[{"id":"a","type":"function","function":{"name":"x","arguments":"{}"}},{"id":"b","type":"function","function":{"name":"y","arguments":"{}"}}]}`
+	call1 := `{"role":"assistant","tool_calls":[{"id":"a","type":"function","function":{"name":"x","arguments":"{}"}}]}`
+	cases := map[string]string{
+		"parallel results":   `[{"role":"user","content":"q"},` + calls2 + `,{"role":"tool","tool_call_id":"a","content":"ra"},{"role":"tool","tool_call_id":"b","content":"rb"}]`,
+		"result then text":   `[{"role":"user","content":"q"},` + call1 + `,{"role":"tool","tool_call_id":"a","content":"ra"},{"role":"user","content":"next"}]`,
+		"parallel then text": `[{"role":"user","content":"q"},` + calls2 + `,{"role":"tool","tool_call_id":"a","content":"ra"},{"role":"tool","tool_call_id":"b","content":"rb"},{"role":"user","content":"next"}]`,
+		"split assistant":    `[{"role":"user","content":"q"},{"role":"assistant","content":"thinking aloud"},` + call1 + `,{"role":"tool","tool_call_id":"a","content":"ra"}]`,
+		"user user":          `[{"role":"user","content":"a"},{"role":"user","content":"b"}]`,
+		"two rounds":         `[{"role":"user","content":"q"},` + call1 + `,{"role":"tool","tool_call_id":"a","content":"ra"},{"role":"assistant","content":"mid"},{"role":"user","content":"again"}]`,
+	}
+	for name, messages := range cases {
+		body, _ := concerns.WireObject([]byte(`{"model":"m","messages":` + messages + `}`))
+		got, _, err := ChatRequestToMessages(body, "m", false, true, false)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		list := roles(t, got)
+		for i := 1; i < len(list); i++ {
+			if list[i] == list[i-1] {
+				t.Errorf("%s: consecutive %s turns: %v\n%s", name, list[i], list, got)
+			}
+		}
+		// Every tool_result sits before any other block of its turn.
+		var result map[string]any
+		_ = json.Unmarshal(got, &result)
+		for _, message := range concerns.Items(result["messages"]) {
+			seenOther := false
+			for _, block := range concerns.Items(concerns.Object(message)["content"]) {
+				if concerns.Text(concerns.Object(block)["type"]) == "tool_result" {
+					if seenOther {
+						t.Errorf("%s: a tool_result follows other content: %s", name, got)
+					}
+				} else {
+					seenOther = true
+				}
+			}
+		}
+	}
+	body, _ := concerns.WireObject([]byte(`{"model":"m","messages":` + cases["parallel then text"] + `}`))
+	got, _, _ := ChatRequestToMessages(body, "m", false, true, false)
+	text := string(got)
+	if strings.Count(text, `"tool_result"`) != 2 || !strings.Contains(text, `"text":"next"`) {
+		t.Fatalf("both results and the text must survive: %s", text)
+	}
+}

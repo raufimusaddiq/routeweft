@@ -115,6 +115,7 @@ func ChatToMessages(body map[string]any, model string, stream bool) (map[string]
 			}
 		}
 		flush()
+		messages = mergeTurns(messages)
 		markLastAssistant(messages)
 	}
 	if format := concerns.Object(body["response_format"]); format != nil {
@@ -227,6 +228,40 @@ func stopSequences(stop any) []any {
 		}
 	}
 	return sequences
+}
+
+// mergeTurns enforces the one rule Anthropic holds every conversation to: roles
+// alternate. Consecutive turns of one role become one turn, with tool_result
+// blocks first (translator/formats/claude.js:146-168, the pin's own merge, which
+// it runs in prepareClaudeRequest). Every branch above that appends a turn is
+// covered here rather than each remembering to merge: parallel tool results,
+// a result followed by text, and an assistant turn split by a tool_use.
+func mergeTurns(messages []any) []any {
+	merged := make([]any, 0, len(messages))
+	for _, raw := range messages {
+		message := concerns.Object(raw)
+		if last := concerns.Object(lastOf(merged)); last != nil && last["role"] == message["role"] {
+			var results, others []any
+			for _, block := range append(concerns.Items(last["content"]), concerns.Items(message["content"])...) {
+				if concerns.Text(concerns.Object(block)["type"]) == "tool_result" {
+					results = append(results, block)
+				} else {
+					others = append(others, block)
+				}
+			}
+			last["content"] = append(results, others...)
+			continue
+		}
+		merged = append(merged, message)
+	}
+	return merged
+}
+
+func lastOf(list []any) any {
+	if len(list) == 0 {
+		return nil
+	}
+	return list[len(list)-1]
 }
 
 // markLastAssistant puts a cache breakpoint on the last cacheable block of the

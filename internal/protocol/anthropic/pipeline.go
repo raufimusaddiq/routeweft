@@ -18,8 +18,9 @@ func lastRoleIsUser(body map[string]any) bool {
 
 // MessagesRequestToChat runs the pin's request pipeline for a Messages client
 // served by a Chat provider (translator/index.js:69-154): drop thinking when the
-// conversation does not end on a user turn, repair tool ids, answer unanswered
-// tool calls, convert, then normalise the result for OpenAI-compatible upstreams.
+// conversation does not end on a user turn, repair tool ids, convert (the leg
+// answers unanswered tool calls once, on the Chat messages it produces), then
+// normalise the result for OpenAI-compatible upstreams.
 //
 // The pin's preserveCacheControl quirk (translator/index.js:152) is not a
 // parameter here: the leg rebuilds every block without cache_control, so there
@@ -33,7 +34,6 @@ func MessagesRequestToChat(raw []byte, model string, stream bool) ([]byte, error
 		delete(body, "thinking")
 	}
 	concerns.EnsureToolCallIDs(body)
-	concerns.FixMissingToolResponses(body)
 	chat, err := MessagesToChat(body, model, stream)
 	if err != nil {
 		return nil, err
