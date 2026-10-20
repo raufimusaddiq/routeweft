@@ -396,7 +396,7 @@ func ResponsesStream(names map[string]bool, body io.ReadCloser) io.ReadCloser {
 	if len(names) == 0 {
 		return body
 	}
-	return &eventRewriter{source: body, reader: bufio.NewReaderSize(body, 32*1024), names: names, converted: map[string]bool{}}
+	return &eventRewriter{source: body, reader: bufio.NewReaderSize(body, 32*1024), names: names, converted: map[string]bool{}, announced: map[string]bool{}}
 }
 
 type eventRewriter struct {
@@ -404,9 +404,33 @@ type eventRewriter struct {
 	reader    *bufio.Reader
 	names     map[string]bool
 	converted map[string]bool // item ids announced as custom_tool_call
-	sequence  int64           // last sequence_number relayed, for the injected terminal event
+	announced map[string]bool // item ids of every function_call announced by an output_item event
+	held      []heldDelta     // argument deltas of items never announced, until their .done says what they are
+	heldSize  int
+	sequence  int64 // last sequence_number relayed, for the injected terminal event
 	pending   []byte
 	err       error
+}
+
+type heldDelta struct {
+	id    string
+	event []byte
+}
+
+// takeHeld removes and returns the held deltas of one item.
+func (r *eventRewriter) takeHeld(id string) []byte {
+	var out []byte
+	kept := r.held[:0]
+	for _, delta := range r.held {
+		if delta.id == id {
+			out = append(out, delta.event...)
+			r.heldSize -= len(delta.event)
+		} else {
+			kept = append(kept, delta)
+		}
+	}
+	r.held = kept
+	return out
 }
 
 func (r *eventRewriter) Close() error { return r.source.Close() }
@@ -439,6 +463,14 @@ func (r *eventRewriter) next() ([]byte, error) {
 			rewritten, rewriteErr := r.rewrite(event)
 			if rewriteErr != nil {
 				return failedEvent(rewriteErr, r.sequence+1), io.EOF
+			}
+			if err != nil {
+				// Deltas that never met a .done cannot be paired with any tool;
+				// they go out as they came.
+				for _, delta := range r.held {
+					rewritten = append(rewritten, delta.event...)
+				}
+				r.held = nil
 			}
 			return rewritten, err
 		}
@@ -516,8 +548,14 @@ func (r *eventRewriter) rewrite(event []byte) ([]byte, error) {
 		var original string
 		_ = json.Unmarshal(item["id"], &original)
 		rewritten, ok, err := asCustomItem(item, r.names, kind == "response.output_item.done")
-		if err != nil || !ok {
+		if err != nil {
 			return event, err
+		}
+		if !ok {
+			if original != "" {
+				r.announced[original] = true
+			}
+			return event, nil
 		}
 		if original != "" {
 			r.converted[original] = true
@@ -527,15 +565,29 @@ func (r *eventRewriter) rewrite(event []byte) ([]byte, error) {
 	case "response.function_call_arguments.delta":
 		// The freeform input must arrive whole, so the JSON fragments are dropped
 		// (:212-215).
-		if r.converted[itemID()] {
+		id := itemID()
+		if r.converted[id] {
 			return nil, nil
 		}
+		if id == "" || r.announced[id] {
+			return event, nil
+		}
+		// No output_item event named this item, so nothing says whether it is a
+		// converted call. Hold the delta until the .done (which carries the tool
+		// name) decides: dropped for a converted call, released for any other.
+		if r.heldSize+len(event) > maxResponsesEvent {
+			return nil, ErrResponsesEventTooLarge
+		}
+		r.held = append(r.held, heldDelta{id: id, event: append([]byte(nil), event...)})
+		r.heldSize += len(event)
+		return nil, nil
 	case "response.function_call_arguments.done":
 		id := itemID()
 		var toolName string
 		_ = json.Unmarshal(payload["name"], &toolName)
+		held := r.takeHeld(id)
 		if !r.converted[id] && !r.names[toolName] {
-			return event, nil
+			return append(held, event...), nil
 		}
 		input, err := customInput(toolName, payload["arguments"])
 		if err != nil {
@@ -549,7 +601,7 @@ func (r *eventRewriter) rewrite(event []byte) ([]byte, error) {
 			payload["item_id"], _ = json.Marshal("ctc_" + strings.TrimPrefix(id, "fc_"))
 		}
 		return emit(customDone)
-	case "response.completed", "response.done", "response.incomplete":
+	case "response.completed", "response.done", "response.incomplete", "response.failed":
 		// response.incomplete is what kenari sends on max_output_tokens, when a
 		// call may be half emitted; it carries the same output as completed.
 		var response map[string]json.RawMessage

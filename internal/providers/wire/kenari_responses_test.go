@@ -240,3 +240,31 @@ func TestCustomToolNamesSkipsAMalformedEntry(t *testing.T) {
 		t.Errorf("names = %v, want {exec}", got)
 	}
 }
+
+const unannouncedDelta = "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"delta\":\"{\\\"input\\\":\\\"ls\\\"}\"}\n\n"
+
+func TestResponsesStreamDropsDeltasOfAConvertedItemNeverAnnounced(t *testing.T) {
+	done := "event: response.function_call_arguments.done\ndata: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_1\",\"name\":\"exec\",\"arguments\":\"{\\\"input\\\":\\\"ls\\\"}\"}\n\n"
+	got := relay(t, unannouncedDelta+done)
+	if strings.Contains(got, "function_call_arguments") || strings.Contains(got, "fc_1") || !strings.Contains(got, `"item_id":"ctc_1"`) {
+		t.Errorf("a function_call delta leaked:\n%s", got)
+	}
+}
+
+func TestResponsesStreamReleasesDeltasOfAnUnannouncedOtherTool(t *testing.T) {
+	done := ("event: response.function_call_arguments.done\ndata: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_1\",\"name\":\"keep\",\"arguments\":\"{}\"}\n\n")
+	if got := relay(t, unannouncedDelta+done); got != unannouncedDelta+done {
+		t.Errorf("stream changed:\n%s", got)
+	}
+	// A delta that never meets a .done is relayed at the end of the stream.
+	if got := relay(t, unannouncedDelta); got != unannouncedDelta {
+		t.Errorf("unpaired delta changed:\n%s", got)
+	}
+}
+
+func TestResponsesStreamRewritesAFailedTerminal(t *testing.T) {
+	in := "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"output\":[{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"c\",\"name\":\"exec\",\"arguments\":\"{\\\"input\\\":\\\"ls\\\"}\"}]}}\n\n"
+	if got := relay(t, in); !strings.Contains(got, `"type":"custom_tool_call"`) || strings.Contains(got, `"type":"function_call"`) {
+		t.Errorf("failed terminal not rewritten:\n%s", got)
+	}
+}
