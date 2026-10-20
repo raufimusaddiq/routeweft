@@ -207,7 +207,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				return nil, provider, &dispatchError{502, "upstream_configuration_error", "provider URL or endpoint is not allowed"}
 			}
 			used++
-			response, err := h.clientFor(provider).Do(request)
+			response, err := wire.Send(provider, h.clientFor(provider), request)
 			if err != nil {
 				if r.Context().Err() != nil {
 					return nil, provider, r.Context().Err()
