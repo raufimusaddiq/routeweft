@@ -41,12 +41,14 @@ func parseDNSToolEnabled(raw string) (map[string]bool, error) {
 	return entries, nil
 }
 
-// normalizeLegacySettings rewrites stored values whose earlier Routeweft shape
-// is no longer valid, so an upgraded database keeps compiling. dnsToolEnabled
-// was a single boolean; a boolean cannot name providers, so it compiles to the
-// empty map (nothing consumed it).
+// normalizeLegacySettings rewrites the one earlier Routeweft shape that is no
+// longer valid: dnsToolEnabled used to be a bare boolean. A boolean cannot name
+// providers, so it compiles to the empty map (nothing consumed it). Any other
+// unparseable value is left as stored rather than discarded as if it were the
+// legacy boolean; nothing reads the compiled value, and SetSettings rejects it
+// on the next write.
 func normalizeLegacySettings(settings map[string]string) {
-	if _, err := parseDNSToolEnabled(settings["dnsToolEnabled"]); err != nil {
+	if raw := strings.TrimSpace(settings["dnsToolEnabled"]); raw == "true" || raw == "false" {
 		settings["dnsToolEnabled"] = "{}"
 	}
 }

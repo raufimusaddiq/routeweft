@@ -172,6 +172,15 @@ func TestC04DNSToolEnabledMap(t *testing.T) {
 	if got := snapshot.Settings()["dnsToolEnabled"]; got != "{}" {
 		t.Fatalf("legacy boolean compiled to %q", got)
 	}
+	// A malformed map is not the legacy boolean and must not be discarded.
+	malformed := `{"openai":"true"}`
+	snapshot, err = (Compiler{}).Compile(Config{Settings: map[string]string{"dnsToolEnabled": malformed}}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := snapshot.Settings()["dnsToolEnabled"]; got != malformed {
+		t.Fatalf("malformed map rewritten to %q", got)
+	}
 }
 
 // C04.5: providerStrategies / comboStrategies objects and sticky settings.

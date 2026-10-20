@@ -288,7 +288,6 @@ func (s *RuntimeSnapshot) ProviderStrategyOverride(provider string) (routing.Str
 	strategy, ok := s.providerStrategies[provider]
 	return strategy, ok
 }
-func (s *RuntimeSnapshot) ProviderStickyLimit() uint64 { return s.providerStickyLimit }
 
 // ProviderStickyLimitFor resolves the per-provider stickyRoundRobinLimit
 // override over the global limit, as the pin does at auth.js:186
