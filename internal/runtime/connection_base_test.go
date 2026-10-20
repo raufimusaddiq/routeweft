@@ -66,3 +66,25 @@ func TestKiloOrgIDReachesTheRoute(t *testing.T) {
 		t.Fatalf("kilocode route: ok=%v settings=%+v", ok, ref.Connection.Settings)
 	}
 }
+
+// Vertex partner stores its GCP project as projectId; it must reach the serving
+// route, where wire.ResolveTarget builds the project path from it.
+func TestVertexPartnerProjectIDReachesTheRoute(t *testing.T) {
+	ctx := context.Background()
+	m, s := providerStore(t)
+	node, err := s.PutNode(ctx, credentials.Node{ID: "vertex-partner", Kind: credentials.NodeBuiltin, ProviderID: "vertex-partner", Name: "Vertex Partner", BaseURL: "https://aiplatform.googleapis.com", Transports: []string{"openai-chat"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PutConnection(ctx, credentials.Connection{ID: "v", NodeID: node.ID, Name: "v", Identity: "id", AuthKind: credentials.AuthAPIKey, Enabled: true, Secret: credentials.Secret{AccessToken: "t", ProviderData: map[string]string{"projectId": "my-proj-123"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.PutModel(ctx, Model{ProviderID: "vertex-partner", ID: "m", Name: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ := m.Load()
+	ref, ok := snapshot.AccountProvider("vertex-partner/m", "v", "openai-chat", nil)
+	if !ok || ref.Connection.Settings.ProjectID != "my-proj-123" {
+		t.Fatalf("vertex-partner route: ok=%v settings=%+v", ok, ref.Connection.Settings)
+	}
+}

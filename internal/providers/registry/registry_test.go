@@ -373,3 +373,15 @@ func TestNamedCredentialRequiresExpiryDeclaration(t *testing.T) {
 		}
 	}
 }
+
+// registry/opencode.js modelsFetcher: https://opencode.ai/zen/v1/models.
+func TestOpenCodeDiscoversFromTheZenModelList(t *testing.T) {
+	catalog, err := NewBuiltinCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := catalog.Lookup("opencode")
+	if spec.DefaultBaseURL != "https://opencode.ai" || spec.DiscoveryPath != "zen/v1/models" {
+		t.Fatalf("opencode discovery %q + %q", spec.DefaultBaseURL, spec.DiscoveryPath)
+	}
+}

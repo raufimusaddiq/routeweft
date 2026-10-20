@@ -97,6 +97,8 @@ var hooks = map[string]Hook{
 	"clinepass":        clineHook,
 	"codebuddy-cn":     codebuddyCN,
 	"codebuddy-intl":   codebuddyIntl,
+	"opencode":         {Target: opencodeTarget, ForceStream: true, Finalize: codebuddyStream},
+	"vertex-partner":   {Target: vertexPartnerTarget},
 }
 
 var minimaxHook = Hook{Finalize: chain(dropOutputConfig, requireClaudeToolType), Target: betaQuery}
