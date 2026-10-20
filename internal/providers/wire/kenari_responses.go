@@ -57,12 +57,18 @@ func ResponsesCustomToolNames(providerID string, request []byte) map[string]bool
 }
 
 func customToolNames(body Body) map[string]bool {
-	var tools []map[string]json.RawMessage
+	var tools []json.RawMessage
 	if json.Unmarshal(body["tools"], &tools) != nil {
 		return nil
 	}
+	// A malformed entry is skipped, as convertCustomTools skips it; it must not
+	// disable the rewrite for the tools around it.
 	var names map[string]bool
-	for _, tool := range tools {
+	for _, raw := range tools {
+		var tool map[string]json.RawMessage
+		if json.Unmarshal(raw, &tool) != nil || tool == nil {
+			continue
+		}
 		if name, ok := customToolName(tool); ok {
 			if names == nil {
 				names = map[string]bool{}
@@ -526,11 +532,11 @@ func (r *eventRewriter) rewrite(event []byte) ([]byte, error) {
 		}
 	case "response.function_call_arguments.done":
 		id := itemID()
-		if !r.converted[id] {
-			return event, nil
-		}
 		var toolName string
 		_ = json.Unmarshal(payload["name"], &toolName)
+		if !r.converted[id] && !r.names[toolName] {
+			return event, nil
+		}
 		input, err := customInput(toolName, payload["arguments"])
 		if err != nil {
 			return nil, err
@@ -543,7 +549,9 @@ func (r *eventRewriter) rewrite(event []byte) ([]byte, error) {
 			payload["item_id"], _ = json.Marshal("ctc_" + strings.TrimPrefix(id, "fc_"))
 		}
 		return emit(customDone)
-	case "response.completed":
+	case "response.completed", "response.done", "response.incomplete":
+		// response.incomplete is what kenari sends on max_output_tokens, when a
+		// call may be half emitted; it carries the same output as completed.
 		var response map[string]json.RawMessage
 		if json.Unmarshal(payload["response"], &response) != nil || response == nil {
 			return event, nil

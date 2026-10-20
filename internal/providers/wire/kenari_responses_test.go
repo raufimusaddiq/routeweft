@@ -94,8 +94,6 @@ func TestRewriteResponsesBodyRefusesArgumentsItCannotRead(t *testing.T) {
 	}
 }
 
-func sse(events ...string) string { return strings.Join(events, "") }
-
 const kenariStream = `event: response.created
 data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress","output":[]}}
 
@@ -216,5 +214,29 @@ func TestResponsesStreamRefusalContinuesTheSequence(t *testing.T) {
 	in = strings.Replace(in, `"name":"exec","arguments":"{\"input\":\"ls\"}"}`, `"name":"exec","arguments":"{\"input\":null}"}`, 1)
 	if got := relay(t, in); !strings.Contains(got, `"sequence_number":8`) {
 		t.Errorf("injected event not numbered after 7:\n%s", got)
+	}
+}
+
+func TestResponsesStreamRewritesTruncatedTerminalEvents(t *testing.T) {
+	for _, kind := range []string{"response.incomplete", "response.done"} {
+		in := "event: " + kind + "\ndata: {\"type\":\"" + kind + "\",\"response\":{\"status\":\"incomplete\",\"output\":[{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"c\",\"name\":\"exec\",\"arguments\":\"{\\\"input\\\":\\\"ls\\\"}\"}]}}\n\n"
+		got := relay(t, in)
+		if !strings.HasPrefix(got, "event: "+kind+"\n") || !strings.Contains(got, `"type":"custom_tool_call"`) || !strings.Contains(got, `"input":"ls"`) || strings.Contains(got, `"type":"function_call"`) {
+			t.Errorf("%s not rewritten:\n%s", kind, got)
+		}
+	}
+}
+
+func TestResponsesStreamRewritesArgumentsDoneForAnUnannouncedItem(t *testing.T) {
+	in := "event: response.function_call_arguments.done\ndata: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_1\",\"name\":\"exec\",\"arguments\":\"{\\\"input\\\":\\\"ls\\\"}\"}\n\n"
+	if got := relay(t, in); !strings.Contains(got, "response.custom_tool_call_input.done") || !strings.Contains(got, `"item_id":"ctc_1"`) {
+		t.Errorf("not rewritten:\n%s", got)
+	}
+}
+
+func TestCustomToolNamesSkipsAMalformedEntry(t *testing.T) {
+	got := ResponsesCustomToolNames("kenari", []byte(`{"tools":["junk",null,{"type":"custom","name":"exec"}]}`))
+	if len(got) != 1 || !got["exec"] {
+		t.Errorf("names = %v, want {exec}", got)
 	}
 }
