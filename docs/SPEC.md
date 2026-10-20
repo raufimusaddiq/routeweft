@@ -396,6 +396,31 @@ Conversion is expressed as legs. A request leg converts a client-format body int
 
 The format identifiers and the legs LiteRouter registers are read from the pinned oracle by `internal/parity` (`translator/formats.js`, `translator/request/`, `translator/response/`). They are not written in this document.
 
+### 9.5 AWS EventStream framing
+
+`concerns.ReadEventStream` validates the 12-byte prelude, big-endian frame and
+header lengths, prelude CRC32/IEEE and message CRC32/IEEE before delivering a
+frame. A frame is at least 16 bytes and at most 24 MiB; headers are at most
+128 KiB; the stream shares the 32 MiB translated-response budget. Header types
+0–9 are retained, including signed 64-bit integers, timestamp milliseconds and
+UUID bytes. Duplicate names, empty names, invalid UTF-8 names/strings, unknown
+header types and truncated headers fail. Payload bytes remain opaque: an empty
+payload and JSON `null` are distinct, and JSON validation belongs to the adapter.
+
+The consumer identifies terminal events and validates protocol-specific event
+shapes. The reader continues through EOF to reject trailing malformed bytes;
+even a valid terminal followed by corrupt framing is a failure. EOF without a
+consumer-recognized terminal is a failure. Consumers must wait for the reader's
+successful return before emitting a success terminal. They receive every valid
+frame, including unknown event types; framing never silently skips an event.
+The reader starts no goroutine and retains no session state. Callers must close
+the source to interrupt blocked reads on cancellation, as the HTTP dispatcher
+does when its request context is canceled. There is no replay/retry in the reader.
+
+The direct-pair path and binary reader are tested together using a test-only
+protocol through ingress and a scripted HTTP endpoint. No Kiro conversion leg
+or provider capability is enabled by this framing foundation (#119 PR 4a).
+
 ## 10. Protocol adapters
 
 A protocol adapter owns wire behavior, not provider identity.
