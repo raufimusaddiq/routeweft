@@ -1438,7 +1438,6 @@ Expected base settings:
 ROUTEWEFT_LISTEN=:21128
 ROUTEWEFT_DATA_DIR=/var/lib/routeweft
 ROUTEWEFT_LOG_LEVEL=info
-ROUTEWEFT_TRUSTED_PROXIES=
 ROUTEWEFT_BOOTSTRAP_ADMIN_PASSWORD=
 ROUTEWEFT_MAX_BODY_BYTES=134217728
 ROUTEWEFT_CORS_ORIGINS=
@@ -1447,6 +1446,16 @@ ROUTEWEFT_CORS_ORIGINS=
 The public request-body limit defaults to 128 MiB. Cross-origin requests are
 denied unless an explicit comma-separated origin allowlist is configured.
 Preflight requests do not require an API key.
+
+`ROUTEWEFT_LOG_LEVEL` controls the JSON service logger through Go `slog`
+level parsing (default `info`; `debug`, `warn`, and `error` are supported).
+Invalid levels fail before opening the data directory. There is no log-level
+CLI flag.
+
+`ROUTEWEFT_TRUSTED_PROXIES` is not implemented and is not a deployment setting.
+Forwarded-IP headers are ignored for all peers; login throttling uses the socket
+remote address. Configurable proxy trust remains unimplemented. This preserves
+the default-deny rule in PRD-SEC-002 without trusting client-supplied headers.
 
 Provider secrets are configured through the admin/control plane or import tooling, not committed config files.
 
