@@ -123,7 +123,7 @@ func failMessagesStream(writer *concerns.SSEWriter, ctx context.Context, cause e
 		failure = map[string]any{"type": "api_error", "message": concerns.Text(failure["message"])}
 	}
 	if err := writer.Event("error", map[string]any{"type": "error", "error": failure}); err != nil {
-		return err
+		return cause // the write failing is a consequence; the cause is why we got here
 	}
 	return cause
 }

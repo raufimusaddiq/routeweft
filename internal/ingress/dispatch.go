@@ -72,7 +72,16 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 	if len(candidates) == 0 {
 		return nil, routing.ProviderRef{}, &dispatchError{503, "no_eligible_accounts", routing.ErrNoEligibleAccounts.Error()}
 	}
-	var lastErr, translationErr error
+	// What to tell the client when no candidate answers. An attempt that reached
+	// an upstream and failed is the real cause and outranks a candidate that
+	// never got that far (credentials, a request its wire cannot express); among
+	// the failed attempts the latest one stands.
+	var attemptErr, preAttemptErr, translationErr error
+	var attemptResponse *http.Response
+	var attemptProvider routing.ProviderRef
+	failedAttempt := func(err error, response *http.Response, provider routing.ProviderRef) {
+		attemptErr, attemptResponse, attemptProvider = err, response, provider
+	}
 	used := 0
 	authFailureSeen := false
 	for index, provider := range candidates {
@@ -89,9 +98,9 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 					return nil, provider, r.Context().Err()
 				}
 				h.recordClassification(provider.ConnectionID, routing.Classification{Outcome: routing.OutcomeAuthRefreshRequired}, time.Now())
-				lastErr = &dispatchError{503, "credentials_unavailable", "provider credentials are unavailable"}
+				preAttemptErr = &dispatchError{503, "credentials_unavailable", "provider credentials are unavailable"}
 				if errors.Is(err, credentials.ErrKeyRequired) {
-					return nil, provider, lastErr
+					return nil, provider, preAttemptErr
 				}
 				continue
 			}
@@ -102,8 +111,9 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			// The request cannot be expressed for this candidate's wire, which says
 			// nothing about the account's health: try the next candidate rather
 			// than let candidate order decide whether the request succeeds.
-			translationErr = &dispatchError{502, "request_translation_failed", err.Error()}
-			lastErr = translationErr
+			if translationErr == nil {
+				translationErr = &dispatchError{502, "request_translation_failed", err.Error()}
+			}
 			continue
 		}
 		for retry := 0; retry < 2 && used < maxAccountAttempts; retry++ {
@@ -121,7 +131,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 					return nil, provider, r.Context().Err()
 				}
 				h.recordClassification(provider.ConnectionID, routing.Classification{Outcome: routing.OutcomeFallbackAccount}, time.Now())
-				lastErr = err
+				failedAttempt(err, nil, provider)
 				break
 			}
 			if response.StatusCode >= 200 && response.StatusCode < 300 {
@@ -161,6 +171,15 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				continue
 			}
 			if classification.AllowsFallback() && readErr == nil && index+1 < len(candidates) && used < maxAccountAttempts {
+				// Keep what this upstream said in case nothing later answers; the
+				// peeked prefix is the body a client would see for an error.
+				kept := *response
+				kept.Header = response.Header.Clone()
+				if int64(len(prefix)) >= errorBodyPeek {
+					kept.Header.Del("Content-Length")
+				}
+				kept.Body = io.NopCloser(bytes.NewReader(prefix))
+				failedAttempt(nil, &kept, provider)
 				response.Body.Close()
 				break
 			}
@@ -171,13 +190,15 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			return response, provider, nil
 		}
 	}
-	if used == 0 && translationErr != nil {
-		// Nothing was attempted, so the reason the request could not be sent is
-		// the one to report, not an unrelated error from a candidate skipped later.
+	switch {
+	case attemptResponse != nil:
+		return attemptResponse, attemptProvider, nil
+	case attemptErr != nil:
+		return nil, routing.ProviderRef{}, attemptErr
+	case translationErr != nil:
 		return nil, routing.ProviderRef{}, translationErr
+	case preAttemptErr != nil:
+		return nil, routing.ProviderRef{}, preAttemptErr
 	}
-	if lastErr == nil {
-		return nil, routing.ProviderRef{}, &dispatchError{503, "no_eligible_accounts", routing.ErrNoEligibleAccounts.Error()}
-	}
-	return nil, routing.ProviderRef{}, lastErr
+	return nil, routing.ProviderRef{}, &dispatchError{503, "no_eligible_accounts", routing.ErrNoEligibleAccounts.Error()}
 }

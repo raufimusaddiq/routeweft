@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -44,6 +45,7 @@ type streamFunc = func(context.Context, io.Reader, io.Writer) error
 // terminal it was handed.
 func chainStreams(first, second streamFunc) streamFunc {
 	return func(ctx context.Context, src io.Reader, dst io.Writer) error {
+		parent := ctx
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		reader, writer := io.Pipe()
@@ -61,11 +63,21 @@ func chainStreams(first, second streamFunc) streamFunc {
 		if closer, ok := src.(io.Closer); ok {
 			_ = closer.Close()
 		}
-		if firstErr := <-done; err == nil {
-			err = firstErr
-		}
-		return err
+		return chainError(err, <-done, parent)
 	}
+}
+
+// chainError picks the error to report for two chained legs. The first leg's
+// failure is the root cause (the upstream broke); the second leg's is usually
+// its echo. What the first leg reports only because the second leg stopped, a
+// closed pipe or the cancel chainStreams itself issued, is not a cause at all.
+func chainError(second, first error, parent context.Context) error {
+	ours := errors.Is(first, io.ErrClosedPipe) ||
+		(errors.Is(first, context.Canceled) && (parent.Err() == nil || second != nil))
+	if first != nil && !ours {
+		return first
+	}
+	return second
 }
 
 func chainBodies(first, second func([]byte) ([]byte, error)) func([]byte) ([]byte, error) {

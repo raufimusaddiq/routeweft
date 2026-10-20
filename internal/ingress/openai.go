@@ -9,6 +9,7 @@ import (
 
 	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
+	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
 	clineprovider "github.com/raufimusaddiq/routeweft/internal/providers/cline"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
@@ -93,6 +94,12 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 			} else if plan.TargetProtocol == anthropicadapter.MessagesProtocol {
 				if translated.Headers == nil {
 					translated.Headers = http.Header{}
+				}
+				if provider.ProviderID == "claude" && err == nil {
+					// The legs add no system prompt of their own (PARITY V14); the
+					// Claude OAuth credential is used with its CLI identity, so that
+					// belongs to this provider's preparation.
+					translated.Body, err = claudeprovider.WithIdentity(translated.Body)
 				}
 				for name, values := range anthropicHeaders(r, provider) {
 					translated.Headers[name] = values

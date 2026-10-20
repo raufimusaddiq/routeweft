@@ -507,3 +507,102 @@ func TestParallelToolResultsReachAMessagesProvider(t *testing.T) {
 		t.Fatalf("status %d, upstream rejected %q: %s", w.Code, rejected, w.Body)
 	}
 }
+
+// An attempt that reached an upstream and failed is the cause to report, even
+// when a later candidate could not express the request.
+func TestUpstreamFailureOutranksALaterTranslationFailure(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprint(w, `{"error":{"message":"slow down, account a"}}`)
+	}))
+	defer upstream.Close()
+	manager := newManager(t)
+	_, key, _ := manager.CreateAPIKey(context.Background(), "test")
+	mux := http.NewServeMux()
+	New(manager, Options{
+		AllowPrivateUpstreams: true,
+		TranslateMessages: func(request *anthropic.MessagesRequest, target string) (ChatTranslation, error) {
+			if target == openai.ResponsesProtocol {
+				return ChatTranslation{}, errors.New("unsupported: cannot express this for Responses")
+			}
+			return TranslateMessages(request, target)
+		},
+		Candidates: func(*runtime.RuntimeSnapshot, string) ([]routing.Account, bool) {
+			return []routing.Account{{ID: "a", Enabled: true}, {ID: "b", Enabled: true}}, true
+		},
+		AccountProvider: func(_ *runtime.RuntimeSnapshot, _, account, _ string) (routing.ProviderRef, bool) {
+			protocol := openai.ChatProtocol
+			if account == "b" {
+				protocol = openai.ResponsesProtocol
+			}
+			return routing.ProviderRef{ProviderID: "test", ConnectionID: account, BaseURL: upstream.URL, Protocol: protocol}, true
+		},
+	}).Attach(mux)
+	r := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(fmt.Sprintf(clientRequests[anthropic.MessagesProtocol].body, false)))
+	r.Header.Set("Authorization", "Bearer "+key)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), "account a") || strings.Contains(w.Body.String(), "request_translation_failed") {
+		t.Fatalf("the client must see account a's 429, not a translation error: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestChainErrorNamesTheCause(t *testing.T) {
+	live := context.Background()
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	boom, echo := errors.New("upstream truncated"), errors.New("second leg echo")
+	cases := []struct {
+		name          string
+		second, first error
+		parent        context.Context
+		want          error
+	}{
+		{"first broke, second echoed it", echo, boom, live, boom},
+		{"first broke, second finished", nil, boom, live, boom},
+		{"first only stopped because second did", echo, io.ErrClosedPipe, live, echo},
+		{"first was cancelled by the chain", nil, context.Canceled, live, nil},
+		{"client went away", echo, context.Canceled, cancelled, echo},
+	}
+	for _, c := range cases {
+		if got := chainError(c.second, c.first, c.parent); got != c.want {
+			t.Errorf("%s: got %v want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// Only the Claude OAuth provider is given the CLI identity; every other
+// Messages provider gets exactly the caller's own system text.
+func TestClaudeIdentityIsProviderPreparationNotTranslation(t *testing.T) {
+	for providerID, want := range map[string]bool{"claude": true, "anthropic": false, "deepseek": false} {
+		var seen string
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			raw, _ := io.ReadAll(r.Body)
+			seen = string(raw)
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, upstreamBodies[anthropic.MessagesProtocol][false])
+		}))
+		manager := newManager(t)
+		_, key, _ := manager.CreateAPIKey(context.Background(), "test")
+		mux := http.NewServeMux()
+		New(manager, Options{
+			AllowPrivateUpstreams: true, TranslateChat: TranslateChat,
+			Candidates: func(*runtime.RuntimeSnapshot, string) ([]routing.Account, bool) {
+				return []routing.Account{{ID: "a", Enabled: true}}, true
+			},
+			AccountProvider: func(_ *runtime.RuntimeSnapshot, _, account, _ string) (routing.ProviderRef, bool) {
+				return routing.ProviderRef{ProviderID: providerID, ConnectionID: account, BaseURL: upstream.URL, Protocol: anthropic.MessagesProtocol}, true
+			},
+		}).Attach(mux)
+		body := `{"model":"test/model","messages":[{"role":"system","content":"be brief"},{"role":"user","content":"ping"}]}`
+		r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+key)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		upstream.Close()
+		if has := strings.Contains(seen, "You are Claude Code"); has != want || !strings.Contains(seen, "be brief") || w.Code != 200 {
+			t.Errorf("%s: identity present=%v want %v, status %d, body %s", providerID, has, want, w.Code, seen)
+		}
+	}
+}

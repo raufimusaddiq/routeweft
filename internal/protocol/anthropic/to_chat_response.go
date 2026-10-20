@@ -180,10 +180,10 @@ func failChatStream(writer *concerns.SSEWriter, ctx context.Context, cause error
 		return cause
 	}
 	if err := writer.Event("", map[string]any{"error": streamFailureValue(cause)}); err != nil {
-		return err
+		return cause // the write failing is a consequence; the cause is why we got here
 	}
 	if err := writer.Done(); err != nil {
-		return err
+		return cause
 	}
 	return cause
 }

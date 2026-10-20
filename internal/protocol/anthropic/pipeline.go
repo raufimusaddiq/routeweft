@@ -39,12 +39,15 @@ func MessagesRequestToChat(raw []byte, model string, stream bool) ([]byte, error
 		return nil, err
 	}
 	if options, set := body["stream_options"]; set {
-		// A client that set stream_options chose; its value is forwarded as is.
+		// A Messages body has no such field, so this only fires for a client that
+		// sends one anyway; the owner's condition is that a client's own choice
+		// is never overwritten.
 		chat["stream_options"] = options
 	} else if stream {
-		// Without this a Chat provider omits the usage chunk and the Messages
-		// client would see zero tokens. A deliberate divergence from the pin
-		// (SPEC 9.3, PARITY V9); Responses->Chat does the same.
+		// The divergence from the pin: a Chat provider omits the usage chunk
+		// unless asked, and a Messages client would then see zero tokens. It is
+		// ours to make, not the client's (SPEC 9.3, PARITY V9); Responses->Chat
+		// does the same.
 		chat["stream_options"] = map[string]any{"include_usage": true}
 	}
 	openai.FilterChatBody(chat, false)
