@@ -179,3 +179,35 @@ func TestCapabilityAdapterPartialPutKeepsStoredState(t *testing.T) {
 		t.Fatalf("explicit empty pool: %d %s", cleared.Code, cleared.Body.String())
 	}
 }
+
+// An imported pool can hold a member that no longer resolves. Only members the
+// body supplies are checked, so the adapter stays editable.
+func TestCapabilityAdapterStoredUnresolvedMemberStaysEditable(t *testing.T) {
+	handler, mux, store, _, cookie := newProvidersAPI(t, false, nil)
+	defer store.Close()
+	ctx := context.Background()
+	if err := handler.opts.ProviderCatalog.PutModel(ctx, runtime.Model{ProviderID: "openai", ID: "gpt-a", Source: "custom"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handler.opts.Settings.SetSettings(ctx, map[string]string{"capacityAdapterVision": `{"enabled":true,"roundRobin":false,"pool":[{"providerId":"openai","modelId":"gpt-pin-alias"}]}`}, nil); err != nil {
+		t.Fatal(err)
+	}
+	partial := doJSON(t, mux, cookie, http.MethodPut, "/admin/v1/capability-adapters/vision", `{"roundRobin":true}`)
+	if partial.Code != http.StatusOK || !containsAll(partial.Body.String(), `"roundRobin":true`, `"modelId":"gpt-pin-alias"`) {
+		t.Fatalf("partial PUT on imported pool: %d %s", partial.Code, partial.Body.String())
+	}
+	// The UI resends the whole stored pool when adding a member.
+	add := doJSON(t, mux, cookie, http.MethodPut, "/admin/v1/capability-adapters/vision", `{"enabled":true,"pool":[{"providerId":"openai","modelId":"gpt-pin-alias"},{"providerId":"openai","modelId":"gpt-a"}]}`)
+	if add.Code != http.StatusOK || !containsAll(add.Body.String(), `"modelId":"gpt-pin-alias"`, `"modelId":"gpt-a"`) {
+		t.Fatalf("resend with new member: %d %s", add.Code, add.Body.String())
+	}
+	// A member that is neither stored nor resolvable is still refused.
+	bad := doJSON(t, mux, cookie, http.MethodPut, "/admin/v1/capability-adapters/vision", `{"pool":[{"providerId":"openai","modelId":"ghost"}]}`)
+	if bad.Code != http.StatusBadRequest {
+		t.Fatalf("new unresolved member accepted: %d", bad.Code)
+	}
+	remove := doJSON(t, mux, cookie, http.MethodPut, "/admin/v1/capability-adapters/vision", `{"pool":[{"providerId":"openai","modelId":"gpt-a"}]}`)
+	if remove.Code != http.StatusOK || containsAll(remove.Body.String(), `gpt-pin-alias`) {
+		t.Fatalf("remove: %d %s", remove.Code, remove.Body.String())
+	}
+}

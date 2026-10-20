@@ -23,16 +23,31 @@ func ImportPinSettings(pin map[string]json.RawMessage) (settings map[string]stri
 
 	// A 0 limit falls through to the default in the pin (`|| 3`, auth.js:186;
 	// normalizeStickyLimit, combo.js:186-189), so it is normalized the same way.
-	providerSticky := pinUint(pin["stickyRoundRobinLimit"], 3)
-	if providerSticky == 0 {
-		providerSticky = 3
+	// Every decode below either yields a value, adds a note or fails the import;
+	// none is discarded (TestC04ImportNeverDropsWrongTypedFieldSilently).
+	limit := func(where string, raw json.RawMessage, def uint64) (uint64, bool) {
+		value, ok := pinUint(raw)
+		if !ok {
+			note("%s: %s is not a non-negative integer, not carried", where, strings.TrimSpace(string(raw)))
+			return def, false
+		}
+		return value, true
 	}
-	comboSticky := max(pinUint(pin["comboStickyRoundRobinLimit"], 1), 1)
-	if _, ok := pin["stickyRoundRobinLimit"]; ok {
-		settings["stickyRoundRobinLimit"] = formatUint(providerSticky)
+	providerSticky, comboSticky := uint64(3), uint64(1)
+	if raw, ok := pin["stickyRoundRobinLimit"]; ok {
+		if value, valid := limit("stickyRoundRobinLimit", raw, 3); valid {
+			providerSticky = value
+			if providerSticky == 0 {
+				providerSticky = 3
+			}
+			settings["stickyRoundRobinLimit"] = formatUint(providerSticky)
+		}
 	}
-	if _, ok := pin["comboStickyRoundRobinLimit"]; ok {
-		settings["comboStickyRoundRobinLimit"] = formatUint(comboSticky)
+	if raw, ok := pin["comboStickyRoundRobinLimit"]; ok {
+		if value, valid := limit("comboStickyRoundRobinLimit", raw, 1); valid {
+			comboSticky = max(value, 1)
+			settings["comboStickyRoundRobinLimit"] = formatUint(comboSticky)
+		}
 	}
 
 	// 1. capacityAdapter {cap: {enabled, roundRobin, models}} -> four settings.
@@ -48,10 +63,12 @@ func ImportPinSettings(pin map[string]json.RawMessage) (settings map[string]stri
 				note("capacityAdapter.%s: unknown capability, not carried", pinName)
 				continue
 			}
-			setting, _ := CapacityAdapterSetting(name)
-			encoded, entryNotes := importCapacityAdapter(pinName, entry)
+			setting, _ := CapacityAdapterSetting(name) // name comes from pinCaps, always a known capability
+			encoded, carried, entryNotes := importCapacityAdapter(pinName, entry)
 			notes = append(notes, entryNotes...)
-			settings[setting] = encoded
+			if carried {
+				settings[setting] = encoded
+			}
 		}
 	}
 
@@ -75,7 +92,7 @@ func ImportPinSettings(pin map[string]json.RawMessage) (settings map[string]stri
 		if list == nil {
 			list = []string{}
 		}
-		encoded, _ := json.Marshal(list)
+		encoded, _ := json.Marshal(list) // []string cannot fail to marshal
 		settings["noProxy"] = string(encoded)
 	}
 
@@ -83,8 +100,10 @@ func ImportPinSettings(pin map[string]json.RawMessage) (settings map[string]stri
 	// multiply by 1024); Routeweft stores bytes. A zero/absent value means the
 	// pin used its default, so Routeweft's own default (5 MiB, PRD 15) is kept.
 	if raw, ok := pin["observabilityMaxJsonSize"]; ok {
-		kib := pinUint(raw, 0)
-		if kib == 0 {
+		kib, valid := limit("observabilityMaxJsonSize", raw, 0)
+		if !valid {
+			// noted above; the Routeweft default stays
+		} else if kib == 0 {
 			note("observabilityMaxJsonSize: unset or 0 in the pin, keeping the Routeweft default")
 		} else {
 			settings["observabilityMaxJsonSize"] = formatUint(kib * 1024)
@@ -99,7 +118,7 @@ func ImportPinSettings(pin map[string]json.RawMessage) (settings map[string]stri
 		if json.Unmarshal(raw, &entries) != nil || entries == nil {
 			note("dnsToolEnabled: not a provider->boolean object, not carried")
 		} else {
-			encoded, _ := json.Marshal(entries)
+			encoded, _ := json.Marshal(entries) // map[string]bool cannot fail to marshal
 			settings["dnsToolEnabled"] = string(encoded)
 		}
 	}
@@ -107,7 +126,9 @@ func ImportPinSettings(pin map[string]json.RawMessage) (settings map[string]stri
 	// 5. strategies. The pin's "round-robin" always honours a sticky limit.
 	if raw, ok := pin["fallbackStrategy"]; ok {
 		var strategy string
-		if json.Unmarshal(raw, &strategy) == nil {
+		if json.Unmarshal(raw, &strategy) != nil {
+			note("fallbackStrategy: %s is not a string, not carried", strings.TrimSpace(string(raw)))
+		} else {
 			switch strategy {
 			case "fill-first":
 				settings["providerStrategy"] = "fill-first"
@@ -120,7 +141,9 @@ func ImportPinSettings(pin map[string]json.RawMessage) (settings map[string]stri
 	}
 	if raw, ok := pin["comboStrategy"]; ok {
 		var strategy string
-		if json.Unmarshal(raw, &strategy) == nil {
+		if json.Unmarshal(raw, &strategy) != nil {
+			note("comboStrategy: %s is not a string, not carried", strings.TrimSpace(string(raw)))
+		} else {
 			switch strategy {
 			case "fallback":
 				settings["comboStrategy"] = "fallback"
@@ -158,42 +181,70 @@ func ImportPinSettings(pin map[string]json.RawMessage) (settings map[string]stri
 	return settings, notes, nil
 }
 
-func importCapacityAdapter(pinName string, raw json.RawMessage) (string, []string) {
-	var notes []string
+// importCapacityAdapter converts one pin capability entry. carried is false when
+// the entry cannot be read as the pin reads it; the capability then keeps its
+// Routeweft default and the reason is in notes, rather than storing a disabled
+// or emptied adapter.
+func importCapacityAdapter(pinName string, raw json.RawMessage) (encoded string, carried bool, notes []string) {
+	bad := func(format string, args ...any) (string, bool, []string) {
+		return "", false, append(notes, fmt.Sprintf("capacityAdapter.%s: "+format+", capability not carried", append([]any{pinName}, args...)...))
+	}
 	enabled, roundRobin := false, false
 	var models []string
+	addModel := func(item json.RawMessage) {
+		var text string
+		var object struct {
+			Model string `json:"model"`
+		}
+		switch {
+		case json.Unmarshal(item, &text) == nil && text != "":
+			models = append(models, text)
+		case json.Unmarshal(item, &object) == nil && object.Model != "":
+			models = append(models, object.Model)
+		default:
+			notes = append(notes, fmt.Sprintf("capacityAdapter.%s: model entry %s is not a model string, not carried", pinName, strings.TrimSpace(string(item))))
+		}
+	}
 	raw = bytes.TrimSpace(raw)
-	if len(raw) > 0 && raw[0] == '[' {
+	switch {
+	case len(raw) > 0 && raw[0] == '[':
 		// Legacy array form: treated as enabled, fallback (capacityAdapter.js:19-21).
 		var items []json.RawMessage
-		_ = json.Unmarshal(raw, &items)
+		if err := json.Unmarshal(raw, &items); err != nil {
+			return bad("legacy array is malformed (%v)", err)
+		}
 		enabled = true
 		for _, item := range items {
-			var text string
-			var object struct {
-				Model string `json:"model"`
-			}
-			if json.Unmarshal(item, &text) == nil && text != "" {
-				models = append(models, text)
-			} else if json.Unmarshal(item, &object) == nil && object.Model != "" {
-				models = append(models, object.Model)
-			}
+			addModel(item)
 		}
-	} else if len(raw) > 0 && raw[0] == '{' {
-		var object struct {
-			Enabled    *bool    `json:"enabled"`
-			RoundRobin bool     `json:"roundRobin"`
-			Models     []string `json:"models"`
+	case len(raw) > 0 && raw[0] == '{':
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return bad("entry is malformed (%v)", err)
 		}
-		_ = json.Unmarshal(raw, &object)
 		// enabled !== false: a missing flag means enabled (capacityAdapter.js:24).
-		enabled = object.Enabled == nil || *object.Enabled
-		roundRobin = object.RoundRobin
-		for _, model := range object.Models {
-			if model != "" {
-				models = append(models, model)
+		enabled = true
+		if value, ok := fields["enabled"]; ok {
+			if err := json.Unmarshal(value, &enabled); err != nil {
+				return bad("enabled %s is not a boolean", strings.TrimSpace(string(value)))
 			}
 		}
+		if value, ok := fields["roundRobin"]; ok {
+			if err := json.Unmarshal(value, &roundRobin); err != nil {
+				return bad("roundRobin %s is not a boolean", strings.TrimSpace(string(value)))
+			}
+		}
+		if value, ok := fields["models"]; ok {
+			var items []json.RawMessage
+			if err := json.Unmarshal(value, &items); err != nil {
+				return bad("models %s is not an array", strings.TrimSpace(string(value)))
+			}
+			for _, item := range items {
+				addModel(item)
+			}
+		}
+	default:
+		return bad("entry %s is neither an object nor an array", string(raw))
 	}
 	pool := make([]map[string]string, 0, len(models))
 	seen := make(map[string]struct{}, len(models))
@@ -212,8 +263,8 @@ func importCapacityAdapter(pinName string, raw json.RawMessage) (string, []strin
 	if len(pool) > 0 {
 		notes = append(notes, fmt.Sprintf("capacityAdapter.%s: provider prefixes kept verbatim and NOT resolved against the catalog (the admin PUT rejects unresolved members); correct any pin alias or unknown model after import", pinName))
 	}
-	encoded, _ := json.Marshal(map[string]any{"enabled": enabled, "roundRobin": roundRobin, "pool": pool})
-	return string(encoded), notes
+	out, _ := json.Marshal(map[string]any{"enabled": enabled, "roundRobin": roundRobin, "pool": pool})
+	return string(out), true, notes
 }
 
 func importStrategyOverrides(key string, raw json.RawMessage, combo bool, globalSticky uint64) (string, []string, error) {
@@ -225,16 +276,20 @@ func importStrategyOverrides(key string, raw json.RawMessage, combo bool, global
 	out := make(map[string]map[string]any, len(entries))
 	for name, value := range entries {
 		var fields map[string]json.RawMessage
-		if json.Unmarshal(value, &fields) != nil {
+		if json.Unmarshal(value, &fields) != nil || fields == nil {
 			notes = append(notes, fmt.Sprintf("%s.%s: not an object, not carried", key, name))
 			continue
 		}
 		entry := map[string]any{}
 		limit := globalSticky
 		if !combo {
-			if own := pinUint(fields["stickyRoundRobinLimit"], 0); own > 0 {
-				limit = own
-				entry["stickyRoundRobinLimit"] = own
+			if raw, ok := fields["stickyRoundRobinLimit"]; ok {
+				if own, valid := pinUint(raw); !valid {
+					notes = append(notes, fmt.Sprintf("%s.%s: stickyRoundRobinLimit %s is not a non-negative integer, not carried", key, name, strings.TrimSpace(string(raw))))
+				} else if own > 0 {
+					limit = own
+					entry["stickyRoundRobinLimit"] = own
+				}
 			}
 		}
 		var strategy string
@@ -268,27 +323,28 @@ func importStrategyOverrides(key string, raw json.RawMessage, combo bool, global
 			out[name] = entry
 		}
 	}
-	encoded, _ := json.Marshal(out)
+	encoded, _ := json.Marshal(out) // built from strings and integers above
 	return string(encoded), notes, nil
 }
 
-// pinUint reads a JS number or numeric string; absent/invalid yields def.
-func pinUint(raw json.RawMessage, def uint64) uint64 {
-	if len(raw) == 0 {
-		return def
+// pinUint reads a JS number or numeric string. ok is false when the value is
+// present but is neither (null, a fraction, a negative, text, an object).
+func pinUint(raw json.RawMessage) (value uint64, ok bool) {
+	if string(bytes.TrimSpace(raw)) == "null" {
+		return 0, false // Unmarshal would accept null as 0
 	}
 	var number float64
 	if json.Unmarshal(raw, &number) == nil {
 		if number < 0 || number != float64(uint64(number)) {
-			return def
+			return 0, false
 		}
-		return uint64(number)
+		return uint64(number), true
 	}
 	var text string
 	if json.Unmarshal(raw, &text) == nil {
 		if parsed, err := strconv.ParseUint(strings.TrimSpace(text), 10, 64); err == nil {
-			return parsed
+			return parsed, true
 		}
 	}
-	return def
+	return 0, false
 }

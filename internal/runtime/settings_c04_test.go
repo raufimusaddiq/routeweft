@@ -368,3 +368,67 @@ func TestC04TolerantReaderSkipsOnlyTheBadEntry(t *testing.T) {
 		t.Fatalf("non-object: %v", got)
 	}
 }
+
+// TestC04ImportNeverDropsWrongTypedFieldSilently feeds a wrong-typed value for
+// every field the importer accepts. Each must fail the import or leave a note;
+// none may be swallowed, and none may store a degraded value in its place.
+func TestC04ImportNeverDropsWrongTypedFieldSilently(t *testing.T) {
+	cases := map[string]string{
+		"sticky string":                               `{"stickyRoundRobinLimit":"many"}`,
+		"sticky null":                                 `{"stickyRoundRobinLimit":null}`,
+		"sticky fraction":                             `{"stickyRoundRobinLimit":2.5}`,
+		"combo sticky negative":                       `{"comboStickyRoundRobinLimit":-1}`,
+		"combo sticky object":                         `{"comboStickyRoundRobinLimit":{}}`,
+		"maxJson string":                              `{"observabilityMaxJsonSize":"big"}`,
+		"maxJson negative":                            `{"observabilityMaxJsonSize":-5}`,
+		"maxJson null":                                `{"observabilityMaxJsonSize":null}`,
+		"dns array":                                   `{"dnsToolEnabled":[]}`,
+		"dns string value":                            `{"dnsToolEnabled":{"a":"yes"}}`,
+		"fallbackStrategy number":                     `{"fallbackStrategy":5}`,
+		"fallbackStrategy null":                       `{"fallbackStrategy":null}`,
+		"comboStrategy object":                        `{"comboStrategy":{}}`,
+		"noProxy number":                              `{"outboundNoProxy":5}`,
+		"capacityAdapter array":                       `{"capacityAdapter":[]}`,
+		"adapter string entry":                        `{"capacityAdapter":{"vision":"openai/gpt-a"}}`,
+		"adapter number entry":                        `{"capacityAdapter":{"pdf":3}}`,
+		"adapter null entry":                          `{"capacityAdapter":{"pdf":null}}`,
+		"adapter enabled string":                      `{"capacityAdapter":{"vision":{"enabled":"yes","models":["a/b"]}}}`,
+		"adapter roundRobin string":                   `{"capacityAdapter":{"vision":{"roundRobin":"yes","models":["a/b"]}}}`,
+		"adapter models string":                       `{"capacityAdapter":{"pdf":{"enabled":true,"models":"openai/x"}}}`,
+		"adapter model number":                        `{"capacityAdapter":{"pdf":{"models":[5]}}}`,
+		"adapter legacy element":                      `{"capacityAdapter":{"audioInput":[7]}}`,
+		"adapter legacy element object without model": `{"capacityAdapter":{"audioInput":[{"enabled":true}]}}`,
+		"providerStrategies array":                    `{"providerStrategies":[]}`,
+		"providerStrategies null":                     `{"providerStrategies":{"a":null}}`,
+		"providerStrategies number":                   `{"providerStrategies":{"a":3}}`,
+		"providerStrategies strategy":                 `{"providerStrategies":{"a":{"fallbackStrategy":["x"]}}}`,
+		"providerStrategies sticky":                   `{"providerStrategies":{"a":{"stickyRoundRobinLimit":"x"}}}`,
+		"comboStrategies string":                      `{"comboStrategies":"x"}`,
+		"comboStrategies null":                        `{"comboStrategies":{"a":null}}`,
+		"comboStrategies strategy null":               `{"comboStrategies":{"a":{"fallbackStrategy":null}}}`,
+	}
+	for name, document := range cases {
+		settings, notes, err := ImportPinSettings(rawPin(t, document))
+		if err != nil {
+			continue // failing the import is an acceptable outcome
+		}
+		if len(notes) == 0 {
+			t.Errorf("%s: silently accepted %s -> settings=%v", name, document, settings)
+		}
+		if strings.Contains(name, "model") || strings.Contains(name, "element") {
+			continue // a bad element is noted and skipped; the rest of the entry still imports
+		}
+		for key, value := range settings {
+			switch key {
+			case "capacityAdapterVision", "capacityAdapterPDF", "capacityAdapterAudioInput", "capacityAdapterVideoInput":
+				t.Errorf("%s: stored a degraded adapter %s=%s", name, key, value)
+			}
+		}
+	}
+	// A readable legacy entry still imports and a null models list is the pin's
+	// empty pool (Array.isArray is false), not an error.
+	settings, notes, err := ImportPinSettings(rawPin(t, `{"capacityAdapter":{"vision":{"models":null}}}`))
+	if err != nil || len(notes) != 0 || settings["capacityAdapterVision"] != `{"enabled":true,"pool":[],"roundRobin":false}` {
+		t.Fatalf("settings=%v notes=%v err=%v", settings, notes, err)
+	}
+}

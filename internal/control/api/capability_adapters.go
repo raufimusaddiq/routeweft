@@ -37,6 +37,18 @@ type adapterPut struct {
 	Pool       *[]adapterPoolEntry `json:"pool"`
 }
 
+// storedMember reports whether a member is already in the stored pool, so the UI
+// resending the whole pool (to add one entry) does not re-reject an imported
+// member that is still unresolved.
+func storedMember(pool []adapterPoolEntry, provider, model string) (adapterPoolEntry, bool) {
+	for _, member := range pool {
+		if member.ProviderID == provider && member.ModelID == model {
+			return member, true
+		}
+	}
+	return adapterPoolEntry{}, false
+}
+
 func parseAdapterConfig(raw string) adapterConfig {
 	roundRobin := false
 	config := adapterConfig{RoundRobin: &roundRobin, Pool: []adapterPoolEntry{}}
@@ -87,7 +99,8 @@ func (h *Handler) handlePutCapabilityAdapter(w http.ResponseWriter, r *http.Requ
 	}
 	settings := h.opts.Settings.Settings()
 	stored := parseAdapterConfig(settings[setting])
-	enabled, roundRobin, supplied := stored.Enabled, *stored.RoundRobin, stored.Pool
+	enabled, roundRobin := stored.Enabled, *stored.RoundRobin
+	var supplied []adapterPoolEntry
 	if body.Enabled != nil {
 		enabled = *body.Enabled
 	}
@@ -102,26 +115,34 @@ func (h *Handler) handlePutCapabilityAdapter(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusServiceUnavailable, "runtime_unavailable", "runtime configuration is unavailable")
 		return
 	}
-	pool := make([]adapterPoolEntry, 0, len(supplied))
-	seen := make(map[string]struct{}, len(supplied))
-	for _, member := range supplied {
-		provider := strings.TrimSpace(member.ProviderID)
-		model := strings.TrimSpace(member.ModelID)
-		if provider == "" || model == "" {
-			writeError(w, http.StatusBadRequest, "invalid_adapter", "pool members require providerId and modelId")
-			return
+	// Only members the body supplied are checked against the catalog. A stored
+	// pool (for example one imported with unresolved pin aliases) is kept as is,
+	// so toggling roundRobin or enabled never fails on a member the operator did
+	// not touch; Remove still works because it supplies the shorter pool.
+	pool := append([]adapterPoolEntry(nil), stored.Pool...)
+	if body.Pool != nil {
+		pool = make([]adapterPoolEntry, 0, len(supplied))
+		seen := make(map[string]struct{}, len(supplied))
+		for _, member := range supplied {
+			provider := strings.TrimSpace(member.ProviderID)
+			model := strings.TrimSpace(member.ModelID)
+			if provider == "" || model == "" {
+				writeError(w, http.StatusBadRequest, "invalid_adapter", "pool members require providerId and modelId")
+				return
+			}
+			key := provider + "\x00" + model
+			if _, exists := seen[key]; exists {
+				writeError(w, http.StatusBadRequest, "invalid_adapter", "duplicate pool member")
+				return
+			}
+			_, stays := storedMember(stored.Pool, provider, model)
+			if _, ok := snapshot.ResolveModel(provider, model); !ok && !stays {
+				writeError(w, http.StatusBadRequest, "invalid_adapter", "pool member must reference a configured model")
+				return
+			}
+			seen[key] = struct{}{}
+			pool = append(pool, adapterPoolEntry{ProviderID: provider, ModelID: model})
 		}
-		key := provider + "\x00" + model
-		if _, exists := seen[key]; exists {
-			writeError(w, http.StatusBadRequest, "invalid_adapter", "duplicate pool member")
-			return
-		}
-		if _, ok := snapshot.ResolveModel(provider, model); !ok {
-			writeError(w, http.StatusBadRequest, "invalid_adapter", "pool member must reference a configured model")
-			return
-		}
-		seen[key] = struct{}{}
-		pool = append(pool, adapterPoolEntry{ProviderID: provider, ModelID: model})
 	}
 	encoded, err := json.Marshal(adapterConfig{Enabled: enabled, RoundRobin: &roundRobin, Pool: pool})
 	if err != nil {
