@@ -151,3 +151,22 @@ func ToolInput(value any) map[string]any {
 // ToolArguments is the Chat `arguments` string for a tool_use input: the input
 // as a JSON object, `{}` when it is none.
 func ToolArguments(input any) string { return JSONText(ToolInput(input)) }
+
+// Present reports whether a field asks for anything, whatever shape it has: an
+// empty object, list or string, null and false ask for nothing. A number always
+// asks for something, zero included.
+func Present(value any) bool {
+	switch v := value.(type) {
+	case nil:
+		return false
+	case map[string]any:
+		return len(v) > 0
+	case []any:
+		return len(v) > 0
+	case string:
+		return v != ""
+	case bool:
+		return v
+	}
+	return true
+}

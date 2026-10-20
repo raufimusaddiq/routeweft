@@ -11,6 +11,8 @@ package hub
 
 import (
 	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/commandcode"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/cursor"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 )
@@ -49,6 +51,7 @@ type Leg struct {
 // so are Chat and Messages (internal/protocol/anthropic). Ollama is a provider
 // wire only: the pin has a Chat>Ollama request leg and an Ollama>Chat response
 // leg and nothing the other way, so a client never speaks it through the hub.
+// Cursor and CommandCode are provider wires of the same kind.
 var legs = []Leg{
 	{anthropic.MessagesProtocol, openai.ChatProtocol, Request},
 	{openai.ChatProtocol, anthropic.MessagesProtocol, Request},
@@ -60,6 +63,10 @@ var legs = []Leg{
 	{openai.ChatProtocol, openai.ResponsesProtocol, Response},
 	{openai.ChatProtocol, ollama.Protocol, Request},
 	{ollama.Protocol, openai.ChatProtocol, Response},
+	{openai.ChatProtocol, cursor.Protocol, Request},
+	{cursor.Protocol, openai.ChatProtocol, Response},
+	{openai.ChatProtocol, commandcode.Protocol, Request},
+	{commandcode.Protocol, openai.ChatProtocol, Response},
 }
 
 // Legs returns a copy of the implemented legs.
