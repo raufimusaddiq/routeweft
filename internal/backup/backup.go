@@ -155,6 +155,10 @@ func StageRestore(ctx context.Context, input, dataDir string) (*Candidate, error
 		return fail(err)
 	}
 	if !hasVersions {
+		var v1 int
+		if err := candidate.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('providerConnections','apiKeys','usageHistory')").Scan(&v1); err == nil && v1 > 0 {
+			return fail(fmt.Errorf("candidate %s is a LiteRouter v1 database, which Routeweft never restores or opens; recreate configuration as described in docs/V1_MIGRATION.md", input))
+		}
 		return fail(fmt.Errorf("candidate %s is not a Routeweft database", input))
 	}
 	version, err := runner.Version(ctx)
