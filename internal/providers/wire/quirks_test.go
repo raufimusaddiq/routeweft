@@ -3,16 +3,20 @@ package wire
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
+	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
+	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
 const (
-	chat      = "openai-chat"
-	responses = "openai-responses"
-	messages  = "anthropic-messages"
+	chat      = openaiadapter.ChatProtocol
+	responses = openaiadapter.ResponsesProtocol
+	messages  = anthropicadapter.MessagesProtocol
 )
 
 func finalize(t *testing.T, id, protocol, body string) string {
@@ -80,7 +84,7 @@ func TestKenariFoldsSystemIntoFirstUserTurn(t *testing.T) {
 			`{"model":"m","instructions":"  be brief ","input":[{"type":"message","role":"system","content":"sys"},{"type":"message","role":"user","content":"hi"}]}`,
 			`{"model":"m","input":[{"type":"message","role":"user","content":"be brief\n\nsys\n\nhi"}]}`},
 		{"part user content and part system",
-			`{"model":"m","input":[{"type":"message","role":"system","content":[{"type":"input_text","text":"a"},{"type":"image"},{"type":"text","text":"b"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`,
+			`{"model":"m","input":[{"type":"message","role":"system","content":[{"type":"input_text","text":"a"},{"type":"text","text":"b"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`,
 			`{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"a\nb\n\n"},{"type":"input_text","text":"hi"}]}]}`},
 		{"empty system message is removed",
 			`{"model":"m","input":[{"type":"message","role":"system","content":""},{"type":"message","role":"user","content":"hi"}]}`,
@@ -209,4 +213,227 @@ func TestKenariFoldEnumeratesEveryInputShape(t *testing.T) {
 			}
 		})
 	}
+}
+
+// quirk × body-state cross products. Each quirk removes or rewrites a field; the
+// bug class is a quirk that changes one half of a pair (tools/tool_choice,
+// instructions/input, text/content) and leaves the other half dangling or loses
+// what was in it. These tables cross every field the quirk can touch with every
+// state the body can be in and check an invariant on each combination.
+
+func decode(t *testing.T, raw string) map[string]any {
+	t.Helper()
+	var out map[string]any
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		t.Fatalf("invalid json %q: %v", raw, err)
+	}
+	return out
+}
+
+func TestDeepseekToolsCrossToolChoice(t *testing.T) {
+	const (
+		fn  = `{"name":"f","input_schema":{}}`
+		web = `{"type":"web_search_20250305","name":"w"}`
+		bad = `{"name":"c","type":"custom","input_schema":{}}`
+	)
+	toolSets := map[string]string{
+		"none dropped": `[` + fn + `,` + web + `]`,
+		"some dropped": `[` + web + `,` + bad + `,` + fn + `]`,
+		"all dropped":  `[` + bad + `]`,
+		"empty":        `[]`,
+	}
+	choices := map[string]string{
+		"absent": "", "null": `"tool_choice":null,`,
+		"auto": `"tool_choice":{"type":"auto"},`, "any": `"tool_choice":{"type":"any"},`,
+		"none": `"tool_choice":{"type":"none"},`, "string": `"tool_choice":"auto",`,
+		"names dropped":  `"tool_choice":{"type":"tool","name":"c"},`,
+		"names kept web": `"tool_choice":{"type":"tool","name":"w"},`,
+		"names kept fn":  `"tool_choice":{"type":"tool","name":"f"},`,
+		"names unknown":  `"tool_choice":{"type":"tool","name":"zzz"},`,
+	}
+	for setName, tools := range toolSets {
+		for choiceName, choice := range choices {
+			t.Run(setName+"/"+choiceName, func(t *testing.T) {
+				in := `{"model":"m",` + choice + `"tools":` + tools + `}`
+				out := finalize(t, "deepseek", messages, in)
+				if setName == "none dropped" || setName == "empty" {
+					if out != in {
+						t.Fatalf("nothing to drop, body changed: %s", out)
+					}
+					return
+				}
+				got := decode(t, out)
+				if setName == "all dropped" {
+					if _, ok := got["tools"]; ok {
+						t.Fatalf("emptied tools stayed: %s", out)
+					}
+					if _, ok := got["tool_choice"]; ok {
+						t.Fatalf("tool_choice outlived its tools: %s", out)
+					}
+					return
+				}
+				var names []string
+				for _, tool := range got["tools"].([]any) {
+					names = append(names, tool.(map[string]any)["name"].(string))
+				}
+				if kind, _ := tool(got["tool_choice"])["type"].(string); kind == "tool" {
+					name, _ := tool(got["tool_choice"])["name"].(string)
+					if name != "zzz" && !contains(names, name) {
+						t.Fatalf("tool_choice names %q, tools are %v: %s", name, names, out)
+					}
+				}
+				for _, n := range names {
+					if n == "c" {
+						t.Fatalf("custom tool survived: %s", out)
+					}
+				}
+				// "auto", "any", "none" and tools that survive are left in place.
+				if choiceName == "auto" || choiceName == "any" || choiceName == "none" || choiceName == "names kept web" || choiceName == "names kept fn" {
+					if _, ok := got["tool_choice"]; !ok {
+						t.Fatalf("tool_choice %s was dropped though it names nothing removed: %s", choiceName, out)
+					}
+				}
+			})
+		}
+	}
+}
+
+func tool(v any) map[string]any {
+	m, _ := v.(map[string]any)
+	if m == nil {
+		return map[string]any{}
+	}
+	return m
+}
+
+func TestMinimaxToolTypeCrossOutputConfig(t *testing.T) {
+	types := map[string]string{
+		"missing": `{"name":"t"}`, "null": `{"name":"t","type":null}`, "empty": `{"name":"t","type":""}`,
+		"custom": `{"name":"t","type":"custom"}`, "web": `{"name":"t","type":"web_search_20250305"}`, "number": `{"name":"t","type":5}`,
+	}
+	for typeName, tl := range types {
+		for _, config := range []string{"", `"output_config":{"effort":"high"},`} {
+			for _, protocol := range []string{messages, chat, responses} {
+				for _, id := range []string{"minimax", "minimax-cn"} {
+					t.Run(fmt.Sprintf("%s/%s/config=%t/%s", id, typeName, config != "", protocol), func(t *testing.T) {
+						in := `{"model":"m",` + config + `"tools":[` + tl + `]}`
+						out := finalize(t, id, protocol, in)
+						if protocol != messages {
+							if out != in {
+								t.Fatalf("not a Messages request, body changed: %s", out)
+							}
+							return
+						}
+						got := decode(t, out)
+						if _, ok := got["output_config"]; ok {
+							t.Fatalf("output_config survived: %s", out)
+						}
+						kind := tool(got["tools"].([]any)[0])["type"]
+						switch typeName {
+						case "missing", "null", "empty":
+							if kind != "custom" {
+								t.Fatalf("typeless tool not typed: %s", out)
+							}
+						case "web":
+							if kind != "web_search_20250305" {
+								t.Fatalf("typed tool changed: %s", out)
+							}
+						case "number":
+							if kind != float64(5) {
+								t.Fatalf("client's non-string type changed: %s", out)
+							}
+						}
+						if again := finalize(t, id, protocol, out); again != out {
+							t.Fatalf("not idempotent: %s then %s", out, again)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+// Whatever the fold does, no text the client sent may vanish: either the body
+// comes back byte-identical, or it is valid, carries no system role or
+// `instructions`, a non-empty `input`, and every original text string.
+func TestKenariFoldCrossProductLosesNothing(t *testing.T) {
+	instructions := map[string]string{
+		"absent": "", "null": `"instructions":null,`, "empty": `"instructions":"",`, "blank": `"instructions":"  ",`,
+		"text": `"instructions":"INSTR",`, "array": `"instructions":["INSTR"],`, "number": `"instructions":7,`,
+	}
+	userContent := map[string]string{
+		"string": `"content":"USER"`, "parts": `"content":[{"type":"input_text","text":"USER"}]`,
+		"object": `"content":{"type":"input_text","text":"USER"}`, "number": `"content":5`,
+		"null": `"content":null`, "missing": ``,
+	}
+	systemContent := map[string]string{
+		"string": `"content":"SYS"`, "parts": `"content":[{"type":"input_text","text":"SYS"},{"type":"text","text":"SYS2"}]`,
+		"image part":     `"content":[{"type":"input_text","text":"SYS"},{"type":"input_image","image_url":"x"}]`,
+		"text-less part": `"content":[{"type":"input_text"}]`,
+		"object":         `"content":{"type":"input_text","text":"SYS"}`, "number": `"content":3`,
+		"null": `"content":null`, "empty string": `"content":""`,
+	}
+	message := func(role, content, typ string) string {
+		fields := []string{}
+		if typ != "" {
+			fields = append(fields, `"type":"`+typ+`"`)
+		}
+		fields = append(fields, `"role":"`+role+`"`)
+		if content != "" {
+			fields = append(fields, content)
+		}
+		return "{" + strings.Join(fields, ",") + "}"
+	}
+	var cases []string
+	for ins, insField := range instructions {
+		for uc, ucField := range userContent {
+			for sc, scField := range systemContent {
+				for _, typ := range []string{"message", ""} {
+					for _, order := range []string{"sys-user", "user-sys", "user-only", "sys-only"} {
+						var items []string
+						switch order {
+						case "sys-user":
+							items = []string{message("system", scField, typ), message("user", ucField, typ)}
+						case "user-sys":
+							items = []string{message("user", ucField, typ), message("system", scField, typ)}
+						case "user-only":
+							items = []string{message("user", ucField, typ)}
+						case "sys-only":
+							items = []string{message("system", scField, typ)}
+						}
+						cases = append(cases, `{"model":"m",`+insField+`"input":[`+strings.Join(items, ",")+`]}`)
+						_ = ins + uc + sc
+					}
+				}
+			}
+		}
+	}
+	changed := 0
+	for _, in := range cases {
+		out := finalize(t, "kenari", responses, in)
+		if out == in {
+			continue
+		}
+		changed++
+		got := decode(t, out)
+		input, ok := got["input"].([]any)
+		if !ok || len(input) == 0 {
+			t.Fatalf("empty or invalid input\n in %s\nout %s", in, out)
+		}
+		if value, ok := got["instructions"]; ok && value != nil && strings.TrimSpace(fmt.Sprint(value)) != "" { // a null or blank value is not an instruction
+			t.Fatalf("instructions survived\n in %s\nout %s", in, out)
+		}
+		if strings.Contains(out, `"role":"system"`) {
+			t.Fatalf("system role survived\n in %s\nout %s", in, out)
+		}
+		for _, text := range []string{"INSTR", "SYS", "SYS2", "USER"} {
+			if strings.Contains(in, text) && !strings.Contains(out, text) {
+				t.Fatalf("%q was lost\n in %s\nout %s", text, in, out)
+			}
+		}
+	}
+	if changed == 0 || changed == len(cases) {
+		t.Fatalf("the fold changed %d of %d bodies; the table is not exercising both outcomes", changed, len(cases))
+	}
+	t.Logf("%d bodies, %d folded, %d left byte-identical", len(cases), changed, len(cases)-changed)
 }

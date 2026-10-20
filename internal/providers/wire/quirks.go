@@ -10,8 +10,11 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
-// Body is a request body parsed one level deep. Values stay raw, so only a field
-// a quirk touches is re-encoded and everything else survives as received.
+// Body is a request body parsed one level deep. Values stay raw, so every field
+// keeps its value as received, including ones this package does not know. When a
+// quirk fires the body is re-marshalled, so its top-level keys come out in
+// alphabetical order and insignificant whitespace is gone; a body no quirk
+// changes is never re-encoded.
 type Body map[string]json.RawMessage
 
 // Finalize is a provider's last rewrite of the outbound body, given the wire
@@ -54,7 +57,8 @@ func (b Body) delete(key string) bool {
 
 // dropClientMetadata: registry quirks.dropClientMetadata (cerebras, mistral).
 // These gateways reject Anthropic's client_metadata field
-// (open-sse/executors/default.js:103).
+// (open-sse/executors/default.js:103). The pin removes it from any body, so this
+// quirk is deliberately not scoped to a wire.
 func dropClientMetadata(_ string, body Body) bool { return body.delete("client_metadata") }
 
 // dropOutputConfig: quirks.dropOutputConfig (minimax, minimax-cn). The
@@ -80,7 +84,7 @@ func requireClaudeToolType(protocol string, body Body) bool {
 	changed := false
 	for i, raw := range tools {
 		var tool map[string]json.RawMessage
-		if json.Unmarshal(raw, &tool) != nil || tool == nil || truthy(tool["type"]) {
+		if json.Unmarshal(raw, &tool) != nil || tool == nil || hasType(tool["type"]) {
 			continue
 		}
 		tool["type"] = json.RawMessage(`"custom"`)
@@ -100,8 +104,13 @@ func requireClaudeToolType(protocol string, body Body) bool {
 // Anthropic endpoint accepts only the built-in web_search_* tools and answers
 // 400 "unknown variant `custom`" to any other typed tool, so a Messages request
 // keeps function-style and typeless tools plus the listed types and drops the
-// rest (open-sse/translator/formats/claude.js:643-668). Emptied tools take
-// tool_choice with them (:681-684).
+// rest (open-sse/translator/formats/claude.js:643-668).
+//
+// tools and tool_choice are a pair; a quirk that removes one half leaves a
+// request the gateway rejects. Emptied tools take tool_choice with them (pin
+// :681-684). Beyond the pin, a tool_choice that names a tool this filter removed
+// is dropped too, even when other tools survive; "auto", "any" and "none" name
+// nothing and stay, and so does a tool_choice naming a surviving tool.
 func supportedToolTypes(allowed ...string) Finalize {
 	return func(protocol string, body Body) bool {
 		if protocol != anthropicadapter.MessagesProtocol {
@@ -112,18 +121,21 @@ func supportedToolTypes(allowed ...string) Finalize {
 			return false
 		}
 		kept := make([]json.RawMessage, 0, len(tools))
+		keptNames := map[string]bool{}
 		for _, raw := range tools {
 			var tool map[string]json.RawMessage
 			if json.Unmarshal(raw, &tool) != nil || tool == nil {
 				kept = append(kept, raw)
 				continue
 			}
-			var kind string
+			var kind, name string
 			_ = json.Unmarshal(tool["type"], &kind)
+			_ = json.Unmarshal(tool["name"], &name)
 			if kind != "" && kind != "function" && !contains(allowed, kind) {
 				continue
 			}
 			kept = append(kept, raw)
+			keptNames[name] = true
 		}
 		if len(kept) == len(tools) {
 			return false
@@ -132,6 +144,13 @@ func supportedToolTypes(allowed ...string) Finalize {
 			body.delete("tools")
 			body.delete("tool_choice")
 			return true
+		}
+		var choice struct {
+			Type string `json:"type"`
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(body["tool_choice"], &choice) == nil && choice.Type == "tool" && !keptNames[choice.Name] {
+			body.delete("tool_choice")
 		}
 		return setJSON(body, "tools", kept)
 	}
@@ -155,13 +174,18 @@ func supportedToolTypes(allowed ...string) Finalize {
 // the pin drops system messages when there is no user turn, losing their text;
 // and an item with no `type` but role "system" (a legal EasyInputMessage) is
 // folded, where the pin looks only at type "message". The body is never emitted
-// with an empty `input`.
+// with an empty `input`, and it is left as received whenever the fold would have
+// to discard something it cannot carry: non-string `instructions`, a system
+// message whose content is an object, a number or has a non-text part, or a first
+// user message whose content is an object or a number.
 func foldResponsesSystem(protocol string, body Body) bool {
 	if protocol != openaiadapter.ResponsesProtocol {
 		return false
 	}
 	var instructions string
-	_ = json.Unmarshal(body["instructions"], &instructions)
+	if raw := body["instructions"]; len(raw) > 0 && string(raw) != "null" && json.Unmarshal(raw, &instructions) != nil {
+		return false // not a string: it cannot be folded, and it must not be deleted
+	}
 	instructions = strings.TrimSpace(instructions)
 
 	var input []json.RawMessage
@@ -191,13 +215,20 @@ func foldResponsesSystem(protocol string, body Body) bool {
 		}
 		isMessage := json.Unmarshal(raw, &item) == nil && (item.Type == "message" || item.Type == "")
 		if isMessage && item.Role == "system" {
-			if text := systemItemText(item.Content); text != "" {
+			text, ok := systemItemText(item.Content)
+			if !ok {
+				return false // content this fold cannot carry as text: nothing is dropped
+			}
+			if text != "" {
 				texts = append(texts, text)
 			}
 			continue
 		}
 		if isMessage && item.Role == "user" && firstUser < 0 {
 			firstUser = len(rest)
+			if !foldableContent(item.Content) {
+				return false // an object or number would lose the user's payload
+			}
 		}
 		rest = append(rest, raw)
 	}
@@ -235,35 +266,59 @@ func foldResponsesSystem(protocol string, body Body) bool {
 	return setJSON(body, "input", rest)
 }
 
+// foldableContent reports whether a user message's content is a shape the fold
+// can prepend to: a string, an array of parts, or no content at all.
+func foldableContent(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return true
+	}
+	return trimmed[0] == '"' || trimmed[0] == '['
+}
+
 // systemItemText is the text of a system message: a string, or the text of its
-// input_text/text parts joined by newlines (default.js:26-29).
-func systemItemText(content json.RawMessage) string {
-	var text string
-	if json.Unmarshal(content, &text) == nil {
-		return text
+// input_text/text parts joined by newlines (default.js:26-29). ok is false for
+// content that cannot be carried as text (an object, a number, a part of another
+// type such as an image, a text-less part), so the caller leaves the body alone
+// rather than drop what the operator put in a system message.
+func systemItemText(content json.RawMessage) (text string, ok bool) {
+	trimmed := bytes.TrimSpace(content)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return "", true
+	}
+	if json.Unmarshal(trimmed, &text) == nil {
+		return text, true
 	}
 	var parts []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
+		Type string  `json:"type"`
+		Text *string `json:"text"`
 	}
-	if json.Unmarshal(content, &parts) != nil {
-		return ""
+	if json.Unmarshal(trimmed, &parts) != nil {
+		return "", false
 	}
 	var texts []string
 	for _, part := range parts {
-		if (part.Type == "input_text" || part.Type == "text") && part.Text != "" {
-			texts = append(texts, part.Text)
+		if (part.Type != "input_text" && part.Type != "text") || part.Text == nil {
+			return "", false
+		}
+		if *part.Text != "" {
+			texts = append(texts, *part.Text)
 		}
 	}
-	return strings.Join(texts, "\n")
+	return strings.Join(texts, "\n"), true
 }
 
-func truthy(raw json.RawMessage) bool {
+// hasType reports whether a tool's `type` is present: any value but a missing
+// key, null or an empty string. A non-string type is the client's to answer for.
+func hasType(raw json.RawMessage) bool {
+	if len(raw) == 0 || string(raw) == "null" {
+		return false
+	}
 	var text string
 	if json.Unmarshal(raw, &text) == nil {
 		return text != ""
 	}
-	return len(raw) > 0 && string(raw) != "null" && string(raw) != "false" && string(raw) != "0"
+	return true
 }
 
 func contains(values []string, want string) bool {

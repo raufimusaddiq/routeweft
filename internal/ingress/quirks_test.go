@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
+	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/transforms/body"
@@ -23,19 +25,19 @@ func TestRegistryQuirksReachTheUpstreamBody(t *testing.T) {
 	cases := []struct {
 		name, provider, protocol, path, endpoint, body, want string
 	}{
-		{"cerebras drops client_metadata", "cerebras", "openai-chat", "/v1/chat/completions", "chat/completions",
+		{"cerebras drops client_metadata", "cerebras", openaiadapter.ChatProtocol, "/v1/chat/completions", "chat/completions",
 			`{"model":"m","client_metadata":{"a":1},"messages":[{"role":"user","content":"hi"}]}`,
 			`{"model":"m","messages":[{"role":"user","content":"hi"}]}`},
-		{"mistral drops client_metadata", "mistral", "openai-chat", "/v1/chat/completions", "chat/completions",
+		{"mistral drops client_metadata", "mistral", openaiadapter.ChatProtocol, "/v1/chat/completions", "chat/completions",
 			`{"model":"m","client_metadata":1,"messages":[{"role":"user","content":"hi"}]}`,
 			`{"model":"m","messages":[{"role":"user","content":"hi"}]}`},
-		{"minimax types tools and drops output_config", "minimax", "anthropic-messages", "/v1/messages", "v1/messages",
+		{"minimax types tools and drops output_config", "minimax", anthropicadapter.MessagesProtocol, "/v1/messages", "v1/messages",
 			`{"model":"m","max_tokens":5,"output_config":{"effort":"high"},"tools":[{"name":"a","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"hi"}]}`,
 			`{"model":"m","max_tokens":5,"tools":[{"name":"a","input_schema":{"type":"object"},"type":"custom","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":"hi"}]}`},
-		{"deepseek drops unsupported tool types", "deepseek", "anthropic-messages", "/v1/messages", "anthropic/v1/messages",
+		{"deepseek drops unsupported tool types", "deepseek", anthropicadapter.MessagesProtocol, "/v1/messages", "anthropic/v1/messages",
 			`{"model":"m","max_tokens":5,"tools":[{"name":"a","type":"custom","input_schema":{}},{"type":"web_search_20250305","name":"w"}],"messages":[{"role":"user","content":"hi"}]}`,
 			`{"model":"m","max_tokens":5,"tools":[{"type":"web_search_20250305","name":"w","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":"hi"}]}`},
-		{"kenari folds the system role", "kenari", "openai-responses", "/v1/responses", "v1/responses",
+		{"kenari folds the system role", "kenari", openaiadapter.ResponsesProtocol, "/v1/responses", "v1/responses",
 			`{"model":"m","input":[{"type":"message","role":"system","content":"sys"},{"type":"message","role":"user","content":"hi"}]}`,
 			`{"model":"m","input":[{"type":"message","role":"user","content":"sys\n\nhi"}]}`},
 	}
@@ -76,17 +78,17 @@ func TestQuirksRunAfterTheSavers(t *testing.T) {
 		inject                                         func(map[string]any)
 		absent                                         string // substring the upstream body must not carry
 	}{
-		{"kenari instructions", "kenari", "openai-responses", "/v1/responses", "v1/responses",
+		{"kenari instructions", "kenari", openaiadapter.ResponsesProtocol, "/v1/responses", "v1/responses",
 			`{"model":"m","input":[{"type":"message","role":"system","content":"sys"},{"type":"message","role":"user","content":"hi"}]}`,
 			`"role":"system"`,
 			func(m map[string]any) { m["instructions"] = "caveman policy" },
 			`"instructions"`},
-		{"cerebras client_metadata", "cerebras", "openai-chat", "/v1/chat/completions", "chat/completions",
+		{"cerebras client_metadata", "cerebras", openaiadapter.ChatProtocol, "/v1/chat/completions", "chat/completions",
 			`{"model":"m","client_metadata":{"a":1},"messages":[{"role":"user","content":"hi"}]}`,
 			`"client_metadata"`,
 			func(m map[string]any) { m["client_metadata"] = "reintroduced" },
 			`"client_metadata"`},
-		{"minimax output_config", "minimax", "anthropic-messages", "/v1/messages", "v1/messages",
+		{"minimax output_config", "minimax", anthropicadapter.MessagesProtocol, "/v1/messages", "v1/messages",
 			`{"model":"m","max_tokens":5,"output_config":{"effort":"high"},"tools":[{"name":"a","input_schema":{}}],"messages":[{"role":"user","content":"hi"}]}`,
 			`"output_config"`,
 			func(m map[string]any) { m["output_config"] = map[string]any{"effort": "low"} },
@@ -152,7 +154,7 @@ func kenariFoldWithRealInjector(t *testing.T, input string) {
 			return pipeline.Run(ctx, protocol, raw, true)
 		},
 		ProviderResolver: func(*runtime.RuntimeSnapshot, string) (routing.ProviderRef, bool) {
-			return routing.ProviderRef{ProviderID: "kenari", Protocol: "openai-responses", BaseURL: upstream.URL, Endpoint: "v1/responses", APIToken: "token"}, true
+			return routing.ProviderRef{ProviderID: "kenari", Protocol: openaiadapter.ResponsesProtocol, BaseURL: upstream.URL, Endpoint: "v1/responses", APIToken: "token"}, true
 		},
 	})
 	recorder := httptest.NewRecorder()

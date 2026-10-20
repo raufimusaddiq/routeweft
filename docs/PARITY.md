@@ -923,7 +923,13 @@ Registry quirks are applied to the final outbound body by `internal/providers/wi
 | `reasoningInject` and `stripUnsupportedParams` | minimax, minimax-cn; every provider | `utils/reasoningContentInjector.js`, `translator/concerns/paramSupport.js` | **deferred to #119** |
 | `cloakToolsOnOAuth` | claude | `providers/registry/claude.js:41` | **not shipped**: tool cloaking disguises the client to the provider; Routeweft sends its own identity (PR #123 precedent) |
 
-Divergences for kenari `responsesSystemRoleUnsupported`, all so no instruction is silently lost or ignored: a plain string `input` (which Routeweft accepts) is folded as one user turn where the pin leaves it alone, so `instructions` still reached kenari; with system text or `instructions` but no user turn the body is left as received where the pin drops the system messages; an item with no `type` but role `system` is folded where the pin looks only at `type: "message"`; and a body that would be left with an empty `input` is left as received. Every other `input` shape (empty array, non-message items, object, number) is byte-identical.
+Divergences, all so no instruction or tool pairing is silently broken or lost:
+
+- **deepseek, `tool_choice`.** The pin drops `tool_choice` only when every tool is filtered out. A `tool_choice` of type `tool` naming a filtered-out tool is dropped too when other tools survive (DeepSeek rejects a `tool_choice` whose tool is absent); `auto`, `any`, `none` and a choice naming a surviving tool stay.
+- **kenari, `input` shapes.** A plain string `input` is folded as one user turn (the pin leaves it alone, so `instructions` still reached kenari). An item with no `type` but role `system` is folded (the pin requires `type: "message"`). A body that would end with an empty `input` is left as received.
+- **kenari, nothing is discarded.** With system text or `instructions` but no user turn, the pin drops the system messages; Routeweft leaves the body as received. The body is also left as received when the fold would have to discard what it cannot carry as text: non-string `instructions`, a system message whose content is an object, a number or has a non-text part (an image), or a first user message whose content is an object or a number. The gateway's own error then reaches the client.
+
+Every other `input` shape (empty array, non-message items, object, number) is byte-identical.
 
 ### Production-incident drift explicitly dispositioned
 
