@@ -430,6 +430,10 @@ func (h *Handler) newUpstreamRequest(r *http.Request, snapshot *runtime.RuntimeS
 	}
 	base.RawPath = ""
 	body = h.finalBody(r, snapshot, provider.Protocol, body)
+	// Registry quirks are provider normalization, step 8 of AGENTS §6: they run on
+	// what the savers and prompt-cache anchoring (steps 2-7) left, so nothing after
+	// them can put back a field a quirk removed.
+	body = wire.FinalizeBody(provider, body)
 	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, base.String(), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -573,7 +577,7 @@ func (s *usageScanner) Write(chunk []byte) (int, error) {
 	for {
 		index := bytes.IndexByte(s.buffer, '\n')
 		if index < 0 {
-			if s.family == shared.FamilySystemOne && len(s.buffer) > 4<<20 {
+			if (s.family == shared.FamilySystemOne || s.family == shared.FamilyOllama) && len(s.buffer) > 4<<20 {
 				s.buffer = nil
 				s.skipping = true
 			}
@@ -581,13 +585,28 @@ func (s *usageScanner) Write(chunk []byte) (int, error) {
 		}
 		line := bytes.TrimSpace(s.buffer[:index])
 		s.buffer = s.buffer[index+1:]
-		if s.family == shared.FamilySystemOne && len(line) > 4<<20 {
+		if (s.family == shared.FamilySystemOne || s.family == shared.FamilyOllama) && len(line) > 4<<20 {
 			continue
 		}
-		if !bytes.HasPrefix(line, []byte("data:")) {
+		var payload []byte
+		if s.family == shared.FamilyOllama {
+			// Ollama streams bare JSON lines, not SSE; done:true ends the stream
+			// and carries the counts.
+			if len(line) == 0 || line[0] != '{' {
+				continue
+			}
+			var last struct {
+				Done bool `json:"done"`
+			}
+			if json.Unmarshal(line, &last) == nil && last.Done {
+				s.complete = true
+			}
+			payload = line
+		} else if bytes.HasPrefix(line, []byte("data:")) {
+			payload = bytes.TrimSpace(line[len("data:"):])
+		} else {
 			continue
 		}
-		payload := bytes.TrimSpace(line[len("data:"):])
 		if bytes.Equal(payload, []byte("[DONE]")) {
 			s.complete = true
 			continue
@@ -607,7 +626,9 @@ func (s *usageScanner) Write(chunk []byte) (int, error) {
 }
 
 func (s *usageScanner) usage() (promptcache.Usage, bool) {
-	if s.family == shared.FamilySystemOne && len(s.buffer) > 0 {
+	// A line-delimited stream's last line may arrive without its newline; for
+	// Ollama that line is the done:true one that holds the counts.
+	if (s.family == shared.FamilySystemOne || s.family == shared.FamilyOllama) && len(s.buffer) > 0 {
 		s.Write([]byte("\n"))
 	}
 	return s.merged, s.found

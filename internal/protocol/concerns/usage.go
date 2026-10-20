@@ -60,3 +60,17 @@ func ClaudeUsageFromOpenAI(usage map[string]any) map[string]any {
 	}
 	return result
 }
+
+// OllamaUsage reads the counts an Ollama response carries at its top level
+// (concerns/usage.js:53-60): prompt_eval_count is the prompt, cache-inclusive;
+// prompt_eval_cached_count is the cache-read subset of it; eval_count is the
+// output. observed is false when the response reported no tokens at all, so an
+// absent count is never recorded as a measured zero. This is the only place the
+// three fields are read; the accounting parser calls it too.
+func OllamaUsage(raw map[string]any) (usage Usage, observed bool) {
+	prompt, output := Int(raw["prompt_eval_count"]), Int(raw["eval_count"])
+	if prompt <= 0 && output <= 0 {
+		return Usage{}, false
+	}
+	return Usage{Prompt: prompt, Completion: output, Total: prompt + output, Cached: Int(raw["prompt_eval_cached_count"])}, true
+}

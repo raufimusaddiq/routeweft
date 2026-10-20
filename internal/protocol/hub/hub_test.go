@@ -11,14 +11,16 @@ import (
 )
 
 // The implemented pairs are exactly those reachable through the Chat hub among
-// Chat, Responses and Messages; Gemini, Ollama and System One have no legs yet
-// (#119 tracks them), so they must stay unreachable rather than appear to work.
+// Chat, Responses and Messages, plus Ollama as a provider wire (the pin has a
+// Chat>Ollama request leg and an Ollama>Chat response leg and no client side);
+// Gemini and System One have no legs yet (#119 tracks them), so they must stay
+// unreachable rather than appear to work.
 func TestCanTranslateCoversChatResponsesMessages(t *testing.T) {
 	converted := map[string]bool{openai.ChatProtocol: true, openai.ResponsesProtocol: true, anthropic.MessagesProtocol: true}
 	protocols := []string{openai.ChatProtocol, openai.ResponsesProtocol, anthropic.MessagesProtocol, gemini.Protocol, ollama.Protocol, systemone.Protocol}
 	for _, source := range protocols {
 		for _, target := range protocols {
-			want := source != target && converted[source] && converted[target]
+			want := source != target && converted[source] && (converted[target] || target == ollama.Protocol)
 			got := CanTranslate(source, target)
 			if source == target {
 				got = false

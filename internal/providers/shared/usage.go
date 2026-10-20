@@ -3,6 +3,7 @@ package shared
 import (
 	"encoding/json"
 
+	"github.com/raufimusaddiq/routeweft/internal/protocol/concerns"
 	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
 )
 
@@ -145,15 +146,13 @@ func parseGeminiUsage(body []byte) (promptcache.Usage, bool) {
 }
 
 func parseOllamaUsage(body []byte) (promptcache.Usage, bool) {
-	var decoded struct {
-		PromptEvalCount int64 `json:"prompt_eval_count"`
-		EvalCount       int64 `json:"eval_count"`
-	}
-	if json.Unmarshal(body, &decoded) != nil {
+	raw, err := concerns.WireObject(body)
+	if err != nil {
 		return promptcache.Usage{}, false
 	}
-	if decoded.PromptEvalCount == 0 && decoded.EvalCount == 0 {
+	usage, observed := concerns.OllamaUsage(raw)
+	if !observed {
 		return promptcache.Usage{}, false
 	}
-	return promptcache.Usage{InputTokens: decoded.PromptEvalCount, OutputTokens: decoded.EvalCount}, true
+	return promptcache.Usage{InputTokens: usage.Prompt, OutputTokens: usage.Completion, CacheReadTokens: usage.Cached}, true
 }

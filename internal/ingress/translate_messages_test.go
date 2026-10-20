@@ -15,6 +15,7 @@ import (
 
 	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/concerns"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
@@ -73,6 +74,15 @@ data: {"type":"message_stop"}
 
 `,
 	},
+	// Ollama reports the prompt cache-inclusive, like Chat, and streams one JSON
+	// object per line; the last has done:true and holds the finish and the counts.
+	ollama.Protocol: {
+		false: `{"model":"vendor/m","message":{"role":"assistant","content":"pong","tool_calls":[{"id":"call_1","function":{"index":0,"name":"lookup","arguments":{"city":"Oslo"}}}]},"done":true,"done_reason":"stop","prompt_eval_count":130,"prompt_eval_cached_count":100,"eval_count":42}`,
+		true: `{"model":"vendor/m","message":{"role":"assistant","content":"pong"},"done":false}
+{"model":"vendor/m","message":{"role":"assistant","content":"","tool_calls":[{"id":"call_1","function":{"index":0,"name":"lookup","arguments":{"city":"Oslo"}}}]},"done":false}
+{"model":"vendor/m","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":130,"prompt_eval_cached_count":100,"eval_count":42}
+`,
+	},
 	openai.ResponsesProtocol: {
 		false: `{"id":"resp_up0001","object":"response","status":"completed","model":"vendor/m","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"pong"}]},{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"city\":\"Oslo\"}"}],"usage":{"input_tokens":130,"output_tokens":42,"total_tokens":172,"input_tokens_details":{"cached_tokens":100}}}`,
 		true: `event: response.created
@@ -103,7 +113,7 @@ var clientRequests = map[string]struct{ path, body string }{
 	anthropic.MessagesProtocol: {"/v1/messages", `{"model":"test/model","max_tokens":50,"stream":%t,"messages":[{"role":"user","content":"ping"}]}`},
 }
 
-var upstreamPaths = map[string]string{openai.ChatProtocol: "/chat/completions", openai.ResponsesProtocol: "/responses", anthropic.MessagesProtocol: "/messages"}
+var upstreamPaths = map[string]string{openai.ChatProtocol: "/chat/completions", openai.ResponsesProtocol: "/responses", anthropic.MessagesProtocol: "/messages", ollama.Protocol: "/api/chat"}
 
 // What a client in each wire must be able to read back from the exchange above.
 func assertClientSees(t *testing.T, client string, stream bool, body string) {
@@ -158,6 +168,15 @@ func upstreamRejects(provider string, header http.Header, body map[string]any, r
 				}
 			}
 		}
+	case ollama.Protocol:
+		if messages, _ := body["messages"].([]any); len(messages) == 0 {
+			return "messages: must not be empty"
+		}
+		for _, message := range concerns.Items(body["messages"]) {
+			if _, text := concerns.Object(message)["content"].(string); !text {
+				return "message content must be a string"
+			}
+		}
 	case openai.ChatProtocol:
 		if messages, _ := body["messages"].([]any); len(messages) == 0 {
 			return "messages: must not be empty"
@@ -176,7 +195,7 @@ func upstreamRejects(provider string, header http.Header, body map[string]any, r
 func TestEveryConvertedPairServesAClient(t *testing.T) {
 	wires := []string{openai.ChatProtocol, openai.ResponsesProtocol, anthropic.MessagesProtocol}
 	for _, client := range wires {
-		for _, provider := range wires {
+		for _, provider := range append(append([]string(nil), wires...), ollama.Protocol) {
 			if client == provider {
 				continue
 			}
@@ -206,7 +225,9 @@ func TestEveryConvertedPairServesAClient(t *testing.T) {
 							return
 						}
 						seen.status = http.StatusOK
-						if stream {
+						if stream && provider == ollama.Protocol {
+							w.Header().Set("Content-Type", "application/x-ndjson")
+						} else if stream {
 							w.Header().Set("Content-Type", "text/event-stream")
 						} else {
 							w.Header().Set("Content-Type", "application/json")
@@ -317,7 +338,7 @@ func TestMessagesStreamAsksChatProviderForUsage(t *testing.T) {
 // A provider whose wire has no leg yet is skipped rather than half-served.
 func TestUnconvertedWireIsStillSkipped(t *testing.T) {
 	for _, client := range []string{openai.ChatProtocol, openai.ResponsesProtocol, anthropic.MessagesProtocol} {
-		for _, provider := range []string{"gemini", "kiro", "cursor", "ollama", "antigravity", "vertex", "gemini-cli", "commandcode"} {
+		for _, provider := range []string{"gemini", "kiro", "cursor", "antigravity", "vertex", "gemini-cli", "commandcode"} {
 			if CanTranslate(client, provider) {
 				t.Errorf("%s client claims to reach %s, which has no conversion leg", client, provider)
 			}

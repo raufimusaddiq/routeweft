@@ -9,6 +9,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/concerns"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/hub"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 )
 
@@ -90,6 +91,15 @@ func chainBodies(first, second func([]byte) ([]byte, error)) func([]byte) ([]byt
 	}
 }
 
+// ollamaEndpoint is Ollama's chat path under the provider's base URL.
+const ollamaEndpoint = "api/chat"
+
+func ollamaStream(model string) streamFunc {
+	return func(ctx context.Context, src io.Reader, dst io.Writer) error {
+		return ollama.OllamaStreamToChat(ctx, src, dst, model)
+	}
+}
+
 // TranslateChat wires both halves of a Chat request served by a provider that
 // speaks another wire.
 func TranslateChat(request *openai.ChatRequest, target string) (ChatTranslation, error) {
@@ -114,13 +124,23 @@ func TranslateChat(request *openai.ChatRequest, target string) (ChatTranslation,
 			Stream: func(ctx context.Context, src io.Reader, dst io.Writer) error {
 				return anthropic.MessagesStreamToChat(ctx, src, dst, names)
 			}}, nil
+	case ollama.Protocol:
+		parsed, err := concerns.WireObject(request.Raw)
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		body, err := ollama.ChatRequestToOllama(parsed, request.Model, request.Stream, true)
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		return ChatTranslation{Endpoint: ollamaEndpoint, Body: body, Response: ollama.OllamaResponseToChat, Stream: ollamaStream(request.Model)}, nil
 	}
 	return ChatTranslation{}, fmt.Errorf("no Chat translator for %q", target)
 }
 
 // TranslateResponses keeps custom-tool response metadata local to this request.
 func TranslateResponses(request *openai.ResponsesRequest, target string) (ChatTranslation, error) {
-	if request.Compact || (target != openai.ChatProtocol && target != anthropic.MessagesProtocol) {
+	if request.Compact || (target != openai.ChatProtocol && target != anthropic.MessagesProtocol && target != ollama.Protocol) {
 		return ChatTranslation{}, fmt.Errorf("no Responses translator for %q", target)
 	}
 	body, err := openai.ResponsesToChat(request)
@@ -138,6 +158,15 @@ func TranslateResponses(request *openai.ResponsesRequest, target string) (ChatTr
 	chat, err := concerns.WireObject(body)
 	if err != nil {
 		return ChatTranslation{}, err
+	}
+	if target == ollama.Protocol {
+		ollamaBody, err := ollama.ChatRequestToOllama(chat, request.Model, request.Stream, false)
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		return ChatTranslation{Endpoint: ollamaEndpoint, Body: ollamaBody,
+			Response: chainBodies(ollama.OllamaResponseToChat, toResponses),
+			Stream:   chainStreams(ollamaStream(request.Model), toResponsesStream)}, nil
 	}
 	var raw map[string]any
 	if parsed, parseErr := concerns.WireObject(request.Raw); parseErr == nil {
@@ -157,8 +186,24 @@ func TranslateResponses(request *openai.ResponsesRequest, target string) (ChatTr
 // TranslateMessages wires both halves of a Messages request served by a
 // provider that speaks Chat or Responses.
 func TranslateMessages(request *anthropic.MessagesRequest, target string) (ChatTranslation, error) {
-	if target != openai.ChatProtocol && target != openai.ResponsesProtocol {
+	if target != openai.ChatProtocol && target != openai.ResponsesProtocol && target != ollama.Protocol {
 		return ChatTranslation{}, fmt.Errorf("no Messages translator for %q", target)
+	}
+	if target == ollama.Protocol {
+		// The pin pivots Messages>Chat>Ollama through the registry functions
+		// alone (translator/index.js:116-125), so the Chat body is not filtered
+		// for OpenAI-compatible upstreams.
+		chat, err := anthropic.MessagesRequestToHubChat(request.Raw, request.Model, request.Stream)
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		body, err := ollama.ChatRequestToOllama(chat, request.Model, request.Stream, false)
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		return ChatTranslation{Endpoint: ollamaEndpoint, Body: body,
+			Response: chainBodies(ollama.OllamaResponseToChat, anthropic.ChatResponseToMessages),
+			Stream:   chainStreams(ollamaStream(request.Model), anthropic.ChatStreamToMessages)}, nil
 	}
 	body, err := anthropic.MessagesRequestToChat(request.Raw, request.Model, request.Stream)
 	if err != nil {

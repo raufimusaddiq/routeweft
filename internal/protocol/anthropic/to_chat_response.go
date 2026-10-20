@@ -173,18 +173,14 @@ func streamFailureValue(cause error) map[string]any {
 	return map[string]any{"code": "upstream_incomplete", "message": "upstream stream ended without a terminal event"}
 }
 
-// failChatStream ends a Chat stream with an error object and the terminal
-// marker. A cancelled client gets nothing (spec 9.3).
+// failChatStream ends a Chat stream with the failure value both protocols use.
 func failChatStream(writer *concerns.SSEWriter, ctx context.Context, cause error) error {
-	if ctx.Err() != nil {
-		return cause
+	shown := cause
+	var upstream *upstreamError
+	if errors.As(cause, &upstream) {
+		shown = &concerns.StreamFailure{Value: streamFailureValue(cause)}
 	}
-	if err := writer.Event("", map[string]any{"error": streamFailureValue(cause)}); err != nil {
-		return cause // the write failing is a consequence; the cause is why we got here
-	}
-	if err := writer.Done(); err != nil {
-		return cause
-	}
+	_ = concerns.FailChatStream(ctx, writer, shown)
 	return cause
 }
 
