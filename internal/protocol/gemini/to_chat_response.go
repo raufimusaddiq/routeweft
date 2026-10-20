@@ -77,7 +77,7 @@ func (s *responseState) consume(chunk map[string]any) ([]map[string]any, error) 
 	response := chunk
 	scope := s.options.Scope
 	if wrapped := concerns.Object(chunk["response"]); wrapped != nil {
-		// The Cloud Code envelope Gemini CLI and Antigravity send (:45).
+		// Cloud Code wraps every chunk (:45); the envelope selects family-scoped storage.
 		response = wrapped
 		scope = FamilyScope(scope, s.options.Model)
 	}

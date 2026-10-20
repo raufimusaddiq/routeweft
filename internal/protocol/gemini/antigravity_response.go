@@ -175,6 +175,9 @@ func (s *antigravityStream) consume(chunk map[string]any) ([]any, error) {
 		}
 		parts = append(parts, map[string]any{"inlineData": map[string]any{"mimeType": mediaType, "data": data}})
 	}
+	if s.finish != "" && (len(parts) > 0 || len(concerns.Items(delta["tool_calls"])) > 0) {
+		return nil, errors.New("content arrived after the finish")
+	}
 	if err := s.accumulate(delta["tool_calls"]); err != nil {
 		return nil, err
 	}
@@ -192,9 +195,6 @@ func (s *antigravityStream) consume(chunk map[string]any) ([]any, error) {
 		}
 	default:
 		return nil, errors.New("finish_reason is not text")
-	}
-	if s.finish != "" && len(parts) > 0 {
-		return nil, errors.New("content arrived after the finish")
 	}
 	return parts, nil
 }
