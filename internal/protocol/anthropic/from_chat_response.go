@@ -34,11 +34,14 @@ func ChatStreamToMessages(ctx context.Context, src io.Reader, dst io.Writer) err
 		if !state.started || state.closed {
 			return nil
 		}
-		if state.finishSeen && state.finish == concerns.FinishToolCalls && !state.toolsOpened {
-			// A terminal that says a tool was called, with no tool to run, describes
-			// work that is not there.
-			return &upstreamError{value: map[string]any{"type": "api_error", "message": "upstream finished for tool calls but sent none"}}
+		// The stop reason and the tool blocks that were sent must agree: a terminal
+		// that says a tool was called, with none to run, describes work that is not
+		// there. An absent reason is derived from what was sent.
+		finish, err := concerns.ResolveFinish(state.finish, state.toolCount, false)
+		if err != nil {
+			return &upstreamError{value: map[string]any{"type": "api_error", "message": err.Error()}}
 		}
+		state.finish = finish
 		state.closed = true
 		if !state.finishSeen {
 			// The provider ended without saying why. Close what is open and report
@@ -46,12 +49,7 @@ func ChatStreamToMessages(ctx context.Context, src io.Reader, dst io.Writer) err
 			// else stopped normally. It must not leave a block open or claim a reason
 			// it never had.
 			var events []map[string]any
-			finish := concerns.FinishStop
-			if len(state.toolCalls) > 0 {
-				finish = concerns.FinishToolCalls
-			}
 			state.closeBlocks(&events)
-			state.finish = finish
 			for _, event := range events {
 				if err := writer.Event(concerns.Text(event["type"]), event); err != nil {
 					return err
@@ -138,7 +136,7 @@ type chatToolBlock struct {
 
 type chatStreamState struct {
 	started, closed, finishSeen bool
-	toolsOpened                 bool
+	toolCount                   int
 	err                         error
 	id                          string
 	model                       any
@@ -238,7 +236,7 @@ func (s *chatStreamState) events(chunk, delta, choice map[string]any) []map[stri
 			s.nextBlock++
 			s.toolCalls[index] = block
 			s.toolOrder = append(s.toolOrder, index)
-			s.toolsOpened = true
+			s.toolCount++
 			events = append(events, map[string]any{"type": "content_block_start", "index": block.block,
 				"content_block": map[string]any{"type": "tool_use", "id": id, "name": block.name, "input": map[string]any{}}})
 		}
@@ -283,23 +281,17 @@ var integerText = regexp.MustCompile(`^\d+$`)
 var signedIntegerText = regexp.MustCompile(`^-?\d+$`)
 var pdfPages = regexp.MustCompile(`^\d+(?:-\d+)?$`)
 
-// sanitizeToolArgs repairs arguments non-Anthropic models get wrong for the
-// Read tool (openai-to-claude.js:14-47). Invalid JSON is returned untouched.
+// sanitizeToolArgs makes the buffered arguments a JSON object and repairs what
+// non-Anthropic models get wrong for the Read tool (openai-to-claude.js:14-47).
 func sanitizeToolArgs(name, arguments string) string {
-	var args map[string]any
-	decoder := json.NewDecoder(strings.NewReader(arguments))
-	decoder.UseNumber()
-	if decoder.Decode(&args) != nil || args == nil {
-		return arguments
-	}
+	// Always an object, like the buffered path (concerns.ToolInput): null, an
+	// array, a string or malformed JSON would otherwise reach the client as
+	// partial_json that does not assemble into a tool input.
+	args := concerns.ToolInput(arguments)
 	if name == "Read" {
 		sanitizeReadArgs(args)
 	}
-	encoded, err := json.Marshal(args)
-	if err != nil {
-		return arguments
-	}
-	return string(encoded)
+	return concerns.JSONText(args)
 }
 
 func sanitizeReadArgs(args map[string]any) {
@@ -385,8 +377,9 @@ func ChatResponseToMessages(body []byte) ([]byte, error) {
 		}
 		content = append(content, map[string]any{"type": "tool_use", "id": id, "name": name, "input": concerns.ToolInput(arguments)})
 	}
-	if concerns.Text(choice["finish_reason"]) == concerns.FinishToolCalls && toolUses == 0 {
-		return nil, errors.New("upstream finished for tool calls but sent none")
+	finish, err := concerns.ResolveFinish(concerns.Text(choice["finish_reason"]), toolUses, false)
+	if err != nil {
+		return nil, err
 	}
 	if len(content) == 0 {
 		content = append(content, map[string]any{"type": "text", "text": ""})
@@ -405,7 +398,7 @@ func ChatResponseToMessages(body []byte) ([]byte, error) {
 	}
 	return json.Marshal(map[string]any{
 		"id": responsePrefix.ReplaceAllString(id, "msg_"), "type": "message", "role": "assistant", "model": model,
-		"content": content, "stop_reason": concerns.FromOpenAIFinish(concerns.Text(choice["finish_reason"]), concerns.FinishFormatClaude),
+		"content": content, "stop_reason": concerns.FromOpenAIFinish(finish, concerns.FinishFormatClaude),
 		"stop_sequence": nil, "usage": usage,
 	})
 }

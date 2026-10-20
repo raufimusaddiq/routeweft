@@ -228,11 +228,7 @@ func convertMessage(message map[string]any) ([]any, error) {
 			}
 			parts = append(parts, part)
 		case "tool_use":
-			input := block["input"]
-			if !concerns.Truthy(input) {
-				input = map[string]any{}
-			}
-			function := map[string]any{"arguments": concerns.JSONText(input)}
+			function := map[string]any{"arguments": concerns.ToolArguments(block["input"])}
 			if name, ok := block["name"]; ok {
 				function["name"] = name
 			}

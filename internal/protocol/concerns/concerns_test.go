@@ -239,3 +239,44 @@ func TestEnsureToolCallIDsFillsAbsentIDs(t *testing.T) {
 		t.Fatalf("every call is answered, so nothing is inserted: %v", claude["messages"])
 	}
 }
+
+// A non-string id is spelled once, as a string, so the call, the pairing set and
+// the result can never hold different values.
+func TestNonStringToolIDsPairAsStrings(t *testing.T) {
+	chat := decode(t, `{"messages":[{"role":"assistant","tool_calls":[{"id":123,"function":{"name":"a"}}]},{"role":"tool","content":"r"}]}`)
+	EnsureToolCallIDs(chat)
+	messages := Items(chat["messages"])
+	call := Object(Items(Object(messages[0])["tool_calls"])[0])
+	if call["id"] != "123" || Object(messages[1])["tool_call_id"] != "123" {
+		t.Fatalf("chat shape: %#v / %#v", call["id"], Object(messages[1])["tool_call_id"])
+	}
+	claude := decode(t, `{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":4.5,"name":"a","input":{}}]},{"role":"user","content":[{"type":"tool_result","content":"r"}]}]}`)
+	EnsureToolCallIDs(claude)
+	messages = Items(claude["messages"])
+	use := Object(Items(Object(messages[0])["content"])[0])
+	result := Object(Items(Object(messages[1])["content"])[0])
+	if _, isText := use["id"].(string); !isText || use["id"] == "" || result["tool_use_id"] != use["id"] {
+		t.Fatalf("messages shape: %#v / %#v", use["id"], result["tool_use_id"])
+	}
+}
+
+func TestResolveFinish(t *testing.T) {
+	cases := []struct {
+		reason string
+		calls  int
+		force  bool
+		want   string
+		fail   bool
+	}{
+		{"", 0, false, "stop", false}, {"", 2, false, "tool_calls", false},
+		{"stop", 2, false, "stop", false}, {"stop", 2, true, "tool_calls", false},
+		{"tool_calls", 1, false, "tool_calls", false}, {"tool_calls", 0, false, "", true},
+		{"tool_calls", 0, true, "", true}, {"length", 0, true, "length", false},
+	}
+	for _, c := range cases {
+		got, err := ResolveFinish(c.reason, c.calls, c.force)
+		if got != c.want || (err != nil) != c.fail {
+			t.Errorf("ResolveFinish(%q,%d,%v)=%q,%v", c.reason, c.calls, c.force, got, err)
+		}
+	}
+}

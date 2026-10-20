@@ -147,3 +147,7 @@ func ToolInput(value any) map[string]any {
 	}
 	return map[string]any{}
 }
+
+// ToolArguments is the Chat `arguments` string for a tool_use input: the input
+// as a JSON object, `{}` when it is none.
+func ToolArguments(input any) string { return JSONText(ToolInput(input)) }

@@ -22,13 +22,15 @@ func GenerateToolCallID(msgIndex, callIndex int, name string) string {
 // repairToolID keeps a valid id, strips an invalid one, and regenerates when
 // nothing is left (concerns/toolCall.js:36-39). Both halves of a tool call run
 // through this, so the id a result names still matches the call it answers.
-func repairToolID(id any, generate func() string) any {
+func repairToolID(id any, generate func() string) string {
 	text, isText := id.(string)
-	if isText && toolIDPattern.MatchString(text) {
-		return id
-	}
 	if !isText && Truthy(id) {
-		return id
+		// A numeric or other non-string id is still the id: spell it as JSON so the
+		// call, the pairing set and the result all hold the same string.
+		text, isText = JSONText(id), true
+	}
+	if isText && toolIDPattern.MatchString(text) {
+		return text
 	}
 	if stripped := toolIDStrip.ReplaceAllString(text, ""); stripped != "" {
 		return stripped
@@ -44,7 +46,7 @@ func repairToolID(id any, generate func() string) any {
 // pin repairs an invalid id but leaves an absent one; PARITY V16.) It mutates body.
 func EnsureToolCallIDs(body map[string]any) {
 	var pending []string
-	answer := func(id any, generate func() string) any {
+	answer := func(id any, generate func() string) string {
 		if Truthy(id) {
 			repaired := repairToolID(id, generate)
 			for k, candidate := range pending {
@@ -77,7 +79,7 @@ func EnsureToolCallIDs(body map[string]any) {
 				function := Object(call["function"])
 				name := Text(function["name"])
 				call["id"] = repairToolID(call["id"], func() string { return GenerateToolCallID(i, j, name) })
-				pending = append(pending, Text(call["id"]))
+				pending = append(pending, call["id"].(string))
 				if !Truthy(call["type"]) {
 					call["type"] = "function"
 				}
@@ -100,7 +102,7 @@ func EnsureToolCallIDs(body map[string]any) {
 			case "tool_use":
 				block["id"] = repairToolID(block["id"], func() string { return GenerateToolCallID(i, k, Text(block["name"])) })
 				if Text(message["role"]) == "assistant" {
-					pending = append(pending, Text(block["id"]))
+					pending = append(pending, block["id"].(string))
 				}
 			case "tool_result":
 				block["tool_use_id"] = answer(block["tool_use_id"], func() string { return GenerateToolCallID(i, k, "") })

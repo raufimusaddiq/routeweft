@@ -1,6 +1,9 @@
 package concerns
 
-import "strings"
+import (
+	"errors"
+	"strings"
+)
 
 // OpenAI finish_reason values: the hub vocabulary (schema/finishReasons.js).
 const (
@@ -88,4 +91,24 @@ func FromOpenAIFinish(reason, format string) string {
 		return "refusal"
 	}
 	return "end_turn"
+}
+
+// ResolveFinish is the one place a finish reason is reconciled with the tool
+// calls that were actually produced. An empty reason is "tool_calls" when calls
+// exist and "stop" otherwise. A reason of "tool_calls" with no call behind it is
+// an error, because the client would be told a tool ran when there is nothing
+// to run. force makes any reason "tool_calls" when calls exist (the pin does so
+// for buffered bodies, nonStreamingHandler.js:397-405; its streams do not).
+func ResolveFinish(reason string, toolCalls int, force bool) (string, error) {
+	switch {
+	case reason == "" && toolCalls > 0:
+		return FinishToolCalls, nil
+	case reason == "":
+		return FinishStop, nil
+	case toolCalls > 0 && force:
+		return FinishToolCalls, nil
+	case reason == FinishToolCalls && toolCalls == 0:
+		return "", errors.New("upstream finished for tool calls but sent none")
+	}
+	return reason, nil
 }

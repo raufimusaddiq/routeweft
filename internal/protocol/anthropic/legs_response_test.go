@@ -637,3 +637,30 @@ func TestChatResponseHalvesAgree(t *testing.T) {
 		}
 	}
 }
+
+// The streamed arguments assemble into an object whatever the provider sent,
+// exactly as the buffered path does.
+func TestStreamedToolArgumentsAreAlwaysAnObject(t *testing.T) {
+	for _, arguments := range []string{`null`, `[1,2]`, `{not json`, `\"text\"`, `{\"a\":1}`} {
+		var out bytes.Buffer
+		stream := `data: {"id":"chatcmpl-abcdefgh","choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"t","arguments":"` + strings.ReplaceAll(arguments, `"`, `\"`) + `"}}]},"finish_reason":"tool_calls"}]}` + "\n\n" + "data: [DONE]\n\n"
+		if strings.Contains(arguments, `\"`) {
+			stream = `data: {"id":"chatcmpl-abcdefgh","choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"t","arguments":"` + arguments + `"}}]},"finish_reason":"tool_calls"}]}` + "\n\n" + "data: [DONE]\n\n"
+		}
+		if err := ChatStreamToMessages(context.Background(), strings.NewReader(stream), &out); err != nil {
+			t.Fatalf("%s: %v", arguments, err)
+		}
+		var assembled string
+		for _, event := range sseData(t, out.String()) {
+			if m, ok := event.(map[string]any); ok && m["type"] == "content_block_delta" {
+				if d := m["delta"].(map[string]any); d["type"] == "input_json_delta" {
+					assembled += d["partial_json"].(string)
+				}
+			}
+		}
+		var object map[string]any
+		if json.Unmarshal([]byte(assembled), &object) != nil || object == nil {
+			t.Errorf("arguments %s assembled into %q, which is not an object", arguments, assembled)
+		}
+	}
+}

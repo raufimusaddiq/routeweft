@@ -109,10 +109,11 @@ func MessagesStreamToChat(ctx context.Context, src io.Reader, dst io.Writer, nam
 			}
 			delta := concerns.Object(event["delta"])
 			if reason := concerns.Text(delta["stop_reason"]); reason != "" {
-				state.finish = concerns.ToOpenAIFinish(reason, concerns.FinishFormatClaude)
-				if state.finish == concerns.FinishToolCalls && state.nextToolIndex == 0 {
-					return false, &upstreamError{value: map[string]any{"type": "api_error", "message": "upstream stopped for tool use but sent no tool call"}}
+				finish, err := concerns.ResolveFinish(concerns.ToOpenAIFinish(reason, concerns.FinishFormatClaude), state.nextToolIndex, false)
+				if err != nil {
+					return false, &upstreamError{value: map[string]any{"type": "api_error", "message": err.Error()}}
 				}
+				state.finish = finish
 				// A refusal produces no content blocks. Surface Anthropic's own
 				// explanation so the client shows why the turn is empty.
 				if note := concerns.Text(concerns.Object(delta["stop_details"])["explanation"]); reason == "refusal" && note != "" {
@@ -125,13 +126,7 @@ func MessagesStreamToChat(ctx context.Context, src io.Reader, dst io.Writer, nam
 			}
 		case "message_stop":
 			if !state.finishSent {
-				finish := state.finish
-				if finish == "" {
-					finish = concerns.FinishStop
-					if len(state.toolCalls) > 0 {
-						finish = concerns.FinishToolCalls
-					}
-				}
+				finish, _ := concerns.ResolveFinish(state.finish, state.nextToolIndex, false)
 				state.finishSent = true
 				if err := emit(map[string]any{}, finish, state.usage()); err != nil {
 					return false, err
@@ -279,12 +274,8 @@ func MessagesResponseToChat(body []byte, names *concerns.ToolNames) ([]byte, err
 		case "thinking":
 			thinking.WriteString(concerns.Text(block["thinking"]))
 		case "tool_use":
-			input := block["input"]
-			if !concerns.Truthy(input) {
-				input = map[string]any{}
-			}
 			calls = append(calls, map[string]any{"id": block["id"], "type": "function", "function": map[string]any{
-				"name": names.Original(concerns.Text(block["name"])), "arguments": concerns.JSONText(input)}})
+				"name": names.Original(concerns.Text(block["name"])), "arguments": concerns.ToolArguments(block["input"])}})
 		}
 	}
 	message := map[string]any{"role": "assistant"}
@@ -304,11 +295,9 @@ func MessagesResponseToChat(body []byte, names *concerns.ToolNames) ([]byte, err
 	if reason == "" {
 		reason = "end_turn"
 	}
-	finish := concerns.ToOpenAIFinish(reason, concerns.FinishFormatClaude)
-	if len(calls) > 0 {
-		finish = concerns.FinishToolCalls
-	} else if finish == concerns.FinishToolCalls {
-		return nil, errors.New("upstream stopped for tool use but sent no tool call")
+	finish, err := concerns.ResolveFinish(concerns.ToOpenAIFinish(reason, concerns.FinishFormatClaude), len(calls), true)
+	if err != nil {
+		return nil, err
 	}
 	// The pin strips reasoning only when there is content to show instead.
 	if message["content"] != "" && message["content"] != nil {
