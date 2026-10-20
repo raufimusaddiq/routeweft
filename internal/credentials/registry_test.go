@@ -224,3 +224,50 @@ func TestLoadSeedsProviderConnections(t *testing.T) {
 		t.Fatalf("credential=%q err=%v", credential, err)
 	}
 }
+
+func TestNamedCredentialSelectionAfterRefresh(t *testing.T) {
+	ctx := context.Background()
+	store, _ := testStore(t)
+	node := seedNode(t, store, "fixture-provider")
+	connection, err := store.PutConnection(ctx, Connection{NodeID: node.ID, ProviderID: "fixture-provider", AuthKind: AuthOAuth, Name: "primary", Identity: "fixture", Secret: Secret{AccessToken: "fixture-access", Expiry: time.Now().Add(-time.Hour), ProviderData: map[string]string{"wireToken": "fixture-stale"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := NewRegistry(store, nil)
+	registry.SetCredentialNameResolver(func(c Connection) string {
+		if c.ProviderID != "fixture-provider" {
+			t.Fatal("wrong provider identity")
+		}
+		return "wireToken"
+	})
+	registry.Register(connection, func(_ context.Context, current Secret) (Secret, error) {
+		current.ProviderData = map[string]string{"wireToken": "fixture-fresh"}
+		current.Expiry = time.Now().Add(time.Hour)
+		return current, nil
+	})
+	got, err := registry.Credential(ctx, connection.ID)
+	if err != nil || got != "fixture-fresh" {
+		t.Fatalf("named credential not selected after refresh: %v", err)
+	}
+	secret, err := registry.Secret(ctx, connection.ID)
+	if err != nil || secret.AccessToken != "fixture-access" {
+		t.Fatalf("primary credential changed: %v", err)
+	}
+	for _, tc := range []struct {
+		secret Secret
+		want   string
+	}{
+		{Secret{AccessToken: "fallback", ProviderData: map[string]string{"wireToken": ""}}, "fallback"},
+		{Secret{AccessToken: "fallback"}, "fallback"},
+		{Secret{Cookie: "fixture-cookie"}, "fixture-cookie"},
+		{Secret{AccessToken: "fallback", ProviderData: map[string]string{"wireToken": "fixture-imported"}}, "fixture-imported"},
+	} {
+		if err := registry.Import(ctx, connection.ID, connection.Identity, tc.secret); err != nil {
+			t.Fatal(err)
+		}
+		got, err := registry.Credential(ctx, connection.ID)
+		if err != nil || got != tc.want {
+			t.Fatalf("credential selection failed: %v", err)
+		}
+	}
+}

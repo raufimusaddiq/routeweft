@@ -342,7 +342,14 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 	if err != nil {
 		return fmt.Errorf("initialize credential store: %w", err)
 	}
+	credentialNames := make(map[string]string)
+	for _, spec := range registry.Builtins() {
+		credentialNames[spec.ID] = spec.CredentialName
+	}
 	registry := credentials.NewRegistry(credentialStore, nil)
+	registry.SetCredentialNameResolver(func(connection credentials.Connection) string {
+		return credentialNames[connection.ProviderID]
+	})
 	// Refreshes are network calls: they need the same pooled, SSRF-guarded client
 	// inference uses, never nil. A nil client here failed every refresh at request
 	// time, which surfaced as a 5xx on inference once a token crossed its lead.
