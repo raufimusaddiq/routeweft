@@ -152,6 +152,17 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			}
 			provider.APIToken = token
 		}
+		// A provider that signs every request with its credential must never be
+		// sent unsigned: an empty HMAC key would produce a signature the gateway
+		// rejects with an error that names nothing useful (wire.Hook
+		// RequireCredential). This is a configuration problem with this account,
+		// so the next candidate is tried and, if none serves, the client sees a
+		// credential error.
+		if wire.RequiresCredential(provider.ProviderID) && strings.TrimSpace(provider.APIToken) == "" {
+			h.recordClassification(provider.ConnectionID, routing.Classification{Outcome: routing.OutcomeAuthRefreshRequired}, time.Now())
+			preAttemptErr = &dispatchError{503, "credentials_unavailable", "provider credentials are unavailable"}
+			continue
+		}
 		outbound, err := prepare(provider)
 		if err != nil {
 			// The request cannot be expressed for this candidate's wire, which says

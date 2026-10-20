@@ -88,7 +88,9 @@ var tokens = []string{
 
 // providers whose headers PR-C changed on purpose; headers_test.go pins their new
 // values. Every other provider must still match the frozen legacy result.
-var headersChanged = map[string]bool{"azure": true, "kimi": true, "kilocode": true}
+// iflow is added by #115 PR-E: every request now carries a per-request HMAC
+// signature (iflow_test.go pins it), so it cannot match a frozen header set.
+var headersChanged = map[string]bool{"azure": true, "kimi": true, "kilocode": true, "iflow": true}
 
 func TestOpenAIHeadersMatchLegacyForEveryProvider(t *testing.T) {
 	for _, id := range providerIDs() {
@@ -170,7 +172,7 @@ func TestPrepareMessagesMatchesLegacyForEveryProvider(t *testing.T) {
 func TestRegisteredHooksAreExactlyTheDeclaredProviders(t *testing.T) {
 	got := Registered()
 	sort.Strings(got)
-	want := []string{"anthropic", "azure", "cerebras", "claude", "cline", "clinepass", "codebuddy-cn", "codebuddy-intl", "codex", "deepseek", "github", "glm", "kenari", "kilocode", "kimchi", "kimi", "minimax", "minimax-cn", "mistral", "xiaomi-tokenplan"}
+	want := []string{"anthropic", "azure", "cerebras", "claude", "cline", "clinepass", "codebuddy-cn", "codebuddy-intl", "codex", "deepseek", "github", "glm", "iflow", "kenari", "kilocode", "kimchi", "kimi", "minimax", "minimax-cn", "mistral", "xiaomi-tokenplan"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("registered hooks %v, want %v", got, want)
 	}
