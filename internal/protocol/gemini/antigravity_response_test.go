@@ -230,11 +230,67 @@ func TestAntigravityUsage(t *testing.T) {
 	}
 }
 
+// refusal is string|null on the wire; false is how a provider says "no refusal".
+// Only a non-empty string or true is one, and a type this leg cannot read fails.
+func TestAntigravityRefusalIsTyped(t *testing.T) {
+	for name, delta := range map[string]string{
+		"absent": `{}`, "null": `{"refusal":null}`, "false": `{"refusal":false}`, "empty": `{"refusal":""}`,
+	} {
+		events, raw, err := toAntigravity(t, context.Background(), chatSSE(chunk(delta, ""), chunk(`{"content":"ok"}`, "stop"), `[DONE]`))
+		if err != nil || at(lastResponse(events), "candidates.0.content.parts.0.text") != "ok" {
+			t.Errorf("%s: a non-refusal was refused: %v %s", name, err, raw)
+		}
+	}
+	for name, delta := range map[string]string{
+		"true": `{"refusal":true}`, "text": `{"refusal":"no"}`, "number": `{"refusal":1}`,
+		"object": `{"refusal":{"x":1}}`, "list": `{"refusal":[]}`,
+	} {
+		events, raw, err := toAntigravity(t, context.Background(), chatSSE(chunk(delta, "stop"), `[DONE]`))
+		if err == nil || len(events) == 0 || events[len(events)-1]["error"] == nil {
+			t.Errorf("%s: refusal served: %v %s", name, err, raw)
+		}
+	}
+}
+
+// A repeated finish chunk is legal and empty; the first one's held content stays.
+func TestAntigravityRepeatedFinishKeepsContent(t *testing.T) {
+	for name, src := range map[string]string{
+		"same reason":    chatSSE(chunk(`{"content":"hello"}`, "stop"), chunk(`{}`, "stop"), `[DONE]`),
+		"no [DONE]":      chatSSE(chunk(`{"content":"hello"}`, "stop"), chunk(`{}`, "stop")),
+		"another reason": chatSSE(chunk(`{"content":"hello"}`, "stop"), chunk(`{}`, "length"), `[DONE]`),
+		"held tool call": chatSSE(chunk(`{"tool_calls":[{"index":0,"id":"c","function":{"name":"f","arguments":"{}"}}]}`, "tool_calls"), chunk(`{}`, "tool_calls"), `[DONE]`),
+	} {
+		events, raw, err := toAntigravity(t, context.Background(), src)
+		if err != nil {
+			t.Errorf("%s: %v %s", name, err, raw)
+			continue
+		}
+		parts := asJSON(at(lastResponse(events), "candidates.0.content.parts"))
+		if name == "held tool call" {
+			if parts != `[{"functionCall":{"args":{},"id":"c","name":"f"}}]` {
+				t.Errorf("%s: parts %s", name, parts)
+			}
+			continue
+		}
+		if parts != `[{"text":"hello"}]` {
+			t.Errorf("%s: held content was replaced: %s", name, parts)
+		}
+		if name == "another reason" && asJSON(at(lastResponse(events), "candidates.0.finishReason")) != `"STOP"` {
+			t.Errorf("%s: the first finish must win", name)
+		}
+	}
+}
+
 func TestAntigravityStreamFailures(t *testing.T) {
 	for name, src := range map[string]string{
 		"two choices":     chatSSE(`{"choices":[{"index":0,"delta":{"content":"a"}},{"index":1,"delta":{"content":"b"}}]}`, `[DONE]`),
 		"second choice":   chatSSE(`{"choices":[{"index":1,"delta":{"content":"a"}}]}`, `[DONE]`),
 		"choice string":   chatSSE(`{"choices":["x"]}`, `[DONE]`),
+		"choices object":  chatSSE(`{"choices":{"0":{"delta":{}}}}`, `[DONE]`),
+		"choices number":  chatSSE(`{"choices":1}`, `[DONE]`),
+		"index string":    chatSSE(`{"choices":[{"index":"0","delta":{"content":"a"}}]}`, `[DONE]`),
+		"usage string":    chatSSE(chunk(`{"content":"x"}`, "stop"), `{"choices":[],"usage":"x"}`, `[DONE]`),
+		"usage list":      chatSSE(chunk(`{"content":"x"}`, "stop"), `{"choices":[],"usage":[1]}`, `[DONE]`),
 		"delta string":    chatSSE(`{"choices":[{"index":0,"delta":"x"}]}`, `[DONE]`),
 		"content object":  chatSSE(chunk(`{"content":{}}`, "stop"), `[DONE]`),
 		"refusal":         chatSSE(chunk(`{"refusal":"no"}`, "stop"), `[DONE]`),

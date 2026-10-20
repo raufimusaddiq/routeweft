@@ -130,10 +130,17 @@ func (s *antigravityStream) consume(chunk map[string]any) ([]any, error) {
 	if model := concerns.Text(chunk["model"]); model != "" && s.model == "" {
 		s.model = model
 	}
-	if usage := concerns.Object(chunk["usage"]); usage != nil {
+	if raw, present := chunk["usage"]; present && raw != nil {
+		usage := concerns.Object(raw)
+		if usage == nil {
+			return nil, errors.New("usage is not an object")
+		}
 		s.usage = usage
 	}
 	choices := concerns.Items(chunk["choices"])
+	if raw, present := chunk["choices"]; present && raw != nil && choices == nil {
+		return nil, errors.New("choices is not a list")
+	}
 	if len(choices) == 0 {
 		return nil, nil
 	}
@@ -144,8 +151,11 @@ func (s *antigravityStream) consume(chunk map[string]any) ([]any, error) {
 	if choice == nil {
 		return nil, errors.New("a choice is not an object")
 	}
-	if index, set := choice["index"]; set && index != nil && concerns.Int(index) != 0 {
-		return nil, errors.New("the upstream sent a choice other than the first")
+	// index is a number or absent; a string "0" is not a first choice.
+	if index, set := choice["index"]; set && index != nil {
+		if !concerns.IsNumber(index) || concerns.Int(index) != 0 {
+			return nil, errors.New("the upstream sent a choice other than the first")
+		}
 	}
 	delta := concerns.Object(choice["delta"])
 	if choice["delta"] != nil && delta == nil {
@@ -164,16 +174,36 @@ func (s *antigravityStream) consume(chunk map[string]any) ([]any, error) {
 	default:
 		return nil, errors.New("delta content is not text")
 	}
-	if refusal := delta["refusal"]; refusal != nil && refusal != "" {
-		return nil, errors.New("the model refused: " + concerns.JSONText(refusal))
-	}
-	for _, raw := range concerns.Items(delta["images"]) {
-		url := concerns.Text(concerns.Object(concerns.Object(raw)["image_url"])["url"])
-		mediaType, data, ok := concerns.ParseDataURI(url)
-		if !ok {
-			return nil, errors.New("a generated image is not a data URI")
+	// refusal is string|null on the wire and providers that mean "no refusal"
+	// send false, so only a non-empty string or true is one. Absent, null, false
+	// and "" are silence; any other type is a shape this leg cannot read.
+	if refusal, present := delta["refusal"]; present && refusal != nil {
+		switch value := refusal.(type) {
+		case bool:
+			if value {
+				return nil, errors.New("the model refused")
+			}
+		case string:
+			if value != "" {
+				return nil, errors.New("the model refused: " + concerns.JSONText(value))
+			}
+		default:
+			return nil, errors.New("delta refusal is neither text nor a boolean")
 		}
-		parts = append(parts, map[string]any{"inlineData": map[string]any{"mimeType": mediaType, "data": data}})
+	}
+	if rawImages, present := delta["images"]; present && rawImages != nil {
+		images := concerns.Items(rawImages)
+		if images == nil {
+			return nil, errors.New("delta images is not a list")
+		}
+		for _, raw := range images {
+			url := concerns.Text(concerns.Object(concerns.Object(raw)["image_url"])["url"])
+			mediaType, data, ok := concerns.ParseDataURI(url)
+			if !ok {
+				return nil, errors.New("a generated image is not a data URI")
+			}
+			parts = append(parts, map[string]any{"inlineData": map[string]any{"mimeType": mediaType, "data": data}})
+		}
 	}
 	if s.finish != "" && (len(parts) > 0 || len(concerns.Items(delta["tool_calls"])) > 0) {
 		return nil, errors.New("content arrived after the finish")
@@ -189,8 +219,13 @@ func (s *antigravityStream) consume(chunk map[string]any) ([]any, error) {
 			if err != nil {
 				return nil, err
 			}
-			s.finish = finish
-			s.held = parts
+			// A repeated finish chunk is legal on the wire with an empty delta
+			// (the guard above refuses one that carries content), so the first
+			// finish is kept: replacing it would drop the parts already held.
+			if s.finish == "" {
+				s.finish = finish
+				s.held = parts
+			}
 			return nil, nil
 		}
 	default:

@@ -178,8 +178,11 @@ func chatRequestToCloudCode(body map[string]any, options RequestOptions, cloud C
 	}
 	request["generationConfig"] = config
 	if !antigravity {
-		// Antigravity sends none (:364-367, executors/antigravity.js:287).
-		request["safetySettings"] = fields["safetySettings"]
+		// Antigravity sends none (:364-367, executors/antigravity.js:287). The CLI
+		// carries the Gemini body's list; an absent one is not sent as null.
+		if raw, ok := fields["safetySettings"]; ok && string(raw) != "null" {
+			request["safetySettings"] = raw
+		}
 	}
 	switch {
 	case fields["toolConfig"] != nil:
@@ -217,33 +220,35 @@ func chatRequestToCloudCode(body map[string]any, options RequestOptions, cloud C
 // wire never sees them, so the leg does not pretend to send them (PARITY 6.8 A2).
 func antigravityPreflight(body map[string]any, claude bool) error {
 	messages, _ := body["messages"].([]any)
-	for _, raw := range messages {
-		message := concerns.Object(raw)
-		if message == nil {
-			continue
-		}
-		if concerns.Text(message["role"]) == "assistant" {
-			delete(message, "reasoning_content")
-		}
-		if !claude {
-			continue
-		}
-		for _, part := range concerns.Items(message["content"]) {
-			item := concerns.Object(part)
-			if item == nil {
+	// Refusals run first and over the whole body: a request that is rejected
+	// must not leave the caller's map stripped (only matters on retry, but the
+	// mutation is ours, not the caller's).
+	if claude {
+		for _, raw := range messages {
+			message := concerns.Object(raw)
+			if message == nil {
 				continue
 			}
-			if kind := concerns.Text(item["type"]); kind != "text" {
-				return unsupported("%q content: the Claude models behind Antigravity are sent text only", kind)
+			for _, part := range concerns.Items(message["content"]) {
+				item := concerns.Object(part)
+				if item == nil {
+					continue
+				}
+				if kind := concerns.Text(item["type"]); kind != "text" {
+					return unsupported("%q content: the Claude models behind Antigravity are sent text only", kind)
+				}
 			}
 		}
-	}
-	if claude {
 		if format := body["response_format"]; format != nil {
 			object := concerns.Object(format)
 			if object == nil || (concerns.Text(object["type"]) != "" && concerns.Text(object["type"]) != "text") {
 				return unsupported("response_format: the Claude models behind Antigravity cannot enforce it")
 			}
+		}
+	}
+	for _, raw := range messages {
+		if message := concerns.Object(raw); concerns.Text(message["role"]) == "assistant" {
+			delete(message, "reasoning_content")
 		}
 	}
 	return nil
@@ -290,6 +295,8 @@ func unwrapCloudCode(body map[string]any) (map[string]any, error) {
 	copied := make(map[string]any, len(inner))
 	for key, value := range inner {
 		// The session is the client's own and the gateway assigns another.
+		// requestType was checked above: only absent, null or "agent" got here,
+		// and all three mean the same thing, so none is copied.
 		if key == "sessionId" || key == "session_id" || cloudCodeRouting[key] || key == "request" || key == "requestType" {
 			continue
 		}
@@ -324,6 +331,8 @@ func AntigravityRequestToChat(body map[string]any, model string, stream bool) ([
 	if err != nil {
 		return nil, err
 	}
+	// thinkingEffort reads the client's thinkingConfig, which GeminiRequestToChat
+	// below turns into thinkingBudget and consumes. Read before, not after.
 	effort, err := thinkingEffort(inner)
 	if err != nil {
 		return nil, err
