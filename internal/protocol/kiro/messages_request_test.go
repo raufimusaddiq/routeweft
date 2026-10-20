@@ -297,6 +297,8 @@ func TestMessagesThinkingIntent(t *testing.T) {
 		"effort beats header":    {ask(`,"output_config":{"effort":"high"}`), "interleaved-thinking-2025-05-14", "claude-sonnet-4.5", true, "24576"},
 		"suffix disables header": {ask(``), "interleaved-thinking-2025-05-14", "claude-sonnet-4.5(none)", false, ""},
 		"model suffix":           {ask(``), "", "claude-sonnet-4.5-thinking", true, "16000"},
+		"tag in system blocks":   {`{"system":[{"type":"text","text":"x"},{"type":"text","text":"<thinking_mode>interleaved</thinking_mode>"}],"messages":[{"role":"user","content":"hi"}]}`, "", "claude-sonnet-4.5", true, "16000"},
+		"tag in system string":   {`{"system":"<thinking_mode>enabled</thinking_mode>","messages":[{"role":"user","content":"hi"}]}`, "", "claude-sonnet-4.5", true, "16000"},
 		"tag in user text":       {`{"messages":[{"role":"user","content":"<thinking_mode>enabled</thinking_mode> hi"}]}`, "", "claude-sonnet-4.5", true, "16000"},
 	} {
 		t.Run(name, func(t *testing.T) {

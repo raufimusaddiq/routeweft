@@ -285,9 +285,8 @@ func TestMessagesBufferedMatchesStream(t *testing.T) {
 			// The ids carry the clock; everything else must agree.
 			delete(streamed, "id")
 			delete(buffered, "id")
-			if name == "empty" {
-				// A stream with no content sends no block; the body says so with an empty text block.
-				streamed["content"] = []any{map[string]any{"type": "text", "text": ""}}
+			if name == "empty" && concerns.JSONText(buffered["content"]) != `[{"text":"","type":"text"}]` {
+				t.Fatalf("an empty answer is one empty text block in both paths: %v", buffered["content"])
 			}
 			delete(streamed, "stop_sequence")
 			delete(buffered, "stop_sequence")

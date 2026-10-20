@@ -222,7 +222,19 @@ func hasThinkingModeTag(body map[string]any) bool {
 			}
 		}
 	}
-	return containsThinkingTag(concerns.Text(body["system"]))
+	// The pin reads only a string system (kiroConstants.js:379-380). A Messages
+	// client sends a list of text blocks, and the prefix the leg builds carries
+	// their text to Kiro either way, so the tag in one must also switch on the tag
+	// reading of the answer.
+	if containsThinkingTag(concerns.Text(body["system"])) {
+		return true
+	}
+	for _, block := range concerns.Items(body["system"]) {
+		if containsThinkingTag(concerns.Text(concerns.Object(block)["text"])) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveBudget is resolveKiroThinkingBudget (kiroConstants.js:144-169). beta is

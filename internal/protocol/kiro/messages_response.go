@@ -179,6 +179,12 @@ func KiroStreamToMessages(ctx context.Context, src io.Reader, dst io.Writer, opt
 		if err = start(); err == nil {
 			err = blocks.stop()
 		}
+		if err == nil && blocks.next == 0 {
+			// An answer with no content is one empty text block, as the buffered body.
+			if err = blocks.open(0, map[string]any{"type": "text", "text": ""}); err == nil {
+				err = blocks.close(0)
+			}
+		}
 	}
 	if err != nil {
 		return failMessages(ctx, writer, err)

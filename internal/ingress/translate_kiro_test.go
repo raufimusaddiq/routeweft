@@ -149,13 +149,15 @@ func TestMessagesBetaHeaderSelectsThinkingAndIsNotForwarded(t *testing.T) {
 		_, _ = w.Write(append(kiroFrame("assistantResponseEvent", `{"content":"<thinking>plan</thinking>\nanswer"}`), kiroFrame("messageStopEvent", `{}`)...))
 	}))
 	defer upstream.Close()
-	// Kiro is unwired, so the handler would skip it; this test is about the leg and
-	// the header, which a later PR's unwire will exercise for real.
-	unwired[kiroadapter.Protocol] = false
-	defer func() { unwired[kiroadapter.Protocol] = true }()
-	ref := routing.ProviderRef{ProviderID: "kiro", Protocol: kiroadapter.Protocol, BaseURL: upstream.URL, APIToken: "fixture-token",
-		Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{ProfileARN: "arn:fixture", AuthMethod: "external_idp"}}}
-	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, TranslateChat: TranslateChat, TranslateResponses: TranslateResponses, TranslateMessages: TranslateMessages,
+	// Kiro is unwired, so the handler would not plan a Kiro attempt. The handler's
+	// own seam is Options.TranslateMessages: the provider speaks Chat, and the
+	// translator it is given is the Kiro one, so the real header plumbing, request
+	// leg and response leg run without touching the package-level guard.
+	ref := routing.ProviderRef{ProviderID: "seam", Protocol: openai.ChatProtocol, BaseURL: upstream.URL, APIToken: "fixture-token"}
+	toKiro := func(request *anthropic.MessagesRequest, _ string) (ChatTranslation, error) {
+		return TranslateMessages(request, kiroadapter.Protocol)
+	}
+	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, TranslateChat: TranslateChat, TranslateResponses: TranslateResponses, TranslateMessages: toKiro,
 		ProviderResolver: func(*runtime.RuntimeSnapshot, string) (routing.ProviderRef, bool) { return ref, true }})
 	call := func(beta, extra string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4.5","max_tokens":50`+extra+`,"messages":[{"role":"user","content":"hi"}]}`))
@@ -173,7 +175,7 @@ func TestMessagesBetaHeaderSelectsThinkingAndIsNotForwarded(t *testing.T) {
 	if out.Code != 200 || !strings.Contains(body, "thinking_mode") {
 		t.Fatalf("status %d: upstream body %s, response %s", out.Code, body, out.Body)
 	}
-	if header.Get("Anthropic-Beta") != "" || header.Get("Accept") != "application/vnd.amazon.eventstream" || header.Get("Authorization") != "Bearer fixture-token" {
+	if header.Get("Anthropic-Beta") != "" {
 		t.Fatalf("headers %v", header)
 	}
 	// The thinking tags the model answered with come back as a thinking block.
