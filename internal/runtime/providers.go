@@ -14,6 +14,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/cloudflare"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
@@ -196,7 +197,13 @@ func (s *RuntimeSnapshot) AccountProvider(requested, account, source string, can
 		return routing.ProviderRef{}, false
 	}
 	config, ok := s.providers[account]
-	if !ok || config.node.ProviderID != model.ProviderID || !config.account.Enabled || len(config.node.Transports) == 0 || config.node.BaseURL == "" {
+	if !ok {
+		return routing.ProviderRef{}, false
+	}
+	// The base is wire.NodeBase's rule: the node's own, else the one the connection
+	// names (Azure OpenAI declares none); a connection with neither is not selectable.
+	baseURL := wire.NodeBase(config.node.BaseURL, "", config.metadata.Settings)
+	if config.node.ProviderID != model.ProviderID || !config.account.Enabled || len(config.node.Transports) == 0 || baseURL == "" {
 		return routing.ProviderRef{}, false
 	}
 	protocol := config.node.Transports[0]
@@ -224,7 +231,7 @@ func (s *RuntimeSnapshot) AccountProvider(requested, account, source string, can
 			return routing.ProviderRef{}, false
 		}
 	}
-	return routing.ProviderRef{Connection: config.metadata, ProviderID: model.ProviderID, ConnectionID: account, BaseURL: config.node.BaseURL, Protocol: protocol, UpstreamModel: model.ID, Endpoint: endpoint}, true
+	return routing.ProviderRef{Connection: config.metadata, ProviderID: model.ProviderID, ConnectionID: account, BaseURL: baseURL, Protocol: protocol, UpstreamModel: model.ID, Endpoint: endpoint}, true
 }
 
 func (s *RuntimeSnapshot) compileServingIndexes() {

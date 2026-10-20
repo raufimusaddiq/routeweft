@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
+	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
 // Model is one catalog entry produced by discovery, reduced to the fields the
@@ -58,7 +60,8 @@ func SyncSpec(ctx context.Context, client *Client, store Store, catalog *registr
 	if !ok {
 		return 0, errors.New("unknown provider " + providerID)
 	}
-	if strings.TrimSpace(spec.DefaultBaseURL) == "" {
+	base := wire.NodeBase("", spec.DefaultBaseURL, routing.ProviderSettings{})
+	if base == "" {
 		return 0, errors.New("provider " + providerID + " has no discoverable base URL")
 	}
 	if client == nil {
@@ -72,7 +75,7 @@ func SyncSpec(ctx context.Context, client *Client, store Store, catalog *registr
 	callClient.AllowPrivateUpstreams = allowPrivate
 	request := Request{
 		ProviderID: providerID,
-		BaseURL:    spec.DefaultBaseURL,
+		BaseURL:    base,
 		Path:       spec.DiscoveryPath,
 		Credential: credential,
 		AuthStyle:  authStyleFor(spec.Auth),

@@ -441,10 +441,6 @@ func (h *Handler) handleTestModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	spec, _ := h.providerSpec(node.ProviderID)
-	baseURL := node.BaseURL
-	if baseURL == "" {
-		baseURL = spec.DefaultBaseURL
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), modelBatchTimeout)
 	defer cancel()
 	results := make([]modelTestResult, 0, len(body.ModelIDs))
@@ -453,7 +449,7 @@ func (h *Handler) handleTestModels(w http.ResponseWriter, r *http.Request) {
 			writeProbeInterrupted(w, ctx, "probe", results)
 			return
 		}
-		result := h.testProviderModel(ctx, connection, node, spec, baseURL, transportName, modelID, modelProbeTimeout)
+		result := h.testProviderModel(ctx, connection, node, spec, transportName, modelID, modelProbeTimeout)
 		results = append(results, result)
 		if ctx.Err() != nil {
 			writeProbeInterrupted(w, ctx, "probe", results)
@@ -463,7 +459,7 @@ func (h *Handler) handleTestModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"connectionId": connection.ID, "transport": transportName, "results": results})
 }
 
-func (h *Handler) testProviderModel(ctx context.Context, connection credentials.Connection, node credentials.Node, spec registry.Spec, baseURL, transportName, modelID string, timeout time.Duration) (result modelTestResult) {
+func (h *Handler) testProviderModel(ctx context.Context, connection credentials.Connection, node credentials.Node, spec registry.Spec, transportName, modelID string, timeout time.Duration) (result modelTestResult) {
 	start := time.Now()
 	requestCtx := ctx
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -548,22 +544,19 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 			endpoint = "messages"
 		}
 	}
-	parsed, err := h.validateOutboundURL(baseURL)
+	// The probe goes where a request would: the same base and target rules serving
+	// uses (wire.NodeBase, wire.ResolveTarget), so a connection that probes fine
+	// is a connection that serves, and a probe never tests a different URL.
+	route := probeRef(node, connection, spec, transportName, modelID, "")
+	target, err := wire.ResolveTarget(route, nativeEndpointPath(route.BaseURL, transportName, endpoint))
+	if err != nil {
+		result.Error = "provider endpoint is not configured for this connection"
+		return result
+	}
+	parsed, err := target.URL(h.validateOutboundURL)
 	if err != nil {
 		result.Error = "provider base URL is not allowed by outbound network policy"
 		return result
-	}
-	endpoint = nativeEndpointPath(parsed.Path, transportName, endpoint)
-	if transportName == string(registry.TransportSystemOne) {
-		// Base URL already points at the typed endpoint; only a spec-declared
-		// override appends a path, matching ingress dispatch.
-		if endpoint != "" {
-			parsed.Path = strings.TrimRight(parsed.Path, "/") + "/" + strings.TrimLeft(endpoint, "/")
-		}
-		parsed.RawPath = ""
-	} else {
-		parsed.Path = strings.TrimRight(parsed.Path, "/") + "/" + strings.TrimLeft(endpoint, "/")
-		parsed.RawPath = ""
 	}
 	if transportName == string(registry.TransportGemini) {
 		query := parsed.Query()
@@ -575,6 +568,10 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 		result.Error = "model probe request could not be encoded"
 		return result
 	}
+	// The probe sends the body serving would: the provider's registry quirks apply
+	// to it too (github's max_completion_tokens, kimchi, deepseek, minimax...), so
+	// a connection that probes fine is one that serves.
+	encoded = wire.FinalizeBody(route, encoded)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, parsed.String(), bytes.NewReader(encoded))
 	if err != nil {
 		result.Error = "model probe request could not be created"
@@ -592,7 +589,8 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	case credentials.AuthCookie:
 		request.Header.Set("Cookie", credential)
 	case credentials.AuthAPIKey, credentials.AuthOAuth:
-		for name, values := range modelWireHeaders(node, transportName, credential) {
+		route.APIToken = credential
+		for name, values := range modelWireHeaders(route) {
 			request.Header[name] = values
 		}
 	default:
@@ -695,20 +693,31 @@ func (h *Handler) fetchConnectionModels(ctx context.Context, connection credenti
 }
 
 func (h *Handler) fetchConnectionModelEntries(ctx context.Context, connection credentials.Connection, node credentials.Node) ([]discovery.Model, error) {
-	baseURL := node.BaseURL
+	var spec registry.Spec
 	path := "models"
 	if node.Kind == credentials.NodeBuiltin {
-		spec, ok := h.providerSpec(node.ProviderID)
+		var ok bool
+		spec, ok = h.providerSpec(node.ProviderID)
 		if !ok {
 			return nil, errors.New("provider is not in the built-in catalog")
-		}
-		if baseURL == "" {
-			baseURL = spec.DefaultBaseURL
 		}
 		path = spec.DiscoveryPath
 	}
 	if slicesContain(node.Transports, string(registry.TransportOllama)) {
 		path = "api/tags"
+	}
+	protocol := string(registry.TransportOpenAIChat)
+	if slicesContain(node.Transports, string(registry.TransportAnthropic)) {
+		protocol = string(registry.TransportAnthropic)
+	}
+	// The listing is requested from the base serving would use (wire.NodeBase,
+	// then the provider's own host such as a Token Plan region). A provider with
+	// no model listing (Azure) lists nothing: no credential is read and nothing is
+	// sent.
+	route := probeRef(node, connection, spec, protocol, "", "")
+	listBase, listable := wire.DiscoveryBase(route)
+	if !listable {
+		return nil, nil
 	}
 	style := discovery.AuthBearer
 	if slicesContain(node.Transports, string(registry.TransportGemini)) {
@@ -731,14 +740,10 @@ func (h *Handler) fetchConnectionModelEntries(ctx context.Context, connection cr
 		style = discovery.AuthCookie
 	}
 	headers := make(map[string]string)
-	protocol := string(registry.TransportOpenAIChat)
-	if slicesContain(node.Transports, string(registry.TransportAnthropic)) {
-		protocol = string(registry.TransportAnthropic)
-	}
-	for name, values := range modelWireHeaders(node, protocol, "") {
+	for name, values := range modelWireHeaders(route) {
 		headers[name] = values[0]
 	}
-	return client.ModelEntries(ctx, discovery.Request{ProviderID: node.ProviderID, BaseURL: baseURL, Path: path, Credential: credential, AuthStyle: style, Headers: headers})
+	return client.ModelEntries(ctx, discovery.Request{ProviderID: node.ProviderID, BaseURL: listBase, Path: path, Credential: credential, AuthStyle: style, Headers: headers})
 }
 
 func modelWireProviderID(node credentials.Node) string {
@@ -748,12 +753,24 @@ func modelWireProviderID(node credentials.Node) string {
 	return ""
 }
 
-func modelWireHeaders(node credentials.Node, protocol, credential string) http.Header {
-	provider := routing.ProviderRef{ProviderID: modelWireProviderID(node), APIToken: credential}
-	if protocol == string(registry.TransportAnthropic) {
+// probeRef is the route a probe or listing for this connection takes: the
+// ProviderRef serving would build, with the connection's own settings, so the
+// wire hooks (headers, target, base) see what they see at request time.
+func probeRef(node credentials.Node, connection credentials.Connection, spec registry.Spec, protocol, model, credential string) routing.ProviderRef {
+	return routing.ProviderRef{
+		ProviderID: modelWireProviderID(node), Protocol: protocol, UpstreamModel: model, APIToken: credential, ConnectionID: connection.ID,
+		BaseURL: wire.NodeBase(node.BaseURL, spec.DefaultBaseURL, connection.Settings),
+		Connection: routing.ConnectionMetadata{Name: connection.Name, AuthKind: string(connection.AuthKind), Identity: connection.Identity,
+			AccountID: connection.AccountID, Settings: connection.Settings},
+	}
+}
+
+func modelWireHeaders(provider routing.ProviderRef) http.Header {
+	credential := provider.APIToken
+	if provider.Protocol == string(registry.TransportAnthropic) {
 		return wire.MessagesHeaders(provider, "", "")
 	}
-	if protocol == string(registry.TransportGemini) {
+	if provider.Protocol == string(registry.TransportGemini) {
 		headers := http.Header{}
 		if credential != "" {
 			headers.Set("x-goog-api-key", credential)

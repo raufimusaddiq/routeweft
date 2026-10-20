@@ -71,7 +71,7 @@ Authentication is orthogonal to transport. A provider can reuse a shared protoco
 | iflow | OA-chat | OAuth | Static | — | iFlow OAuth plus current cookie/import helper workflow. |
 | kilocode | OA-chat | OAuth | Dynamic + passthrough | — | Kilo model discovery through gateway/OpenRouter-style catalog. |
 | kimchi | OA-chat | API key + OAuth | Passthrough | — | Dual auth and passthrough model IDs. |
-| kimi | Multi: chat+messages | API key + OAuth | Static | Usage | Kimi native Chat + Messages transports, OAuth refresh and header hooks. |
+| kimi | Multi: chat+messages+responses | API key + OAuth | Static | Usage | Kimi native Chat + Messages + Responses transports, OAuth refresh and header hooks. |
 | kiro | Specialized | OAuth/API key/imports | Static | Usage/quota | Kiro runtime wire format, device/social auth, API-key/import/auto-import/CLI-proxy flows. |
 | mimo-free | OA-chat | No auth | Dynamic + passthrough | — | Free/no-auth provider with live model discovery. |
 | minimax-cn | Multi: chat+messages | API key | Static | Usage | China MiniMax Chat + Messages, usage and provider quirks. |
