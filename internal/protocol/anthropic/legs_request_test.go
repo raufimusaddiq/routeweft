@@ -109,7 +109,7 @@ func TestMessagesRequestToChatEdgeCases(t *testing.T) {
 	  {"role":"assistant","tool_calls":[{"id":"t1","type":"function","function":{"name":"x","arguments":"{}"}},{"id":"t2","type":"function","function":{"name":"y","arguments":"{}"}}]},
 	  {"role":"tool","tool_call_id":"t2","content":"done"},
 	  {"role":"tool","tool_call_id":"t1","content":"[No response received]"},
-	  {"role":"user","content":"b"}
+	  {"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.invalid/i.png"}},{"type":"text","text":"b"}]}
 	]}`)
 }
 
