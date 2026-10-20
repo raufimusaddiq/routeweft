@@ -295,3 +295,58 @@ func TestReadEventsBoundsOneEvent(t *testing.T) {
 		t.Fatal("an event built of several lines must be bounded as a whole")
 	}
 }
+
+func TestOllamaUsageIsCacheInclusiveAndAbsentWhenUnreported(t *testing.T) {
+	usage, observed := OllamaUsage(decode(t, `{"prompt_eval_count":130,"prompt_eval_cached_count":100,"eval_count":42}`))
+	if !observed || usage.Prompt != 130 || usage.Cached != 100 || usage.Completion != 42 || usage.Total != 172 {
+		t.Errorf("%+v %v", usage, observed)
+	}
+	if got := encode(t, usage.OpenAI()); got != `{"completion_tokens":42,"prompt_tokens":130,"prompt_tokens_details":{"cached_tokens":100},"total_tokens":172}` {
+		t.Errorf("%s", got)
+	}
+	for _, body := range []string{`{}`, `{"done":true}`, `{"prompt_eval_count":0,"eval_count":0}`} {
+		if _, observed := OllamaUsage(decode(t, body)); observed {
+			t.Errorf("%s reported usage", body)
+		}
+	}
+}
+
+func TestReadLinesFramesNDJSON(t *testing.T) {
+	var seen []string
+	err := ReadLines(context.Background(), strings.NewReader("{\"a\":1}\n\n  {\"a\":2}  \r\n{\"a\":3}"), func(line map[string]any) (bool, error) {
+		seen = append(seen, encode(t, line))
+		return len(seen) == 3, nil
+	})
+	if err != nil || strings.Join(seen, "") != `{"a":1}{"a":2}{"a":3}` {
+		t.Fatalf("err=%v seen=%v", err, seen)
+	}
+	// A stream the consumer never stopped was cut short.
+	if err := ReadLines(context.Background(), strings.NewReader("{\"a\":1}\n"), func(map[string]any) (bool, error) { return false, nil }); err == nil {
+		t.Error("a stream with no terminal must not look finished")
+	}
+	if err := ReadLines(context.Background(), strings.NewReader("{\"a\":1}\nnot json\n"), func(map[string]any) (bool, error) { return false, nil }); err == nil || !strings.Contains(err.Error(), "invalid upstream stream event") {
+		t.Errorf("a bad line: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := ReadLines(ctx, strings.NewReader("{\"a\":1}\n"), func(map[string]any) (bool, error) { return true, nil }); err == nil {
+		t.Error("a cancelled read must stop")
+	}
+}
+
+func TestUncarriableChatNamesWhatTheWireCannotDo(t *testing.T) {
+	for body, want := range map[string]string{
+		`{"n":2}`: "n=2: Ollama returns one completion", `{"logprobs":true}`: "logprobs: Ollama reports none", `{"modalities":["text","audio"]}`: "audio output",
+		`{"audio":{}}`: `"audio"`, `{"functions":[{}]}`: `"functions"`, `{"function_call":"auto"}`: `"function_call"`,
+	} {
+		if got := UncarriableChat(decode(t, body), "Ollama"); !strings.Contains(got, want) {
+			t.Errorf("%s: %q", body, got)
+		}
+	}
+	if got := UncarriableChat(decode(t, `{"n":2}`), "Anthropic"); got != "n=2: Anthropic returns one completion" {
+		t.Errorf("the Messages wording changed: %q", got)
+	}
+	if got := UncarriableChat(decode(t, `{"n":1,"logprobs":false,"modalities":["text"]}`), "Ollama"); got != "" {
+		t.Errorf("%q", got)
+	}
+}

@@ -55,7 +55,6 @@ var trackedLegGaps = map[string]string{
 	"request openai-chat>gemini":       "#119 Gemini family (gemini, gemini-cli, antigravity, vertex)",
 	"request openai-chat>gemini-cli":   "#119 Gemini family (gemini, gemini-cli, antigravity, vertex)",
 	"request openai-chat>kiro":         "#119 Kiro",
-	"request openai-chat>ollama":       "#119 Ollama",
 	"request openai-chat>vertex":       "#119 Gemini family (gemini, gemini-cli, antigravity, vertex)",
 	"response antigravity>openai-chat": "#119 Gemini family (gemini, gemini-cli, antigravity, vertex)",
 	"response commandcode>openai-chat": "#119 Cursor and CommandCode",
@@ -64,7 +63,6 @@ var trackedLegGaps = map[string]string{
 	"response gemini>openai-chat":      "#119 Gemini family (gemini, gemini-cli, antigravity, vertex)",
 	"response kiro>anthropic-messages": "#119 Kiro",
 	"response kiro>openai-chat":        "#119 Kiro",
-	"response ollama>openai-chat":      "#119 Ollama",
 	"response openai-chat>antigravity": "#119 Gemini family (gemini, gemini-cli, antigravity, vertex)",
 	"response vertex>openai-chat":      "#119 Gemini family (gemini, gemini-cli, antigravity, vertex)",
 }

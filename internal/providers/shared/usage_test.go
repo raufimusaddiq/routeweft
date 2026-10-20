@@ -40,6 +40,7 @@ func TestParseUsagePerProtocolFamily(t *testing.T) {
 		{"responses nested", FamilyOpenAIResponses, `{"response":{"usage":{"input_tokens":6,"output_tokens":1}}}`, 6, 1, 0},
 		{"gemini", FamilyGemini, `{"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":5,"cachedContentTokenCount":3}}`, 11, 5, 3},
 		{"ollama", FamilyOllama, `{"prompt_eval_count":8,"eval_count":6}`, 8, 6, 0},
+		{"ollama cached subset of the prompt", FamilyOllama, `{"prompt_eval_count":8,"prompt_eval_cached_count":5,"eval_count":6}`, 8, 6, 5},
 		{"anthropic", FamilyAnthropic, `{"usage":{"input_tokens":12,"output_tokens":7,"cache_read_input_tokens":2,"cache_creation_input_tokens":1}}`, 12, 7, 2},
 	}
 	for _, tc := range cases {

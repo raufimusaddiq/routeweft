@@ -23,8 +23,6 @@ var unreachableProviders = map[string]string{
 	"kiro":           "#119 Kiro",
 	"cursor":         "#119 Cursor and CommandCode",
 	"commandcode":    "#119 Cursor and CommandCode",
-	"ollama":         "#119 Ollama",
-	"ollama-local":   "#119 Ollama",
 	"typesafe":       "no conversion leg exists at the pin: registry/typesafe.js:22 format \"systemone\" is not in translator/formats.js:2-15",
 	"qoder":          "no conversion leg exists at the pin: registry/qoder.js:19-26 declares no format; its wire is executor-level (shared/qoder/sse.js)",
 	"perplexity-web": "no conversion leg exists at the pin: registry/perplexity-web.js:21 format \"perplexity-web\" is not in translator/formats.js:2-15",
