@@ -482,6 +482,8 @@ func (h *Handler) handleNodeRoutes(w http.ResponseWriter, r *http.Request) {
 		if !supported || base == "" {
 			continue
 		}
+		// "{model}" stands in for the model: a provider whose target depends on the
+		// real model (an Azure deployment) fails the lookup and is not listed.
 		route := routing.ProviderRef{ProviderID: modelWireProviderID(node), Protocol: protocol, BaseURL: base, UpstreamModel: "{model}"}
 		target, err := wire.ResolveTarget(route, nativeEndpointPath(base, protocol, path))
 		if err != nil {

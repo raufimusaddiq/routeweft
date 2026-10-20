@@ -568,6 +568,10 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 		result.Error = "model probe request could not be encoded"
 		return result
 	}
+	// The probe sends the body serving would: the provider's registry quirks apply
+	// to it too (github's max_completion_tokens, kimchi, deepseek, minimax...), so
+	// a connection that probes fine is one that serves.
+	encoded = wire.FinalizeBody(route, encoded)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, parsed.String(), bytes.NewReader(encoded))
 	if err != nil {
 		result.Error = "model probe request could not be created"

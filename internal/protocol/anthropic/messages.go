@@ -23,6 +23,10 @@ type MessagesRequest struct {
 	Stream bool
 	Raw    []byte
 	Fields map[string]json.RawMessage
+	// Scope names who this request is for (the authenticated client and the
+	// provider connection), set by ingress for a translated attempt. A leg that
+	// keeps state between requests keys it by Scope; empty means keep none.
+	Scope string
 	// AnthropicBeta records a client anthropic-beta header value carried in the
 	// parsed request for the native transport to forward.
 	AnthropicBeta string

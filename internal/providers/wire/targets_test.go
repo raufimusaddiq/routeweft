@@ -3,6 +3,7 @@ package wire
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -136,18 +137,19 @@ func TestTokenplanTargetCrossProduct(t *testing.T) {
 						t.Fatalf("malformed target %+v", got)
 					}
 					official := strings.Contains(base, "xiaomimimo.com")
-					host := map[string]string{"sgp": "sgp", "cn": "cn", "ams": "ams"}[strings.TrimSpace(region)] // "cn " is cn, not the default region
-					if host == "" {
-						host = "sgp"
-					}
-					wantBase := "https://token-plan-" + host + ".xiaomimimo.com/v1"
-					if !official {
-						wantBase = strings.TrimRight(base, "/")
+					trimmed := strings.TrimSpace(region)
+					var wantBase string
+					switch {
+					case !official:
+						wantBase = strings.TrimRight(base, "/") // a custom base is kept as given
+					case trimmed == "sgp" || trimmed == "cn" || trimmed == "ams":
+						wantBase = "https://token-plan-" + trimmed + ".xiaomimimo.com/v1" // an explicit region overrides
+					default:
+						// No region, or one that names none: the connection's own host.
+						parsed, _ := url.Parse(base)
+						wantBase = "https://" + parsed.Host + "/v1"
 					}
 					if protocol == chat {
-						if !official {
-							wantBase = strings.TrimRight(base, "/")
-						}
 						if got.BaseURL != wantBase || got.Endpoint != "chat/completions" {
 							t.Fatalf("chat target %+v want base %s", got, wantBase)
 						}
@@ -174,12 +176,30 @@ func TestDiscoveryBase(t *testing.T) {
 		{"azure has no listing", ref("azure", chat, "https://acme.openai.azure.com", routing.ProviderSettings{}), "", false},
 		{"tokenplan region", ref("xiaomi-tokenplan", chat, "https://token-plan-sgp.xiaomimimo.com/v1", routing.ProviderSettings{Region: "cn"}), "https://token-plan-cn.xiaomimimo.com/v1", true},
 		{"tokenplan default", ref("xiaomi-tokenplan", chat, "https://token-plan-sgp.xiaomimimo.com/v1", routing.ProviderSettings{}), "https://token-plan-sgp.xiaomimimo.com/v1", true},
+		{"tokenplan cn base, no region, keeps its host", ref("xiaomi-tokenplan", chat, "https://token-plan-cn.xiaomimimo.com/v1", routing.ProviderSettings{}), "https://token-plan-cn.xiaomimimo.com/v1", true},
+		{"tokenplan ams base, unknown region, keeps its host", ref("xiaomi-tokenplan", chat, "https://token-plan-ams.xiaomimimo.com/v1", routing.ProviderSettings{Region: "mars"}), "https://token-plan-ams.xiaomimimo.com/v1", true},
 		{"tokenplan custom base", ref("xiaomi-tokenplan", chat, "http://127.0.0.1:9/v1/", routing.ProviderSettings{Region: "cn"}), "http://127.0.0.1:9/v1", true},
 		{"anyone else", ref("kimi", chat, "https://api.kimi.com/coding/v1", routing.ProviderSettings{}), "https://api.kimi.com/coding/v1", true},
 	} {
 		base, ok := DiscoveryBase(c.ref)
 		if base != c.wantBase || ok != c.wantOK {
 			t.Errorf("%s: %q %v want %q %v", c.name, base, ok, c.wantBase, c.wantOK)
+		}
+	}
+}
+
+// A Token Plan key is issued for one region: a CN or AMS connection with no region
+// setting keeps its own host rather than being sent to the default one.
+func TestTokenplanNeverMovesAKeyToAnotherRegionUnlessAsked(t *testing.T) {
+	for _, host := range []string{"sgp", "cn", "ams"} {
+		base := "https://token-plan-" + host + ".xiaomimimo.com/v1"
+		for _, region := range []string{"", "  ", "mars", "CN"} {
+			for _, protocol := range []string{chat, messages} {
+				got, err := ResolveTarget(ref("xiaomi-tokenplan", protocol, base, routing.ProviderSettings{Region: region}), "x")
+				if err != nil || !strings.HasPrefix(got.BaseURL, "https://token-plan-"+host+".xiaomimimo.com") {
+					t.Errorf("base %s region %q %s: %+v %v", host, region, protocol, got, err)
+				}
+			}
 		}
 	}
 }

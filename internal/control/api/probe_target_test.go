@@ -11,6 +11,7 @@ import (
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
@@ -21,6 +22,7 @@ import (
 type recordedCall struct {
 	URL    string
 	Header http.Header
+	Body   string
 }
 
 func recordingHandler(t *testing.T) (*Handler, func() []recordedCall) {
@@ -29,8 +31,12 @@ func recordingHandler(t *testing.T) (*Handler, func() []recordedCall) {
 	var mu sync.Mutex
 	var calls []recordedCall
 	h.opts.DiscoveryClient.HTTP = probeHTTPFunc(func(r *http.Request) (*http.Response, error) {
+		var raw []byte
+		if r.Body != nil {
+			raw, _ = io.ReadAll(r.Body)
+		}
 		mu.Lock()
-		calls = append(calls, recordedCall{r.URL.String(), r.Header.Clone()})
+		calls = append(calls, recordedCall{r.URL.String(), r.Header.Clone(), string(raw)})
 		mu.Unlock()
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"data":[{"id":"m1"}]}`))}, nil
 	})
@@ -189,5 +195,59 @@ func TestAzureModelListingIsANoOp(t *testing.T) {
 	models, err := h.fetchConnectionModelEntries(context.Background(), connection, node)
 	if err != nil || len(models) != 0 || len(calls()) != 0 {
 		t.Fatalf("models=%v err=%v calls=%v", models, err, calls())
+	}
+}
+
+// The probe sends the body serving would send: wire.FinalizeBody applies to it.
+func TestProbeBodyGoesThroughTheRegistryQuirks(t *testing.T) {
+	catalog, _ := registry.NewBuiltinCatalog()
+	// github: the o-series and gpt-5 take max_completion_tokens, never max_tokens.
+	for model, want := range map[string]bool{"gpt-5": true, "o1": true, "o3-mini": true, "o4": true, "gpt-4o": false, "deepseek-o3-mini": false} {
+		h, calls := recordingHandler(t)
+		spec, _ := catalog.Lookup("github")
+		node, connection := builtinConnection("github", routing.ProviderSettings{}, credentials.AuthOAuth)
+		h.testProviderModel(context.Background(), connection, node, spec, "openai-chat", model, time.Second)
+		got := calls()
+		if len(got) != 1 {
+			t.Fatalf("%s: %d requests", model, len(got))
+		}
+		moved := strings.Contains(got[0].Body, `"max_completion_tokens"`) && !strings.Contains(got[0].Body, `"max_tokens"`)
+		if moved != want {
+			t.Errorf("github %s: completion tokens moved=%v want %v: %s", model, moved, want, got[0].Body)
+		}
+	}
+}
+
+// For every built-in provider and transport the body a probe sends is a fixed
+// point of the seam: running it through wire.FinalizeBody again changes nothing,
+// so the probe cannot have skipped a quirk that applies to it.
+func TestEveryProbeBodyIsFinalized(t *testing.T) {
+	catalog, _ := registry.NewBuiltinCatalog()
+	checked := 0
+	for _, spec := range registry.Builtins() {
+		for _, transport := range spec.Transports {
+			protocol := string(transport)
+			switch protocol {
+			case "openai-chat", "openai-responses", "anthropic-messages":
+			default:
+				continue
+			}
+			h, calls := recordingHandler(t)
+			spec, _ := catalog.Lookup(spec.ID)
+			node, connection := builtinConnection(spec.ID, routing.ProviderSettings{AzureEndpoint: "https://acme.openai.azure.com"}, credentials.AuthAPIKey)
+			for _, model := range []string{"gpt-5", "o3", "claude-sonnet-4.5", "kimi-k2"} {
+				h.testProviderModel(context.Background(), connection, node, spec, protocol, model, time.Second)
+			}
+			for _, call := range calls() {
+				route := routing.ProviderRef{ProviderID: spec.ID, Protocol: protocol}
+				if again := string(wire.FinalizeBody(route, []byte(call.Body))); again != call.Body {
+					t.Errorf("%s/%s probe body is not final:\n sent %s\n final %s", spec.ID, protocol, call.Body, again)
+				}
+				checked++
+			}
+		}
+	}
+	if checked < 100 {
+		t.Fatalf("only %d probe bodies checked; the table is not exercising the catalog", checked)
 	}
 }

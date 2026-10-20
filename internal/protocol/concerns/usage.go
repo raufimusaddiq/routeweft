@@ -101,3 +101,28 @@ func CommandCodeUsage(raw map[string]any) (usage Usage, extra CommandCodeObserva
 	return Usage{Prompt: input, Completion: output, Total: total},
 		CommandCodeObservations{CachedInput: Int(raw["cachedInputTokens"]), Reasoning: Int(raw["reasoningTokens"])}, true
 }
+
+// GeminiUsage reads a Gemini usageMetadata object (concerns/usage.js:27-39):
+// promptTokenCount is the prompt, cache-inclusive, with cachedContentTokenCount
+// the cache-read subset; the completion is candidates plus thoughts, thoughts
+// being a subset of it; the total is the upstream's. When the upstream omits
+// candidatesTokenCount it is derived from the total. observed is false when no
+// count is positive, so an absent count is never recorded as a measured zero.
+// A total the upstream left out or zeroed is the sum of the parts, which the
+// pin would report as 0 beside a positive prompt. This is the only place the
+// fields are read.
+func GeminiUsage(raw map[string]any) (usage Usage, observed bool) {
+	prompt, thoughts, total := Int(raw["promptTokenCount"]), Int(raw["thoughtsTokenCount"]), Int(raw["totalTokenCount"])
+	candidates := Int(raw["candidatesTokenCount"])
+	if candidates == 0 && total > 0 {
+		candidates = max(total-prompt-thoughts, 0)
+	}
+	completion := candidates + thoughts
+	if prompt <= 0 && completion <= 0 && total <= 0 {
+		return Usage{}, false
+	}
+	if total <= 0 {
+		total = prompt + completion
+	}
+	return Usage{Prompt: prompt, Completion: completion, Total: total, Cached: Int(raw["cachedContentTokenCount"]), Reasoning: thoughts}, true
+}

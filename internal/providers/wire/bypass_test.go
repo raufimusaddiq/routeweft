@@ -134,8 +134,8 @@ func TestEveryUpstreamBaseComesFromTheWireSeam(t *testing.T) {
 // The functions that dial an upstream must reach it through the seam even when
 // they never name a base URL field themselves, so they are pinned by name too.
 var mustCallWire = map[string][]string{
-	"ingress/ingress.go:newUpstreamRequest":                {"ResolveTarget"},
-	"control/api/providers.go:testProviderModel":           {"ResolveTarget"},
+	"ingress/ingress.go:newUpstreamRequest":                {"ResolveTarget", "FinalizeBody"},
+	"control/api/providers.go:testProviderModel":           {"ResolveTarget", "FinalizeBody"},
 	"control/api/providers.go:fetchConnectionModelEntries": {"DiscoveryBase"},
 	"control/api/workflows.go:handleNodeRoutes":            {"ResolveTarget", "NodeBase"},
 	"runtime/providers.go:AccountProvider":                 {"NodeBase"},
@@ -172,6 +172,77 @@ func TestDialingFunctionsCallTheWireSeam(t *testing.T) {
 			if !found {
 				t.Errorf("%s no longer calls wire.%s: an upstream URL must be built with the seam", name, want)
 			}
+		}
+	}
+}
+
+// An inference body is encoded and POSTed in exactly two places, serving and the
+// model probe, and both apply wire.FinalizeBody. This finds any other function in
+// the packages that talk to providers (ingress, control/api) that POSTs a request,
+// so a third site cannot ship without choosing: go through the seam, or be listed
+// here with the reason it is not an inference body.
+var providerPostSites = map[string]string{
+	"ingress/ingress.go:newUpstreamRequest":      "serving",
+	"control/api/providers.go:testProviderModel": "model probe",
+}
+
+func TestEveryInferenceBodyPostGoesThroughFinalizeBody(t *testing.T) {
+	root := filepath.Join("..", "..")
+	found := map[string]bool{}
+	for _, dir := range []string{"ingress", "control/api"} {
+		entries, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(dir), "*.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range entries {
+			if strings.HasSuffix(path, "_test.go") {
+				continue
+			}
+			file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rel := dir + "/" + filepath.Base(path)
+			for _, decl := range file.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || fn.Body == nil {
+					continue
+				}
+				posts, finalizes := false, false
+				ast.Inspect(fn.Body, func(n ast.Node) bool {
+					switch node := n.(type) {
+					case *ast.CallExpr:
+						if sel, ok := node.Fun.(*ast.SelectorExpr); ok {
+							if sel.Sel.Name == "NewRequestWithContext" || sel.Sel.Name == "NewRequest" {
+								for _, arg := range node.Args {
+									if a, ok := arg.(*ast.SelectorExpr); ok && a.Sel.Name == "MethodPost" {
+										posts = true
+									}
+								}
+							}
+							if id, ok := sel.X.(*ast.Ident); ok && id.Name == "wire" && sel.Sel.Name == "FinalizeBody" {
+								finalizes = true
+							}
+						}
+					}
+					return true
+				})
+				if !posts {
+					continue
+				}
+				name := rel + ":" + fn.Name.Name
+				found[name] = true
+				if _, listed := providerPostSites[name]; !listed {
+					t.Errorf("%s POSTs a request but is not a listed inference site: pass the body through wire.FinalizeBody, or list it with the reason it is not an inference body", name)
+				} else if !finalizes {
+					t.Errorf("%s POSTs an inference body without wire.FinalizeBody", name)
+				}
+			}
+		}
+	}
+	for name := range providerPostSites {
+		if !found[name] {
+			t.Errorf("listed site %s no longer POSTs a request; remove it", name)
 		}
 	}
 }

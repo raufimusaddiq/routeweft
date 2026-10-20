@@ -162,13 +162,11 @@ var tokenplanRegions = map[string]string{
 	"ams": "https://token-plan-ams.xiaomimimo.com/v1",
 }
 
-const tokenplanDefaultRegion = "sgp"
-
 // tokenplanTarget: Chat posts to {base}/chat/completions and Messages to
 // {base minus /v1}/anthropic/v1/messages (executors/xiaomi-tokenplan.js:13-19).
-// The region picks the official host from a closed set (an unknown region falls
-// back to the default region, as config/providers.js:18 does); a connection whose
-// base URL is not an official Xiaomi host keeps its own base.
+// The region picks the official host from a closed set, and only when it is set
+// (see tokenplanBase); a connection whose base URL is not an official Xiaomi host
+// keeps its own base.
 func tokenplanTarget(provider routing.ProviderRef) (Target, error) {
 	base := tokenplanBase(provider)
 	if provider.Protocol == anthropicadapter.MessagesProtocol {
@@ -177,16 +175,28 @@ func tokenplanTarget(provider routing.ProviderRef) (Target, error) {
 	return Target{BaseURL: base, Endpoint: "chat/completions"}, nil
 }
 
-// tokenplanBase is the host a Token Plan key is served from.
+// tokenplanBase is the host a Token Plan key is served from. A Token Plan key is
+// issued for one region, so the connection's own host is never replaced by a
+// default: a region only overrides when it is set and names a known region
+// (sgp, cn, ams) on an official Xiaomi host. With no region, or one that names
+// none of them, the host the connection was configured with is kept (as
+// {scheme}://{host}/v1); a base that is not an official Xiaomi host is kept as
+// given.
+//
+// Divergence from the pin: config/providers.js:16-19 falls back to the default
+// region for an unset or unknown one, which would send a CN or AMS key to the SGP
+// host. An unset region on the catalog's own default base is the SGP host, as in
+// the pin.
 func tokenplanBase(provider routing.ProviderRef) string {
-	base := strings.TrimRight(provider.BaseURL, "/")
-	if parsed, err := url.Parse(base); err == nil && strings.HasSuffix(parsed.Hostname(), ".xiaomimimo.com") {
-		base = tokenplanRegions[tokenplanDefaultRegion]
-		if regional, ok := tokenplanRegions[strings.TrimSpace(provider.Connection.Settings.Region)]; ok {
-			base = regional
-		}
+	base := strings.TrimRight(strings.TrimSpace(provider.BaseURL), "/")
+	parsed, err := url.Parse(base)
+	if err != nil || !strings.HasSuffix(parsed.Hostname(), ".xiaomimimo.com") {
+		return base
 	}
-	return base
+	if regional, ok := tokenplanRegions[strings.TrimSpace(provider.Connection.Settings.Region)]; ok {
+		return regional
+	}
+	return parsed.Scheme + "://" + parsed.Host + "/v1"
 }
 
 // kimiDeviceHeaders: every Kimi transport runs the kimiHeaders hook

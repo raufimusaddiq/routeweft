@@ -28,6 +28,10 @@ type ChatRequest struct {
 
 	Raw    []byte
 	Fields map[string]json.RawMessage
+	// Scope names who this request is for (the authenticated client and the
+	// provider connection), set by ingress for a translated attempt. A leg that
+	// keeps state between requests keys it by Scope; empty means keep none.
+	Scope string `json:"-"`
 }
 
 // ParseChatRequest validates the required shape and records the untouched bytes.

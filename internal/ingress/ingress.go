@@ -311,11 +311,16 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 			if attempt.Model == "" {
 				attempt.Model = request.Model
 			}
+			attempt.Scope = translationScope(r, provider)
 			translated, err = h.opts.TranslateMessages(&attempt, plan.TargetProtocol)
 			if translated.Headers == nil {
 				translated.Headers = http.Header{}
 			}
-			for name, values := range openAIProviderHeaders(provider) {
+			credentials := openAIProviderHeaders(provider)
+			if plan.TargetProtocol == geminiadapter.Protocol {
+				credentials = geminiHeaders(provider)
+			}
+			for name, values := range credentials {
 				translated.Headers[name] = values
 			}
 			if provider.Endpoint != "" {
