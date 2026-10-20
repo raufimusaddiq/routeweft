@@ -1086,7 +1086,7 @@ func (h *Handler) publishConnection(ctx context.Context, connection credentials.
 	if connection.AuthKind == "" {
 		connection.AuthKind = credentials.AuthOAuth
 	}
-	if connection.Secret.Empty() && connection.ID != "" {
+	if connection.Secret.Empty() && len(connection.Secret.ProviderData) == 0 && connection.ID != "" {
 		// An edit without a secret keeps the stored blob.
 		existing, err := h.opts.Credentials.GetConnection(ctx, connection.ID)
 		if err != nil {

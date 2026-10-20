@@ -211,6 +211,26 @@ The exact representation may use maps/slices/tries as benchmarking justifies, bu
 
 A successful request may not synchronously query SQLite to discover routing configuration.
 
+Connection publication and startup compilation project provider settings from
+the existing sealed credential payload into typed, immutable value fields.
+`AccountProvider` carries node ID/kind/name/prefix and connection
+name/auth-kind/identity/account ID/proxy-pool ID alongside the selected route.
+The provider-settings allowlist is `baseUrl`, `azureEndpoint`, `apiVersion`,
+`deployment`, `organization`, `region`, `workspaceId`, `deviceId`, `agentId`,
+`email`, `userId`, `systemId`, `organizationId`, `defaultOrganizationId`, `uid`.
+The raw `ProviderData` map, tokens, cookies and client secrets remain outside
+snapshots. Settings are not returned to browser clients by connection CRUD.
+No-auth connections may persist settings in the sealed payload without a token.
+Metadata-only edits preserve existing credentials and omitted provider fields.
+Credential imports/renewals that change projected settings also use the
+compile/commit/publish protocol, so durable and serving metadata agree.
+Token-only renewals commit under the same mutation lock without recompiling
+configuration or advancing its revision.
+Startup with a configured credential key fails if a sealed settings payload
+cannot be authenticated/decoded; it must not silently serve default settings.
+Absent keys retain the existing credential-unavailable behavior. Serving reads
+only the compiled projection; no per-request SQLite/decryption lookup is added.
+
 ## 6. RuntimeState
 
 Mutable runtime state is deliberately separate:

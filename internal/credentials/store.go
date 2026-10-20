@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
 // AuthKind mirrors the registry credential modes. It is duplicated locally so
@@ -57,6 +58,7 @@ type Connection struct {
 	Name        string
 	AuthKind    AuthKind
 	Identity    string
+	Settings    routing.ProviderSettings
 	Secret      Secret
 	Enabled     bool
 	Priority    int
@@ -71,8 +73,8 @@ type Connection struct {
 // ProviderData carries the provider-specific connection fields LiteRouter
 // persists alongside the credential (copilot token, Google project id, Cursor
 // machine id, Kiro profile ARN, device id, org id). It lives inside the sealed
-// payload because those values are as sensitive as the token itself and must
-// never reach a snapshot or the browser.
+// payload; only the typed provider-settings projection can enter a snapshot.
+// The raw map and credentials must never reach the snapshot or browser.
 type Secret struct {
 	AccessToken  string            `json:"accessToken,omitempty"`
 	RefreshToken string            `json:"refreshToken,omitempty"`
@@ -239,6 +241,7 @@ func (s *Store) PutConnection(ctx context.Context, connection Connection) (Conne
 	if connection.ID == "" {
 		connection.ID = uuid.NewString()
 	}
+	connection.Settings = projectSettings(connection.Secret.ProviderData)
 	blob, err := s.sealSecret(connection.Secret)
 	if err != nil {
 		return Connection{}, err
@@ -254,6 +257,10 @@ ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_k
 		metadata.Secret = Secret{}
 		for i := range c.Connections {
 			if c.Connections[i].ID == connection.ID {
+				if blob == nil {
+					metadata.Settings = c.Connections[i].Settings
+					connection.Settings = metadata.Settings
+				}
 				c.Connections[i] = metadata
 				return nil
 			}
@@ -270,7 +277,7 @@ ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_k
 // sealSecret encodes the credential payload. A nil result means "leave the
 // stored blob unchanged", which is how an enable/disable edit keeps the secret.
 func (s *Store) sealSecret(secret Secret) (any, error) {
-	if secret.Empty() {
+	if secret.Empty() && secret.IDToken == "" && len(secret.ProviderData) == 0 {
 		return nil, nil
 	}
 	payload, err := json.Marshal(secret)
@@ -304,18 +311,9 @@ func (s *Store) RotateSecret(ctx context.Context, connectionID string, secret Se
 	if err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, "UPDATE provider_connections SET secret_blob=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", sealed, connectionID)
-	if err != nil {
-		return fmt.Errorf("persist rotated credential: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.exec(ctx, editConnection(connectionID, func(c *Connection) {
+		c.Settings = projectSettings(secret.ProviderData)
+	}), "UPDATE provider_connections SET secret_blob=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", sealed, connectionID)
 }
 
 // GetConnection returns one connection with its decrypted secret.
@@ -491,6 +489,7 @@ func (s *Store) scanConnection(scan func(...any) error) (Connection, error) {
 			return Connection{}, fmt.Errorf("decode credential for connection %q: %w", connection.Name, err)
 		}
 	}
+	connection.Settings = projectSettings(connection.Secret.ProviderData)
 	return connection, nil
 }
 

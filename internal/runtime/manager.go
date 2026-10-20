@@ -32,10 +32,10 @@ func NewManager(ctx context.Context, db *sql.DB) (*Manager, error) {
 }
 
 // NewManagerObserved is NewManager with a PXPIPE diagnostics sink that is part
-// of the initial snapshot and of every later one.
-func NewManagerObserved(ctx context.Context, db *sql.DB, observePXPIPE func(pxpipe.Diagnostic)) (*Manager, error) {
+// of the initial snapshot and of every later one. Optional sealer use is startup-only.
+func NewManagerObserved(ctx context.Context, db *sql.DB, observePXPIPE func(pxpipe.Diagnostic), sealers ...*credentials.Sealer) (*Manager, error) {
 	m := &Manager{db: db, state: NewState(), compiler: Compiler{PXPIPEObserver: observePXPIPE}}
-	config, err := loadConfig(ctx, db)
+	config, err := loadConfig(ctx, db, sealers...)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +66,10 @@ func (m *Manager) Update(ctx context.Context, mutate func(*Candidate) error) (*R
 func (m *Manager) update(ctx context.Context, mutate func(*Candidate) error, persist func(*sql.Tx) error) (*RuntimeSnapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.updateLocked(ctx, mutate, persist)
+}
 
+func (m *Manager) updateLocked(ctx context.Context, mutate func(*Candidate) error, persist func(*sql.Tx) error) (*RuntimeSnapshot, error) {
 	current, err := m.Load()
 	if err != nil {
 		return nil, err
@@ -129,7 +132,7 @@ func (m *Manager) Version() uint64 {
 	return m.version.Load()
 }
 
-func loadConfig(ctx context.Context, db *sql.DB) (Config, error) {
+func loadConfig(ctx context.Context, db *sql.DB, sealers ...*credentials.Sealer) (Config, error) {
 	config := Config{Settings: defaultSettingsCopy()}
 	config.Aliases = make(map[string]ModelRef)
 	config.DisabledModels = make(map[string]struct{})
@@ -179,7 +182,7 @@ func loadConfig(ctx context.Context, db *sql.DB) (Config, error) {
 		return Config{}, err
 	}
 	config.Combos = combos
-	config.Providers, err = credentials.LoadConfiguration(ctx, db)
+	config.Providers, err = credentials.LoadConfiguration(ctx, db, sealers...)
 	if err != nil {
 		return Config{}, err
 	}

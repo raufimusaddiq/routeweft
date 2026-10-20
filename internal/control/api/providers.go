@@ -232,7 +232,17 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 			body.Identity = old.Identity
 		}
 		if body.Secret.Empty() {
+			data := body.Secret.ProviderData
 			body.Secret = old.Secret
+			if data != nil {
+				body.Secret.ProviderData = make(map[string]string, len(old.Secret.ProviderData)+len(data))
+				for key, value := range old.Secret.ProviderData {
+					body.Secret.ProviderData[key] = value
+				}
+				for key, value := range data {
+					body.Secret.ProviderData[key] = value
+				}
+			}
 		}
 		if body.Enabled == nil {
 			body.Enabled = &old.Enabled

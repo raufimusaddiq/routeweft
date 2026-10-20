@@ -242,3 +242,45 @@ func connectionNames(connections []Connection) []string {
 	}
 	return names
 }
+
+func TestSealedSettingsLoadWithoutCredentialExposure(t *testing.T) {
+	ctx := context.Background()
+	s, sealer := testStore(t)
+	node, err := s.PutNode(ctx, Node{Kind: NodeBuiltin, ProviderID: "ollama-local", Name: "Local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.PutConnection(ctx, Connection{NodeID: node.ID, Name: "Local", Identity: "local", AuthKind: AuthNone, Enabled: true, Secret: Secret{ProviderData: map[string]string{"baseUrl": "http://localhost:11435", "unknownSecret": "fixture-secret"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := LoadConfiguration(ctx, s.db, sealer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Connections) != 1 || config.Connections[0].Settings.BaseURL != "http://localhost:11435" || config.Connections[0].Secret.ProviderData != nil || !config.Connections[0].Secret.Empty() {
+		t.Fatal("sealed settings did not project without credentials")
+	}
+	c.Secret = Secret{}
+	c.Name = "Renamed"
+	if _, err := s.PutConnection(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	config, err = LoadConfiguration(ctx, s.db, sealer)
+	if err != nil || config.Connections[0].Settings.BaseURL != "http://localhost:11435" {
+		t.Fatalf("edit without secret lost durable settings: %v", err)
+	}
+	wrongKey, err := NewSealer([]byte("11234567890123456789012345678901"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfiguration(ctx, s.db, wrongKey); err == nil {
+		t.Fatal("wrong key silently replaced settings with defaults")
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE provider_connections SET secret_blob='malformed' WHERE id=?`, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfiguration(ctx, s.db, sealer); err == nil {
+		t.Fatal("malformed sealed settings silently ignored")
+	}
+}
