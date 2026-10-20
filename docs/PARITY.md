@@ -1361,7 +1361,7 @@ Kiro does not accept some keywords. Each row below is a decision, and `RequestIn
 
 **Known gaps, each its own follow-up under #119.** *Kiro saver view:* conversation history and the current message have no saver view; the transform order is unchanged. *Token estimates:* the pin's `contextUsagePercentage × context window` and `chars/4` estimates (`:1102-1113`) are not reported; no usage is better than an invented one. *Credits:* `meteringEvent` credits (`:895-905`) are counted, not reported, and no `kiro_credits` key is added to `usage`. *Time context:* see above. *Header-driven thinking:* `anthropic-beta` needs request headers in the Messages legs.
 
-**Wire prerequisites for #135 (header/body hooks in 6.10; region/order/fallback remain pending).** `profileArn` in the body and `x-amzn-codewhisperer-profile-arn` in the headers, account-aware: API-key, IdC and external-IdP accounts never use the shared default (`openai-to-kiro.js:325-341`, `executors/kiro.js:276-279`); the auth headers `TokenType`, `x-amz-sso-bearer`, `x-amzn-kiro-agent-mode`, `X-Amz-Target` for `codewhisperer.*` hosts and `Accept: application/vnd.amazon.eventstream` (`:235-282`); the three-host order and region rewrite (`:299-328`); endpoint-fallback statuses 401/403/404 (`kiroConstants.js:28`).
+**Wire prerequisites for #135 (header/body hooks in 6.10; endpoint binding complete in 6.11).** `profileArn` in the body and `x-amzn-codewhisperer-profile-arn` in the headers, account-aware: API-key, IdC and external-IdP accounts never use the shared default (`openai-to-kiro.js:325-341`, `executors/kiro.js:276-279`); the auth headers `TokenType`, `x-amz-sso-bearer`, `x-amzn-kiro-agent-mode`, `X-Amz-Target` for `codewhisperer.*` hosts and `Accept: application/vnd.amazon.eventstream` (`:235-282`); the three-host order and region rewrite (`:299-328`); endpoint-fallback statuses 401/403/404 (`kiroConstants.js:28`).
 
 The request guards also refuse unread tool, call, content-part and thinking keys (including empty values), malformed thinking configurations, and strict tool-output guarantees. Supplied IDs are validated before shared repair can rewrite them. Known response events enumerate the keys they read or treat as bookkeeping; mixed nested and flat envelopes, multiple reasoning values and conflicting object tool fragments fail rather than select one and lose another.
 
@@ -1486,12 +1486,12 @@ credential.
 | Body profileArn | `translator/request/openai-to-kiro.js:325-341,419-421`; `translator/request/claude-to-kiro.js:248-255` | Stored value replaces any caller value. For `api_key` only, a missing/blank stored profile removes any client-supplied profile and emits neither body field nor profile header, matching the pin's account-bound omission. Other auth methods still fail closed without a stored profile; no shared OAuth/social default is used. An already matching profile preserves the original bytes |
 | Other body fields | `executors/kiro.js:344-346`; `translator/request/openai-to-kiro.js:398-430` | Executor leaves the body alone. Conversation state, inference config and additional model fields belong to the existing request leg; the hook adds no other account field |
 | anthropic-beta / interleaved thinking | `config/kiroConstants.js:44,144-158`; `translator/request/claude-to-kiro.js:238-242`; `executors/kiro.js:235-282` | The pin sends **no outbound beta header**. It reads original inbound headers only after body thinking configuration returns no setting. A string beta value containing `interleaved-thinking`, case-insensitively, selects the default budget 16000. Explicit body thinking, including disabled, wins. This inbound Messages behavior remains with PR 4c; no fabricated outbound header is added |
-| Endpoint ordering and region | `executors/kiro.js:299-334` | Pin orders Q, other Amazon surfaces, then Kiro runtime, and rewrites Amazon regions from stored `region` (default `us-east-1`). This PR keeps the configured base; automatic surface selection remains a binding prerequisite |
-| Endpoint fallback | `executors/kiro.js:336-341`; `config/kiroConstants.js:28` | Pin adds 401/403/404 to endpoint fallback. No new endpoint retry loop in this hook PR; binding must provide the bounded surface fallback |
+| Endpoint ordering and region | `executors/kiro.js:299-334` | Pin orders Q, other Amazon surfaces, then Kiro runtime, and rewrites Amazon regions from stored `region` (default `us-east-1`). PR 4e completes the bounded surface binding in 6.11; the configured connection base takes precedence over the built-in order |
+| Endpoint fallback | `executors/kiro.js:336-341`; `config/kiroConstants.js:28` | Pin adds 401/403/404 to endpoint fallback. PR 4e implements response-driven, bounded endpoint fallback in 6.11 |
 
-**Binding remains closed.** Messages legs (PR 4c) remain unbound, and Kiro
-remains in `ingress.unwired`. This PR does not claim provider readiness, endpoint
-failover, the saver view or live-provider qualification. It retains the existing
+**Endpoint binding is complete in PR 4e (6.11).** Public routing remains closed:
+Messages legs (PR 4c) remain in review, and Kiro remains in `ingress.unwired`.
+Neither PR claims provider readiness, the saver view or live-provider qualification. It retains the existing
 Chat/direct-leg/EventStream tests, tests every emitted header and auth/host
 condition, refuses missing/invalid settings and missing credentials, and checks
 that other providers receive none of the Kiro-specific headers. Both credential
@@ -1506,6 +1506,90 @@ conversation, median finalization was 8.15 microseconds without an account hook
 and 10.49 microseconds with the Kiro profile injection; allocation cost was
 1000 B / 14 allocations versus 1312 B / 20 allocations. Other checks were
 running concurrently, so these timings do not establish production latency.
+
+### 6.11 Kiro endpoint binding (#119, PR 4e)
+
+Oracle: `1c3b9f47837d42ea64992063309064af755a14a3`; paths below are
+under `open-sse/`. This completes endpoint selection and fallback, not public
+routing or provider qualification. Contracts: PRD-API-005, PRD-ROUTE-003,
+SPEC 11/14/20, BDR-006/008/009.
+
+| Behavior | Pin evidence | Routeweft binding |
+|---|---|---|
+| Three hosts | `providers/registry/kiro.js:19-24` | Q, CodeWhisperer and Kiro runtime, each serving `generateAssistantResponse` |
+| Actual order | `executors/kiro.js:299-327` | Q first, CodeWhisperer second, runtime last for every auth method; the earlier auth-specific prose in that file does not describe the returned order |
+| Region | `executors/kiro.js:315-319` | Stored `region`, trimmed, defaults to `us-east-1`; Q and CodeWhisperer use that region. Runtime stays `runtime.us-east-1.kiro.dev`. No operation-path rewrite. The pin's region fixture is `eu-west-1` (`tests/unit/kiro-api-key-endpoint-routing.test.js:39-45`); local fixtures also exercise `us-west-2`, `eu-central-1` and `ap-southeast-1`. These fixtures establish URL construction, not regional service availability |
+| Endpoint status fallback | `executors/kiro.js:336-341`; `config/kiroConstants.js:28` | Only 401/403/404 advance the endpoint index; 400/429/500 do not |
+| Auth boundary | `executors/kiro.js:247-265,293-313` | The same stored credential and TokenType cross Amazon and Kiro surfaces. An intermediate 401/403 is an endpoint/auth-surface rejection, not proof that refresh is required. Only exhausting all surfaces with a final 401/403 records auth-refresh-required, preserving the existing once-per-chain auth classification limit. A budget stop before all surfaces are tried does not invalidate the credential |
+| Target header | `executors/kiro.js:241-245` | Final request URL decides X-Amz-Target; it is removed before non-CodeWhisperer attempts, so prepared headers cannot retain a previous surface's target |
+| Exhaustion | `executors/base.js:127,183`; `executors/kiro.js:330-333` | `ErrKiroEndpointsExhausted` refuses an out-of-range index with an empty Target. Dispatch reports `kiro_endpoints_exhausted` after surface or request-budget exhaustion; it never wraps to candidate zero |
+
+`wire.ResolveTarget` is the only producer of inference targets. Its optional
+attempt index leaves other provider hooks and existing callers unchanged.
+`newUpstreamRequest` validates every selected target with the existing SSRF
+policy, applies final body normalization and endpoint-aware headers, and uses
+the existing pooled client. The dispatch loop advances only after receiving an
+eligible HTTP response and closes that response before advancing. No retry
+occurs after a successful response is returned, including streamed responses.
+Cancellation stops further attempts.
+
+Deliberate differences from the pin:
+
+- A stored connection `baseUrl` comes first; otherwise a non-default route base
+  comes first. The catalog's legacy runtime default is treated as a built-in
+  candidate, so it cannot defeat Q-first ordering. An explicitly stored runtime
+  base still takes precedence. The pin ignores connection `baseUrl` here
+  (`executors/kiro.js:299-300,330-333`; `executors/base.js:22-24`). Configured
+  Q/CodeWhisperer hosts receive the same region rewrite; custom proxy bases keep
+  their host and path. A trailing operation segment is not duplicated. Exact
+  duplicate bases are removed. Invalid configured URLs fail validation; they
+  do not silently fall through to an official host.
+- Region must have AWS region syntax before entering a hostname. The pin
+  interpolates its trimmed string directly (`executors/kiro.js:315-319`). No
+  region-availability assertion or live discovery is added.
+- The candidate list has at most four entries, three without a custom base.
+  401/403/404 advance monotonically through that list. The existing single
+  same-account 408/409 retry remains available, giving at most five wire attempts
+  per account (four without a custom base). All accounts share the existing
+  ten-wire-attempt cap (SPEC 14).
+  The pin inherits 429 host fallback (`executors/base.js:83-84`) despite the
+  zero same-URL 429 retry setting (`providers/registry/kiro.js:26-28`), and
+  advances URLs after network errors (`executors/base.js:173-180`). Per this
+  PR's contract, neither case advances Kiro endpoints; existing account fallback
+  remains available. No token refresh is attempted inside endpoint fallback.
+
+`TestKiroEndpointOrderAndRegions` checks all three targets and the final target
+header; `TestKiroConfiguredEndpointFirstAndBounded` checks configured precedence,
+deduplication, region validation and exhaustion. `TestDispatchEndpointFallback`
+asserts the exact sequence for each requested status, successful recovery,
+three/four-attempt exhaustion, unchanged payload/credential, no intermediate
+credential cooldown and body closure. `TestDispatchEndpointGlobalBoundAndCancellation`
+asserts ten attempts across accounts, the five-attempt account bound including
+the existing 408 retry, and one attempt on cancellation. The seam
+checks now require dispatch's retry decision to call `ResolveTarget` and reject
+Kiro host literals in inference consumers outside the wire package.
+
+Local Go 1.22.12 resolution benchmark (`go test ./internal/providers/wire -run
+'^$' -bench BenchmarkKiroResolveTarget -benchmem -count=3`): median 8.09
+microseconds, approximately 240 B and 3 allocations for default Kiro target
+selection. Builds/tests ran concurrently; this measures resolver cost, not
+production latency or an end-to-end regression. Non-Kiro target behavior is
+unchanged.
+
+Validation with Go 1.22.12: build and vet pass; wire/ingress tests and race
+suites pass. The full race run passes every package except `control/api`, which
+hits the default ten-minute timeout during password hashing in the
+`TestStartNeedsNoPublicOriginUnlessTheFlowConsumesIt/qoder` fixture. That
+subtest passes alone under the race detector; no assertion or data-race failure
+was reported. No password or timeout policy was changed.
+
+Kiro stays in `ingress.unwired`. Removing it requires the reviewed/merged direct
+Messages legs (PR 4c), agreement to enable public routing, and one coherent
+change to the ingress translation arms, reachability declarations and actual-app
+streaming/non-streaming, fallback and cancellation fixtures. Endpoint binding
+alone does not certify the outstanding saver view, onboarding/refresh/model/
+quota workflows or provider readiness. No SQLite schema/storage changes, new
+service/dependency, live provider call or production prompt fixture is involved.
 
 ## 7. Validation, limits and completion
 

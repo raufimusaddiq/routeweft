@@ -86,9 +86,9 @@ type TargetError struct{ Err error }
 func (e *TargetError) Error() string { return e.Err.Error() }
 func (e *TargetError) Unwrap() error { return e.Err }
 
-// ResolveTarget applies the provider's Target hook to the route's own base URL
-// and endpoint. A provider with no hook is sent exactly where the route says.
-func ResolveTarget(provider routing.ProviderRef, endpoint string) (Target, error) {
+// ResolveTarget applies a provider hook; without one it preserves the route.
+// The optional attempt selects a Kiro surface, never an account retry.
+func ResolveTarget(provider routing.ProviderRef, endpoint string, attempt ...int) (Target, error) {
 	target := Target{BaseURL: provider.BaseURL, Endpoint: endpoint}
 	hook := For(provider.ProviderID).Target
 	if hook == nil {
@@ -105,6 +105,13 @@ func ResolveTarget(provider routing.ProviderRef, endpoint string) (Target, error
 		target.Endpoint = resolved.Endpoint
 	}
 	target.Query = resolved.Query
+	if provider.ProviderID == "kiro" {
+		index := 0
+		if len(attempt) > 0 {
+			index = attempt[0]
+		}
+		return kiroEndpoint(provider, index)
+	}
 	return target, nil
 }
 
@@ -297,6 +304,12 @@ func (e *CredentialError) Unwrap() error { return e.Err }
 
 // ApplyRequestHeaders runs after body normalization and URL resolution so signatures cover the wire bytes.
 func ApplyRequestHeaders(provider routing.ProviderRef, request *http.Request, body []byte) error {
+	if provider.ProviderID == "kiro" {
+		request.Header.Del("X-Amz-Target")
+		if strings.HasPrefix(request.URL.Hostname(), "codewhisperer.") {
+			request.Header.Set("X-Amz-Target", "AmazonCodeWhispererStreamingService.GenerateAssistantResponse")
+		}
+	}
 	if hook := For(provider.ProviderID).RequestHeaders; hook != nil {
 		headers, err := hook(provider, body, request.URL.String())
 		if err != nil {

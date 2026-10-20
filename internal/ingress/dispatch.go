@@ -173,11 +173,11 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			}
 			continue
 		}
-		for retry := 0; retry < 2 && used < maxAccountAttempts; retry++ {
+		for retry, endpointAttempt := 0, 0; retry < 2 && used < maxAccountAttempts; {
 			if err := r.Context().Err(); err != nil {
 				return nil, provider, err
 			}
-			request, err := h.newUpstreamRequest(r, snapshot, provider, outbound.Endpoint, outbound.Body, outbound.Headers)
+			request, err := h.newUpstreamRequest(r, snapshot, provider, outbound.Endpoint, outbound.Body, outbound.Headers, endpointAttempt)
 			if err != nil {
 				var credentialErr *wire.CredentialError
 				if errors.As(err, &credentialErr) {
@@ -220,6 +220,21 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				}
 				return response, provider, nil
 			}
+			if provider.ProviderID == "kiro" && (response.StatusCode == 401 || response.StatusCode == 403 || response.StatusCode == 404) {
+				response.Body.Close()
+				endpointAttempt++
+				_, nextErr := wire.ResolveTarget(provider, outbound.Endpoint, endpointAttempt)
+				if nextErr == nil && used < maxAccountAttempts {
+					// A host's auth rejection does not prove the credential is invalid on another surface.
+					continue
+				}
+				if nextErr != nil && !authFailureSeen && (response.StatusCode == 401 || response.StatusCode == 403) {
+					authFailureSeen = true
+					h.recordClassification(provider.ConnectionID, routing.Classification{Outcome: routing.OutcomeAuthRefreshRequired}, time.Now())
+				}
+				failedAttempt(&dispatchError{502, "kiro_endpoints_exhausted", wire.ErrKiroEndpointsExhausted.Error()}, nil, provider)
+				break
+			}
 			prefix, readErr := io.ReadAll(io.LimitReader(response.Body, errorBodyPeek))
 			if r.Context().Err() != nil {
 				response.Body.Close()
@@ -252,6 +267,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 					return nil, provider, r.Context().Err()
 				case <-timer.C:
 				}
+				retry++
 				continue
 			}
 			if classification.AllowsFallback() && readErr == nil && index+1 < len(candidates) && used < maxAccountAttempts {

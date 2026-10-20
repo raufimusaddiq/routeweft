@@ -413,12 +413,12 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	h.handleOpenAI(w, r, openaiadapter.ChatProtocol, false)
 }
 
-func (h *Handler) newUpstreamRequest(r *http.Request, snapshot *runtime.RuntimeSnapshot, provider routing.ProviderRef, endpoint string, body []byte, headers http.Header) (*http.Request, error) {
+func (h *Handler) newUpstreamRequest(r *http.Request, snapshot *runtime.RuntimeSnapshot, provider routing.ProviderRef, endpoint string, body []byte, headers http.Header, endpointAttempt ...int) (*http.Request, error) {
 	validate := transport.ValidatePublicURL
 	if h.opts.AllowPrivateUpstreams {
 		validate = transport.ValidateTrustedLocalURL
 	}
-	target, err := wire.ResolveTarget(provider, endpoint)
+	target, err := wire.ResolveTarget(provider, endpoint, endpointAttempt...)
 	if err != nil {
 		return nil, err
 	}

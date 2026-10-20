@@ -134,6 +134,7 @@ func TestEveryUpstreamBaseComesFromTheWireSeam(t *testing.T) {
 // The functions that dial an upstream must reach it through the seam even when
 // they never name a base URL field themselves, so they are pinned by name too.
 var mustCallWire = map[string][]string{
+	"ingress/dispatch.go:dispatchAttempts":                 {"ResolveTarget"},
 	"ingress/ingress.go:newUpstreamRequest":                {"ResolveTarget", "FinalizeBody"},
 	"control/api/providers.go:testProviderModel":           {"ResolveTarget", "FinalizeBody"},
 	"control/api/providers.go:fetchConnectionModelEntries": {"DiscoveryBase"},
@@ -361,6 +362,41 @@ func TestCloudflarePathsAreSpelledOnlyInTheSeam(t *testing.T) {
 		ast.Inspect(file, func(n ast.Node) bool {
 			if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING && (strings.Contains(lit.Value, "/ai/run/") || strings.Contains(lit.Value, "/ai/v1/")) {
 				t.Errorf("%s spells a Cloudflare Workers AI path (%s): only wire.cloudflareTarget builds it", rel, lit.Value)
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestKiroInferenceHostsAreSpelledOnlyInTheSeam(t *testing.T) {
+	root := filepath.Join("..", "..")
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		// Catalog defaults, onboarding validation and quota URLs are not inference dispatch.
+		if strings.HasPrefix(filepath.ToSlash(rel), "providers/") {
+			return nil
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			return err
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+				for _, host := range []string{"https://q.", "https://codewhisperer.", "https://runtime."} {
+					if strings.Contains(lit.Value, host) {
+						t.Errorf("%s spells a Kiro host outside wire.ResolveTarget: %s", rel, lit.Value)
+					}
+				}
 			}
 			return true
 		})

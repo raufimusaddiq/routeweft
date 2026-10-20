@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -75,4 +76,55 @@ func kiroBody(provider routing.ProviderRef, body Body) bool {
 		return false
 	}
 	return setJSON(body, "profileArn", profile)
+}
+
+var ErrKiroEndpointsExhausted = errors.New("kiro endpoints exhausted")
+
+var kiroRegion = regexp.MustCompile(`^[a-z]{2}(?:-[a-z]+)+-[0-9]+$`)
+
+func kiroEndpoint(provider routing.ProviderRef, index int) (Target, error) {
+	region := strings.TrimSpace(provider.Connection.Settings.Region)
+	if region == "" {
+		region = "us-east-1"
+	}
+	if !kiroRegion.MatchString(region) {
+		return Target{}, &TargetError{Err: errors.New("kiro connection has invalid region")}
+	}
+	bases := []string{
+		"https://q." + region + ".amazonaws.com",
+		"https://codewhisperer." + region + ".amazonaws.com",
+		"https://runtime.us-east-1.kiro.dev",
+	}
+	configured := strings.TrimRight(strings.TrimSpace(provider.Connection.Settings.BaseURL), "/")
+	if configured == "" {
+		configured = strings.TrimRight(strings.TrimSpace(provider.BaseURL), "/")
+		configured = strings.TrimSuffix(configured, "/"+kiroOperation)
+		// The catalog's legacy runtime default must not override the pin's Q-first order.
+		if configured == "https://runtime.us-east-1.kiro.dev" {
+			configured = ""
+		}
+	}
+	configured = strings.TrimSuffix(configured, "/"+kiroOperation)
+	if parsed, err := url.Parse(configured); err == nil {
+		for _, service := range []string{"q", "codewhisperer"} {
+			host := parsed.Hostname()
+			if strings.HasPrefix(host, service+".") && strings.HasSuffix(host, ".amazonaws.com") && kiroRegion.MatchString(strings.TrimSuffix(strings.TrimPrefix(host, service+"."), ".amazonaws.com")) {
+				parsed.Host = strings.Replace(parsed.Host, host, service+"."+region+".amazonaws.com", 1)
+				configured = parsed.String()
+			}
+		}
+	}
+	if configured != "" {
+		ordered := []string{configured}
+		for _, base := range bases {
+			if base != configured {
+				ordered = append(ordered, base)
+			}
+		}
+		bases = ordered
+	}
+	if index < 0 || index >= len(bases) {
+		return Target{}, &TargetError{Err: ErrKiroEndpointsExhausted}
+	}
+	return Target{BaseURL: bases[index], Endpoint: kiroOperation}, nil
 }
