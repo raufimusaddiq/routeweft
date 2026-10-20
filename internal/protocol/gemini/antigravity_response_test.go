@@ -319,7 +319,7 @@ func TestCloudCodeResponseLegsServeBothWires(t *testing.T) {
 	object := `{"response":{"candidates":[{"content":{"parts":[{"text":"hi"},{"functionCall":{"id":"c1","name":"lookup","args":{"q":1}},"thoughtSignature":"SIG"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":2,"thoughtsTokenCount":1},"modelVersion":"m","responseId":"r"}}`
 	for _, model := range []string{"gemini-3-flash", "claude-sonnet-4-6"} {
 		cache := NewSignatures(10, time.Hour)
-		options := ResponseOptions{Model: model, Signatures: cache, Scope: FamilyScope("alice|conn", model)}
+		options := ResponseOptions{Model: model, Signatures: cache, Scope: "alice|conn"}
 		result, err := buffered(t, object, options)
 		if err != nil {
 			t.Fatal(err)

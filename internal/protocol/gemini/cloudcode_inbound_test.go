@@ -52,32 +52,58 @@ func TestCloudCodeEnvelopeOnTheClientLegs(t *testing.T) {
 		if got, err := cloudInbound(t, wire, withSession); err != nil || strings.Contains(asJSON(got), "-1") {
 			t.Errorf("%s: session: %v %s", wire, err, asJSON(got))
 		}
+		for _, fields := range []string{
+			`"project":"x","model":"y"`, `"userAgent":"u"`,
+			`"requestId":"r","user_prompt_id":"q"`, `"sessionId":"-1","session_id":"2"`,
+		} {
+			for _, body := range []string{
+				`{` + fields + `,` + inner[1:],
+				`{` + fields + `,"request":` + inner + `}`,
+			} {
+				got, err := cloudInbound(t, wire, body)
+				if err != nil || asJSON(got) != asJSON(bare) {
+					t.Errorf("%s routing fields %s: %v %s", wire, fields, err, asJSON(got))
+				}
+			}
+		}
 		for name, c := range map[string]struct {
 			body string
 			ok   bool
 		}{
-			"agent type":       {`{"requestType":"agent","request":` + inner + `}`, true},
-			"null type":        {`{"requestType":null,"request":` + inner + `}`, true},
-			"null request":     {inner[:len(inner)-1] + `,"request":null}`, true},
-			"image type":       {`{"requestType":"image_gen","request":` + inner + `}`, false},
-			"empty type":       {`{"requestType":"","request":` + inner + `}`, false},
-			"number type":      {`{"requestType":1,"request":` + inner + `}`, false},
-			"search type":      {`{"requestType":"search","request":` + inner + `}`, false},
-			"request string":   {`{"request":"x"}`, false},
-			"request array":    {`{"request":[]}`, false},
-			"request number":   {`{"request":1}`, false},
-			"request bool":     {`{"request":true}`, false},
-			"request empty":    {`{"request":{}}`, false},
-			"both contents":    {`{"contents":[{"role":"user","parts":[{"text":"x"}]}],"request":` + inner + `}`, false},
-			"both tools":       {`{"tools":[],"request":` + inner + `}`, false},
-			"both generation":  {`{"generationConfig":{},"request":` + inner + `}`, false},
-			"unknown envelope": {`{"surprise":1,"request":` + inner + `}`, false},
-			"no contents":      {`{"request":{"generationConfig":{}}}`, false},
-			"null contents":    {`{"request":{"contents":null}}`, false},
-			"empty contents":   {`{"request":{"contents":[]}}`, false},
-			"contents object":  {`{"request":{"contents":{}}}`, false},
-			"bare empty":       {`{}`, false},
-			"bare no contents": {`{"generationConfig":{}}`, false},
+			"bare agent type":   {`{"requestType":"agent",` + inner[1:], true},
+			"bare null type":    {`{"requestType":null,` + inner[1:], true},
+			"bare image type":   {`{"requestType":"image_gen",` + inner[1:], false},
+			"bare search type":  {`{"requestType":"search",` + inner[1:], false},
+			"bare empty type":   {`{"requestType":"",` + inner[1:], false},
+			"bare number type":  {`{"requestType":1,` + inner[1:], false},
+			"bare object type":  {`{"requestType":{},` + inner[1:], false},
+			"bare array type":   {`{"requestType":[],` + inner[1:], false},
+			"bare unknown":      {`{"surprise":1,` + inner[1:], false},
+			"inner unknown":     {`{"request":{"surprise":1,` + inner[1:] + `}`, false},
+			"inner image type":  {`{"request":{"requestType":"image_gen",` + inner[1:] + `}`, false},
+			"inner search type": {`{"request":{"requestType":"search",` + inner[1:] + `}`, false},
+			"agent type":        {`{"requestType":"agent","request":` + inner + `}`, true},
+			"null type":         {`{"requestType":null,"request":` + inner + `}`, true},
+			"null request":      {inner[:len(inner)-1] + `,"request":null}`, true},
+			"image type":        {`{"requestType":"image_gen","request":` + inner + `}`, false},
+			"empty type":        {`{"requestType":"","request":` + inner + `}`, false},
+			"number type":       {`{"requestType":1,"request":` + inner + `}`, false},
+			"search type":       {`{"requestType":"search","request":` + inner + `}`, false},
+			"request string":    {`{"request":"x"}`, false},
+			"request array":     {`{"request":[]}`, false},
+			"request number":    {`{"request":1}`, false},
+			"request bool":      {`{"request":true}`, false},
+			"request empty":     {`{"request":{}}`, false},
+			"both contents":     {`{"contents":[{"role":"user","parts":[{"text":"x"}]}],"request":` + inner + `}`, false},
+			"both tools":        {`{"tools":[],"request":` + inner + `}`, false},
+			"both generation":   {`{"generationConfig":{},"request":` + inner + `}`, false},
+			"unknown envelope":  {`{"surprise":1,"request":` + inner + `}`, false},
+			"no contents":       {`{"request":{"generationConfig":{}}}`, false},
+			"null contents":     {`{"request":{"contents":null}}`, false},
+			"empty contents":    {`{"request":{"contents":[]}}`, false},
+			"contents object":   {`{"request":{"contents":{}}}`, false},
+			"bare empty":        {`{}`, false},
+			"bare no contents":  {`{"generationConfig":{}}`, false},
 		} {
 			_, err := cloudInbound(t, wire, c.body)
 			if (err == nil) != c.ok {

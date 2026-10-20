@@ -75,9 +75,11 @@ func finishFor(reason, message string) (string, error) {
 // order.
 func (s *responseState) consume(chunk map[string]any) ([]map[string]any, error) {
 	response := chunk
+	scope := s.options.Scope
 	if wrapped := concerns.Object(chunk["response"]); wrapped != nil {
 		// The Cloud Code envelope Gemini CLI and Antigravity send (:45).
 		response = wrapped
+		scope = FamilyScope(scope, s.options.Model)
 	}
 	if raw, present := response["error"]; present && raw != nil {
 		if object := concerns.Object(raw); object != nil {
@@ -120,7 +122,7 @@ func (s *responseState) consume(chunk map[string]any) ([]map[string]any, error) 
 		if part == nil {
 			return nil, failure("upstream_invalid", "Gemini sent a part that is not an object")
 		}
-		partDeltas, err := s.part(part)
+		partDeltas, err := s.part(part, scope)
 		if err != nil {
 			return nil, err
 		}
@@ -136,7 +138,7 @@ func (s *responseState) consume(chunk map[string]any) ([]map[string]any, error) 
 	return deltas, nil
 }
 
-func (s *responseState) part(part map[string]any) ([]map[string]any, error) {
+func (s *responseState) part(part map[string]any, scope string) ([]map[string]any, error) {
 	for key := range part {
 		switch key {
 		case "text", "thought", "thoughtSignature", "thought_signature", "functionCall", "inlineData", "inline_data":
@@ -180,7 +182,7 @@ func (s *responseState) part(part map[string]any) ([]map[string]any, error) {
 			id = concerns.GenerateToolCallID(0, s.calls, original)
 		}
 		if s.pendingSig != "" {
-			s.options.Signatures.Put(s.options.Scope, id, original, concerns.JSONText(concerns.ToolInput(argumentText)), s.pendingSig)
+			s.options.Signatures.Put(scope, id, original, concerns.JSONText(concerns.ToolInput(argumentText)), s.pendingSig)
 			s.pendingSig = ""
 		}
 		deltas = append(deltas, map[string]any{"tool_calls": []any{map[string]any{

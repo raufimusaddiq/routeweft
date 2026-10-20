@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -115,7 +116,7 @@ func TestCloudCodeSessionAndRequestIDs(t *testing.T) {
 	a, _ := make1(CloudCodeOptions{}, "5:alice")
 	b, _ := make1(CloudCodeOptions{}, "5:alice")
 	c, _ := make1(CloudCodeOptions{}, "3:bob")
-	if at(a, "request.sessionId") == nil || at(a, "request.sessionId") != at(b, "request.sessionId") || at(a, "request.sessionId") == at(c, "request.sessionId") {
+	if at(a, "request.sessionId") != toNumericSession("routeweft:5:alice") || at(a, "request.sessionId") != at(b, "request.sessionId") || at(a, "request.sessionId") == at(c, "request.sessionId") {
 		t.Errorf("derived sessions: %v %v %v", at(a, "request.sessionId"), at(b, "request.sessionId"), at(c, "request.sessionId"))
 	}
 	if strings.Contains(asJSON(a), "alice") {
@@ -392,42 +393,57 @@ func TestFamilyScopeKeepsTheTenant(t *testing.T) {
 // the other family of the same tenant, and every family of another tenant, are
 // served none (thoughtSignatureStore.js:14-24; antigravity-thought-signature-family.test.js).
 func TestSignaturesAreScopedByTenantAndFamily(t *testing.T) {
-	cache := NewSignatures(20, time.Hour)
-	stored := func(tenant, model, signature string) {
-		t.Helper()
-		object := `{"response":{"candidates":[{"content":{"parts":[{"functionCall":{"id":"call_1","name":"lookup","args":{}},"thoughtSignature":"` + signature + `"}]},"finishReason":"STOP"}]}}`
-		if _, err := buffered(t, object, ResponseOptions{Model: model, Signatures: cache, Scope: FamilyScope(tenant, model)}); err != nil {
-			t.Fatal(err)
+	for _, stream := range []bool{false, true} {
+		cache := NewSignatures(20, time.Hour)
+		stored := func(tenant, model, signature string) {
+			t.Helper()
+			object := `{"response":{"candidates":[{"content":{"parts":[{"functionCall":{"id":"call_1","name":"lookup","args":{}},"thoughtSignature":"` + signature + `"}]},"finishReason":"STOP"}]}}`
+			options := ResponseOptions{Model: model, Signatures: cache, Scope: tenant}
+			var err error
+			if stream {
+				_, _, err = streamed(t, context.Background(), sse(object, object), options)
+			} else {
+				_, err = buffered(t, object, options)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
-	}
-	stored("alice|conn", "claude-opus-4-6-thinking", "CLAUDE-SIG")
-	stored("alice|conn", "gemini-3-flash", "GEMINI-SIG")
-	chat := `{"messages":[{"role":"user","content":"a"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"r"}]}`
-	sent := func(tenant, model string) any {
-		result, err := cloudRequest(t, AntigravityProtocol, chat, RequestOptions{Model: model, Repair: true, Signatures: cache, Scope: FamilyScope(tenant, model)}, CloudCodeOptions{})
-		if err != nil {
-			t.Fatal(err)
+		stored("alice|conn", "claude-opus-4-6-thinking", "CLAUDE-SIG")
+		stored("alice|conn", "gemini-3-flash", "GEMINI-SIG")
+		chat := `{"messages":[{"role":"user","content":"a"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"r"}]}`
+		sent := func(wire, tenant, model string) any {
+			result, err := cloudRequest(t, wire, chat, RequestOptions{Model: model, Repair: true, Signatures: cache, Scope: tenant}, CloudCodeOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return at(result, "request.contents.1.parts.0.thoughtSignature")
 		}
-		return at(result, "request.contents.1.parts.0.thoughtSignature")
-	}
-	for _, c := range []struct {
-		tenant, model string
-		want          any
-	}{
-		{"alice|conn", "claude-opus-4-6-thinking", "CLAUDE-SIG"}, {"alice|conn", "claude-sonnet-4-6", "CLAUDE-SIG"},
-		{"alice|conn", "gemini-3-flash", "GEMINI-SIG"}, {"alice|conn", "gemini-3.8-flash-tiered", "GEMINI-SIG"},
-		{"bob|conn", "claude-opus-4-6-thinking", nil}, {"bob|conn", "gemini-3-flash", PlaceholderSignature},
-		{"alice|other", "claude-opus-4-6-thinking", nil}, {"", "claude-opus-4-6-thinking", nil},
-		{"", "gemini-3-flash", PlaceholderSignature},
-	} {
-		if got := sent(c.tenant, c.model); got != c.want {
-			t.Errorf("%s/%s: %v, want %v", c.tenant, c.model, got, c.want)
+		for _, c := range []struct {
+			tenant, model string
+			want          any
+		}{
+			{"alice|conn", "claude-opus-4-6-thinking", "CLAUDE-SIG"}, {"alice|conn", "claude-sonnet-4-6", "CLAUDE-SIG"},
+			{"alice|conn", "gemini-3-flash", "GEMINI-SIG"}, {"alice|conn", "gemini-3.8-flash-tiered", "GEMINI-SIG"},
+			{"bob|conn", "claude-opus-4-6-thinking", nil}, {"bob|conn", "gemini-3-flash", PlaceholderSignature},
+			{"alice|other", "claude-opus-4-6-thinking", nil}, {"", "claude-opus-4-6-thinking", nil},
+			{"", "gemini-3-flash", PlaceholderSignature},
+		} {
+			for _, wire := range bothWires {
+				want := c.want
+				if want == nil && wire == GeminiCLIProtocol {
+					want = PlaceholderSignature
+				}
+				if got := sent(wire, c.tenant, c.model); got != want {
+					t.Errorf("stream=%v %s/%s/%s: %v, want %v", stream, wire, c.tenant, c.model, got, want)
+				}
+			}
 		}
-	}
-	// With no tenant nothing is stored, whatever the family.
-	before := cache.Len()
-	object := `{"candidates":[{"content":{"parts":[{"functionCall":{"name":"f","args":{}},"thoughtSignature":"S"}]},"finishReason":"STOP"}]}`
-	if _, err := buffered(t, object, ResponseOptions{Signatures: cache, Scope: FamilyScope("", "claude-x")}); err != nil || cache.Len() != before {
-		t.Errorf("stored %d with no tenant (%v)", cache.Len()-before, err)
+		// With no tenant nothing is stored, whatever the family.
+		before := cache.Len()
+		stored("", "claude-x", "S")
+		if cache.Len() != before {
+			t.Errorf("stored %d with no tenant", cache.Len()-before)
+		}
 	}
 }

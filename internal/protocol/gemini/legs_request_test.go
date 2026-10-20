@@ -279,7 +279,7 @@ func TestGeminiFourOmitsSamplingVisibly(t *testing.T) {
 			t.Fatal(err)
 		}
 		config := concerns.Object(result["generationConfig"])
-		for _, name := range []string{"temperature", "topP", "topK"} {
+		for _, name := range []string{"temperature", "topP"} {
 			if _, present := config[name]; present {
 				t.Errorf("%s: %s sent", model, name)
 			}

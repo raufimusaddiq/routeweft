@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -37,8 +38,7 @@ type CloudCodeOptions struct {
 	Project string
 	// SessionID is the client session. A numeric id is sent as it is, any other is
 	// hashed to the numeric form (utils/sessionManager.js:18-25). Empty derives one
-	// from RequestOptions.Scope, and from nothing when there is no scope: the
-	// field is then left out rather than made up.
+	// from "routeweft:" + RequestOptions.Scope; with no scope the field is omitted.
 	SessionID string
 	// RequestID labels the request. Empty gets "agent-<uuid>" (:127-129,350).
 	RequestID string
@@ -142,7 +142,9 @@ func chatRequestToCloudCode(body map[string]any, options RequestOptions, cloud C
 		options.OmitPlaceholderSignature = claude
 	}
 	options.Vertex = false
-	encoded, names, err := ChatRequestToGemini(body, options)
+	signatureOptions := options
+	signatureOptions.Scope = FamilyScope(options.Scope, options.Model)
+	encoded, names, err := ChatRequestToGemini(body, signatureOptions)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -269,23 +271,26 @@ func unwrapCloudCode(body map[string]any) (map[string]any, error) {
 				return nil, unsupported("%q is in the envelope and in request: the body is ambiguous", key)
 			}
 		}
-		for key, value := range body {
+		inner = wrapped
+	}
+	for _, fields := range []map[string]any{body, inner} {
+		for key, value := range fields {
 			switch {
-			case key == "request" || cloudCodeRouting[key]:
+			case key == "request" || cloudCodeRouting[key] || key == "sessionId" || key == "session_id":
 			case key == "requestType":
 				if value != nil && value != "agent" {
 					return nil, unsupported("requestType %s: only the agent path is served; image generation is out of scope", concerns.JSONText(value))
 				}
+			case slices.Contains(cloudCodeInner, key):
 			default:
 				return nil, unsupported("envelope field %q", key)
 			}
 		}
-		inner = wrapped
 	}
 	copied := make(map[string]any, len(inner))
 	for key, value := range inner {
 		// The session is the client's own and the gateway assigns another.
-		if key == "sessionId" || key == "session_id" {
+		if key == "sessionId" || key == "session_id" || cloudCodeRouting[key] || key == "request" || key == "requestType" {
 			continue
 		}
 		copied[key] = value
