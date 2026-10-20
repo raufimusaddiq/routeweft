@@ -56,7 +56,7 @@ func (h *Handler) PlanCombo(snapshot *runtime.RuntimeSnapshot, access auth.Entry
 			adapterRequirements = append(adapterRequirements, requirement)
 		}
 	}
-	adapterTier := eligibleAdapters(access, adapterRequirements, routed)
+	adapterTier := eligibleAdapters(snapshot, access, adapterRequirements, routed)
 	if len(adapterTier) > 0 {
 		adapterTier = orderAdapterTier(adapterTier, adapterRequirements, name, snapshot, h)
 	}
@@ -123,7 +123,7 @@ func anyMemberHas(members []routing.Member, capability string) bool {
 
 // eligibleAdapters keeps only enabled, non-empty pools and drops candidates
 // already present in the Combo fallback list so a member never appears twice.
-func eligibleAdapters(access auth.Entry, requirements []routing.CapabilityRequirement, routed []routing.Member) []routing.Member {
+func eligibleAdapters(snapshot *runtime.RuntimeSnapshot, access auth.Entry, requirements []routing.CapabilityRequirement, routed []routing.Member) []routing.Member {
 	members := routing.AdapterCandidates(requirements, nil)
 	present := make(map[string]struct{}, len(routed))
 	for _, member := range routed {
@@ -134,7 +134,7 @@ func eligibleAdapters(access auth.Entry, requirements []routing.CapabilityRequir
 		if _, exists := present[member.ProviderID+"\x00"+member.ModelID]; exists {
 			continue
 		}
-		if !access.Permits(member.ProviderID + "/" + member.ModelID) {
+		if !snapshot.KeyAllows(access, member.ProviderID+"/"+member.ModelID) {
 			continue
 		}
 		kept = append(kept, member)

@@ -81,8 +81,9 @@ func TestRestrictedKeyOnlySeesAllowedModelsAndCombos(t *testing.T) {
 		}
 	}
 	got := listedIDs(t, f.do("GET", "/v1/models", f.scoped, ""))
-	// An allowed alias grants only the alias name, not its canonical target.
-	want := map[string]bool{"fast": true, "team": true, "openai/gpt-b": true}
+	// Grants are resolved identities (pin keyAccess.js): an allowed alias is its
+	// target, so the target is listed too. A Combo is granted without its members.
+	want := map[string]bool{"fast": true, "openai/gpt-a": true, "team": true, "openai/gpt-b": true}
 	if len(got) != len(want) {
 		t.Fatalf("restricted listing = %v, want %v", got, want)
 	}
@@ -124,12 +125,12 @@ func TestRestrictedKeyIsDeniedBeforeModelResolution(t *testing.T) {
 	}
 	// Past the gate there is no provider wired in this fixture (503/404), which
 	// is how an allowed request is told apart from a 403.
-	for _, model := range []string{"fast", "team", "openai/gpt-b"} {
+	for _, model := range []string{"fast", "openai/gpt-a", "team", "openai/gpt-b"} {
 		if code := chat(f.scoped, model); code == http.StatusForbidden {
 			t.Fatalf("model %q should be permitted, got 403", model)
 		}
 	}
-	for _, model := range []string{"openai/gpt-a", "openai/gpt-c", "gpt-c", "does-not-exist"} {
+	for _, model := range []string{"openai/gpt-c", "gpt-c", "does-not-exist"} {
 		if code := chat(f.scoped, model); code != http.StatusForbidden {
 			t.Fatalf("model %q: status %d, want 403 (no existence oracle)", model, code)
 		}
@@ -298,7 +299,7 @@ func TestKeyMissAfterAuthenticationFailsClosed(t *testing.T) {
 			}
 		}
 	}
-	// Keys not required: unrestricted by design.
+	// Keys not required and no key presented: unrestricted by design.
 	if _, err := manager.SetSettings(ctx, map[string]string{"requireApiKey": "false"}, nil); err != nil {
 		t.Fatal(err)
 	}

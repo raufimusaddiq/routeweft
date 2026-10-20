@@ -199,6 +199,7 @@ func (c Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, erro
 		snapshot.noProxy = nil
 	}
 	snapshot.compileServingIndexes()
+	snapshot.compileKeyAccess(config.APIKeys)
 	return snapshot, nil
 }
 
