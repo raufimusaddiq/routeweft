@@ -76,6 +76,10 @@ type Hook struct {
 	// RequireCredential prevents unauthenticated dispatch when an empty credential
 	// would otherwise produce a misleading upstream error.
 	RequireCredential bool
+	// Do sends the request in place of client.Do, for a provider whose exchange is
+	// not one request and one reply (Cursor's Connect stream, which the client
+	// answers mid-turn). It returns an ordinary response for the caller to classify.
+	Do func(*http.Client, *http.Request) (*http.Response, error)
 }
 
 var hooks = map[string]Hook{
@@ -110,6 +114,7 @@ var hooks = map[string]Hook{
 	"opencode":         {Target: opencodeTarget, ForceStream: true, Finalize: codebuddyStream},
 	"vertex-partner":   {Target: vertexPartnerTarget},
 	"cloudflare-ai":    {Target: cloudflareTarget},
+	"cursor":           {RequestHeaders: cursorHeaders, Target: cursorTarget, ForceStream: true, RequireCredential: true, Do: CursorDo},
 }
 
 var minimaxHook = Hook{Finalize: chain(dropOutputConfig, requireClaudeToolType), Target: betaQuery}
@@ -199,6 +204,14 @@ func set(headers http.Header, values map[string]string) {
 	for name, value := range values {
 		headers.Set(name, value)
 	}
+}
+
+// Send performs the request through the provider's own exchange when it has one.
+func Send(provider routing.ProviderRef, client *http.Client, request *http.Request) (*http.Response, error) {
+	if do := For(provider.ProviderID).Do; do != nil {
+		return do(client, request)
+	}
+	return client.Do(request)
 }
 
 // ForcesStream reports whether the provider only answers streams.
