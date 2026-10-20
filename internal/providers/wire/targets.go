@@ -76,6 +76,15 @@ func (t Target) URL(validate func(string) (*url.URL, error)) (*url.URL, error) {
 	return base, nil
 }
 
+// TargetError is a provider Target hook refusing a route: a required setting is
+// missing, or the model has no endpoint on the wire the route carries. It says
+// nothing about the account's health or the request, so a caller falls through to
+// the next candidate and, if none serves, reports Err to the operator.
+type TargetError struct{ Err error }
+
+func (e *TargetError) Error() string { return e.Err.Error() }
+func (e *TargetError) Unwrap() error { return e.Err }
+
 // ResolveTarget applies the provider's Target hook to the route's own base URL
 // and endpoint. A provider with no hook is sent exactly where the route says.
 func ResolveTarget(provider routing.ProviderRef, endpoint string) (Target, error) {
@@ -86,7 +95,7 @@ func ResolveTarget(provider routing.ProviderRef, endpoint string) (Target, error
 	}
 	resolved, err := hook(provider)
 	if err != nil {
-		return Target{}, err
+		return Target{}, &TargetError{Err: err}
 	}
 	if resolved.BaseURL != "" {
 		target.BaseURL = resolved.BaseURL
@@ -271,7 +280,7 @@ var vertexProject = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*$`)
 func vertexPartnerTarget(provider routing.ProviderRef) (Target, error) {
 	project := strings.TrimSpace(provider.Connection.Settings.ProjectID)
 	if project == "" {
-		return Target{}, errors.New("vertex-partner connection has no projectId: set projectId in the connection's provider settings")
+		return Target{}, errors.New("vertex-partner connection has no projectId: add a Project ID to the connection (Providers > New connection) or set providerData.projectId when creating it through the API")
 	}
 	if !vertexProject.MatchString(project) || strings.Contains(project, "..") {
 		return Target{}, errors.New("vertex-partner projectId is not a valid GCP project id")

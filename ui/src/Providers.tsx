@@ -87,6 +87,7 @@ export function Providers({ onUnauthorized }: Props) {
   const [accountOpen, setAccountOpen] = useState(false)
   const [genericNodeID, setGenericNodeID] = useState('')
   const [generic, setGeneric] = useState({ name: '', prefix: '', baseUrl: '', transports: ['openai-chat'] })
+  const [projectId, setProjectId] = useState('')
   const [account, setAccount] = useState({ name: '', identity: '', authKind: '', accessToken: '', refreshToken: '', cookie: '' })
   const [oauthFlow, setOauthFlow] = useState<OAuthFlow | null>(null)
   // Two independent secrets: the import panel's credential and the browser flow's
@@ -252,11 +253,12 @@ export function Providers({ onUnauthorized }: Props) {
     event.preventDefault()
     if (!selectedProvider || !account.name.trim() || !account.identity.trim()) return
     await action('account', 'Provider connection saved.', async () => {
-      const secret: Record<string, string> = {}
+      const secret: Record<string, string | Record<string, string>> = {}
       if (account.authKind === 'cookie') secret.cookie = account.cookie
       else if (account.authKind !== 'none') { secret.accessToken = account.accessToken; if (account.refreshToken) secret.refreshToken = account.refreshToken }
+      if (selected === 'vertex-partner' && projectId.trim()) secret.providerData = { projectId: projectId.trim() }
       await send('/connections', 'POST', { providerId: selected, nodeId: selectedNode?.id, name: account.name, identity: account.identity, authKind: account.authKind || selectedProvider.authModes[0] || selectedProvider.auth, secret, enabled: true, priority: selectedConnections.length })
-      setAccountOpen(false); resetSecrets(); setAccount({ name: '', identity: '', authKind: '', accessToken: '', refreshToken: '', cookie: '' })
+      setAccountOpen(false); resetSecrets(); setProjectId(''); setAccount({ name: '', identity: '', authKind: '', accessToken: '', refreshToken: '', cookie: '' })
     })
   }
 
@@ -454,6 +456,7 @@ export function Providers({ onUnauthorized }: Props) {
               <div className="oauth-actions"><button className="button-primary" type="button" disabled={busy !== '' || !oauthInput.trim()} onClick={() => void finishOAuth()}>{busy === 'oauth-finish' ? 'Finishing…' : 'Finish sign-in'}</button><button className="button-ghost" type="button" onClick={() => resetSecrets()}>Cancel</button></div></>}
           <p>Or paste tokens manually below.</p>
         </div>}
+        {selected === 'vertex-partner' && <label className="wide-field">Project ID<input required value={projectId} onChange={event => setProjectId(event.target.value)} placeholder="my-gcp-project" /></label>}
         {account.authKind === 'cookie' ? <label className="wide-field">Cookie/session<input type="password" autoComplete="new-password" value={account.cookie} onChange={event => setAccount({ ...account, cookie: event.target.value })} /></label> : account.authKind !== 'none' && <><label className="wide-field">Access token / API key<input required type="password" autoComplete="new-password" value={account.accessToken} onChange={event => setAccount({ ...account, accessToken: event.target.value })} /></label>{account.authKind === 'oauth' && <label className="wide-field">Refresh token<input type="password" autoComplete="new-password" value={account.refreshToken} onChange={event => setAccount({ ...account, refreshToken: event.target.value })} /></label>}</>}
       </div><button className="button-primary" type="submit" disabled={busy === 'account'}>{busy === 'account' ? 'Saving…' : 'Save connection'}</button></form>}
 

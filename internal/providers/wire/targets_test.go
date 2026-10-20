@@ -1,6 +1,7 @@
 package wire
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -279,5 +280,15 @@ func TestVertexPartnerRejectsAProjectThatIsNotAPathSegment(t *testing.T) {
 		if got, err := ResolveTarget(ref("vertex-partner", chat, "https://aiplatform.googleapis.com", routing.ProviderSettings{ProjectID: project}), "chat/completions"); err == nil {
 			t.Errorf("%q accepted: %+v", project, got)
 		}
+	}
+}
+
+// A hook refusal is a *TargetError, so a caller can fall through to the next
+// candidate; a bad base is not one.
+func TestHookRefusalIsATargetError(t *testing.T) {
+	_, err := ResolveTarget(ref("vertex-partner", chat, "https://aiplatform.googleapis.com", routing.ProviderSettings{}), "chat/completions")
+	var refused *TargetError
+	if !errors.As(err, &refused) {
+		t.Fatalf("want *TargetError, got %T %v", err, err)
 	}
 }
