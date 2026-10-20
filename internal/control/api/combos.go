@@ -53,6 +53,7 @@ func (h *Handler) handlePutCombo(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_combo", err.Error())
 			return
 		}
+		combo.FusionTuning = combo.FusionTuning.Normalize()
 	}
 	for position, member := range body.Members {
 		selected := true

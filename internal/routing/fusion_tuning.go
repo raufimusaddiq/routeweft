@@ -1,7 +1,6 @@
 package routing
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -44,19 +43,33 @@ func (t FusionTuning) Validate() error {
 	return nil
 }
 
-// ParseV1FusionTuning reads the pinned fusionTuning JSON object. Unknown keys
-// are ignored and null keys mean "default", as in v1.
-func ParseV1FusionTuning(raw []byte) (FusionTuning, error) {
-	var in struct {
-		MinPanel           *int   `json:"minPanel"`
-		StragglerGraceMs   *int64 `json:"stragglerGraceMs"`
-		PanelHardTimeoutMs *int64 `json:"panelHardTimeoutMs"`
+// Clone returns a copy that shares no pointee with t, so a published Combo
+// cannot be mutated through a caller's copy (AGENTS §3).
+func (t FusionTuning) Clone() FusionTuning {
+	if t.MinPanel != nil {
+		v := *t.MinPanel
+		t.MinPanel = &v
 	}
-	if err := json.Unmarshal(raw, &in); err != nil {
-		return FusionTuning{}, fmt.Errorf("fusion tuning: %w", err)
+	if t.StragglerGraceMs != nil {
+		v := *t.StragglerGraceMs
+		t.StragglerGraceMs = &v
 	}
-	tuning := FusionTuning{MinPanel: in.MinPanel, StragglerGraceMs: in.StragglerGraceMs, PanelHardTimeoutMs: in.PanelHardTimeoutMs}
-	return tuning, tuning.Validate()
+	if t.PanelHardTimeoutMs != nil {
+		v := *t.PanelHardTimeoutMs
+		t.PanelHardTimeoutMs = &v
+	}
+	return t
+}
+
+// Normalize returns the tuning as it resolves: a minPanel below 2 is stored as
+// 2 (combo.js:562), so what is stored is what runs.
+func (t FusionTuning) Normalize() FusionTuning {
+	t = t.Clone()
+	if t.MinPanel != nil && *t.MinPanel < 2 {
+		two := 2
+		t.MinPanel = &two
+	}
+	return t
 }
 
 // Apply returns base with the Combo's overrides resolved the way v1 resolves

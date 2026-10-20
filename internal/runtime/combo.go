@@ -52,6 +52,7 @@ func cloneCombos(combos map[string]Combo) map[string]Combo {
 	cloned := make(map[string]Combo, len(combos))
 	for key, combo := range combos {
 		combo.Members = append([]ComboMember(nil), combo.Members...)
+		combo.FusionTuning = combo.FusionTuning.Clone()
 		cloned[key] = combo
 	}
 	return cloned
@@ -135,6 +136,7 @@ func (s *RuntimeSnapshot) ComboByName(name string) (Combo, bool) {
 		return Combo{}, false
 	}
 	combo.Members = append([]ComboMember(nil), combo.Members...)
+	combo.FusionTuning = combo.FusionTuning.Clone()
 	return combo, true
 }
 
@@ -146,6 +148,7 @@ func (s *RuntimeSnapshot) Combos() []Combo {
 	list := make([]Combo, 0, len(s.combos))
 	for _, combo := range s.combos {
 		combo.Members = append([]ComboMember(nil), combo.Members...)
+		combo.FusionTuning = combo.FusionTuning.Clone()
 		list = append(list, combo)
 	}
 	return list

@@ -77,3 +77,27 @@ func TestComboFusionTuningInvalidIsRefusedBeforeCommit(t *testing.T) {
 		t.Fatal("rejected Combo was published")
 	}
 }
+
+func TestComboSnapshotReadsCannotMutatePublishedTuning(t *testing.T) {
+	ctx := context.Background()
+	manager, store := newTestManager(t)
+	defer store.Close()
+	comboModels(t, manager)
+	minPanel := 3
+	if _, err := manager.SetCombos(ctx, []Combo{{ID: "c", Name: "c", FusionTuning: routing.FusionTuning{MinPanel: &minPanel}, Members: []ComboMember{{ProviderID: "openai", ModelID: "gpt-text", Selected: true}}}}); err != nil {
+		t.Fatal(err)
+	}
+	minPanel = 7 // the caller's pointer must not reach the snapshot
+	snapshot, err := manager.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := snapshot.ComboByName("c")
+	*got.FusionTuning.MinPanel = 9
+	list := snapshot.Combos()
+	*list[0].FusionTuning.MinPanel = 8
+	again, _ := snapshot.ComboByName("c")
+	if *again.FusionTuning.MinPanel != 3 {
+		t.Fatalf("published tuning mutated: %d", *again.FusionTuning.MinPanel)
+	}
+}

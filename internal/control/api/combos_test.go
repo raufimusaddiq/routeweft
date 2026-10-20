@@ -143,3 +143,13 @@ func TestComboFusionTuningRoundTripAndValidation(t *testing.T) {
 		t.Fatalf("clear status=%d body=%s", cleared.Code, cleared.Body.String())
 	}
 }
+
+func TestComboFusionTuningMinPanelIsStoredAsResolved(t *testing.T) {
+	handler, mux, store, _, cookie := newProvidersAPI(t, false, nil)
+	defer store.Close()
+	seedComboCatalog(t, handler)
+	created := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/combos", `{"name":"fz","fusionEnabled":true,"fusionTuning":{"minPanel":0},"members":[{"providerId":"openai","modelId":"gpt-5"},{"providerId":"openai","modelId":"gpt-5-mini"}]}`)
+	if created.Code != http.StatusOK || !strings.Contains(created.Body.String(), `"minPanel":2`) {
+		t.Fatalf("status=%d body=%s", created.Code, created.Body.String())
+	}
+}

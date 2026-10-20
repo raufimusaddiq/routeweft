@@ -72,20 +72,16 @@ func TestFusionTuningRejectsValuesV1CannotMean(t *testing.T) {
 	}
 }
 
-func TestParseV1FusionTuning(t *testing.T) {
-	got, err := ParseV1FusionTuning([]byte(`{"minPanel":3,"stragglerGraceMs":null,"panelHardTimeoutMs":45000,"future":true}`))
-	if err != nil || got.MinPanel == nil || *got.MinPanel != 3 || got.StragglerGraceMs != nil || got.PanelHardTimeoutMs == nil || *got.PanelHardTimeoutMs != 45000 {
-		t.Fatalf("tuning %+v err=%v", got, err)
+func TestFusionTuningCloneSharesNothingAndNormalizeLiftsMinPanel(t *testing.T) {
+	orig := FusionTuning{MinPanel: ptrInt(0), StragglerGraceMs: ptrInt64(5)}
+	clone := orig.Clone()
+	*clone.MinPanel, *clone.StragglerGraceMs = 9, 9
+	if *orig.MinPanel != 0 || *orig.StragglerGraceMs != 5 {
+		t.Fatalf("clone aliases original: %+v", orig)
 	}
-	if _, err := ParseV1FusionTuning([]byte(`{"panelHardTimeoutMs":0}`)); err == nil {
-		t.Fatal("zero hard timeout accepted")
-	}
-	if _, err := ParseV1FusionTuning([]byte(`[`)); err == nil {
-		t.Fatal("malformed JSON accepted")
-	}
-	empty, err := ParseV1FusionTuning([]byte(`{}`))
-	if err != nil || !empty.IsZero() {
-		t.Fatalf("empty tuning %+v err=%v", empty, err)
+	norm := orig.Normalize()
+	if *norm.MinPanel != 2 || *orig.MinPanel != 0 || norm.PanelHardTimeoutMs != nil {
+		t.Fatalf("normalize %+v orig %+v", norm, orig)
 	}
 }
 

@@ -58,6 +58,7 @@ func cloneComboList(combos []Combo) []Combo {
 	cloned := make([]Combo, len(combos))
 	for i, combo := range combos {
 		combo.Members = append([]ComboMember(nil), combo.Members...)
+		combo.FusionTuning = combo.FusionTuning.Clone()
 		cloned[i] = combo
 	}
 	return cloned
