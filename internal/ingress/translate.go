@@ -5,14 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/commandcode"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/concerns"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/cursor"
+	geminiwire "github.com/raufimusaddiq/routeweft/internal/protocol/gemini"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/hub"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
+	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
 // unwired are provider wires whose conversion legs exist (internal/protocol/hub)
@@ -20,8 +24,82 @@ import (
 // must not be routed to one. Cursor needs a Connect-RPC protobuf transport over
 // HTTP/2 (executors/cursor.js); CommandCode needs its headers, forced stream and
 // pre-stream error handling in internal/providers/wire (executors/commandcode.js).
+// Vertex needs the project-scoped URL and the service-account or key
+// authentication that #115 PR-C's target hook supplies (executors/vertex.js:66-123);
+// until it does, a request routed there would fail at the last hop. PR-C removes
+// the vertex entry together with TranslateChat's vertex arm, which is not built
+// here because the endpoint it would name is that hook's to compute.
 // A provider leaves this list in the PR that binds its wire.
-var unwired = map[string]bool{cursor.Protocol: true, commandcode.Protocol: true}
+var unwired = map[string]bool{cursor.Protocol: true, commandcode.Protocol: true, geminiwire.VertexProtocol: true}
+
+// geminiSignatures keeps the thought signatures Gemini attached to its function
+// calls so the next request of the conversation can send them back. In memory
+// only, bounded, and keyed by translationScope (geminiwire.Signatures).
+var geminiSignatures = geminiwire.NewSignatures(geminiwire.DefaultSignatureEntries, geminiwire.DefaultSignatureTTL)
+
+// translationScope names who an attempt is for: the authenticated client key and
+// the provider connection. A deployment that requires no key has an empty key id
+// and its scope is the connection alone; a request with neither has no scope, and
+// a leg that would keep state for it keeps none.
+func translationScope(r *http.Request, provider routing.ProviderRef) string {
+	key := ""
+	if holder := attributionFrom(r); holder != nil {
+		if id := holder.keyID.Load(); id != nil {
+			key = *id
+		}
+	}
+	if provider.ConnectionID == "" && key == "" {
+		return ""
+	}
+	// Length-prefixed, so no pair of ids can join to the scope of another pair.
+	return fmt.Sprintf("%d:%s%s", len(key), key, provider.ConnectionID)
+}
+
+// geminiEndpoint is the generateContent path of a model under the provider's
+// base URL (compat.go's native route builds the same one). The model is a path
+// segment: one that could end it, or start a query, is not sent.
+func geminiEndpoint(model string, stream bool) (string, error) {
+	if model == "" || strings.ContainsAny(model, "/?#:\\ ") {
+		return "", fmt.Errorf("model %q cannot be named in a Gemini path", model)
+	}
+	method := "generateContent"
+	if stream {
+		method = "streamGenerateContent"
+	}
+	return "v1beta/models/" + model + ":" + method, nil
+}
+
+// geminiOptions are the request-leg options of a translated Gemini attempt.
+func geminiRequestOptions(model, scope string, repair bool) geminiwire.RequestOptions {
+	return geminiwire.RequestOptions{Model: model, Repair: repair, Signatures: geminiSignatures, Scope: scope}
+}
+
+// geminiTranslation turns a Chat body into the whole Gemini attempt; wrap adapts
+// the Chat response legs to the client's wire (nil for a Chat client).
+func geminiTranslation(chat map[string]any, model, scope string, stream, repair bool,
+	wrapBody func(func([]byte) ([]byte, error)) func([]byte) ([]byte, error),
+	wrapStream func(streamFunc) streamFunc) (ChatTranslation, error) {
+	endpoint, err := geminiEndpoint(model, stream)
+	if err != nil {
+		return ChatTranslation{}, err
+	}
+	body, names, err := geminiwire.ChatRequestToGemini(chat, geminiRequestOptions(model, scope, repair))
+	if err != nil {
+		return ChatTranslation{}, err
+	}
+	options := geminiwire.ResponseOptions{Model: model, Names: names, Signatures: geminiSignatures, Scope: scope}
+	response := func(body []byte) ([]byte, error) { return geminiwire.GeminiResponseToChat(body, options) }
+	streamer := func(ctx context.Context, src io.Reader, dst io.Writer) error {
+		return geminiwire.GeminiStreamToChat(ctx, src, dst, options)
+	}
+	if wrapBody != nil {
+		response = wrapBody(response)
+	}
+	if wrapStream != nil {
+		streamer = wrapStream(streamer)
+	}
+	return ChatTranslation{Endpoint: endpoint, Body: body, Response: response, Stream: streamer}, nil
+}
 
 // CanTranslate declares the implemented protocol pairs, independent of providers.
 func CanTranslate(source, target string) bool {
@@ -144,13 +222,19 @@ func TranslateChat(request *openai.ChatRequest, target string) (ChatTranslation,
 			return ChatTranslation{}, err
 		}
 		return ChatTranslation{Endpoint: ollamaEndpoint, Body: body, Response: ollama.OllamaResponseToChat, Stream: ollamaStream(request.Model)}, nil
+	case geminiwire.Protocol:
+		parsed, err := concerns.WireObject(request.Raw)
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		return geminiTranslation(parsed, request.Model, request.Scope, request.Stream, true, nil, nil)
 	}
 	return ChatTranslation{}, fmt.Errorf("no Chat translator for %q", target)
 }
 
 // TranslateResponses keeps custom-tool response metadata local to this request.
 func TranslateResponses(request *openai.ResponsesRequest, target string) (ChatTranslation, error) {
-	if request.Compact || (target != openai.ChatProtocol && target != anthropic.MessagesProtocol && target != ollama.Protocol) {
+	if request.Compact || (target != openai.ChatProtocol && target != anthropic.MessagesProtocol && target != ollama.Protocol && target != geminiwire.Protocol) {
 		return ChatTranslation{}, fmt.Errorf("no Responses translator for %q", target)
 	}
 	body, err := openai.ResponsesToChat(request)
@@ -168,6 +252,13 @@ func TranslateResponses(request *openai.ResponsesRequest, target string) (ChatTr
 	chat, err := concerns.WireObject(body)
 	if err != nil {
 		return ChatTranslation{}, err
+	}
+	if target == geminiwire.Protocol {
+		return geminiTranslation(chat, request.Model, request.Scope, request.Stream, false,
+			func(first func([]byte) ([]byte, error)) func([]byte) ([]byte, error) {
+				return chainBodies(first, toResponses)
+			},
+			func(first streamFunc) streamFunc { return chainStreams(first, toResponsesStream) })
 	}
 	if target == ollama.Protocol {
 		ollamaBody, err := ollama.ChatRequestToOllama(chat, request.Model, request.Stream, false)
@@ -196,8 +287,21 @@ func TranslateResponses(request *openai.ResponsesRequest, target string) (ChatTr
 // TranslateMessages wires both halves of a Messages request served by a
 // provider that speaks Chat or Responses.
 func TranslateMessages(request *anthropic.MessagesRequest, target string) (ChatTranslation, error) {
-	if target != openai.ChatProtocol && target != openai.ResponsesProtocol && target != ollama.Protocol {
+	if target != openai.ChatProtocol && target != openai.ResponsesProtocol && target != ollama.Protocol && target != geminiwire.Protocol {
 		return ChatTranslation{}, fmt.Errorf("no Messages translator for %q", target)
+	}
+	if target == geminiwire.Protocol {
+		// Messages>Chat>Gemini through the registry functions alone, as for
+		// Ollama (translator/index.js:116-125).
+		chat, err := anthropic.MessagesRequestToHubChat(request.Raw, request.Model, request.Stream)
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		return geminiTranslation(chat, request.Model, request.Scope, request.Stream, false,
+			func(first func([]byte) ([]byte, error)) func([]byte) ([]byte, error) {
+				return chainBodies(first, anthropic.ChatResponseToMessages)
+			},
+			func(first streamFunc) streamFunc { return chainStreams(first, anthropic.ChatStreamToMessages) })
 	}
 	if target == ollama.Protocol {
 		// The pin pivots Messages>Chat>Ollama through the registry functions
