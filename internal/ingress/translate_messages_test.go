@@ -126,6 +126,43 @@ func assertClientSees(t *testing.T, client string, stream bool, body string) {
 	}
 }
 
+// upstreamRejects is the part of each real upstream's contract that a leg can
+// violate: Anthropic gates cache ttl behind a beta header, wants a signed
+// thinking block or none, takes no empty list, and nothing may claim to be
+// someone else's CLI; Chat takes no empty message list or tools array either.
+func upstreamRejects(provider string, header http.Header, body map[string]any, raw string) string {
+	switch provider {
+	case anthropic.MessagesProtocol:
+		if strings.Contains(raw, `"ttl"`) && !strings.Contains(header.Get("Anthropic-Beta"), "extended-cache-ttl") {
+			return "cache_control.ttl requires the extended-cache-ttl beta"
+		}
+		if strings.Contains(raw, "Claude Code") {
+			return "system prompt claims an identity the caller never set"
+		}
+		if tools, present := body["tools"].([]any); present && len(tools) == 0 {
+			return "tools: must not be empty"
+		}
+		if messages, _ := body["messages"].([]any); len(messages) == 0 {
+			return "messages: at least one message is required"
+		}
+		for _, message := range concerns.Items(body["messages"]) {
+			for _, block := range concerns.Items(concerns.Object(message)["content"]) {
+				if b := concerns.Object(block); b["type"] == "thinking" && concerns.Text(b["signature"]) == "" {
+					return "thinking.signature: field required"
+				}
+			}
+		}
+	case openai.ChatProtocol:
+		if messages, _ := body["messages"].([]any); len(messages) == 0 {
+			return "messages: must not be empty"
+		}
+		if tools, present := body["tools"].([]any); present && len(tools) == 0 {
+			return "tools: must not be empty"
+		}
+	}
+	return ""
+}
+
 // Every client wire reaches every provider wire it can be converted to, on both
 // the buffered and the streamed path, with the provider's own credential and
 // path, the client's tool id, text, finish reason and usage intact, and exactly
@@ -142,19 +179,33 @@ func TestEveryConvertedPairServesAClient(t *testing.T) {
 					var seen struct {
 						sync.Mutex
 						path, auth, apiKey, version string
+						status                      int
 						body                        map[string]any
 					}
 					upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						seen.Lock()
 						defer seen.Unlock()
 						seen.path, seen.auth, seen.apiKey, seen.version = r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("X-Api-Key"), r.Header.Get("Anthropic-Version")
+						raw, _ := io.ReadAll(r.Body)
 						seen.body = map[string]any{}
-						_ = json.NewDecoder(r.Body).Decode(&seen.body)
+						_ = json.Unmarshal(raw, &seen.body)
+						// The fake enforces what each real upstream enforces, so a body
+						// the header or the wire contract does not allow is a 400 here
+						// as it would be there, not a 200 the test cannot see.
+						if reason := upstreamRejects(provider, r.Header, seen.body, string(raw)); reason != "" {
+							seen.status = http.StatusBadRequest
+							w.Header().Set("Content-Type", "application/json")
+							w.WriteHeader(http.StatusBadRequest)
+							fmt.Fprintf(w, `{"error":{"type":"invalid_request_error","message":%q}}`, reason)
+							return
+						}
+						seen.status = http.StatusOK
 						if stream {
 							w.Header().Set("Content-Type", "text/event-stream")
 						} else {
 							w.Header().Set("Content-Type", "application/json")
 						}
+						w.WriteHeader(http.StatusOK)
 						fmt.Fprint(w, upstreamBodies[provider][stream])
 					}))
 					defer upstream.Close()
@@ -185,11 +236,11 @@ func TestEveryConvertedPairServesAClient(t *testing.T) {
 					r.Header.Set("Authorization", "Bearer "+key)
 					w := httptest.NewRecorder()
 					mux.ServeHTTP(w, r)
-					if w.Code != 200 {
-						t.Fatalf("status %d: %s", w.Code, w.Body)
-					}
 					seen.Lock()
 					defer seen.Unlock()
+					if seen.status != http.StatusOK || w.Code != http.StatusOK {
+						t.Fatalf("upstream answered %d, client got %d: %s", seen.status, w.Code, w.Body)
+					}
 					if seen.path != upstreamPaths[provider] {
 						t.Errorf("upstream path %q want %q", seen.path, upstreamPaths[provider])
 					}
@@ -338,5 +389,73 @@ func TestTranslationFailureMovesToTheNextCandidate(t *testing.T) {
 	defer mu.Unlock()
 	if w.Code != 200 || len(contacted) != 1 || contacted[0] != "/responses" {
 		t.Fatalf("status %d contacted %v body %s", w.Code, contacted, w.Body)
+	}
+}
+
+// When the upstream rejects what the leg sent, the client sees that rejection,
+// with its status and body, and the failure is recorded once as a failure.
+func TestUpstreamRejectionReachesTheClient(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"type":"error","error":{"type":"invalid_request_error","message":"cache_control.ttl requires the extended-cache-ttl beta"}}`)
+	}))
+	defer upstream.Close()
+	manager := newManager(t)
+	_, key, _ := manager.CreateAPIKey(context.Background(), "test")
+	var outcomes []RequestOutcome
+	var mu sync.Mutex
+	mux := http.NewServeMux()
+	New(manager, Options{
+		AllowPrivateUpstreams: true, TranslateChat: TranslateChat,
+		Candidates: func(*runtime.RuntimeSnapshot, string) ([]routing.Account, bool) {
+			return []routing.Account{{ID: "a", Enabled: true}}, true
+		},
+		AccountProvider: func(_ *runtime.RuntimeSnapshot, _, account, _ string) (routing.ProviderRef, bool) {
+			return routing.ProviderRef{ProviderID: "test", ConnectionID: account, BaseURL: upstream.URL, Protocol: anthropic.MessagesProtocol}, true
+		},
+		OnRequestComplete: func(o RequestOutcome) { mu.Lock(); outcomes = append(outcomes, o); mu.Unlock() },
+	}).Attach(mux)
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(fmt.Sprintf(clientRequests[openai.ChatProtocol].body, false)))
+	r.Header.Set("Authorization", "Bearer "+key)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	mu.Lock()
+	defer mu.Unlock()
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "extended-cache-ttl") || len(outcomes) != 1 || outcomes[0].Status != http.StatusBadRequest {
+		t.Fatalf("status %d body %s outcomes %+v", w.Code, w.Body, outcomes)
+	}
+}
+
+// With nothing attempted, the translation failure is what is reported, not an
+// unrelated error from a candidate skipped afterwards.
+func TestTranslationErrorIsKeptWhenNothingWasAttempted(t *testing.T) {
+	manager := newManager(t)
+	_, key, _ := manager.CreateAPIKey(context.Background(), "test")
+	mux := http.NewServeMux()
+	New(manager, Options{
+		AllowPrivateUpstreams: true,
+		TranslateMessages: func(*anthropic.MessagesRequest, string) (ChatTranslation, error) {
+			return ChatTranslation{}, errors.New("unsupported: document source \"url\"")
+		},
+		Candidates: func(*runtime.RuntimeSnapshot, string) ([]routing.Account, bool) {
+			return []routing.Account{{ID: "first", Enabled: true}, {ID: "second", Enabled: true}}, true
+		},
+		CredentialFor: func(_ context.Context, account string) (string, error) {
+			if account == "second" {
+				return "", errors.New("vault unavailable")
+			}
+			return "token", nil
+		},
+		AccountProvider: func(_ *runtime.RuntimeSnapshot, _, account, _ string) (routing.ProviderRef, bool) {
+			return routing.ProviderRef{ProviderID: "test", ConnectionID: account, BaseURL: "http://127.0.0.1:1", Protocol: openai.ChatProtocol}, true
+		},
+	}).Attach(mux)
+	r := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(fmt.Sprintf(clientRequests[anthropic.MessagesProtocol].body, false)))
+	r.Header.Set("Authorization", "Bearer "+key)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "request_translation_failed") {
+		t.Fatalf("status %d body %s", w.Code, w.Body)
 	}
 }

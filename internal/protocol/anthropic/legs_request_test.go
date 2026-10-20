@@ -175,16 +175,15 @@ func TestChatRequestToMessages(t *testing.T) {
 	equalJSON(t, got, `{
 	  "model":"upstream","max_tokens":32000,"stream":false,"temperature":0.5,
 	  "system":[
-	    {"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude."},
-	    {"type":"text","text":"Be brief.\ndev note\nYou must respond with valid JSON. Respond ONLY with a JSON object, no other text.","cache_control":{"type":"ephemeral","ttl":"1h"}}
+	    {"type":"text","text":"Be brief.\ndev note\nYou must respond with valid JSON. Respond ONLY with a JSON object, no other text.","cache_control":{"type":"ephemeral"}}
 	  ],
 	  "messages":[
 	    {"role":"user","content":[{"type":"text","text":"hi"},{"type":"text","text":"again"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}},{"type":"image","source":{"type":"url","url":"https://example.invalid/x.png"}}]},
-	    {"role":"assistant","content":[{"type":"thinking","thinking":"plan"},{"type":"text","text":"calling"},{"type":"tool_use","id":"call_1","name":"srv_lookup","input":{"q":"x"}}]},
+	    {"role":"assistant","content":[{"type":"text","text":"calling"},{"type":"tool_use","id":"call_1","name":"srv_lookup","input":{"q":"x"}}]},
 	    {"role":"user","content":[{"type":"tool_result","tool_use_id":"call_1","content":"result"}]},
 	    {"role":"assistant","content":[{"type":"text","text":"done","cache_control":{"type":"ephemeral"}}]}
 	  ],
-	  "tools":[{"name":"srv_lookup","description":"Look up","input_schema":{"type":"object","properties":{"q":{"type":"string"}}},"cache_control":{"type":"ephemeral","ttl":"1h"}}],
+	  "tools":[{"name":"srv_lookup","description":"Look up","input_schema":{"type":"object","properties":{"q":{"type":"string"}}},"cache_control":{"type":"ephemeral"}}],
 	  "tool_choice":{"type":"tool","name":"srv_lookup"}
 	}`)
 	if names.Original("srv_lookup") != "srv.lookup" {
@@ -429,5 +428,33 @@ func TestToolResultNestedObjectIsJSON(t *testing.T) {
 	got, err := MessagesRequestToChat([]byte(`{"model":"m","messages":[{"role":"user","content":"a"},{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"x","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"text","text":{"k":[1,2]}}]}]}]}`), "m", false)
 	if err != nil || !strings.Contains(string(got), `{\"k\":[1,2]}`) || strings.Contains(string(got), "map[") {
 		t.Fatalf("%s %v", got, err)
+	}
+}
+
+// What the leg sends, the receiving side must have agreed to. No ttl without the
+// beta header that grants it, no identity the caller did not write, no thinking
+// block Anthropic did not sign, and no sampling pair current models reject.
+func TestChatRequestToMessagesSendsNothingTheUpstreamHasNotAgreedTo(t *testing.T) {
+	body, _ := concerns.WireObject([]byte(`{"model":"m","temperature":0.2,"top_p":0.9,
+	  "messages":[{"role":"user","content":"hi"},
+	   {"role":"assistant","reasoning_content":"unsigned","content":[{"type":"text","text":"a"},{"type":"thinking","thinking":"also unsigned"},{"type":"thinking","thinking":"signed","signature":"sig"}]},
+	   {"role":"user","content":"more"}],
+	  "tools":[{"type":"function","function":{"name":"t"}}]}`))
+	got, _, err := ChatRequestToMessages(body, "m", false, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+	for _, forbidden := range []string{`"ttl"`, "Claude Code", "unsigned", `"top_p"`} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("%s must not be sent: %s", forbidden, text)
+		}
+	}
+	if strings.Contains(text, `"system"`) || !strings.Contains(text, `"signature":"sig"`) {
+		t.Errorf("no system block without caller system text, and a signed thinking block is kept: %s", text)
+	}
+	body, _ = concerns.WireObject([]byte(`{"model":"m","top_p":0.9,"messages":[{"role":"user","content":"hi"}]}`))
+	if got, _, _ := ChatRequestToMessages(body, "m", false, true, false); !strings.Contains(string(got), `"top_p":0.9`) {
+		t.Errorf("top_p alone is carried: %s", got)
 	}
 }

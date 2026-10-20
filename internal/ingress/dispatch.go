@@ -72,7 +72,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 	if len(candidates) == 0 {
 		return nil, routing.ProviderRef{}, &dispatchError{503, "no_eligible_accounts", routing.ErrNoEligibleAccounts.Error()}
 	}
-	var lastErr error
+	var lastErr, translationErr error
 	used := 0
 	authFailureSeen := false
 	for index, provider := range candidates {
@@ -102,7 +102,8 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			// The request cannot be expressed for this candidate's wire, which says
 			// nothing about the account's health: try the next candidate rather
 			// than let candidate order decide whether the request succeeds.
-			lastErr = &dispatchError{502, "request_translation_failed", err.Error()}
+			translationErr = &dispatchError{502, "request_translation_failed", err.Error()}
+			lastErr = translationErr
 			continue
 		}
 		for retry := 0; retry < 2 && used < maxAccountAttempts; retry++ {
@@ -169,6 +170,11 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			}{io.MultiReader(bytes.NewReader(prefix), response.Body), response.Body}
 			return response, provider, nil
 		}
+	}
+	if used == 0 && translationErr != nil {
+		// Nothing was attempted, so the reason the request could not be sent is
+		// the one to report, not an unrelated error from a candidate skipped later.
+		return nil, routing.ProviderRef{}, translationErr
 	}
 	if lastErr == nil {
 		return nil, routing.ProviderRef{}, &dispatchError{503, "no_eligible_accounts", routing.ErrNoEligibleAccounts.Error()}

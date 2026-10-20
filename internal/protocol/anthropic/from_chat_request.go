@@ -7,15 +7,15 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/protocol/concerns"
 )
 
-// ClaudeSystemPrompt is injected as the first system block of every request the
-// leg produces (config/appConstants.js:172; translator/request/openai-to-claude.js:136).
-const ClaudeSystemPrompt = "You are Claude Code, Anthropic's official CLI for Claude."
-
 // TrailingUserPlaceholder ends a conversation that would otherwise end on an
 // assistant turn (translator/formats/claude.js:343).
 const TrailingUserPlaceholder = "Continue."
 
-var ephemeral1h = func() map[string]any { return map[string]any{"type": "ephemeral", "ttl": "1h"} }
+// ephemeral is the plain 5-minute cache breakpoint. The pin asks for ttl "1h"
+// (openai-to-claude.js:142,184), which Anthropic gates behind the
+// extended-cache-ttl beta header; the gateway sends no such header, so a body
+// asking for it would be rejected or silently downgraded (PARITY V13).
+var ephemeral = func() map[string]any { return map[string]any{"type": "ephemeral"} }
 
 // ChatToMessages is the request leg openai-chat>anthropic-messages
 // (translator/request/openai-to-claude.js:17-201). The returned ToolNames maps
@@ -37,7 +37,11 @@ func ChatToMessages(body map[string]any, model string, stream bool) (map[string]
 		result["temperature"] = temperature
 	}
 	if topP, ok := body["top_p"]; ok {
-		result["top_p"] = topP
+		// Current Claude models reject a request that sets both; temperature,
+		// the older and more common control, wins (PARITY V15).
+		if _, both := result["temperature"]; !both {
+			result["top_p"] = topP
+		}
 	}
 	if stop := stopSequences(body["stop"]); len(stop) > 0 {
 		result["stop_sequences"] = stop
@@ -124,11 +128,13 @@ func ChatToMessages(body map[string]any, model string, stream bool) (map[string]
 		}
 	}
 	result["messages"] = messages
-	system := []any{map[string]any{"type": "text", "text": ClaudeSystemPrompt}}
+	// The pin prepends "You are Claude Code, Anthropic's official CLI for Claude."
+	// (openai-to-claude.js:136). A translation leg has no business telling a
+	// third-party model who it is or spending tokens on every request, so only
+	// the caller's own system text is sent (PARITY V14).
 	if len(systemParts) > 0 {
-		system = append(system, map[string]any{"type": "text", "text": strings.Join(systemParts, "\n"), "cache_control": ephemeral1h()})
+		result["system"] = []any{map[string]any{"type": "text", "text": strings.Join(systemParts, "\n"), "cache_control": ephemeral()}}
 	}
-	result["system"] = system
 	if tools := concerns.Items(body["tools"]); tools != nil {
 		converted := []any{}
 		for _, raw := range tools {
@@ -160,7 +166,7 @@ func ChatToMessages(body map[string]any, model string, stream bool) (map[string]
 		}
 		if len(converted) > 0 {
 			if last := concerns.Object(converted[len(converted)-1]); last != nil {
-				last["cache_control"] = ephemeral1h()
+				last["cache_control"] = ephemeral()
 			}
 		}
 		if len(converted) > 0 {
@@ -303,9 +309,9 @@ func contentBlocks(message map[string]any, names *concerns.ToolNames) ([]any, er
 			}
 		}
 	case "assistant":
-		if reasoning := concerns.Text(message["reasoning_content"]); reasoning != "" {
-			blocks = append(blocks, map[string]any{"type": "thinking", "thinking": reasoning})
-		}
+		// reasoning_content (and any thinking part without a signature) is not sent:
+		// Anthropic only accepts a thinking block it signed, so an unsigned one is
+		// a request it rejects (PARITY V15). Signed parts below are kept.
 		if parts := concerns.Items(message["content"]); parts != nil {
 			for _, raw := range parts {
 				part := concerns.Object(raw)
@@ -321,6 +327,9 @@ func contentBlocks(message map[string]any, names *concerns.ToolNames) ([]any, er
 				case "tool_use":
 					blocks = append(blocks, map[string]any{"type": "tool_use", "id": part["id"], "name": part["name"], "input": part["input"]})
 				case "thinking":
+					if concerns.Text(part["signature"]) == "" {
+						continue
+					}
 					thinking := map[string]any{}
 					for key, value := range part {
 						if key != "cache_control" {
