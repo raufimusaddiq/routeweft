@@ -181,11 +181,15 @@ func TestKenariCustomToolResponseRewrite(t *testing.T) {
 		status       int
 		contains     []string
 		doesNotCarry []string
+		observed     bool
 	}{
-		{"body", false, goodBody, 200, []string{`"type":"custom_tool_call"`, `"input":"ls"`, `"id":"ctc_1"`}, []string{`function_call"`, `arguments`}},
-		{"stream", true, goodStream, 200, []string{`"type":"custom_tool_call"`, `"input":"ls"`}, []string{`"type":"function_call"`}},
-		{"body refused", false, strings.Replace(goodBody, `{\"input\":\"ls\"}`, `ls`, 1), 502, []string{"kenari_custom_tool_arguments_invalid"}, []string{"custom_tool_call"}},
-		{"stream refused", true, strings.Replace(goodStream, "{\\\"input\\\":\\\"ls\\\"}", "ls", 1), 200, []string{"response.failed", "kenari_custom_tool_arguments_invalid"}, []string{"custom_tool_call"}},
+		{"body", false, goodBody, 200, []string{`"type":"custom_tool_call"`, `"input":"ls"`, `"id":"ctc_1"`}, []string{`function_call"`, `arguments`}, true},
+		{"stream", true, goodStream, 200, []string{`"type":"custom_tool_call"`, `"input":"ls"`}, []string{`"type":"function_call"`}, false},
+		{"body refused", false, strings.Replace(goodBody, `{\"input\":\"ls\"}`, `ls`, 1), 502, []string{"kenari_custom_tool_arguments_invalid"}, []string{"custom_tool_call"}, true},
+		{"stream refused", true, strings.Replace(goodStream, "{\\\"input\\\":\\\"ls\\\"}", "ls", 1), 200, []string{"response.failed", "kenari_custom_tool_arguments_invalid"}, []string{"custom_tool_call"}, false},
+		{"body without usage", false, strings.Replace(goodBody, `,"usage":{"input_tokens":1,"output_tokens":1}`, "", 1), 200, []string{`"type":"custom_tool_call"`}, nil, false},
+		{"body refused without usage", false, `{"output":[{"type":"function_call","name":"exec","arguments":"ls"}]}`, 502, []string{"kenari_custom_tool_arguments_invalid"}, nil, false},
+		{"body with measured zero", false, strings.ReplaceAll(goodBody, `tokens":1`, `tokens":0`), 200, []string{`"type":"custom_tool_call"`}, nil, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -201,7 +205,8 @@ func TestKenariCustomToolResponseRewrite(t *testing.T) {
 				_, _ = w.Write([]byte(c.upstream))
 			}))
 			defer upstream.Close()
-			mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true,
+			log := &outcomeLog{}
+			mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, OnRequestComplete: log.add,
 				ProviderResolver: func(*runtime.RuntimeSnapshot, string) (routing.ProviderRef, bool) {
 					return routing.ProviderRef{ProviderID: "kenari", Protocol: openaiadapter.ResponsesProtocol, BaseURL: upstream.URL, Endpoint: "v1/responses", APIToken: "token"}, true
 				},
@@ -214,6 +219,23 @@ func TestKenariCustomToolResponseRewrite(t *testing.T) {
 			}
 			if recorder.Code != c.status {
 				t.Errorf("status %d, want %d: %s", recorder.Code, c.status, got)
+			}
+			if !c.stream {
+				outcomes := log.wait(t)
+				if len(outcomes) != 1 {
+					t.Fatalf("outcomes = %v, want one", outcomes)
+				}
+				o := outcomes[0]
+				if o.UsageUnobserved != !c.observed || o.Status != c.status {
+					t.Errorf("outcome = %+v, want status %d, observed %t", o, c.status, c.observed)
+				}
+				var tokens int64
+				if strings.Contains(c.upstream, `"input_tokens":1`) {
+					tokens = 1
+				}
+				if o.InputTokens != tokens || o.OutputTokens != tokens {
+					t.Errorf("outcome = %+v, want %d input/output tokens", o, tokens)
+				}
 			}
 			for _, want := range c.contains {
 				if !strings.Contains(got, want) {

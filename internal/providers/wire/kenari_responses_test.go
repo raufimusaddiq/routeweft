@@ -153,11 +153,9 @@ event: response.function_call_arguments.delta
 data: {"type":"response.function_call_arguments.delta","item_id":"fc_2","output_index":1,"delta":"{}"}
 
 event: response.completed
-data: {"response":{"id":"resp_1","output":[{"arguments":null,"call_id":"c1","id":"ctc_1","input":"ls","name":"exec","type":"custom_tool_call"},{"type":"function_call","id":"fc_2","call_id":"c2","name":"keep","arguments":"{}"}],"status":"completed"},"type":"response.completed"}
+data: {"response":{"id":"resp_1","output":[{"call_id":"c1","id":"ctc_1","input":"ls","name":"exec","type":"custom_tool_call"},{"type":"function_call","id":"fc_2","call_id":"c2","name":"keep","arguments":"{}"}],"status":"completed"},"type":"response.completed"}
 
 `
-	// response.completed: the arguments key must be gone, not null.
-	want = strings.Replace(want, `"arguments":null,`, "", 1)
 	if got != want {
 		t.Errorf("stream\n got %s\nwant %s", got, want)
 	}
@@ -266,5 +264,73 @@ func TestResponsesStreamRewritesAFailedTerminal(t *testing.T) {
 	in := "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"output\":[{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"c\",\"name\":\"exec\",\"arguments\":\"{\\\"input\\\":\\\"ls\\\"}\"}]}}\n\n"
 	if got := relay(t, in); !strings.Contains(got, `"type":"custom_tool_call"`) || strings.Contains(got, `"type":"function_call"`) {
 		t.Errorf("failed terminal not rewritten:\n%s", got)
+	}
+}
+
+func TestResponsesStreamReleasesHeldDeltasWhenItemIsAnnounced(t *testing.T) {
+	const deltaA = `event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"A"}
+
+`
+	const deltaB = `event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"B"}
+
+`
+	const done = `event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","item_id":"fc_1","name":"keep","arguments":"AB"}
+
+`
+	for _, kind := range []string{"response.output_item.added", "response.output_item.done"} {
+		t.Run(kind, func(t *testing.T) {
+			announced := "event: " + kind + "\ndata: {\"type\":\"" + kind + "\",\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"name\":\"keep\"}}\n\n"
+			if got, want := relay(t, deltaA+announced+deltaB+done), announced+deltaA+deltaB+done; got != want {
+				t.Errorf("stream\n got %s\nwant %s", got, want)
+			}
+		})
+	}
+}
+
+func TestResponsesStreamDropsHeldDeltasWhenCustomItemIsAnnounced(t *testing.T) {
+	for _, kind := range []string{"response.output_item.added", "response.output_item.done"} {
+		t.Run(kind, func(t *testing.T) {
+			announced := "event: " + kind + "\ndata: {\"type\":\"" + kind + "\",\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"name\":\"exec\",\"arguments\":\"{\\\"input\\\":\\\"ls\\\"}\"}}\n\n"
+			if got, want := relay(t, unannouncedDelta+announced), relay(t, announced); got != want {
+				t.Errorf("converted item leaked held deltas:\n%s", got)
+			}
+		})
+	}
+}
+
+func TestResponsesStreamDropsHeldDeltasBeforeTerminal(t *testing.T) {
+	for _, kind := range []string{"response.completed", "response.done", "response.incomplete", "response.failed"} {
+		for _, output := range []string{`[]`, `[{"type":"function_call","id":"fc_2","name":"keep","arguments":"{}"}]`} {
+			t.Run(kind+output, func(t *testing.T) {
+				terminal := "event: " + kind + "\ndata: {\"type\":\"" + kind + "\",\"response\":{\"output\":" + output + "}}\n\n"
+				for _, ending := range []string{terminal, strings.TrimRight(terminal, "\n")} {
+					if got := relay(t, unannouncedDelta+ending); got != ending {
+						t.Errorf("unpaired delta survived terminal:\n%s", got)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestResponsesStreamDropsHeldDeltasBeforeDoneMarker(t *testing.T) {
+	const terminal = "data: [DONE]\n\n"
+	if got := relay(t, unannouncedDelta+terminal); got != terminal {
+		t.Errorf("unpaired delta survived terminal:\n%s", got)
+	}
+}
+
+func BenchmarkResponsesStream(b *testing.B) {
+	b.ReportAllocs()
+	b.SetBytes(int64(len(kenariStream)))
+	for i := 0; i < b.N; i++ {
+		stream := ResponsesStream(execNames, io.NopCloser(strings.NewReader(kenariStream)))
+		if _, err := io.Copy(io.Discard, stream); err != nil {
+			b.Fatal(err)
+		}
+		stream.Close()
 	}
 }
