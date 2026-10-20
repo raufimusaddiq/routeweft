@@ -908,6 +908,23 @@ normalisation (`concerns/thinkingUnified.js`, which needs the model capability
 table, and with it the model-aware `max_tokens` ceiling at
 `openai-to-claude.js:25`); tool-name cloaking for OAuth (`index.js:165-176`).
 
+### 6.4 Provider wire: where Routeweft differs from the pin (#115)
+
+Registry quirks are applied to the final outbound body by `internal/providers/wire` (AGENTS §6 step 8). Pin: `1c3b9f47837d42ea64992063309064af755a14a3`.
+
+| Quirk | Providers | Pin | Status |
+| --- | --- | --- | --- |
+| `dropClientMetadata` | cerebras, mistral | `executors/default.js:103` | ported |
+| `dropOutputConfig`, `requireClaudeToolType` | minimax, minimax-cn | `translator/formats/claude.js:487`, `translator/concerns/toolCall.js:165-181` | ported |
+| `claudeSupportedToolTypes` | deepseek | `translator/formats/claude.js:643-668,681-684` | ported for the whitelist; the pin's folding of `function`-shaped tools is not (Routeweft's Messages legs never emit that shape) |
+| `responsesSystemRoleUnsupported` | kenari | `executors/default.js:21-42,97` | ported, with the divergence below |
+| `responsesFunctionToolsOnly` | kenari | `handlers/chatCore.js:235`, `translator/concerns/responsesFunctionTools.js` | **deferred to #119** (request and response rewrite in the shared concerns) |
+| `thinkingFormat` | blackbox, cloudflare-ai, codebuddy-cn, codebuddy-intl, iflow, openrouter, siliconflow, tokenrouter, venice, vercel-ai-gateway | `translator/concerns/thinkingUnified.js:133` | **deferred to #119** |
+| `reasoningInject` and `stripUnsupportedParams` | minimax, minimax-cn; every provider | `utils/reasoningContentInjector.js`, `translator/concerns/paramSupport.js` | **deferred to #119** |
+| `cloakToolsOnOAuth` | claude | `providers/registry/claude.js:41` | **not shipped**: tool cloaking disguises the client to the provider; Routeweft sends its own identity (PR #123 precedent) |
+
+Divergence: when a kenari Responses body has system text but no user turn to fold it into, the pin drops the system messages and keeps the rest, silently losing their text. Routeweft leaves the body as received so the gateway's own error reaches the client.
+
 ### Production-incident drift explicitly dispositioned
 
 | #73 incident | Pinned source / Routeweft evidence | Status / decision |

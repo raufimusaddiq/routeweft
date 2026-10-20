@@ -155,12 +155,12 @@ func TestPrepareMessagesMatchesLegacyForEveryProvider(t *testing.T) {
 	}
 }
 
-// Every provider id the ingress handlers used to branch on is registered, and
-// nothing else is: a new hook is a deliberate change to this list.
-func TestRegisteredHooksAreExactlyTheFormerBranches(t *testing.T) {
+// The hook list is closed: the six branches ingress used to hold (PR-A) plus the
+// registry-quirk providers. A new hook is a deliberate change to this list.
+func TestRegisteredHooksAreExactlyTheDeclaredProviders(t *testing.T) {
 	got := Registered()
 	sort.Strings(got)
-	want := []string{"anthropic", "claude", "cline", "clinepass", "codex", "github"}
+	want := []string{"anthropic", "cerebras", "claude", "cline", "clinepass", "codex", "deepseek", "github", "kenari", "minimax", "minimax-cn", "mistral"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("registered hooks %v, want %v", got, want)
 	}

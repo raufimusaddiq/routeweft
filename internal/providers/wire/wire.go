@@ -40,6 +40,8 @@ type Hook struct {
 	DefaultMessagesBeta string
 	// UnwrapResponse removes a gateway envelope from a non-stream 2xx body.
 	UnwrapResponse func(body []byte) []byte
+	// Finalize is the provider's last rewrite of the outbound body (registry quirks).
+	Finalize Finalize
 }
 
 var hooks = map[string]Hook{
@@ -49,11 +51,19 @@ var hooks = map[string]Hook{
 		MessagesHeaders: claudeprovider.Headers,
 		PrepareMessages: claudeprovider.WithIdentity,
 	},
-	"github":    {BearerMessages: true},
-	"anthropic": {DefaultMessagesBeta: anthropicprovider.Beta},
-	"cline":     clineHook,
-	"clinepass": clineHook,
+	"github":     {BearerMessages: true},
+	"anthropic":  {DefaultMessagesBeta: anthropicprovider.Beta},
+	"cerebras":   {Finalize: dropClientMetadata},
+	"mistral":    {Finalize: dropClientMetadata},
+	"minimax":    minimaxHook,
+	"minimax-cn": minimaxHook,
+	"deepseek":   {Finalize: supportedToolTypes("web_search_20250305", "web_search_20260209")},
+	"kenari":     {Finalize: foldResponsesSystem},
+	"cline":      clineHook,
+	"clinepass":  clineHook,
 }
+
+var minimaxHook = Hook{Finalize: chain(dropOutputConfig, requireClaudeToolType)}
 
 var clineHook = Hook{
 	OpenAIOverride: clineprovider.Headers,
