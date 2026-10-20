@@ -288,20 +288,10 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		spec, _ := h.providerSpec(node.ProviderID)
-		allowed := spec.AuthModes
-		if len(allowed) == 0 {
-			allowed = []registry.AuthKind{spec.Auth}
-		}
 		if authKind == "" {
 			authKind = credentials.AuthKind(spec.Auth)
 		}
-		valid := false
-		for _, item := range allowed {
-			if string(item) == string(authKind) {
-				valid = true
-			}
-		}
-		if !valid {
+		if !authKindPermitted(spec, authKind) {
 			writeError(w, http.StatusBadRequest, "invalid_auth_kind", "authentication mode is not supported by this provider")
 			return
 		}
@@ -318,20 +308,10 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 	if body.ProxyPool != nil {
 		proxyPool = *body.ProxyPool
 	}
-	connection, err := h.opts.Credentials.PutConnection(r.Context(), credentials.Connection{ID: r.PathValue("id"), NodeID: node.ID, Name: body.Name, AuthKind: authKind, Identity: body.Identity, Secret: body.Secret, Enabled: enabled, Priority: priority, ProxyPoolID: proxyPool, AccountID: accountID})
+	connection, _, err := h.publishConnection(r.Context(), credentials.Connection{ID: r.PathValue("id"), NodeID: node.ID, ProviderID: node.ProviderID, Name: body.Name, AuthKind: authKind, Identity: body.Identity, Secret: body.Secret, Enabled: enabled, Priority: priority, ProxyPoolID: proxyPool, AccountID: accountID})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity, auth mode, and proxy pool")
 		return
-	}
-	connection.ProviderID = node.ProviderID
-	if h.opts.CredentialRegistry != nil {
-		h.opts.CredentialRegistry.Register(connection, nil)
-	}
-	if h.opts.PoolBindings != nil {
-		if _, err := h.opts.PoolBindings.RefreshPoolBindings(r.Context()); err != nil {
-			writeError(w, http.StatusInternalServerError, "connection_publish_failed", "connection saved but runtime proxy bindings could not be refreshed")
-			return
-		}
 	}
 	writeJSON(w, http.StatusOK, connectionJSON(connection))
 }
@@ -1103,6 +1083,24 @@ func connectionJSON(connection credentials.Connection) map[string]any {
 func slicesContain(items []string, target string) bool {
 	for _, item := range items {
 		if item == target {
+			return true
+		}
+	}
+	return false
+}
+
+// authKindPermitted reports whether a provider accepts one credential mode. It is
+// the single rule for every path that stores a connection: the manual form, an
+// onboarding flow's result, and the Generic Provider restriction. Duplicating it is
+// how the import path wrote a cookie connection for iflow that the PATCH path then
+// refused as invalid_auth_kind.
+func authKindPermitted(spec registry.Spec, kind credentials.AuthKind) bool {
+	allowed := spec.AuthModes
+	if len(allowed) == 0 {
+		allowed = []registry.AuthKind{spec.Auth}
+	}
+	for _, item := range allowed {
+		if string(item) == string(kind) {
 			return true
 		}
 	}

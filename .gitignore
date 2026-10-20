@@ -29,3 +29,7 @@ ui/.vite/
 .DS_Store
 .idea/
 .vscode/
+
+# Generated parity harness scratch files (written per test run)
+compat/parity/.facts.generated.mjs
+compat/parity/.secrets.generated.mjs

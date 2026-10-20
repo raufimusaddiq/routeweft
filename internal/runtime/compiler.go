@@ -150,10 +150,10 @@ func (c Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, erro
 		if !configured[spec.ID] {
 			continue
 		}
-		for _, id := range spec.StaticModels {
-			if !known[modelKey(spec.ID, id)] {
-				config.Models = append(config.Models, Model{ProviderID: spec.ID, ID: id, Name: id, Source: "seed"})
-				known[modelKey(spec.ID, id)] = true
+		for _, seed := range spec.SeedModels {
+			if !known[modelKey(spec.ID, seed.ID)] {
+				config.Models = append(config.Models, Model{ProviderID: spec.ID, ID: seed.ID, Name: seed.Name, ContextWindow: seed.ContextWindow, Source: "seed"})
+				known[modelKey(spec.ID, seed.ID)] = true
 			}
 		}
 	}

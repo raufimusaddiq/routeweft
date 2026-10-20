@@ -17,7 +17,7 @@ func TestObserverFeedsRuntimeStateEligibility(t *testing.T) {
 	state := runtime.NewState()
 	exhausted := &fakeClient{state: State{Windows: []Window{{Name: "weekly", Remaining: ptr(0), ResetAt: &reset}}}}
 	observer := Observer{Clients: map[string]UsageClient{"codex": exhausted}, Now: func() time.Time { return now }, Publisher: state}
-	if _, err := observer.Observe(context.Background(), "codex", "acct-1", "token"); err != nil {
+	if _, err := observer.Observe(context.Background(), "codex", "acct-1", Credential{AccessToken: "token"}); err != nil {
 		t.Fatal(err)
 	}
 	observation, ok := state.Quota("acct-1")
@@ -34,7 +34,7 @@ func TestObserverFeedsRuntimeStateEligibility(t *testing.T) {
 	failing := &fakeClient{err: errFailedRead}
 	state2 := runtime.NewState()
 	observer2 := Observer{Clients: map[string]UsageClient{"claude": failing}, Now: func() time.Time { return now }, Publisher: state2}
-	if _, err := observer2.Observe(context.Background(), "claude", "acct-2", "token"); err == nil {
+	if _, err := observer2.Observe(context.Background(), "claude", "acct-2", Credential{AccessToken: "token"}); err == nil {
 		t.Fatal("expected read failure")
 	}
 	observation2, ok := state2.Quota("acct-2")

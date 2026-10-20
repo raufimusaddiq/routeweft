@@ -11,9 +11,10 @@ import (
 // trackedProviderGaps are LiteRouter providers Routeweft does not serve yet.
 // They are tracked work, never a reason to hide anything LiteRouter serves, and
 // the list only shrinks (ratchet).
-var trackedProviderGaps = map[string]string{
-	"muse": "#115: Responses, API key, two seed models; needs the 80->81 baseline change in PRD/PROVIDER_BASELINE",
-}
+// Empty: #116 adopted muse as the 81st built-in, so no tracked gap remains. The
+// map stays so a future gap has one place to be declared, and the ratchet in
+// TestEveryOracleProviderIsABuiltin keeps it honest.
+var trackedProviderGaps = map[string]string{}
 
 const registryDir = "open-sse/providers/registry"
 

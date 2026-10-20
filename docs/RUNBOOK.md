@@ -50,7 +50,19 @@ ROUTEWEFT_LOG_LEVEL=info
 ROUTEWEFT_BOOTSTRAP_ADMIN_PASSWORD='use-a-secret-source'
 ROUTEWEFT_MAX_BODY_BYTES=134217728
 ROUTEWEFT_CORS_ORIGINS='https://console.example'
+# Operator-facing origin used as the provider sign-in callback. Required only for
+# the providers whose flow sends a redirect URI it takes from here (gemini-cli,
+# antigravity, iflow, gitlab, cline, clinepass, kimchi, trae, windsurf,
+# xiaomi-mimo). Flows that hardcode their registered redirect (claude, codex, xai),
+# never use one (device flows, zed) or have no browser step (cursor) start without
+# it. Never derived from request headers; sign-in for a flow that needs it fails
+# with oauth_redirect_unconfigured when it is unset.
+ROUTEWEFT_PUBLIC_ORIGIN='https://console.example'
 ROUTEWEFT_UI_DIR=/ui
+# Google-family sign-in (gemini-cli, antigravity). No built-in default: see
+# docs/SPEC.md 19.1 "Deliberate divergence: Google OAuth client".
+ROUTEWEFT_GOOGLE_OAUTH_CLIENT_ID='use-a-secret-source'
+ROUTEWEFT_GOOGLE_OAUTH_CLIENT_SECRET='use-a-secret-source'
 ```
 
 `ROUTEWEFT_UI_DIR` (`--ui-dir`) points at the built Vite output; the Go binary

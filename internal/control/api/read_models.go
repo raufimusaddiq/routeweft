@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/telemetry"
@@ -171,10 +172,22 @@ type providerReadModel struct {
 	DefaultBaseURL    string   `json:"defaultBaseURL,omitempty"`
 	ModelCatalog      string   `json:"modelCatalog"`
 	PassthroughModels bool     `json:"passthroughModels"`
-	StaticModels      []string `json:"staticModels,omitempty"`
-	ReportsUsage      bool     `json:"reportsUsage"`
-	ConfiguredNodes   int      `json:"configuredNodes"`
-	EnabledAccounts   int      `json:"enabledAccounts"`
+	// StaticModels keeps the established wire name and shape: an array of model
+	// ids. The seed entries carry names and context windows internally, but the
+	// catalog read model is not the place to change that contract.
+	StaticModels []string `json:"staticModels,omitempty"`
+	ReportsUsage bool     `json:"reportsUsage"`
+	// FlowType and SignInModes tell the dashboard which sign-in affordance to
+	// offer. Without them the UI cannot know whether a provider uses a browser
+	// redirect, a device code, or import only, and offering both panels made half
+	// the buttons 404.
+	FlowType    string   `json:"flowType,omitempty"`
+	SignInModes []string `json:"signInModes,omitempty"`
+	// MetaKeys lists the operator input the provider's flow reads, so the
+	// dashboard renders only fields that flow consumes.
+	MetaKeys        []string `json:"metaKeys,omitempty"`
+	ConfiguredNodes int      `json:"configuredNodes"`
+	EnabledAccounts int      `json:"enabledAccounts"`
 }
 
 func (h *Handler) providers(w http.ResponseWriter, r *http.Request) error {
@@ -208,7 +221,8 @@ FROM provider_nodes n LEFT JOIN provider_connections c ON c.node_id=n.id GROUP B
 	items := make([]providerReadModel, 0, len(specs))
 	for _, spec := range specs {
 		count := counts[spec.ID]
-		item := providerReadModel{ID: spec.ID, Auth: string(spec.Auth), DefaultBaseURL: safeURL(spec.DefaultBaseURL), ModelCatalog: string(spec.ModelCatalog), PassthroughModels: spec.PassthroughModels, StaticModels: spec.StaticModels, ReportsUsage: spec.ReportsUsage, ConfiguredNodes: count[0], EnabledAccounts: count[1]}
+		item := providerReadModel{ID: spec.ID, Auth: string(spec.Auth), DefaultBaseURL: safeURL(spec.DefaultBaseURL), ModelCatalog: string(spec.ModelCatalog), PassthroughModels: spec.PassthroughModels, StaticModels: spec.StaticModels(), ReportsUsage: spec.ReportsUsage, ConfiguredNodes: count[0], EnabledAccounts: count[1]}
+		item.FlowType, item.SignInModes, item.MetaKeys = h.signInModes(spec.ID)
 		for _, transport := range spec.Transports {
 			item.Transports = append(item.Transports, string(transport))
 		}
@@ -767,4 +781,56 @@ func putNullInt(dst map[string]any, key string, value sql.NullInt64) {
 	if value.Valid {
 		dst[key] = value.Int64
 	}
+}
+
+// signInModes reports how a provider can be connected, so the dashboard offers
+// exactly the affordances that exist: "browser", "device" and/or "import".
+//
+// It reads the same flow tables the endpoints use, so the UI cannot drift from
+// what the server accepts. An empty result means the provider has no onboarding
+// flow at all and keeps the manual credential form.
+func (h *Handler) signInModes(providerID string) (string, []string, []string) {
+	flowType := ""
+	modes := make([]string, 0, 3)
+	var metaKeys []string
+	if flow, ok := h.oauthFlows.Lookup(providerID); ok {
+		flowType = string(flow.Type)
+		metaKeys = append(metaKeys, flow.MetaKeys...)
+		switch flow.Type {
+		case onboarding.FlowDeviceCode:
+			if flow.Startable() {
+				modes = append(modes, "device")
+			}
+		case onboarding.FlowImportToken, onboarding.FlowManualToken:
+			// Import only; no browser or device step exists.
+		default:
+			if flow.Startable() {
+				modes = append(modes, "browser")
+			}
+		}
+	}
+	if manual, ok := h.importFlowFor(providerID); ok {
+		modes = append(modes, "import")
+		// An import mode's own operator input is additive with the browser flow's.
+		for _, key := range manual.MetaKeys {
+			metaKeys = append(metaKeys, key)
+		}
+	}
+	return flowType, modes, dedupeStrings(metaKeys)
+}
+
+func dedupeStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
 }

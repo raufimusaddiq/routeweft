@@ -16,10 +16,23 @@ type Publisher interface {
 	ObserveQuotaResult(account string, remaining *float64, resetAt time.Time, observedAt time.Time, errText string)
 }
 
+// Credential is the full connection payload a usage reader may need. Providers
+// differ: some read a bearer token, some an API key, some both plus a
+// provider-specific field (Google project id, Kiro profile ARN, device id), so
+// the reader receives the sealed payload rather than one string.
+type Credential struct {
+	AccessToken string
+	Cookie      string
+	// ProviderData carries the provider-specific fields a reader needs (project
+	// id, profile ARN, device id). The refresh token is deliberately absent: no
+	// reader reads one, and a live secret with no consumer is only a leak surface.
+	ProviderData map[string]string
+}
+
 // UsageClient is one provider usage reader. Each first-class provider group
 // supplies an adapter so quota normalization is written once.
 type UsageClient interface {
-	Usage(ctx context.Context, credential string) (State, error)
+	Usage(ctx context.Context, credential Credential) (State, error)
 }
 
 // Observer reads provider usage, normalizes it, and publishes one account's
@@ -33,7 +46,7 @@ type Observer struct {
 // Observe fetches quota for one provider/account and publishes the result.
 // A read failure is recorded as StatusError with Remaining unset, which routing
 // treats as "not exhausted" (PROVIDER_BASELINE §8).
-func (o Observer) Observe(ctx context.Context, providerID, account, credential string) (State, error) {
+func (o Observer) Observe(ctx context.Context, providerID, account string, credential Credential) (State, error) {
 	client, ok := o.Clients[providerID]
 	if !ok {
 		return State{}, ErrNotConfigured
@@ -97,8 +110,12 @@ type CodexClient struct {
 }
 
 // Usage implements UsageClient for Codex.
-func (c CodexClient) Usage(ctx context.Context, credential string) (State, error) {
-	usage, err := (codexprovider.UsageClient{Client: c.Client, AccountID: c.AccountID}).Usage(ctx, credential)
+func (c CodexClient) Usage(ctx context.Context, credential Credential) (State, error) {
+	accountID := c.AccountID
+	if accountID == "" {
+		accountID = credential.ProviderData["chatgptAccountId"]
+	}
+	usage, err := (codexprovider.UsageClient{Client: c.Client, AccountID: accountID}).Usage(ctx, credential.AccessToken)
 	if err != nil {
 		return State{Err: err.Error()}, err
 	}
@@ -138,11 +155,11 @@ type ClaudeClient struct {
 }
 
 // Usage implements UsageClient for Claude.
-func (c ClaudeClient) Usage(ctx context.Context, credential string) (State, error) {
+func (c ClaudeClient) Usage(ctx context.Context, credential Credential) (State, error) {
 	if c.Client == nil {
 		return State{}, errors.New("claude usage client is required")
 	}
-	usage, err := c.Client.Usage(ctx, credential, false)
+	usage, err := c.Client.Usage(ctx, credential.AccessToken, false)
 	if err != nil {
 		return State{Err: err.Error()}, err
 	}

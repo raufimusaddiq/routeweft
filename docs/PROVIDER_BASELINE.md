@@ -33,7 +33,7 @@ A Routeweft built-in provider:
 
 Authentication is orthogonal to transport. A provider can reuse a shared protocol adapter while retaining specialized OAuth/import/quota code.
 
-## 3. Initial built-in catalog — 80 active providers
+## 3. Initial built-in catalog — 81 active providers
 
 | Provider | Routeweft transport class | Connection/auth | Model catalog | Usage/quota | Required provider-specific behavior |
 |---|---|---|---|---|---|
@@ -117,8 +117,15 @@ Authentication is orthogonal to transport. A provider can reuse a shared protoco
 | alitp-intl | OA-chat | API key | Static | — | Alibaba Token Plan; preserve cache-control quirk. |
 | kenari | Multi: chat+responses+messages | API key | Dynamic + passthrough | Usage/quota | Prefer source-matching native endpoint; retain Responses tool/system-role quirks and IDR pricing/usage. |
 | typesafe | SystemOne | API key | Static | — | Native System One/Jev transport; service kind is systemone. |
+| muse | OA-responses | API key | Static | — | Meta Muse over the OpenAI Responses wire; two contributor models. |
 
-Broad-provider GA requires all 80 rows to be implemented and green, not merely displayed in UI.
+`muse` is the 81st row, added by the owner decision on #116: the pinned reference
+registry (`open-sse/providers/registry/index.js`) imports it as an active entry,
+so leaving it out made a provider LiteRouter serves unroutable in Routeweft. It
+uses the OpenAI Responses wire against `https://api.meta.ai/v1` with an API key
+(`open-sse/providers/registry/muse.js`).
+
+Broad-provider GA requires all 81 rows to be implemented and green, not merely displayed in UI.
 
 ## 4. Hidden reference providers
 

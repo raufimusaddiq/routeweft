@@ -29,6 +29,17 @@ jobs:
       - run: go test -race ./internal/app -run TestPinnedSystemOneDifferential -count=1
       - run: go test -race ./internal/security ./internal/ingress ./internal/providers/shared
       - run: go test -race ./internal/parity ./internal/protocol/hub -count=1
+      # Provider catalog, model seeds, quota readers and onboarding flows are
+      # compared against the oracle: no hand-kept provider list can drift.
+      - run: go test -tags oracle ./internal/providers/parity -count=1
+      # The secret tripwire reads the secrets the oracle ships. Without ORACLE_DIR
+      # it can only match known prefixes, which is how the iflow literal shipped, so
+      # it runs here where the oracle is present.
+      - run: go test ./internal/providers/onboarding -run TestNoThirdPartyProviderSecretInTree -count=1
+        env:
+          # This job fetches the oracle, so the scan must be the full one; without
+          # the oracle it fails rather than degrading to a prefix check.
+          ROUTEWEFT_REQUIRE_ORACLE_SECRET_SCAN: "1"
 
   go:
     runs-on: ubuntu-latest

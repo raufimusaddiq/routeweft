@@ -29,7 +29,7 @@ This document records binding architecture/build choices so implementation agent
 | BDR-019 | Exact SQLite Go driver | Accepted: `modernc.org/sqlite` v1.34.5 |
 | BDR-020 | Strict FIFO review discipline | Accepted |
 | BDR-021 | One feature/PR per dedicated worktree | Accepted |
-| BDR-022 | 80-provider built-in catalog is a first-class GA target | Accepted |
+| BDR-022 | 81-provider built-in catalog is a first-class GA target | Accepted |
 | BDR-023 | Generic Provider unifies Chat/Responses/Messages compatible nodes | Accepted |
 | BDR-024 | Product requirements freeze gates Codex implementation | Accepted |
 | BDR-025 | OpenAI Chat Completions is the conversion hub | Accepted |
@@ -288,7 +288,7 @@ Dependent PRs are based on the reviewed/merged prerequisite by default. Stacked 
 
 ## BDR-022 — Built-in provider catalog
 
-Routeweft targets all 80 active providers in `docs/PROVIDER_BASELINE.md` as first-class built-ins for broad-provider GA.
+Routeweft targets all 81 active providers in `docs/PROVIDER_BASELINE.md` as first-class built-ins for broad-provider GA.
 
 First-class does not imply one executor per provider. Shared protocol adapters are preferred.
 

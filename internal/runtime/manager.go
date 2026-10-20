@@ -122,6 +122,13 @@ func (m *Manager) update(ctx context.Context, mutate func(*Candidate) error, per
 	return compiled, nil
 }
 
+// Version reports how many times the snapshot has been recompiled. It exists so a
+// caller can observe how much work a mutation caused: every Update recompiles the
+// whole candidate, so a batch that publishes per item shows up here.
+func (m *Manager) Version() uint64 {
+	return m.version.Load()
+}
+
 func loadConfig(ctx context.Context, db *sql.DB) (Config, error) {
 	config := Config{Settings: defaultSettingsCopy()}
 	config.Aliases = make(map[string]ModelRef)
