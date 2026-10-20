@@ -754,19 +754,110 @@ Per identity:
 
 No credential is sent to browser code.
 
-### 19.1 Browser sign-in (Claude, Codex)
+### 19.1 Provider onboarding flows
 
-`POST /admin/v1/oauth/{provider}/start` (body: account name and stable identity) mints a PKCE pair and a 256-bit state, and returns `{state, authorizeUrl, completion, expiresAt}`. The verifier never leaves the server.
+Onboarding implements the flow shapes the reference declares per provider
+(`src/lib/oauth/providers/*.js` `flowType`, plus the separate import, cookie, PAT
+and API-key routes). One implementation exists per shape, not per provider:
 
-`POST /admin/v1/oauth/{provider}/callback` (body: `state`, `input`) redeems the state, exchanges the code through the provider engine, and creates the connection through the credential store and registry. `input` is the bare code, Claude's `code#state`, or the Codex redirect URL.
+| Flow | Meaning |
+|---|---|
+| `authorization_code_pkce` | browser sign-in with PKCE; the operator pastes a code or the redirect URL |
+| `authorization_code` | browser sign-in without PKCE |
+| `device_code` | the operator enters a code; Routeweft polls the token endpoint |
+| `browser_token` | the browser returns a token, validated before storage |
+| `import_token` | credential read from a local IDE install |
+| `manual_token` | token, cookie, PAT or API key pasted by the operator |
 
-The providers' registered redirect URIs never point at Routeweft, so the operator hands the result back from the authenticated dashboard rather than receiving a browser redirect.
+The provider-to-flow mapping is `internal/providers/onboarding`; the parity gate
+compares it against the reference so a provider cannot lose its sign-in mode.
+
+`POST /admin/v1/oauth/{provider}/start` (body: account name, stable identity, and
+optional provider `meta` such as GitLab's base URL/client id or Kiro's region)
+mints a PKCE pair and a 256-bit state, and returns
+`{state, authorizeUrl, completion, flowType, expiresAt}`. A device flow has its
+own endpoint (`/device`, below). The verifier and any flow-private state never
+leave the server.
+
+`POST /admin/v1/oauth/{provider}/device` (same body) begins a device
+authorization and returns `{state, flowType, userCode, verificationUrl,
+intervalSeconds, expiresAt}`. The provider's device handle stays server-side on
+the pending attempt: the browser holds only the opaque state, so a client cannot
+substitute one attempt's handle for another.
+
+`POST /admin/v1/oauth/{provider}/callback` (body: `state`, `input`) redeems the
+state, runs the provider exchange, and creates the connection through the
+credential store and registry. `input` is the bare code, Claude's `code#state`,
+a redirect URL, or a callback URL carrying the credential.
+
+`POST /admin/v1/oauth/{provider}/poll` (body: `state`) advances a device-code
+attempt using the handle the server captured at `/device`. A pending
+authorization answers `200 {status: "pending"}` and is never an error; approval
+answers `200 {status: "connected", connection}`; denial and expiry end the
+attempt. Concurrent approved polls cannot both save: one reserves the attempt,
+and a save that persisted nothing releases it so the token already issued
+upstream is not lost.
+
+`POST /admin/v1/oauth/{provider}/import` (body: account name/identity, `input`,
+optional `meta`) completes an import mode: a token bundle, a cookie, a PAT or an
+API key. `POST /admin/v1/oauth/{provider}/bulk-import` accepts an array, a single
+object, or `{accounts: [...]}` and imports each entry serially, for the providers
+whose reference exposes a bulk route (codex, grok-cli); every other provider
+answers `oauth_unsupported` rather than accepting a batch it would drop. Each item
+reports its index, status and saved connection id, and no credential is echoed.
+
+A provider may offer a browser or device flow *and* an import mode (codex, grok-cli, iflow, kiro, xiaomi-mimo, cursor); the
+import endpoint resolves the import flow independently of the browser one.
+
+The provider read model reports `flowType` and `signInModes` (`browser`,
+`device`, `import`) from the same flow tables the endpoints use, so the dashboard
+offers exactly the affordances that exist rather than guessing from the auth
+kind.
+
+The providers' registered redirect URIs never point at Routeweft, so the operator
+hands the result back from the authenticated dashboard rather than receiving a
+browser redirect. Providers whose client registration pins the callback keep
+their exact registered host and port (Codex `localhost:1455/auth/callback`, xAI
+`127.0.0.1:56121/callback`).
+
+**Deliberate divergence: Google OAuth client.** The reference ships a shared
+Google OAuth client id and secret in its own public tree
+(`open-sse/providers/shared.js` `GOOGLE_OAUTH_CLIENT`, `ANTIGRAVITY_OAUTH_CLIENT`)
+and uses it for `gemini-cli` and `antigravity`. Routeweft deliberately does not
+republish it:
+
+- it is a third-party credential and this repository is public, so copying it
+  would put it in permanent public git history;
+- using it would make Routeweft impersonate the reference's OAuth app, which is a
+  different failure than a parity gap.
+
+The operator supplies `ROUTEWEFT_GOOGLE_OAUTH_CLIENT_ID` and
+`ROUTEWEFT_GOOGLE_OAUTH_CLIENT_SECRET`. There is no fallback: enabling either
+Google-family provider without them fails that sign-in with a configuration
+error, and refresh fails closed the same way. The same applies to iflow, whose
+client the reference also ships. An internal test
+(`TestNoThirdPartyProviderSecretInTree`) reads every secret the pinned reference
+ships and fails if any appears in the tree, so the decision is enforced rather
+than remembered.
+
+Provider-specific connection fields the reference persists with a credential
+(ChatGPT account id and plan, Google project id, Cursor machine id, Kiro profile
+ARN and client registration, Kimi device id, Qoder machine id, Kilocode org id)
+live inside the sealed credential payload, never in a snapshot or a browser
+response.
 
 Pending state is process-local, expires after 10 minutes, is bound to the admin session that started it and to the provider, and is single-use even when the exchange fails. A state that is unknown, expired, replayed or owned by another session returns the same `oauth_state_invalid` error, and a foreign session does not consume the owner's attempt. A device-authorization start the provider rate-limits (Kilo: too many pending authorizations) returns HTTP 429 `oauth_rate_limited`, distinct from `oauth_start_failed`. A device poll that loses the save reservation to a concurrent poll of the same approved attempt answers `{"status":"pending"}`; a state that is gone keeps `oauth_state_invalid`. Responses carry fixed messages only: no provider text, code, verifier or token.
 
-OAuth connections that hold a refresh token (Claude, Codex) are registered with a refresh exchanger by the credential registry, so every registration path (sign-in, manual entry, startup load) refreshes through the same singleflight and durable commit.
+Connections whose provider has a refresh grant are registered with a refresh
+exchanger by the credential registry, so every registration path (sign-in,
+import, manual entry, startup load) refreshes through the same singleflight and
+durable commit. The grant table mirrors the reference refresh dispatcher; a
+provider without a grant (a static API key, or a long-lived seat key such as
+Windsurf or Zed) resolves no exchanger and is never failed by a refresh that
+cannot succeed. A rotated refresh token is always committed before the refresh
+counts as successful.
 
-### 19.2 Device sign-in (Kilo Code)
+### 19.2 Device sign-in
 
 Providers whose oracle flow is device authorization use `POST /admin/v1/oauth/{provider}/device` (body: account name and stable identity), which returns `{state, userCode, verificationUrl, intervalSeconds, expiresAt}`, and `POST /admin/v1/oauth/{provider}/poll` (body: `state`). The browser's only handle on an attempt is the opaque `state`; poll requests carry nothing else, and poll responses never echo the code. Kilo Code's protocol uses one code as both the device code and the user code, so that code is shown to the operator once, in the start response, because the operator must confirm it on the provider's page. A provider with a separate device code keeps it server-side.
 
@@ -1267,7 +1358,26 @@ None of these decisions may introduce PostgreSQL/Redis or change the standalone 
 
 `docs/PROVIDER_BASELINE.md` is normative for provider breadth.
 
-All 80 active rows are first-class product targets. The transport class in that matrix determines the default adapter family, while authentication/model-discovery/quota modules remain orthogonal.
+All 81 active rows are first-class product targets. The transport class in that matrix determines the default adapter family, while authentication/model-discovery/quota modules remain orthogonal.
+
+### 32.1 Quota readers and model seeds
+
+Quota support is the reference dispatcher's handler table, not the registry's
+`usage: true` advertisement: `iflow` has a handler without the flag and `qoder`
+advertises without a handler, so the readable set is what the dispatcher lists.
+Every reader takes the full connection credential (access token, API key, cookie
+and the provider-specific fields) because providers differ in which they need. A
+provider with no reader publishes `ErrNotConfigured`, which routing treats as
+"not exhausted", never as healthy.
+
+Model seeds are generated from the reference registry
+(`compat/parity/generate-seeds.mjs`) rather than hand-maintained, so a provider
+the reference serves models for cannot ship with an empty catalog and force the
+operator to run discovery before its first request.
+
+Seeds carry the reference's display name and, where the reference specifies one,
+its context window. Most entries have no `contextLength` in the reference, so
+their context window is zero rather than guessed; it is not required for routing.
 
 Provider readiness is a real capability state; the UI must not imply production readiness for a provider whose connection/request path is not implemented.
 

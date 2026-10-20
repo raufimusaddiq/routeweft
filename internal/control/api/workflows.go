@@ -104,8 +104,8 @@ func (h *Handler) validateConnection(ctx context.Context, c credentials.Connecti
 				}
 			}
 			if model == "" && node.Kind == credentials.NodeBuiltin {
-				if spec, ok := h.providerSpec(node.ProviderID); ok && len(spec.StaticModels) > 0 {
-					model = spec.StaticModels[0]
+				if spec, ok := h.providerSpec(node.ProviderID); ok && len(spec.SeedModels) > 0 {
+					model = spec.SeedModels[0].ID
 				}
 			}
 		}

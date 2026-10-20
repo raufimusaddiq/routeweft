@@ -67,12 +67,19 @@ type Connection struct {
 // Secret is one decryptable credential payload. Fields are optional per auth
 // kind: API keys use AccessToken, OAuth uses AccessToken/RefreshToken/Expiry,
 // cookie auth uses Cookie, and imports may additionally carry IDToken.
+//
+// ProviderData carries the provider-specific connection fields LiteRouter
+// persists alongside the credential (copilot token, Google project id, Cursor
+// machine id, Kiro profile ARN, device id, org id). It lives inside the sealed
+// payload because those values are as sensitive as the token itself and must
+// never reach a snapshot or the browser.
 type Secret struct {
-	AccessToken  string    `json:"accessToken,omitempty"`
-	RefreshToken string    `json:"refreshToken,omitempty"`
-	IDToken      string    `json:"idToken,omitempty"`
-	Cookie       string    `json:"cookie,omitempty"`
-	Expiry       time.Time `json:"expiry,omitempty"`
+	AccessToken  string            `json:"accessToken,omitempty"`
+	RefreshToken string            `json:"refreshToken,omitempty"`
+	IDToken      string            `json:"idToken,omitempty"`
+	Cookie       string            `json:"cookie,omitempty"`
+	Expiry       time.Time         `json:"expiry,omitempty"`
+	ProviderData map[string]string `json:"providerData,omitempty"`
 }
 
 // Empty reports whether the secret holds no credential material at all. A

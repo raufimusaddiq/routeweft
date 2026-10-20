@@ -123,9 +123,9 @@ func newProvidersAPI(t *testing.T, allowPrivate bool, upstream *discovery.Client
 	}
 	sessions := adminauth.NewSessionManager(time.Hour)
 	specs := []registry.Spec{
-		{ID: "openai", Transports: []registry.Protocol{registry.TransportOpenAIChat, registry.TransportOpenAIResponses}, Auth: registry.AuthAPIKey, DefaultBaseURL: "https://api.openai.com/v1", ModelCatalog: registry.CatalogStatic, StaticModels: []string{"gpt-5"}},
-		{ID: "anthropic", Transports: []registry.Protocol{registry.TransportAnthropic}, Auth: registry.AuthAPIKey, DefaultBaseURL: "https://api.anthropic.com/v1", ModelCatalog: registry.CatalogStatic, StaticModels: []string{"claude-sonnet-4"}},
-		{ID: "typesafe", Transports: []registry.Protocol{registry.TransportSystemOne}, Auth: registry.AuthAPIKey, DefaultBaseURL: "https://api.typesafe.ai/v1/systemone", ModelCatalog: registry.CatalogStatic, StaticModels: []string{"jev"}},
+		{ID: "openai", Transports: []registry.Protocol{registry.TransportOpenAIChat, registry.TransportOpenAIResponses}, Auth: registry.AuthAPIKey, DefaultBaseURL: "https://api.openai.com/v1", ModelCatalog: registry.CatalogStatic, SeedModels: []registry.SeedModel{{ID: "gpt-5"}}},
+		{ID: "anthropic", Transports: []registry.Protocol{registry.TransportAnthropic}, Auth: registry.AuthAPIKey, DefaultBaseURL: "https://api.anthropic.com/v1", ModelCatalog: registry.CatalogStatic, SeedModels: []registry.SeedModel{{ID: "claude-sonnet-4"}}},
+		{ID: "typesafe", Transports: []registry.Protocol{registry.TransportSystemOne}, Auth: registry.AuthAPIKey, DefaultBaseURL: "https://api.typesafe.ai/v1/systemone", ModelCatalog: registry.CatalogStatic, SeedModels: []registry.SeedModel{{ID: "jev"}}},
 	}
 	handler := New(Options{
 		Accounts: accounts, Sessions: sessions, Settings: manager, Keys: manager,

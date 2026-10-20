@@ -27,7 +27,9 @@ import (
 	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
 	"github.com/raufimusaddiq/routeweft/internal/providers/discovery"
 	"github.com/raufimusaddiq/routeweft/internal/providers/oauthrefresh"
+	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
+	providerusage "github.com/raufimusaddiq/routeweft/internal/providers/usage"
 	"github.com/raufimusaddiq/routeweft/internal/proxy"
 	quota "github.com/raufimusaddiq/routeweft/internal/quota"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
@@ -36,6 +38,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
 	"github.com/raufimusaddiq/routeweft/internal/telemetry"
 	"github.com/raufimusaddiq/routeweft/internal/transforms/pxpipe"
+	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
 type Config struct {
@@ -63,6 +66,11 @@ type Config struct {
 	// UIDir is the built Vite UI directory served by the Go binary (BDR-003).
 	// Empty disables static serving so a reverse proxy can own the assets.
 	UIDir string
+	// PublicOrigin is the operator-facing origin used as a provider sign-in
+	// callback. It is configured, never derived from a request, so a caller cannot
+	// steer a provider redirect. Providers whose client registration pins a
+	// loopback port (Codex, xAI) do not need it.
+	PublicOrigin string
 }
 
 // loadSnapshot exposes the active snapshot to the proxy binder's binding source.
@@ -298,6 +306,7 @@ func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager 
 		Combos:                manager,
 		QuotaRefresher:        a.RefreshQuota,
 		AllowPrivateUpstreams: a.cfg.AllowPrivateUpstreams,
+		PublicOrigin:          a.cfg.PublicOrigin,
 		PXPIPE:                a.pxpipe,
 		DiscoveryClient:       &discovery.Client{},
 		Telemetry:             a.usage,
@@ -335,7 +344,18 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 		return fmt.Errorf("initialize credential store: %w", err)
 	}
 	registry := credentials.NewRegistry(credentialStore, nil)
-	registry.SetExchangerResolver(oauthrefresh.Resolver(nil))
+	// Refreshes are network calls: they need the same pooled, SSRF-guarded client
+	// inference uses, never nil. A nil client here failed every refresh at request
+	// time, which surfaced as a 5xx on inference once a token crossed its lead.
+	refreshClient := transport.NewSSRFProtectedClient()
+	if a.cfg.AllowPrivateUpstreams {
+		refreshClient = transport.NewTrustedLocalSSRFProtectedClient()
+	}
+	resolver, err := oauthrefresh.Resolver(refreshClient)
+	if err != nil {
+		return fmt.Errorf("install credential refresh: %w", err)
+	}
+	registry.SetExchangerResolver(resolver)
 	// The control plane shares this store/registry so provider CRUD publishes
 	// credentials to the same memory-first state inference reads (SPEC §19).
 	a.creds, a.credReg = credentialStore, registry
@@ -352,15 +372,34 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 			continue
 		}
 		seeded[node.ProviderID] = true
+		// A Google-family provider cannot refresh or sign in without the
+		// operator-supplied OAuth client (docs/SPEC.md 19.1). Say so once at
+		// startup instead of failing the first request that needs it.
+		if node.ProviderID == "gemini-cli" || node.ProviderID == "antigravity" {
+			if _, _, err := onboarding.GoogleClientFromEnvironment(); err != nil {
+				a.log.Warn("google-family provider enabled without an OAuth client; sign-in and refresh will fail until it is configured",
+					"provider", node.ProviderID, "error", err)
+			}
+		}
 		if _, err := registry.Load(ctx, node.ProviderID); err != nil {
 			a.log.Warn("provider credentials unavailable; skipping startup seed", "provider", node.ProviderID, "error", err)
 		}
 	}
+	// Codex and Claude keep their dedicated engines; every other provider whose
+	// quota LiteRouter reads goes through the shared usage package, so the reader
+	// set is the reference dispatcher's table rather than a second hand-kept list.
+	usageClient := transport.NewSSRFProtectedClient()
+	if a.cfg.AllowPrivateUpstreams {
+		usageClient = transport.NewTrustedLocalSSRFProtectedClient()
+	}
+	clients, err := providerusage.Readers(usageClient, nil)
+	if err != nil {
+		return fmt.Errorf("install quota readers: %w", err)
+	}
+	clients["codex"] = quota.CodexClient{}
+	clients["claude"] = quota.ClaudeClient{Client: &claudeprovider.UsageClient{}}
 	observer := quota.Observer{
-		Clients: map[string]quota.UsageClient{
-			"codex":  quota.CodexClient{},
-			"claude": quota.ClaudeClient{Client: &claudeprovider.UsageClient{}},
-		},
+		Clients:   clients,
 		Publisher: manager.State(),
 	}
 	a.quota = quota.NewService(credentialStore, registry, observer).WithSeeder(registry)

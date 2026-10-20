@@ -1,7 +1,5 @@
 package registry
 
-import "github.com/raufimusaddiq/routeweft/internal/providers/cloudflare"
-
 // Builtins returns the first built-in provider group: OpenAI Chat
 // Completions providers that authenticate with API keys and use a fixed base
 // URL (docs/PROVIDER_BASELINE.md group 1). Base URLs were verified against the
@@ -56,7 +54,50 @@ func Builtins() []Spec {
 	specs = append(specs, LocalAndNoAuth()...)
 	specs = append(specs, APIGateways()...)
 	specs = append(specs, OAuthSpecialized()...)
-	return append(specs, SpecializedWire()...)
+	specs = append(specs, SpecializedWire()...)
+	return applySeeds(specs)
+}
+
+// applySeeds attaches the generated per-provider model seeds. Keeping them out
+// of the identity literals means a provider's seed list can be regenerated from
+// the oracle without touching its transport/auth declaration, and a provider can
+// never silently ship without the models LiteRouter serves for it.
+func applySeeds(specs []Spec) []Spec {
+	for i := range specs {
+		specs[i].SeedModels = unionSeeds(seedModels[specs[i].ID], compatSeedIDs[specs[i].ID])
+	}
+	return specs
+}
+
+// unionSeeds is the oracle's seeds plus every ID the previous release shipped.
+//
+// Parity decides what Routeweft can serve; it must not delete a model an operator
+// already routed to. Regenerating from the oracle alone dropped IDs that existing
+// aliases and Combo members referenced, which made the configuration fail to
+// compile — a startup failure, with the dashboard unreachable to fix it. The floor
+// only ever adds: oracle entries keep their name and context window, and a
+// previously shipped ID the oracle no longer lists keeps its ID with no metadata.
+func unionSeeds(oracle []SeedModel, compat []string) []SeedModel {
+	if len(oracle) == 0 && len(compat) == 0 {
+		return nil
+	}
+	merged := make([]SeedModel, 0, len(oracle)+len(compat))
+	seen := make(map[string]bool, len(oracle)+len(compat))
+	for _, seed := range oracle {
+		if seen[seed.ID] {
+			continue
+		}
+		seen[seed.ID] = true
+		merged = append(merged, seed)
+	}
+	for _, id := range compat {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		merged = append(merged, SeedModel{ID: id, Name: id})
+	}
+	return merged
 }
 
 // SpecializedWire returns providers from PROVIDER_BASELINE's Specialized
@@ -72,35 +113,16 @@ func Builtins() []Spec {
 // endpoint is resolved from provider-specific data at request time.
 func SpecializedWire() []Spec {
 	return []Spec{
-		{ID: "antigravity", Transports: []Protocol{TransportAntigravity}, Auth: AuthOAuth, DefaultBaseURL: "https://cloudcode-pa.googleapis.com", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
-			"gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.1-pro-preview",
-		}},
-		{ID: "gemini-cli", Transports: []Protocol{TransportGeminiCLI}, Auth: AuthOAuth, DefaultBaseURL: "https://cloudcode-pa.googleapis.com/v1internal", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
-			"gemini-3.1-pro-preview", "gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview",
-			"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
-		}},
-		{ID: "cursor", Transports: []Protocol{TransportCursor}, Auth: AuthOAuth, DefaultBaseURL: "https://api2.cursor.sh", ModelCatalog: CatalogStatic, StaticModels: []string{
-			"default", "claude-4.5-opus-high-thinking", "claude-4.5-opus-high", "claude-4.5-sonnet-thinking", "claude-4.5-sonnet", "claude-4.5-haiku",
-			"claude-4.5-opus", "gpt-5.2-codex", "claude-4.6-opus-max", "claude-4.6-sonnet-medium-thinking", "kimi-k2.5", "gemini-3-flash-preview", "gpt-5.2", "gpt-5.3-codex",
-		}},
-		{ID: "qoder", Transports: []Protocol{TransportQoder}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api3.qoder.sh", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
-			"ultimate", "auto", "performance", "efficient", "lite", "qmodel_38max", "qmodel_latest", "qmodel", "qfmodel", "kmodel_latest", "kmodel", "gmodel", "gfmodel", "dmodel", "dfmodel", "mmodel",
-		}},
-		{ID: "kiro", Transports: []Protocol{TransportKiro}, Auth: AuthOAuth, AuthModes: []AuthKind{AuthOAuth, AuthAPIKey}, DefaultBaseURL: "https://runtime.us-east-1.kiro.dev", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
-			"claude-opus-5", "claude-opus-5-thinking", "claude-opus-4.8", "claude-opus-4.7", "claude-sonnet-4.6", "claude-sonnet-4.5",
-		}},
-		{ID: "vertex", Transports: []Protocol{TransportVertex}, Auth: AuthAPIKey, DefaultBaseURL: "https://aiplatform.googleapis.com", ModelCatalog: CatalogStatic, StaticModels: []string{
-			"gemini-3.1-pro-preview", "gemini-3.1-flash-lite-preview", "gemini-3-flash-preview", "gemini-2.5-flash",
-		}},
-		{ID: "commandcode", Transports: []Protocol{TransportCommandCode}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.commandcode.ai/alpha", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
-			"deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash", "moonshotai/Kimi-K2.6", "moonshotai/Kimi-K2.5", "zai-org/GLM-5.1", "zai-org/GLM-5",
-			"MiniMaxAI/MiniMax-M2.7", "MiniMaxAI/MiniMax-M2.5", "Qwen/Qwen3.6-Max-Preview", "Qwen/Qwen3.6-Plus", "stepfun/Step-3.5-Flash",
-		}},
+		{ID: "antigravity", Transports: []Protocol{TransportAntigravity}, Auth: AuthOAuth, DefaultBaseURL: "https://cloudcode-pa.googleapis.com", ModelCatalog: CatalogStatic, ReportsUsage: true},
+		{ID: "gemini-cli", Transports: []Protocol{TransportGeminiCLI}, Auth: AuthOAuth, DefaultBaseURL: "https://cloudcode-pa.googleapis.com/v1internal", ModelCatalog: CatalogStatic, ReportsUsage: true},
+		{ID: "cursor", Transports: []Protocol{TransportCursor}, Auth: AuthOAuth, DefaultBaseURL: "https://api2.cursor.sh", ModelCatalog: CatalogStatic},
+		{ID: "qoder", Transports: []Protocol{TransportQoder}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api3.qoder.sh", ModelCatalog: CatalogStatic, ReportsUsage: true},
+		{ID: "kiro", Transports: []Protocol{TransportKiro}, Auth: AuthOAuth, AuthModes: []AuthKind{AuthOAuth, AuthAPIKey}, DefaultBaseURL: "https://runtime.us-east-1.kiro.dev", ModelCatalog: CatalogStatic, ReportsUsage: true},
+		{ID: "vertex", Transports: []Protocol{TransportVertex}, Auth: AuthAPIKey, DefaultBaseURL: "https://aiplatform.googleapis.com", ModelCatalog: CatalogStatic},
+		{ID: "commandcode", Transports: []Protocol{TransportCommandCode}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.commandcode.ai/alpha", ModelCatalog: CatalogStatic, ReportsUsage: true},
 		{ID: "grok-cli", Transports: []Protocol{TransportOpenAIResponses}, Auth: AuthOAuth, DefaultBaseURL: "https://cli-chat-proxy.grok.com", ModelCatalog: CatalogStatic, ReportsUsage: true},
 		{ID: "grok-web", Transports: []Protocol{TransportGrokWeb}, Auth: AuthCookie, DefaultBaseURL: "https://grok.com", ModelCatalog: CatalogPassthrough, PassthroughModels: true},
-		{ID: "perplexity-web", Transports: []Protocol{TransportPerplexityWeb}, Auth: AuthCookie, DefaultBaseURL: "https://www.perplexity.ai", ModelCatalog: CatalogStatic, StaticModels: []string{
-			"pplx-auto", "pplx-sonar", "pplx-gpt", "pplx-gemini", "pplx-sonnet", "pplx-opus", "pplx-nemotron",
-		}},
+		{ID: "perplexity-web", Transports: []Protocol{TransportPerplexityWeb}, Auth: AuthCookie, DefaultBaseURL: "https://www.perplexity.ai", ModelCatalog: CatalogStatic},
 		{ID: "kenari", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://kenari.id", TransportEndpoints: map[Protocol]string{
 			TransportOpenAIChat:      "v1/chat/completions",
 			TransportOpenAIResponses: "v1/responses",
@@ -127,54 +149,27 @@ func SpecializedWire() []Spec {
 // arbitrary IDs stay routable.
 func OAuthSpecialized() []Spec {
 	return []Spec{
-		{ID: "xai", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.x.ai/v1", ModelCatalog: CatalogStatic, StaticModels: []string{
-			"grok-4.6", "grok-4.5", "grok-4", "grok-4-fast-reasoning", "grok-code-fast-1", "grok-3",
-		}},
+		{ID: "xai", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.x.ai/v1", ModelCatalog: CatalogStatic},
 		{ID: "github", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses, TransportAnthropic}, Auth: AuthOAuth, DefaultBaseURL: "https://api.githubcopilot.com", TransportEndpoints: map[Protocol]string{
 			TransportOpenAIChat:      "chat/completions",
 			TransportOpenAIResponses: "responses",
 			TransportAnthropic:       "v1/messages",
-		}, ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
-			"gpt-5.2", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.4", "gpt-5.4-mini",
-			"claude-haiku-4.5", "claude-opus-4.5", "claude-sonnet-4.5", "claude-sonnet-4.6", "claude-opus-4.6", "claude-opus-4.7",
-			"gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3.1-pro-preview", "grok-code-fast-1", "oswe-vscode-prime", "goldeneye-free-auto",
-		}},
+		}, ModelCatalog: CatalogStatic, ReportsUsage: true},
 		{ID: "gitlab", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://gitlab.com", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "api/v4/chat/completions"}, ModelCatalog: CatalogStatic},
-		{ID: "iflow", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://apis.iflow.cn/v1", ModelCatalog: CatalogStatic, StaticModels: []string{
-			"qwen3-coder-plus", "qwen3-max", "qwen3-vl-plus", "qwen3-max-preview", "qwen3-235b", "qwen3-235b-a22b-instruct",
-			"qwen3-235b-a22b-thinking-2507", "qwen3-32b", "kimi-k2", "deepseek-v3.2", "deepseek-v3.1", "deepseek-v3", "deepseek-r1", "glm-4.7",
-			"iflow-rome-30ba3b",
-		}},
+		{ID: "iflow", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, AuthModes: []AuthKind{AuthOAuth, AuthCookie}, DefaultBaseURL: "https://apis.iflow.cn/v1", ModelCatalog: CatalogStatic},
 		{ID: "kimi", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.kimi.com/coding/v1", TransportEndpoints: map[Protocol]string{
 			TransportOpenAIChat: "chat/completions",
 			TransportAnthropic:  "messages",
-		}, ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
-			"kimi-k3", "k3", "kimi-for-coding", "kimi-for-coding-highspeed", "kimi-k2.7-code", "kimi-k2.7-code-highspeed",
-			"kimi-k2.6", "kimi-k2.5", "kimi-k2.5-thinking", "kimi-latest",
-		}},
+		}, ModelCatalog: CatalogStatic, ReportsUsage: true},
 		{ID: "xiaomi-mimo", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.xiaomimimo.com", TransportEndpoints: map[Protocol]string{
 			TransportOpenAIChat: "v1/chat/completions",
 			TransportAnthropic:  "anthropic/v1/messages",
-		}, ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
-			"mimo-x-pro-preview", "mimo-x-flash-preview", "mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-omni", "mimo-v2-flash",
-		}},
-		{ID: "cline", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://api.cline.bot", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "api/v1/chat/completions"}, DiscoveryPath: "api/v1/models", ModelCatalog: CatalogStatic, StaticModels: []string{
-			"anthropic/claude-opus-4.7", "anthropic/claude-sonnet-4.6", "anthropic/claude-opus-4.6", "openai/gpt-5.3-codex", "openai/gpt-5.4",
-			"google/gemini-3.1-pro-preview", "google/gemini-3.1-flash-lite-preview", "kwaipilot/kat-coder-pro",
-		}},
-		{ID: "clinepass", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.cline.bot", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "api/v1/chat/completions"}, DiscoveryPath: "api/v1/models", ModelCatalog: CatalogStatic, StaticModels: []string{
-			"cline-pass/glm-5.2", "cline-pass/kimi-k2.7-code", "cline-pass/kimi-k2.6", "cline-pass/deepseek-v4-pro", "cline-pass/deepseek-v4-flash",
-			"cline-pass/mimo-v2.5", "cline-pass/mimo-v2.5-pro", "cline-pass/minimax-m3", "cline-pass/qwen3.7-max", "cline-pass/qwen3.7-plus",
-		}},
+		}, ModelCatalog: CatalogStatic, ReportsUsage: true},
+		{ID: "cline", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://api.cline.bot", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "api/v1/chat/completions"}, DiscoveryPath: "api/v1/models", ModelCatalog: CatalogStatic},
+		{ID: "clinepass", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.cline.bot", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "api/v1/chat/completions"}, DiscoveryPath: "api/v1/models", ModelCatalog: CatalogStatic},
 		{ID: "kilocode", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://api.kilo.ai/api", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "openrouter/chat/completions"}, DiscoveryPath: "gateway/models", ModelCatalog: CatalogDynamic, PassthroughModels: true},
-		{ID: "codebuddy-cn", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://copilot.tencent.com/v2", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
-			"glm-5.2", "glm-5.1", "glm-5v-turbo", "minimax-m3", "kimi-k2.7", "kimi-k2.6", "hy3", "hy4-preview", "glm-5.3", "glm-5.3-flash",
-			"kimi-k3-1", "deepseek-v4-pro", "deepseek-v4.1-flash",
-		}},
-		{ID: "codebuddy-intl", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://www.codebuddy.ai/v2", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
-			"glm-5.2", "glm-5.1", "glm-5.0", "glm-5.0-turbo", "glm-5v-turbo", "glm-4.7", "minimax-m3", "minimax-m2.7", "kimi-k2.7", "kimi-k2.6",
-			"kimi-k2.5", "hy3-preview", "deepseek-v4-pro", "deepseek-v4.1-flash", "deepseek-v3-2-volc",
-		}},
+		{ID: "codebuddy-cn", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://copilot.tencent.com/v2", ModelCatalog: CatalogStatic, ReportsUsage: true},
+		{ID: "codebuddy-intl", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://www.codebuddy.ai/v2", ModelCatalog: CatalogStatic, ReportsUsage: true},
 	}
 }
 
@@ -188,7 +183,8 @@ func APIGateways() []Spec {
 		{ID: "tokenrouter", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.tokenrouter.com/v1", ModelCatalog: CatalogDynamic, PassthroughModels: true},
 		{ID: "perplexity-agent", Transports: []Protocol{TransportOpenAIResponses}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.perplexity.ai/v1", ModelCatalog: CatalogDynamic, PassthroughModels: true},
 		{ID: "opencode-go", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses, TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://opencode.ai/zen/go/v1", ModelCatalog: CatalogStatic, ReportsUsage: true},
-		{ID: "cloudflare-ai", Transports: []Protocol{TransportOpenAIChat, TransportSystemOne}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.cloudflare.com/client/v4/accounts", ModelCatalog: CatalogStatic, StaticModels: []string{cloudflare.Clef, cloudflare.ClefFlash}, ReportsUsage: true},
+		{ID: "cloudflare-ai", Transports: []Protocol{TransportOpenAIChat, TransportSystemOne}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.cloudflare.com/client/v4/accounts", ModelCatalog: CatalogStatic},
+		{ID: "muse", Transports: []Protocol{TransportOpenAIResponses}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.meta.ai/v1", ModelCatalog: CatalogStatic},
 	}
 }
 
@@ -201,9 +197,9 @@ func LocalAndNoAuth() []Spec {
 		{ID: "mimo-free", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, DefaultBaseURL: "https://api.xiaomimimo.com", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "api/free-ai/openai/chat"}, ModelCatalog: CatalogDynamic, PassthroughModels: true},
 		{ID: "mmf", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, DefaultBaseURL: "https://api.xiaomimimo.com", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "api/free-ai/openai/chat"}, ModelCatalog: CatalogStatic},
 		{ID: "opencode", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, DefaultBaseURL: "https://opencode.ai", ModelCatalog: CatalogDynamic, PassthroughModels: true},
-		{ID: "ollama", Transports: []Protocol{TransportOllama}, Auth: AuthAPIKey, DefaultBaseURL: "https://ollama.com", ModelCatalog: CatalogStatic},
+		{ID: "ollama", Transports: []Protocol{TransportOllama}, Auth: AuthAPIKey, DefaultBaseURL: "https://ollama.com", ModelCatalog: CatalogStatic, ReportsUsage: true},
 		{ID: "ollama-local", Transports: []Protocol{TransportOllama}, Auth: AuthNone, DefaultBaseURL: "http://localhost:11434", ModelCatalog: CatalogStatic},
-		{ID: "typesafe", Transports: []Protocol{TransportSystemOne}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.typesafe.ai/v1/systemone", ModelCatalog: CatalogStatic, StaticModels: []string{"jev-latest"}, ReportsUsage: true},
+		{ID: "typesafe", Transports: []Protocol{TransportSystemOne}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.typesafe.ai/v1/systemone", ModelCatalog: CatalogStatic},
 	}
 }
 
@@ -224,47 +220,42 @@ func MultiTransport() []Spec {
 
 // Claude returns the Claude Code OAuth identity using shared Anthropic Messages.
 func Claude() []Spec {
-	return []Spec{{ID: "claude", Transports: []Protocol{TransportAnthropic}, Auth: AuthOAuth, DefaultBaseURL: "https://api.anthropic.com/v1", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
-		"claude-opus-5", "claude-fable-5-1", "claude-fable-5", "claude-sonnet-5", "claude-haiku-4-5-20251001",
-	}}}
+	return []Spec{{ID: "claude", Transports: []Protocol{TransportAnthropic}, Auth: AuthOAuth, DefaultBaseURL: "https://api.anthropic.com/v1", ModelCatalog: CatalogStatic, ReportsUsage: true}}
 }
 
 // Gemini returns the first-party Gemini GenerateContent identity.
 func Gemini() []Spec {
-	return []Spec{{ID: "gemini", Transports: []Protocol{TransportGemini}, Auth: AuthAPIKey, DefaultBaseURL: "https://generativelanguage.googleapis.com/v1beta/models", ModelCatalog: CatalogStatic, StaticModels: []string{
-		"gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite",
-		"gemini-3.1-pro-preview", "gemini-3.1-flash-lite-preview", "gemini-3-flash-preview",
-		"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemma-4-31b-it",
-	}}}
+	return []Spec{{ID: "gemini", Transports: []Protocol{TransportGemini}, Auth: AuthAPIKey, DefaultBaseURL: "https://generativelanguage.googleapis.com/v1beta/models", ModelCatalog: CatalogStatic}}
 }
 
 // Anthropic returns the first-party Anthropic Messages identity. Message
 // headers/beta behavior live in the anthropic provider module.
 func Anthropic() []Spec {
-	return []Spec{{ID: "anthropic", Transports: []Protocol{TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.anthropic.com/v1", ModelCatalog: CatalogStatic, StaticModels: []string{
-		"claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-3-5-sonnet-20241022",
-	}}}
+	return []Spec{{ID: "anthropic", Transports: []Protocol{TransportAnthropic}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.anthropic.com/v1", ModelCatalog: CatalogStatic}}
 }
 
 // Codex returns the OpenAI Codex OAuth provider identity. Its rotating
 // credentials and request path are implemented by the Codex provider module.
 func Codex() []Spec {
-	return []Spec{{ID: "codex", Transports: []Protocol{TransportOpenAIResponses}, Auth: AuthOAuth, DefaultBaseURL: "https://chatgpt.com/backend-api/codex", ModelCatalog: CatalogStatic, ReportsUsage: true, StaticModels: []string{
-		"gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-sol-review", "gpt-5.6-terra", "gpt-5.6-terra-review",
-		"gpt-5.6-luna", "gpt-5.6-luna-review", "gpt-5.5", "gpt-5.5-review", "gpt-5.4", "gpt-5.4-review", "gpt-5.4-mini",
-		"gpt-5.4-mini-review", "gpt-5.3-codex-spark", "gpt-5.3-codex-spark-review", "codex-auto-review",
-	}}}
+	return []Spec{{ID: "codex", Transports: []Protocol{TransportOpenAIResponses}, Auth: AuthOAuth, DefaultBaseURL: "https://chatgpt.com/backend-api/codex", ModelCatalog: CatalogStatic, ReportsUsage: true}}
 }
 
 // NativeOpenAI returns the first-party provider with both source-matching
 // OpenAI transports, as required by PRD-PROV-001.
 func NativeOpenAI() []Spec {
-	return []Spec{{ID: "openai", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.openai.com/v1", ModelCatalog: CatalogStatic, StaticModels: []string{
-		"gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-5-mini", "gpt-5-nano",
-		"gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
-		"o3", "o3-mini", "o3-pro", "o4-mini", "o1", "o1-mini",
-	}}}
+	return []Spec{{ID: "openai", Transports: []Protocol{TransportOpenAIChat, TransportOpenAIResponses}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.openai.com/v1", ModelCatalog: CatalogStatic}}
 }
 
 // NewBuiltinCatalog validates and indexes the built-in provider group.
 func NewBuiltinCatalog() (*Catalog, error) { return NewCatalog(Builtins()) }
+
+// PreviouslyShipped reports whether an ID was seeded by the release before seeds
+// were generated from the reference. Such IDs stay seeded as a compat floor.
+func PreviouslyShipped(providerID, modelID string) bool {
+	for _, id := range compatSeedIDs[providerID] {
+		if id == modelID {
+			return true
+		}
+	}
+	return false
+}

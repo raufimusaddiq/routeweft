@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
@@ -752,6 +753,103 @@ func BenchmarkConfiguredNativeServing(b *testing.B) {
 		w := serveRequest(handler, key, "/v1/chat/completions", `{"model":"fast","messages":[{"role":"user","content":"hi"}]}`)
 		if w.Code != 200 {
 			b.Fatal(w.Code)
+		}
+	}
+}
+
+// TestFreshInstallRoutesSeededModel proves the #116 done condition: a fresh
+// install routes a model for a provider it has never discovered, using only the
+// generated seeds from the reference registry.
+func TestFreshInstallRoutesSeededModel(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, r.URL.Path)
+	}))
+	defer upstream.Close()
+	a := New(Config{DataDir: t.TempDir(), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true, AdminBootstrapUsername: "operator", AdminBootstrapPassword: "synthetic-password"}, nil)
+	if err := a.Initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer a.store.Close()
+	_, key, err := a.runtime.CreateAPIKey(context.Background(), "client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	login := httptest.NewRecorder()
+	a.Handler().ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/admin/v1/auth/login", strings.NewReader(`{"username":"operator","password":"synthetic-password"}`)))
+	if login.Code != 200 || len(login.Result().Cookies()) == 0 {
+		t.Fatalf("login %d %s", login.Code, login.Body)
+	}
+	cookie := login.Result().Cookies()[0]
+	admin := func(method, path, body string) {
+		t.Helper()
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.AddCookie(cookie)
+		w := httptest.NewRecorder()
+		a.Handler().ServeHTTP(w, r)
+		if w.Code != 200 {
+			t.Fatalf("%s %s: %d %s", method, path, w.Code, w.Body)
+		}
+	}
+	// muse is chosen because it is the newest catalog entry: its models exist only
+	// as generated seeds, never as operator-created rows.
+	admin(http.MethodPost, "/admin/v1/provider-nodes", fmt.Sprintf(`{"kind":"builtin","providerId":"muse","name":"muse","baseUrl":%q}`, upstream.URL))
+	admin(http.MethodPost, "/admin/v1/connections", `{"providerId":"muse","name":"acct","identity":"acct","authKind":"api-key","secret":{"accessToken":"synthetic"},"enabled":true}`)
+
+	for _, model := range []string{"muse-spark-1.2-contributor", "muse-spark-1.3-contributor"} {
+		w := serveRequest(a.Handler(), key, "/v1/responses", fmt.Sprintf(`{"model":%q,"input":"hi"}`, model))
+		if w.Code != 200 || !strings.Contains(w.Body.String(), "responses") {
+			t.Fatalf("%s status=%d body=%s", model, w.Code, w.Body)
+		}
+	}
+	// Seeds must not turn the catalog into a passthrough.
+	w := serveRequest(a.Handler(), key, "/v1/responses", `{"model":"not-a-seed","input":"hi"}`)
+	if w.Code != 404 {
+		t.Fatalf("unknown model status=%d body=%s", w.Code, w.Body)
+	}
+}
+
+// TestEverySeededProviderServesItsFirstModel is the drift guard for the seed
+// catalog: every built-in provider that ships seeds must be able to serve one
+// without discovery. A provider added to the catalog without seeds fails here
+// rather than at an operator's first request.
+func TestEverySeededProviderServesItsFirstModel(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, r.URL.Path)
+	}))
+	defer upstream.Close()
+	a := New(Config{DataDir: t.TempDir(), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true}, nil)
+	if err := a.Initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer a.store.Close()
+	ctx := context.Background()
+	for _, spec := range registry.Builtins() {
+		if len(spec.SeedModels) == 0 {
+			continue
+		}
+		node, err := a.creds.PutNode(ctx, credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: spec.ID, Name: spec.ID, BaseURL: upstream.URL})
+		if err != nil {
+			t.Fatalf("%s node: %v", spec.ID, err)
+		}
+		_, err = a.creds.PutConnection(ctx, credentials.Connection{
+			NodeID: node.ID, Name: spec.ID, Identity: spec.ID + "-account",
+			AuthKind: credentials.AuthAPIKey, Secret: credentials.Secret{AccessToken: "synthetic"}, Enabled: true,
+		})
+		if err != nil {
+			t.Fatalf("%s connection: %v", spec.ID, err)
+		}
+	}
+	snapshot, err := a.runtime.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, spec := range registry.Builtins() {
+		if len(spec.SeedModels) == 0 {
+			continue
+		}
+		seed := spec.SeedModels[0]
+		if _, ok := snapshot.ServingModel(spec.ID + "/" + seed.ID); !ok {
+			t.Errorf("%s seed %q is not served", spec.ID, seed.ID)
 		}
 	}
 }
