@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -336,7 +337,7 @@ func TestConfiguredServingCorruptCredentialStartup(t *testing.T) {
 		fmt.Fprint(w, r.Header.Get("Authorization"))
 	}))
 	defer upstream.Close()
-	a, key := servingApp(t, upstream.URL, 1)
+	a, _ := servingApp(t, upstream.URL, 1)
 	ctx := context.Background()
 	if _, err := a.creds.PutNode(ctx, credentials.Node{ID: "broken", Kind: credentials.NodeGeneric, ProviderID: "broken", Name: "broken", BaseURL: upstream.URL, Transports: []string{"openai-responses"}}); err != nil {
 		t.Fatal(err)
@@ -354,23 +355,16 @@ func TestConfiguredServingCorruptCredentialStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 	var logs bytes.Buffer
-	a.log = slog.New(slog.NewTextHandler(&logs, nil))
-	if err := a.Initialize(ctx); err != nil {
-		t.Fatalf("corrupt provider blocked startup: %v", err)
+	a = New(a.cfg, slog.New(slog.NewTextHandler(&logs, nil)))
+	err := a.Initialize(ctx)
+	if err == nil || !strings.Contains(err.Error(), "open provider settings") {
+		t.Fatalf("unreadable sealed payload did not fail startup: %v", err)
 	}
-	if !strings.Contains(logs.String(), "provider=broken") || !strings.Contains(logs.String(), "level=WARN") || strings.Contains(logs.String(), "synthetic-") {
-		t.Fatalf("missing warning or exposed credential material: %s", &logs)
+	if a.ready.Load() || calls.Load() != 0 {
+		t.Fatal("failed startup became ready or contacted an upstream")
 	}
-	if err := a.store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	w := serveRequest(a.Handler(), key, "/v1/responses", `{"model":"broken/model","input":"hi"}`)
-	if w.Code != 503 || !strings.Contains(w.Body.String(), "credentials_unavailable") || calls.Load() != 0 {
-		t.Fatalf("corrupt credential status=%d calls=%d body=%s", w.Code, calls.Load(), w.Body)
-	}
-	w = serveRequest(a.Handler(), key, "/v1/responses", `{"model":"fast","input":"hi"}`)
-	if w.Code != 200 || w.Body.String() != "Bearer synthetic-0" || calls.Load() != 1 {
-		t.Fatalf("healthy provider status=%d calls=%d body=%s", w.Code, calls.Load(), w.Body)
+	if strings.Contains(err.Error(), "synthetic-") || strings.Contains(logs.String(), "synthetic-") {
+		t.Fatal("startup failure exposed credential material")
 	}
 }
 
@@ -420,10 +414,13 @@ func TestConfiguredServingCredentialFailures(t *testing.T) {
 					t.Fatal(err)
 				}
 				a = New(Config{DataDir: a.cfg.DataDir, AllowPrivateUpstreams: true}, nil)
-				if err := a.Initialize(context.Background()); err != nil {
-					t.Fatal(err)
+				if err := a.Initialize(context.Background()); !errors.Is(err, credentials.ErrKeyRequired) {
+					t.Fatalf("sealed rows without a key did not fail startup: %v", err)
 				}
-				defer a.store.Close()
+				if a.ready.Load() || calls.Load() != 0 {
+					t.Fatal("keyless startup became ready or contacted an upstream")
+				}
+				return
 			} else {
 				a.credReg.Forget("account-00")
 				if mode == "all-missing" {

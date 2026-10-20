@@ -24,7 +24,7 @@ type ConnectionMetadata struct {
 
 // ProviderRef identifies one configured provider node and connection.
 type ProviderRef struct {
-	Connection    ConnectionMetadata
+	Connection    ConnectionMetadata `json:"-"`
 	ProviderID    string
 	Protocol      string
 	BaseURL       string

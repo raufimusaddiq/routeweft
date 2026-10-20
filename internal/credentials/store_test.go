@@ -58,7 +58,7 @@ func TestPutConnectionSealsSecretAtRest(t *testing.T) {
 	if loaded.Secret.RefreshToken != "fixture-rotating-credential" || loaded.Secret.AccessToken != "fixture-access" || loaded.AuthKind != AuthOAuth || loaded.Priority != 1 || !loaded.Enabled {
 		t.Fatalf("connection=%+v", loaded)
 	}
-	config, err := LoadConfiguration(ctx, store.db)
+	config, err := LoadConfiguration(ctx, store.db, store.sealer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestConnectionAccountMetadataRoundTripsWithoutSecrets(t *testing.T) {
 	if err != nil || len(connections) != 1 || connections[0].AccountID != "account-a" {
 		t.Fatalf("list account metadata: %+v %v", connections, err)
 	}
-	config, err := LoadConfiguration(ctx, s.db)
+	config, err := LoadConfiguration(ctx, s.db, s.sealer)
 	if err != nil || len(config.Connections) != 1 || config.Connections[0].AccountID != "account-a" || !config.Connections[0].Secret.Empty() {
 		t.Fatalf("snapshot metadata lost account or contains secrets: %+v %v", config, err)
 	}
@@ -269,6 +269,9 @@ func TestSealedSettingsLoadWithoutCredentialExposure(t *testing.T) {
 	config, err = LoadConfiguration(ctx, s.db, sealer)
 	if err != nil || config.Connections[0].Settings.BaseURL != "http://localhost:11435" {
 		t.Fatalf("edit without secret lost durable settings: %v", err)
+	}
+	if _, err := LoadConfiguration(ctx, s.db, nil); !errors.Is(err, ErrKeyRequired) {
+		t.Fatalf("missing key silently skipped sealed settings: %v", err)
 	}
 	wrongKey, err := NewSealer([]byte("11234567890123456789012345678901"))
 	if err != nil {

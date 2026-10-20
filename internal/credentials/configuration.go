@@ -97,11 +97,20 @@ func editConnection(id string, edit func(*Connection)) func(*Configuration) erro
 }
 
 // LoadConfiguration reads metadata at startup; serving never calls it.
-func LoadConfiguration(ctx context.Context, db *sql.DB, sealers ...*Sealer) (Configuration, error) {
-	var sealer *Sealer
-	if len(sealers) > 0 {
-		sealer = sealers[0]
-	}
+func LoadConfiguration(ctx context.Context, db *sql.DB, sealer *Sealer) (Configuration, error) {
+	return loadConfiguration(ctx, db, sealer, true)
+}
+
+// LoadMetadata omits sealed settings for inventories and structural backup validation only.
+func LoadMetadata(ctx context.Context, db *sql.DB) (Configuration, error) {
+	return loadConfiguration(ctx, db, nil, false)
+}
+
+func (s *Store) Configuration(ctx context.Context) (Configuration, error) {
+	return LoadConfiguration(ctx, s.db, s.sealer)
+}
+
+func loadConfiguration(ctx context.Context, db *sql.DB, sealer *Sealer, settings bool) (Configuration, error) {
 	s := &Store{db: db}
 	nodes, err := s.ListNodes(ctx)
 	if err != nil {
@@ -119,7 +128,10 @@ func LoadConfiguration(ctx context.Context, db *sql.DB, sealers ...*Sealer) (Con
 		if err := rows.Scan(&c.ID, &c.NodeID, &c.ProviderID, &c.Name, &c.AuthKind, &c.Identity, &blob, &c.Enabled, &c.Priority, &c.ProxyPoolID, &c.AccountID); err != nil {
 			return Configuration{}, err
 		}
-		if blob != "" && sealer != nil {
+		if blob != "" && settings {
+			if sealer == nil {
+				return Configuration{}, fmt.Errorf("open provider settings for connection %q: %w", c.ID, ErrKeyRequired)
+			}
 			payload, err := sealer.Open(blob)
 			if err != nil {
 				return Configuration{}, fmt.Errorf("open provider settings for connection %q: %w", c.ID, err)

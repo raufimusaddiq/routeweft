@@ -246,7 +246,7 @@ func (h *Handler) handleTestBatch(w http.ResponseWriter, r *http.Request) {
 	}()
 	ctx, cancel := context.WithTimeout(r.Context(), modelBatchTimeout)
 	defer cancel()
-	config, err := credentials.LoadConfiguration(ctx, h.opts.DB)
+	config, err := h.opts.Credentials.Configuration(ctx)
 	if err != nil {
 		writeError(w, 503, "batch_unavailable", "enabled connections could not be loaded (maximum 200)")
 		return
@@ -319,7 +319,7 @@ func (h *Handler) handleAvailability(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_page", err.Error())
 		return
 	}
-	config, err := credentials.LoadConfiguration(r.Context(), h.opts.DB)
+	config, err := credentials.LoadMetadata(r.Context(), h.opts.DB)
 	if err != nil {
 		writeError(w, 500, "availability_failed", "connection metadata unavailable")
 		return

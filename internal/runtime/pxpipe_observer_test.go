@@ -30,7 +30,7 @@ func TestPXPIPEObserverSurvivesSnapshotPublication(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		seen = append(seen, d)
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

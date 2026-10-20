@@ -32,7 +32,7 @@ func (c *metadataSignInClient) Do(r *http.Request) (*http.Response, error) {
 func TestPublishedConnectionMetadataSurvivesRestartWithoutDatabase(t *testing.T) {
 	ctx := context.Background()
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer sk-fixture-key" {
+		if r.Header.Get("Authorization") != "Bearer sk-fixture-rotated-2" {
 			t.Error("wrong inference credential")
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -82,7 +82,7 @@ func TestPublishedConnectionMetadataSurvivesRestartWithoutDatabase(t *testing.T)
 		if w.Code != 200 {
 			t.Fatalf("%s: %d %s", path, w.Code, w.Body)
 		}
-		for _, secret := range []string{"sk-fixture-key", "fixture-client-secret"} {
+		for _, secret := range []string{"sk-fixture", "fixture-client-secret"} {
 			if strings.Contains(w.Body.String(), secret) {
 				t.Fatal("control response leaked secret")
 			}
@@ -126,6 +126,25 @@ func TestPublishedConnectionMetadataSurvivesRestartWithoutDatabase(t *testing.T)
 	old, _ := snapshot.AccountProvider("xiaomi-mimo/mimo-v2-flash", c.ID, "openai-chat", nil)
 	if old != original {
 		t.Fatal("publication mutated an older snapshot")
+	}
+	for _, rotation := range []struct{ body, token, uid string }{
+		{`{"secret":{"accessToken":"sk-fixture-rotated"}}`, "sk-fixture-rotated", "fixture-user"},
+		{`{"secret":{"accessToken":"sk-fixture-rotated-2","providerData":{"uid":"rotated-user"}}}`, "sk-fixture-rotated-2", "rotated-user"},
+	} {
+		request(http.MethodPatch, "/admin/v1/connections/"+c.ID, rotation.body)
+		want.Settings.UID = rotation.uid
+		published, err := a.runtime.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ref, ok := published.AccountProvider("xiaomi-mimo/mimo-v2-flash", c.ID, "openai-chat", nil)
+		if !ok || ref.Connection != want {
+			t.Fatalf("token rotation dropped compiled metadata: %+v", ref.Connection)
+		}
+		durable, err := a.creds.GetConnection(ctx, c.ID)
+		if err != nil || durable.Secret.AccessToken != rotation.token || durable.Secret.ProviderData["baseUrl"] != want.Settings.BaseURL || durable.Secret.ProviderData["uid"] != rotation.uid {
+			t.Fatalf("rotation lost durable token or metadata: %v", err)
+		}
 	}
 	request(http.MethodPost, "/admin/v1/models", `{"providerId":"ollama-local","id":"llama3.2","name":"Llama 3.2"}`)
 	request(http.MethodPost, "/admin/v1/connections", `{"providerId":"ollama-local","name":"Local","identity":"local","authKind":"none","enabled":true,"secret":{"providerData":{"baseUrl":"http://localhost:11435"}}}`)

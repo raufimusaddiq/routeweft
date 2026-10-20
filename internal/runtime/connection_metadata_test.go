@@ -2,9 +2,12 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
@@ -55,6 +58,17 @@ func TestProviderSettingsPublishRotateAndRestore(t *testing.T) {
 		ref, ok := before.AccountProvider(tc.provider+"/"+tc.model, tc.provider, "openai-chat", nil)
 		if !ok || ref.Connection.Settings != tc.want || ref.Connection.Identity != "fixture-identity" || ref.Connection.AuthKind == "" || ref.Connection.AccountID != "fixture-account" {
 			t.Fatalf("published %s: %+v selectable=%v", tc.provider, ref.Connection, ok)
+		}
+		data, err := json.Marshal(ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]any
+		if err := json.Unmarshal(data, &fields); err != nil {
+			t.Fatal(err)
+		}
+		if _, exposed := fields["Connection"]; exposed {
+			t.Fatal("ProviderRef JSON exposed compiled connection identity")
 		}
 		tc.data["region"] = "mutated-input"
 	}
@@ -173,5 +187,54 @@ func BenchmarkAccountProviderMetadata(b *testing.B) {
 		if !ok || ref.ConnectionID != "fixture" {
 			b.Fatal("missing compiled metadata")
 		}
+	}
+}
+
+func TestCredentialInstallWaitHonorsDeadline(t *testing.T) {
+	ctx := context.Background()
+	m, s := providerStore(t)
+	node, err := s.PutNode(ctx, credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "github", Name: "GitHub"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := s.PutConnection(ctx, credentials.Connection{NodeID: node.ID, Name: "Fixture", Identity: "fixture", AuthKind: credentials.AuthOAuth, Enabled: true, Secret: credentials.Secret{AccessToken: "fixture-old"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := m.Load()
+	entered, release := make(chan struct{}), make(chan struct{})
+	finished := make(chan error, 1)
+	go func() {
+		_, err := m.Update(ctx, func(*Candidate) error { close(entered); <-release; return nil })
+		finished <- err
+	}()
+	<-entered
+	defer func() {
+		close(release)
+		if err := <-finished; err != nil {
+			t.Error(err)
+		}
+	}()
+	deadline, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	installed := make(chan error, 1)
+	go func() {
+		installed <- s.RotateSecret(deadline, connection.ID, credentials.Secret{AccessToken: "fixture-new"})
+	}()
+	select {
+	case err := <-installed:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("renewal wait: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("renewal ignored its persistence deadline while queued")
+	}
+	after, _ := m.Load()
+	if after != before {
+		t.Fatal("timed-out install published metadata")
+	}
+	durable, err := s.GetConnection(ctx, connection.ID)
+	if err != nil || durable.Secret.AccessToken != "fixture-old" {
+		t.Fatalf("timed-out install changed durable credential: %v", err)
 	}
 }

@@ -221,14 +221,20 @@ The provider-settings allowlist is `baseUrl`, `azureEndpoint`, `apiVersion`,
 The raw `ProviderData` map, tokens, cookies and client secrets remain outside
 snapshots. Settings are not returned to browser clients by connection CRUD.
 No-auth connections may persist settings in the sealed payload without a token.
-Metadata-only edits preserve existing credentials and omitted provider fields.
+All connection edits preserve omitted provider fields, including token-only
+rotations. Metadata-only edits also preserve existing credentials.
 Credential imports/renewals that change projected settings also use the
 compile/commit/publish protocol, so durable and serving metadata agree.
-Token-only renewals commit under the same mutation lock without recompiling
-configuration or advancing its revision.
+Token-only renewals commit under the same mutation gate without recompiling
+configuration or advancing its revision. Queueing for this gate honors the
+refresh persistence deadline; an install whose queueing deadline expires writes
+and publishes nothing.
+No upstream HTTP runs while the gate is held.
 Startup with a configured credential key fails if a sealed settings payload
 cannot be authenticated/decoded; it must not silently serve default settings.
-Absent keys retain the existing credential-unavailable behavior. Serving reads
+A sealed payload without a credential key also fails serving startup. Keyless
+backup structural validation and availability inventories explicitly omit sealed
+settings and never publish serving snapshots. Serving reads
 only the compiled projection; no per-request SQLite/decryption lookup is added.
 
 ## 6. RuntimeState

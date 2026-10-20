@@ -75,8 +75,12 @@ func compileProviders(config credentials.Configuration) (map[string]servingProvi
 
 // UpdateProviders uses the same compile/commit/publish lock as other config.
 func (m *Manager) UpdateProviders(ctx context.Context, change func(*credentials.Configuration) error, persist func(*sql.Tx) error) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	// Sealed settings and their snapshot must serialize with configuration writes.
+	// Only local compile/SQLite work holds this gate; refresh HTTP runs before it.
+	if err := m.lockMutation(ctx); err != nil {
+		return err
+	}
+	defer m.unlockMutation()
 	current, err := m.Load()
 	if err != nil {
 		return err

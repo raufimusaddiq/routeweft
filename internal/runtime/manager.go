@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sync"
 	"sync/atomic"
 
 	"github.com/raufimusaddiq/routeweft/internal/auth"
@@ -17,25 +16,25 @@ var ErrUninitialized = errors.New("runtime snapshot is not initialized")
 
 // Manager publishes immutable snapshots. Writes serialize; readers do atomic loads.
 type Manager struct {
-	db      *sql.DB
-	mu      sync.Mutex
-	active  atomic.Pointer[RuntimeSnapshot]
-	version atomic.Uint64
-	state   *RuntimeState
+	db       *sql.DB
+	mutation chan struct{}
+	active   atomic.Pointer[RuntimeSnapshot]
+	version  atomic.Uint64
+	state    *RuntimeState
 	// compiler carries process-level hooks shared by every snapshot.
 	compiler Compiler
 }
 
-// NewManager loads durable configuration and compiles the initial snapshot.
+// NewManager loads keyless configuration; sealed rows require NewManagerObserved.
 func NewManager(ctx context.Context, db *sql.DB) (*Manager, error) {
-	return NewManagerObserved(ctx, db, nil)
+	return NewManagerObserved(ctx, db, nil, nil)
 }
 
 // NewManagerObserved is NewManager with a PXPIPE diagnostics sink that is part
-// of the initial snapshot and of every later one. Optional sealer use is startup-only.
-func NewManagerObserved(ctx context.Context, db *sql.DB, observePXPIPE func(pxpipe.Diagnostic), sealers ...*credentials.Sealer) (*Manager, error) {
-	m := &Manager{db: db, state: NewState(), compiler: Compiler{PXPIPEObserver: observePXPIPE}}
-	config, err := loadConfig(ctx, db, sealers...)
+// of the initial snapshot and of every later one. The sealer is used only during startup.
+func NewManagerObserved(ctx context.Context, db *sql.DB, observePXPIPE func(pxpipe.Diagnostic), sealer *credentials.Sealer) (*Manager, error) {
+	m := &Manager{mutation: make(chan struct{}, 1), db: db, state: NewState(), compiler: Compiler{PXPIPEObserver: observePXPIPE}}
+	config, err := loadConfig(ctx, db, sealer)
 	if err != nil {
 		return nil, err
 	}
@@ -64,8 +63,10 @@ func (m *Manager) Update(ctx context.Context, mutate func(*Candidate) error) (*R
 }
 
 func (m *Manager) update(ctx context.Context, mutate func(*Candidate) error, persist func(*sql.Tx) error) (*RuntimeSnapshot, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	if err := m.lockMutation(ctx); err != nil {
+		return nil, err
+	}
+	defer m.unlockMutation()
 	return m.updateLocked(ctx, mutate, persist)
 }
 
@@ -132,7 +133,13 @@ func (m *Manager) Version() uint64 {
 	return m.version.Load()
 }
 
-func loadConfig(ctx context.Context, db *sql.DB, sealers ...*credentials.Sealer) (Config, error) {
+func loadConfig(ctx context.Context, db *sql.DB, sealer *credentials.Sealer) (Config, error) {
+	return loadConfigUsing(ctx, db, func(ctx context.Context, db *sql.DB) (credentials.Configuration, error) {
+		return credentials.LoadConfiguration(ctx, db, sealer)
+	})
+}
+
+func loadConfigUsing(ctx context.Context, db *sql.DB, providers func(context.Context, *sql.DB) (credentials.Configuration, error)) (Config, error) {
 	config := Config{Settings: defaultSettingsCopy()}
 	config.Aliases = make(map[string]ModelRef)
 	config.DisabledModels = make(map[string]struct{})
@@ -182,9 +189,37 @@ func loadConfig(ctx context.Context, db *sql.DB, sealers ...*credentials.Sealer)
 		return Config{}, err
 	}
 	config.Combos = combos
-	config.Providers, err = credentials.LoadConfiguration(ctx, db, sealers...)
+	config.Providers, err = providers(ctx, db)
 	if err != nil {
 		return Config{}, err
 	}
 	return config, nil
+}
+
+func (m *Manager) lockMutation(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case m.mutation <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			m.unlockMutation()
+			return err
+		}
+		return nil
+	}
+}
+
+func (m *Manager) unlockMutation() { <-m.mutation }
+
+// ValidateStoredConfiguration checks backup structure without publishing a serving snapshot.
+// Sealed settings are authenticated later by application startup with its credential key.
+func ValidateStoredConfiguration(ctx context.Context, db *sql.DB) (uint64, error) {
+	config, err := loadConfigUsing(ctx, db, credentials.LoadMetadata)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := (Compiler{}).Compile(config, 1); err != nil {
+		return 0, err
+	}
+	return config.Revision, nil
 }

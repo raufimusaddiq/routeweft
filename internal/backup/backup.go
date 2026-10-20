@@ -76,18 +76,13 @@ func Create(ctx context.Context, source *sqlite.Store, output string) (Metadata,
 		_ = staged.Close()
 		return Metadata{}, err
 	}
-	manager, err := appruntime.NewManager(ctx, staged.DB())
-	if err != nil {
-		_ = staged.Close()
-		return Metadata{}, err
-	}
-	snapshot, err := manager.Load()
+	revision, err := appruntime.ValidateStoredConfiguration(ctx, staged.DB())
 	if err != nil {
 		_ = staged.Close()
 		return Metadata{}, err
 	}
 	info := buildinfo.Current()
-	meta := Metadata{SchemaVersion: version, RouteweftVersion: info.Version, RouteweftCommit: info.Commit, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), ConfigRevision: snapshot.ConfigRevision()}
+	meta := Metadata{SchemaVersion: version, RouteweftVersion: info.Version, RouteweftCommit: info.Commit, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), ConfigRevision: revision}
 	if err := staged.CloseBackup(ctx); err != nil {
 		return Metadata{}, err
 	}
@@ -172,26 +167,22 @@ func StageRestore(ctx context.Context, input, dataDir string) (*Candidate, error
 	if err := runner.Apply(ctx); err != nil {
 		return fail(fmt.Errorf("migrate candidate: %w", err))
 	}
-	manager, err := appruntime.NewManager(ctx, candidate.DB())
+	revision, err := appruntime.ValidateStoredConfiguration(ctx, candidate.DB())
 	if err != nil {
-		return fail(fmt.Errorf("compile candidate snapshot: %w", err))
-	}
-	snapshot, err := manager.Load()
-	if err != nil {
-		return fail(err)
+		return fail(fmt.Errorf("validate candidate configuration: %w", err))
 	}
 	meta, err := readMetadata(input + ".meta.json")
 	if err != nil {
 		return fail(err)
 	}
-	if meta != nil && (meta.SchemaVersion != version || meta.ConfigRevision != snapshot.ConfigRevision()) {
+	if meta != nil && (meta.SchemaVersion != version || meta.ConfigRevision != revision) {
 		return fail(errors.New("backup metadata does not match the database schema/configuration"))
 	}
 	if err := candidate.IntegrityCheck(ctx); err != nil {
 		return fail(err)
 	}
 	if meta == nil {
-		meta = &Metadata{SchemaVersion: version, ConfigRevision: snapshot.ConfigRevision()}
+		meta = &Metadata{SchemaVersion: version, ConfigRevision: revision}
 	}
 	if err := candidate.CloseBackup(ctx); err != nil {
 		_ = os.RemoveAll(dir)
