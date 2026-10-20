@@ -47,7 +47,17 @@ func TestChatRequestFieldsAreCarriedOrRefused(t *testing.T) {
 		"max_completion":      {`{` + user + `,"max_completion_tokens":11}`, "options.num_predict", `11`},
 		"max_tokens wins":     {`{` + user + `,"max_tokens":10,"max_completion_tokens":11}`, "options.num_predict", `10`},
 		"tools":               {`{` + user + `,"tools":[{"type":"function","function":{"name":"f"}}]}`, "tools", `[{"function":{"name":"f"},"type":"function"}]`},
-		"tool_choice":         {`{` + user + `,"tool_choice":"auto"}`, "tool_choice", `"auto"`},
+		"tool_choice auto":    {`{` + user + `,"tool_choice":"auto"}`, "tool_choice", `"auto"`},
+		"stop string":         {`{` + user + `,"stop":"###"}`, "options.stop", `["###"]`},
+		"stop list":           {`{` + user + `,"stop":["a","b"]}`, "options.stop", `["a","b"]`},
+		"seed":                {`{` + user + `,"seed":7}`, "options.seed", `7`},
+		"presence_penalty":    {`{` + user + `,"presence_penalty":0.5}`, "options.presence_penalty", `0.5`},
+		"frequency_penalty":   {`{` + user + `,"frequency_penalty":0.25}`, "options.frequency_penalty", `0.25`},
+		"json_object":         {`{` + user + `,"response_format":{"type":"json_object"}}`, "format", `"json"`},
+		"json_schema":         {`{` + user + `,"response_format":{"type":"json_schema","json_schema":{"name":"n","schema":{"type":"object"}}}}`, "format", `{"type":"object"}`},
+		"text format":         {`{` + user + `,"response_format":{"type":"text"}}`, "format", `null`},
+		"tool_choice none":    {`{` + user + `,"tools":[{"type":"function","function":{"name":"f"}}],"tool_choice":"none"}`, "tools", `null`},
+		"empty logit_bias":    {`{` + user + `,"logit_bias":{}}`, "options", `null`},
 		"text parts joined":   {`{"messages":[{"role":"user","content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}]}`, "messages.0.content", `"a\nb"`},
 		"developer is system": {`{"messages":[{"role":"developer","content":"be brief"},{"role":"user","content":"hi"}]}`, "messages.0.role", `"system"`},
 	}
@@ -61,13 +71,12 @@ func TestChatRequestFieldsAreCarriedOrRefused(t *testing.T) {
 	}
 	// Not carried: the pin sends none of these and nothing the request asks for
 	// is lost by leaving them out (PARITY 6.4 gives the reason for each).
-	for _, field := range []string{`"stop":["x"]`, `"seed":1`, `"presence_penalty":1`, `"frequency_penalty":1`, `"logit_bias":{}`,
-		`"top_logprobs":2`, `"store":true`, `"metadata":{"a":"b"}`, `"user":"u"`, `"response_format":{"type":"json_object"}`,
+	for _, field := range []string{`"top_logprobs":2`, `"store":true`, `"metadata":{"a":"b"}`, `"user":"u"`,
 		`"parallel_tool_calls":false`, `"stream_options":{"include_usage":true}`, `"reasoning_effort":"high"`, `"reasoning":{"effort":"low"}`,
 		`"prompt_cache_key":"k"`, `"service_tier":"auto"`, `"modalities":["text"]`} {
 		t.Run("not carried/"+field, func(t *testing.T) {
 			result := mustConvert(t, `{`+user+`,`+field+`}`)
-			for _, key := range []string{"stop", "seed", "response_format", "think", "format", "keep_alive"} {
+			for _, key := range []string{"response_format", "think", "format", "keep_alive", "tool_choice"} {
 				if _, present := result[key]; present {
 					t.Errorf("%s was sent: %v", key, result)
 				}
@@ -78,21 +87,28 @@ func TestChatRequestFieldsAreCarriedOrRefused(t *testing.T) {
 		})
 	}
 	for name, body := range map[string]string{
-		"n>1":                `{` + user + `,"n":2}`,
-		"logprobs":           `{` + user + `,"logprobs":true}`,
-		"audio output":       `{` + user + `,"modalities":["text","audio"]}`,
-		"audio":              `{` + user + `,"audio":{"voice":"x"}}`,
-		"functions":          `{` + user + `,"functions":[{"name":"f"}]}`,
-		"function_call":      `{` + user + `,"function_call":"auto"}`,
-		"input_audio part":   `{"messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"x"}}]}]}`,
-		"file part":          `{"messages":[{"role":"user","content":[{"type":"file","file":{"file_id":"f"}}]}]}`,
-		"unknown part":       `{"messages":[{"role":"user","content":[{"type":"hologram"}]}]}`,
-		"remote image":       `{"messages":[{"role":"user","content":[{"type":"text","text":"t"},{"type":"image_url","image_url":{"url":"https://x/y.png"}}]}]}`,
-		"image without url":  `{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{}}]}]}`,
-		"unknown role":       `{"messages":[{"role":"critic","content":"x"}]}`,
-		"non-function call":  `{"messages":[{"role":"assistant","content":"","tool_calls":[{"id":"c","type":"custom","function":{"name":"f"}}]}]}`,
-		"image in tool turn": `{"messages":[{"role":"assistant","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,QQ=="}}],"tool_calls":[{"id":"c","type":"function","function":{"name":"f"}}]}]}`,
-		"nothing survives":   `{"messages":[{"role":"user","content":""}]}`,
+		"n>1":                  `{` + user + `,"n":2}`,
+		"logprobs":             `{` + user + `,"logprobs":true}`,
+		"audio output":         `{` + user + `,"modalities":["text","audio"]}`,
+		"audio":                `{` + user + `,"audio":{"voice":"x"}}`,
+		"functions":            `{` + user + `,"functions":[{"name":"f"}]}`,
+		"function_call":        `{` + user + `,"function_call":"auto"}`,
+		"input_audio part":     `{"messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"x"}}]}]}`,
+		"file part":            `{"messages":[{"role":"user","content":[{"type":"file","file":{"file_id":"f"}}]}]}`,
+		"unknown part":         `{"messages":[{"role":"user","content":[{"type":"hologram"}]}]}`,
+		"remote image":         `{"messages":[{"role":"user","content":[{"type":"text","text":"t"},{"type":"image_url","image_url":{"url":"https://x/y.png"}}]}]}`,
+		"image without url":    `{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{}}]}]}`,
+		"unknown role":         `{"messages":[{"role":"critic","content":"x"}]}`,
+		"non-function call":    `{"messages":[{"role":"assistant","content":"","tool_calls":[{"id":"c","type":"custom","function":{"name":"f"}}]}]}`,
+		"image in tool turn":   `{"messages":[{"role":"assistant","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,QQ=="}}],"tool_calls":[{"id":"c","type":"function","function":{"name":"f"}}]}]}`,
+		"nothing survives":     `{"messages":[{"role":"user","content":""}]}`,
+		"logit_bias":           `{` + user + `,"logit_bias":{"50256":-100}}`,
+		"tool_choice required": `{` + user + `,"tool_choice":"required"}`,
+		"tool_choice named":    `{` + user + `,"tool_choice":{"type":"function","function":{"name":"f"}}}`,
+		"unknown format":       `{` + user + `,"response_format":{"type":"xml"}}`,
+		"schema missing":       `{` + user + `,"response_format":{"type":"json_schema"}}`,
+		"stop of numbers":      `{` + user + `,"stop":[1]}`,
+		"n":                    `{` + user + `,"n":2}`,
 	} {
 		t.Run("refused/"+name, func(t *testing.T) {
 			if _, err := convert(t, body); err == nil || !strings.HasPrefix(err.Error(), "unsupported") {

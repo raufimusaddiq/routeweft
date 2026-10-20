@@ -3,6 +3,7 @@ package concerns
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 // StreamFailure is a failure the upstream itself reported inside a stream. Value
@@ -34,13 +35,14 @@ func FailChatStream(ctx context.Context, writer *SSEWriter, cause error) error {
 
 // UncarriableChat names what a Chat request asks for that a provider wire that
 // returns one completion of text and tool calls cannot do, or "" when there is
-// none. Refusing is the rule: answering without it is a wrong answer.
-func UncarriableChat(body map[string]any) string {
+// none. Refusing is the rule: answering without it is a wrong answer. wire names
+// the provider wire in the message the client sees ("Anthropic", "Ollama").
+func UncarriableChat(body map[string]any, wire string) string {
 	if n := Int(body["n"]); n > 1 {
-		return "n>1: one completion is returned"
+		return fmt.Sprintf("n=%d: %s returns one completion", n, wire)
 	}
 	if Truthy(body["logprobs"]) {
-		return "logprobs: none are reported"
+		return fmt.Sprintf("logprobs: %s reports none", wire)
 	}
 	for _, modality := range Items(body["modalities"]) {
 		if Text(modality) == "audio" {
@@ -49,7 +51,7 @@ func UncarriableChat(body map[string]any) string {
 	}
 	for _, field := range []string{"audio", "functions", "function_call"} {
 		if Truthy(body[field]) {
-			return "request field \"" + field + "\" (use tools)"
+			return fmt.Sprintf("request field %q (use tools)", field)
 		}
 	}
 	return ""

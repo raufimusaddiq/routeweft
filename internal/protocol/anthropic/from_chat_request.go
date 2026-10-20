@@ -201,7 +201,7 @@ func ChatToMessages(body map[string]any, model string, stream bool) (map[string]
 // cannot do, instead of answering without it. Dropped hints that only shape
 // sampling (seed, penalties, logit_bias, top_logprobs) are recorded in PARITY 6.3.
 func rejectUncarriable(body map[string]any) error {
-	if reason := concerns.UncarriableChat(body); reason != "" {
+	if reason := concerns.UncarriableChat(body, "Anthropic"); reason != "" {
 		return unsupported("%s", reason)
 	}
 	return nil

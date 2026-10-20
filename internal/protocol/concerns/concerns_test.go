@@ -336,14 +336,17 @@ func TestReadLinesFramesNDJSON(t *testing.T) {
 
 func TestUncarriableChatNamesWhatTheWireCannotDo(t *testing.T) {
 	for body, want := range map[string]string{
-		`{"n":2}`: "n>1", `{"logprobs":true}`: "logprobs", `{"modalities":["text","audio"]}`: "audio output",
+		`{"n":2}`: "n=2: Ollama returns one completion", `{"logprobs":true}`: "logprobs: Ollama reports none", `{"modalities":["text","audio"]}`: "audio output",
 		`{"audio":{}}`: `"audio"`, `{"functions":[{}]}`: `"functions"`, `{"function_call":"auto"}`: `"function_call"`,
 	} {
-		if got := UncarriableChat(decode(t, body)); !strings.Contains(got, want) {
+		if got := UncarriableChat(decode(t, body), "Ollama"); !strings.Contains(got, want) {
 			t.Errorf("%s: %q", body, got)
 		}
 	}
-	if got := UncarriableChat(decode(t, `{"n":1,"logprobs":false,"modalities":["text"]}`)); got != "" {
+	if got := UncarriableChat(decode(t, `{"n":2}`), "Anthropic"); got != "n=2: Anthropic returns one completion" {
+		t.Errorf("the Messages wording changed: %q", got)
+	}
+	if got := UncarriableChat(decode(t, `{"n":1,"logprobs":false,"modalities":["text"]}`), "Ollama"); got != "" {
 		t.Errorf("%q", got)
 	}
 }

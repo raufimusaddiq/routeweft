@@ -933,6 +933,8 @@ The pin's two Ollama legs are `request openai-chat>ollama` (`translator/request/
 | V26 | `ollama-to-openai.js:44-46,129` always attach `usage`, with zeros when the response reports no counts. | Usage is present only when `prompt_eval_count` or `eval_count` is positive (`concerns.OllamaUsage`), the same rule the accounting parser uses; `prompt_eval_cached_count` is the cache-read subset of the prompt. | A zero that was never measured is not a measurement (V8). The accounting parser (`shared.parseOllamaUsage`) now reads the cached count too, so a native Ollama record gains `cache_read`; this changes recorded usage, not stored schema. |
 | V27 | `ollama-to-openai.js:35-47` returns at `done:true` without reading `message`. | Text, thinking and tool calls on the final line are emitted before the finish chunk. | Some Ollama versions put the last text there; the pin loses it. |
 | V28 | An `{"error":...}` line or body becomes an empty completion; a stream that stops before `done:true` ends silently (`ollama-to-openai.js:49-58`). | The error object, or the generic incomplete-stream error, ends the stream in the client's protocol (an error object then `[DONE]`), and a buffered error body is a 502. | SPEC 9.3: a failed stream never claims success. |
+| V29 | `openai-to-ollama.js:28-44` sends only `temperature`, `num_predict` and `top_p`. | `stop` is `options.stop`, `seed`, `presence_penalty` and `frequency_penalty` are `options.*`, and `response_format` is `format` (`json_object` is `"json"`, `json_schema` is the schema). An unknown format type, a schema-less `json_schema`, or a `stop` that is not a string or list of strings is refused. | Ollama's `/api/chat` takes `format` ("`json` or a JSON schema") and `options` (`stop`, `seed`, `presence_penalty`, `frequency_penalty`, ...) (ollama `docs/api.md`, checked for this round). The pin drops them, so JSON the client asked for arrives as prose and a stop string is run past, with a 200. The Messages leg already carries the same fields from the same hub body. |
+| V30 | `openai-to-ollama.js:51-54` forwards `tool_choice` verbatim; `/api/chat` has no such field. | `none` withholds the tools. `auto` or absent is as before. `required` or a named function is refused. A non-empty `logit_bias` is refused. | A forwarded `none` lets the model call a tool the client forbade; a forwarded `required` is not honoured. `/api/chat` has no `tool_choice`, `n`, `logit_bias`, or logprobs control. |
 
 Mirrored though odd, each asserted by a test:
 
@@ -953,13 +955,18 @@ The Ollama wire sends thinking and Routeweft carries it: `message.thinking` is `
 | `model`, `stream`, `messages` | carried | pin |
 | `temperature`, `top_p` | carried (`options`) | pin |
 | `max_tokens`; `max_completion_tokens` when `max_tokens` is absent | carried (`options.num_predict`) | pin; V22 |
-| `tools`, `tool_choice` | carried | pin |
+| `tools` | carried | pin |
 | part `text`, `refusal`; `image_url` data URI | carried (text joined with a newline; `images[]` raw base64) | pin |
 | `developer` role | carried (as `system`) | V21 |
 | `tool` message, assistant `tool_calls` | carried (`tool_name`; arguments as an object) | pin; V24 |
-| `stop`, `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `top_logprobs`, `store`, `metadata`, `user`, `response_format`, `parallel_tool_calls`, `stream_options`, `prompt_cache_key`, `service_tier`, `modalities` (text only) | not carried | the pin sends none; none changes what is asked in a way the wire could answer differently |
+| `stop` (string or list) | carried (`options.stop`) | V29 |
+| `seed`, `presence_penalty`, `frequency_penalty` | carried (`options.*`) | V29 |
+| `response_format` (`json_object`, `json_schema`; `text` asks for nothing) | carried (`format`) | V29 |
+| `tool_choice` `auto`; `none` | carried; withholds the tools | V30 |
+| `top_logprobs`, `store`, `metadata`, `user`, `stream_options`, `prompt_cache_key`, `service_tier`, `modalities` (text only) | not carried | bookkeeping or caching hints; `/api/chat` has no field for them and none changes the answer. `top_logprobs` only means something with `logprobs`, which is refused |
+| `parallel_tool_calls:false` | not carried | **known gap**: `/api/chat` has no control for it, so a response may hold several tool calls; the client still receives a valid list |
 | `reasoning_effort`, `reasoning`, assistant `reasoning_content` | not carried | known gap, see Thinking |
-| `n>1`, `logprobs:true`, audio output, `audio`, `functions`, `function_call` | refused | V23 |
+| `n>1`, `logprobs:true`, audio output, `audio`, `functions`, `function_call`, non-empty `logit_bias`, `tool_choice` `required` or a named function, a `response_format` or `stop` that cannot be expressed | refused | V23, V29, V30 |
 | part `input_audio`, `file`, unknown types; `image_url` that is not a base64 data URI; image in a tool-call turn or tool result; unknown roles; non-`function` tool calls; nothing left after conversion | refused | V23 |
 
 #### Response fields, Ollama to Chat (`TestStreamIsConvertedLineByLine`, `TestBufferedBodyIsConverted`)

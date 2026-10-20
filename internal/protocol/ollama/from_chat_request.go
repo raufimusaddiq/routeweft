@@ -20,7 +20,7 @@ import (
 // nothing it asks for is lost), or refused with an error, so the dispatcher
 // tries the next candidate. Nothing is dropped silently.
 func ChatRequestToOllama(body map[string]any, model string, stream, repair bool) ([]byte, error) {
-	if reason := concerns.UncarriableChat(body); reason != "" {
+	if reason := concerns.UncarriableChat(body, "Ollama"); reason != "" {
 		return nil, unsupported("%s", reason)
 	}
 	if repair {
@@ -50,16 +50,98 @@ func ChatRequestToOllama(body map[string]any, model string, stream, repair bool)
 	if value := body["top_p"]; value != nil {
 		options["top_p"] = value
 	}
+	// The pin sends none of these (:28-44) although /api/chat takes each in
+	// options: a stop string ignored runs generation past it (PARITY V29).
+	for _, name := range []string{"seed", "presence_penalty", "frequency_penalty"} {
+		if value := body[name]; value != nil {
+			options[name] = value
+		}
+	}
+	stop, err := stopSequences(body["stop"])
+	if err != nil {
+		return nil, err
+	}
+	if len(stop) > 0 {
+		options["stop"] = stop
+	}
 	if len(options) > 0 {
 		result["options"] = options
 	}
-	if tools, ok := body["tools"].([]any); ok {
-		result["tools"] = tools
+	format, err := responseFormat(body["response_format"])
+	if err != nil {
+		return nil, err
 	}
-	if concerns.Truthy(body["tool_choice"]) {
-		result["tool_choice"] = body["tool_choice"]
+	if format != nil {
+		result["format"] = format
+	}
+	if concerns.Truthy(body["logit_bias"]) && len(concerns.Object(body["logit_bias"])) > 0 {
+		return nil, unsupported("logit_bias: Ollama has no equivalent")
+	}
+	tools, hasTools := body["tools"].([]any)
+	switch choice := body["tool_choice"]; {
+	case !concerns.Truthy(choice), choice == "auto":
+		if hasTools {
+			result["tools"] = tools
+		}
+		if choice == "auto" {
+			result["tool_choice"] = choice
+		}
+	case choice == "none":
+		// Ollama has no tool_choice, so the pin's passthrough (:51-54) lets a
+		// model call a tool the client forbade. Withholding the tools is how this
+		// wire honours "none" (PARITY V30).
+	default:
+		return nil, unsupported("tool_choice %s: Ollama cannot require a tool", concerns.JSONText(choice))
 	}
 	return json.Marshal(result)
+}
+
+// stopSequences accepts a Chat stop value, a string or a list of strings.
+func stopSequences(stop any) ([]any, error) {
+	switch value := stop.(type) {
+	case nil:
+		return nil, nil
+	case string:
+		if value == "" {
+			return nil, nil
+		}
+		return []any{value}, nil
+	case []any:
+		for _, item := range value {
+			if _, ok := item.(string); !ok {
+				return nil, unsupported("stop must be a string or a list of strings")
+			}
+		}
+		return value, nil
+	}
+	return nil, unsupported("stop must be a string or a list of strings")
+}
+
+// responseFormat is Chat's response_format as Ollama's `format`: the string
+// "json" for json_object, the schema itself for json_schema. Text asks for
+// nothing. Anything else is refused: JSON the client asked for must not arrive
+// as prose.
+func responseFormat(value any) (any, error) {
+	format := concerns.Object(value)
+	if value == nil {
+		return nil, nil
+	}
+	if format == nil {
+		return nil, unsupported("response_format must be an object")
+	}
+	switch kind := concerns.Text(format["type"]); kind {
+	case "", "text":
+		return nil, nil
+	case "json_object":
+		return "json", nil
+	case "json_schema":
+		if schema := concerns.Object(concerns.Object(format["json_schema"])["schema"]); schema != nil {
+			return schema, nil
+		}
+		return nil, unsupported("response_format json_schema without a schema")
+	default:
+		return nil, unsupported("response_format type %q", kind)
+	}
 }
 
 func unsupported(format string, args ...any) error {
