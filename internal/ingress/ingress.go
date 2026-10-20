@@ -312,6 +312,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 				attempt.Model = request.Model
 			}
 			attempt.Scope = translationScope(r, provider)
+			attempt.AnthropicBeta = strings.Join(r.Header.Values("Anthropic-Beta"), ",")
 			translated, err = h.opts.TranslateMessages(&attempt, plan.TargetProtocol)
 			if translated.Headers == nil {
 				translated.Headers = http.Header{}

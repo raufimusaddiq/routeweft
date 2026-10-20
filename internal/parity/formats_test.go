@@ -45,11 +45,9 @@ var formatAliases = map[string]string{
 // keyed "kind from>to". Each is tracked work; the list only shrinks (ratchet).
 // Every leg is #119 scope; the value names the PR family that closes it. The
 // gemini and vertex legs landed in PR 5a, the gemini-cli and antigravity legs
-// in PR 5b, and the Kiro Chat legs in PR 4b; what is left is Kiro Messages.
-var trackedLegGaps = map[string]string{
-	"request anthropic-messages>kiro":  "#119 PR 4c Kiro Messages",
-	"response kiro>anthropic-messages": "#119 PR 4c Kiro Messages",
-}
+// in PR 5b, the Kiro Chat legs in PR 4b and the Kiro Messages legs in PR 4c:
+// no leg is left.
+var trackedLegGaps = map[string]string{}
 
 type oracleLeg struct {
 	hub.Leg

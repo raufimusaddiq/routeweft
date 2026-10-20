@@ -27,8 +27,10 @@ type MessagesRequest struct {
 	// provider connection), set by ingress for a translated attempt. A leg that
 	// keeps state between requests keys it by Scope; empty means keep none.
 	Scope string
-	// AnthropicBeta records a client anthropic-beta header value carried in the
-	// parsed request for the native transport to forward.
+	// AnthropicBeta is the client's anthropic-beta header value (every header line,
+	// comma-joined), set by ingress on a translated attempt. A translating leg may
+	// read it as an input (the Kiro leg reads interleaved-thinking from it); nothing
+	// forwards it, and the native path takes the header from the inbound request.
 	AnthropicBeta string
 }
 
