@@ -34,13 +34,17 @@ func NodeBase(nodeBase, specDefault string, settings routing.ProviderSettings) s
 
 // DiscoveryBase is the base a model listing is requested from: the route's base
 // as the provider's Base hook sees it (a Token Plan region host), or the route's
-// own. Unlike ResolveTarget it needs no model, so it works for a provider whose
-// target is built per model (Azure deployments).
-func DiscoveryBase(provider routing.ProviderRef) string {
-	if base := For(provider.ProviderID).Base; base != nil {
-		return base(provider)
+// own. ok is false for a provider that has no model listing at all (Azure), so
+// the caller lists nothing rather than request a URL the provider does not serve.
+func DiscoveryBase(provider routing.ProviderRef) (base string, ok bool) {
+	hook := For(provider.ProviderID)
+	if hook.Unlisted {
+		return "", false
 	}
-	return provider.BaseURL
+	if hook.Base != nil {
+		return hook.Base(provider), true
+	}
+	return provider.BaseURL, true
 }
 
 // URL validates the target's base with validate (the SSRF policy of the caller),

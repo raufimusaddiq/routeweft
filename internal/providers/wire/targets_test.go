@@ -161,3 +161,25 @@ func TestTokenplanTargetCrossProduct(t *testing.T) {
 		}
 	}
 }
+
+// A model listing is requested from serving's base; a provider with no listing
+// has none, and the pin never lists Azure models.
+func TestDiscoveryBase(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		ref      routing.ProviderRef
+		wantBase string
+		wantOK   bool
+	}{
+		{"azure has no listing", ref("azure", chat, "https://acme.openai.azure.com", routing.ProviderSettings{}), "", false},
+		{"tokenplan region", ref("xiaomi-tokenplan", chat, "https://token-plan-sgp.xiaomimimo.com/v1", routing.ProviderSettings{Region: "cn"}), "https://token-plan-cn.xiaomimimo.com/v1", true},
+		{"tokenplan default", ref("xiaomi-tokenplan", chat, "https://token-plan-sgp.xiaomimimo.com/v1", routing.ProviderSettings{}), "https://token-plan-sgp.xiaomimimo.com/v1", true},
+		{"tokenplan custom base", ref("xiaomi-tokenplan", chat, "http://127.0.0.1:9/v1/", routing.ProviderSettings{Region: "cn"}), "http://127.0.0.1:9/v1", true},
+		{"anyone else", ref("kimi", chat, "https://api.kimi.com/coding/v1", routing.ProviderSettings{}), "https://api.kimi.com/coding/v1", true},
+	} {
+		base, ok := DiscoveryBase(c.ref)
+		if base != c.wantBase || ok != c.wantOK {
+			t.Errorf("%s: %q %v want %q %v", c.name, base, ok, c.wantBase, c.wantOK)
+		}
+	}
+}

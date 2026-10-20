@@ -42,6 +42,9 @@ type Hook struct {
 	// Base is the host a model listing is requested from, when it is not the
 	// route's base (a Token Plan region).
 	Base func(routing.ProviderRef) string
+	// Unlisted marks a provider with no model listing: the reference never lists
+	// its models, and a URL we cannot verify is not invented for it.
+	Unlisted bool
 	// Target resolves where the request goes when that depends on the
 	// connection, the model or the wire (a deployment path, a region, a query).
 	Target func(routing.ProviderRef) (Target, error)
@@ -70,7 +73,7 @@ var hooks = map[string]Hook{
 	"minimax-cn":       minimaxHook,
 	"deepseek":         {Finalize: supportedToolTypes("web_search_20250305", "web_search_20260209")},
 	"kenari":           {Finalize: foldResponsesSystem},
-	"azure":            {NoOpenAIBearer: true, OpenAIHeaders: azureHeaders, Target: azureTarget},
+	"azure":            {NoOpenAIBearer: true, OpenAIHeaders: azureHeaders, Target: azureTarget, Unlisted: true},
 	"xiaomi-tokenplan": {Target: tokenplanTarget, Base: tokenplanBase},
 	"glm":              {Target: betaQuery},
 	"kimi":             {OpenAIHeaders: kimiDeviceHeaders, MessagesHeaders: kimiDeviceHeaders, Target: betaQuery},

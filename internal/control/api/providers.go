@@ -702,6 +702,19 @@ func (h *Handler) fetchConnectionModelEntries(ctx context.Context, connection cr
 	if slicesContain(node.Transports, string(registry.TransportOllama)) {
 		path = "api/tags"
 	}
+	protocol := string(registry.TransportOpenAIChat)
+	if slicesContain(node.Transports, string(registry.TransportAnthropic)) {
+		protocol = string(registry.TransportAnthropic)
+	}
+	// The listing is requested from the base serving would use (wire.NodeBase,
+	// then the provider's own host such as a Token Plan region). A provider with
+	// no model listing (Azure) lists nothing: no credential is read and nothing is
+	// sent.
+	route := probeRef(node, connection, spec, protocol, "", "")
+	listBase, listable := wire.DiscoveryBase(route)
+	if !listable {
+		return nil, nil
+	}
 	style := discovery.AuthBearer
 	if slicesContain(node.Transports, string(registry.TransportGemini)) {
 		style = discovery.AuthGoogleAPIKey
@@ -722,18 +735,11 @@ func (h *Handler) fetchConnectionModelEntries(ctx context.Context, connection cr
 	case credentials.AuthCookie:
 		style = discovery.AuthCookie
 	}
-	protocol := string(registry.TransportOpenAIChat)
-	if slicesContain(node.Transports, string(registry.TransportAnthropic)) {
-		protocol = string(registry.TransportAnthropic)
-	}
-	// The listing is requested from the base serving would use (wire.NodeBase,
-	// then the provider's own host such as a Token Plan region).
-	route := probeRef(node, connection, spec, protocol, "", "")
 	headers := make(map[string]string)
 	for name, values := range modelWireHeaders(route) {
 		headers[name] = values[0]
 	}
-	return client.ModelEntries(ctx, discovery.Request{ProviderID: node.ProviderID, BaseURL: wire.DiscoveryBase(route), Path: path, Credential: credential, AuthStyle: style, Headers: headers})
+	return client.ModelEntries(ctx, discovery.Request{ProviderID: node.ProviderID, BaseURL: listBase, Path: path, Credential: credential, AuthStyle: style, Headers: headers})
 }
 
 func modelWireProviderID(node credentials.Node) string {

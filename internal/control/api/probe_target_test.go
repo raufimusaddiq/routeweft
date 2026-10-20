@@ -130,7 +130,6 @@ func TestModelListingsTakeServingsBase(t *testing.T) {
 		settings routing.ProviderSettings
 		wantHost string
 	}{
-		{"azure", routing.ProviderSettings{AzureEndpoint: "https://acme.openai.azure.com"}, "acme.openai.azure.com"},
 		{"xiaomi-tokenplan", routing.ProviderSettings{Region: "cn"}, "token-plan-cn.xiaomimimo.com"},
 		{"xiaomi-tokenplan", routing.ProviderSettings{}, "token-plan-sgp.xiaomimimo.com"},
 		{"kimi", routing.ProviderSettings{DeviceID: "dev-9"}, "api.kimi.com"},
@@ -178,5 +177,17 @@ func TestRouteListingUsesServingsTargets(t *testing.T) {
 	// An Azure route depends on the connection's endpoint and deployment: none to list.
 	if got := body("azure"); !strings.Contains(got, `"routes":{}`) {
 		t.Errorf("azure routes %s", got)
+	}
+}
+
+// Azure has no model listing at the pin (registry/azure.js declares no models
+// fetcher; validate/route.js validates by a deployment chat request), so listing
+// is a clean no-op: no credential read, no request, no error.
+func TestAzureModelListingIsANoOp(t *testing.T) {
+	h, calls := recordingHandler(t)
+	node, connection := builtinConnection("azure", routing.ProviderSettings{AzureEndpoint: "https://acme.openai.azure.com", Deployment: "d1"}, credentials.AuthAPIKey)
+	models, err := h.fetchConnectionModelEntries(context.Background(), connection, node)
+	if err != nil || len(models) != 0 || len(calls()) != 0 {
+		t.Fatalf("models=%v err=%v calls=%v", models, err, calls())
 	}
 }

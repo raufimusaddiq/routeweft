@@ -11,7 +11,11 @@ func has(m map[string]any, key string) bool { _, ok := m[key]; return ok }
 // GitHub Copilot: model x max_tokens x max_completion_tokens x reasoning_effort.
 func TestGithubChatBodyCrossProduct(t *testing.T) {
 	models := map[string]bool{"gpt-5": true, "gpt-5.2-codex": true, "o3-mini": true, "o1-preview": true, "o4-mini": true, "GPT-5-mini": true,
-		"gpt-4o": false, "claude-sonnet-4.5": false, "gemini-2.5-pro": false, "o2-x": false}
+		"gpt-4o": false, "claude-sonnet-4.5": false, "gemini-2.5-pro": false, "o2-x": false,
+		// Bare o-series ids are completion-token models too (the pin's dash misses them)...
+		"o1": true, "o3": true, "o4": true, "O3": true,
+		// ...and an id that only contains one is not (the pin's lack of an anchor matches it).
+		"deepseek-o3-mini": false, "my-o1-clone": false, "o10": false, "o3x": false, "foo/o3": false}
 	tokens := map[string]string{"absent": "", "number": `"max_tokens":100,`, "null": `"max_tokens":null,`}
 	completions := map[string]string{"absent": "", "present": `"max_completion_tokens":7,`}
 	efforts := map[string]string{"absent": "", "none": `"reasoning_effort":"none",`, "high": `"reasoning_effort":"high",`, "non-string": `"reasoning_effort":["none"],`}

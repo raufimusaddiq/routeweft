@@ -30,8 +30,13 @@ func isArrayRaw(raw json.RawMessage) bool {
 
 // ---- GitHub Copilot Chat Completions (open-sse/executors/github.js) ----
 
-// GitHub's newer OpenAI models require max_completion_tokens (github.js:94-96).
-var githubCompletionTokensModel = regexp.MustCompile(`(?i)gpt-5|o[134]-`)
+// GitHub's newer OpenAI models require max_completion_tokens (github.js:94-96,
+// /gpt-5|o[134]-/i). Divergence: the pin's o-series test is unanchored and needs
+// a dash, so the bare ids o1, o3 and o4 miss it (the 400 it exists to prevent) and
+// a foreign id such as deepseek-o3-mini matches it (moving the field is wrong
+// there). Here the o-series is an id that starts o1, o3 or o4 and then ends or
+// continues with a dash; gpt-5 stays as in the pin.
+var githubCompletionTokensModel = regexp.MustCompile(`(?i)gpt-5|^o[134](?:-|$)`)
 
 // githubChatBody applies the Copilot /chat/completions quirks to a Chat body:
 // max_tokens becomes max_completion_tokens for gpt-5 and o-series models
@@ -202,7 +207,7 @@ func kimchiBody(protocol string, body Body) bool {
 		// A `system` that cannot be carried stays where it is; that failure is
 		// local. The field drops, reasoning strip and artifact stripping below
 		// are independent of it and always run.
-		if _, ok := mergeKimchiSystem(body, raw); ok {
+		if mergeKimchiSystem(body, raw) {
 			delete(body, "system")
 			changed = true
 		}
@@ -232,23 +237,24 @@ func kimchiBody(protocol string, body Body) bool {
 	return changed
 }
 
-// mergeKimchiSystem folds a top-level Anthropic `system` into messages. ok is
-// false when it cannot be carried, so the caller leaves the body alone.
-func mergeKimchiSystem(body Body, raw json.RawMessage) (merged, ok bool) {
+// mergeKimchiSystem folds a top-level Anthropic `system` into messages. It
+// reports false when `system` cannot be carried, so the caller leaves the field in
+// place; true means it was folded in or had nothing to carry.
+func mergeKimchiSystem(body Body, raw json.RawMessage) bool {
 	if !jsTruthy(raw) {
-		return false, true
+		return true
 	}
 	text, carried := systemTopLevelText(raw)
 	if !carried {
-		return false, false
+		return false
 	}
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return false, true
+		return true
 	}
 	var messages []json.RawMessage
 	if json.Unmarshal(body["messages"], &messages) != nil || !isArrayRaw(body["messages"]) {
-		return false, false
+		return false
 	}
 	for i, rawMessage := range messages {
 		var message map[string]json.RawMessage
@@ -267,25 +273,25 @@ func mergeKimchiSystem(body Body, raw json.RawMessage) (merged, ok bool) {
 		case isArrayRaw(message["content"]):
 			var parts []json.RawMessage
 			if json.Unmarshal(message["content"], &parts) != nil {
-				return false, false
+				return false
 			}
 			lead, _ := json.Marshal(map[string]string{"type": "text", "text": text})
 			message["content"], _ = json.Marshal(append([]json.RawMessage{lead}, parts...))
 		default:
-			return false, false
+			return false
 		}
 		encoded, err := json.Marshal(message)
 		if err != nil {
-			return false, false
+			return false
 		}
 		messages[i] = encoded
-		return true, setJSON(body, "messages", messages)
+		return setJSON(body, "messages", messages)
 	}
 	lead, err := json.Marshal(map[string]string{"role": "system", "content": text})
 	if err != nil {
-		return false, false
+		return false
 	}
-	return true, setJSON(body, "messages", append([]json.RawMessage{lead}, messages...))
+	return setJSON(body, "messages", append([]json.RawMessage{lead}, messages...))
 }
 
 func isNullRaw(raw json.RawMessage) bool { return strings.TrimSpace(string(raw)) == "null" }
