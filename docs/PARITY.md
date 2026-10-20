@@ -948,6 +948,7 @@ One seam builds every upstream URL: `wire.NodeBase` (node base, else catalog def
 | `max_completion_tokens`, `reasoning_effort:"none"`, content-part sanitising on /chat/completions | github | `executors/github.js:56-107,144-147` | ported |
 | Gateway field drops, `system` merge, artifact stripping | kimchi | `executors/kimchi.js:4-120` | ported |
 | Per-request HMAC request signature: `x-iflow-signature` = HMAC-SHA256(apiKey, `"<User-Agent>:<session-id>:<unix-ms>"`) hex, with `session-id: session-<uuid4>` and `x-iflow-timestamp` | iflow | `executors/iflow.js:29-35` (canonical input `:31`, HMAC `:32-34`), headers `:43-64`, UA source `registry/iflow.js:19-21` | **ported (#115 PR-E)**; a connection with no credential is refused before dispatch rather than sent unsigned. **Live acceptance is UNVERIFIED offline** — the signature is pinned byte-for-byte against a fixed vector, but no request has been made to `apis.iflow.cn`, so that the gateway accepts it is not claimed here. |
+| Qoder COSY request signing: `Authorization: Bearer COSY.<payloadB64>.<md5hex>` where md5hex covers `payloadB64\ncosyKey\ntimestamp\nbodyLatin1\nsigPath`; AES-128-CBC user-info payload with the key RSA-wrapped per request; 19 `Cosy-*`/`Login-Version`/`X-Request-Id` headers | qoder | `shared/qoder/cosy.js:116-175` (signature `:146-148`, AES `:44-55`, RSA `:57-63`), constants `shared/qoder/constants.js:67-74,98-105` | **builder implemented (#115 PR-G), NOT wired, unverified against a live gateway.** `wire.BuildCosyHeaders` is pinned byte-for-byte (canonical string, md5, AES ciphertext) but no hook calls it and no request has been made to `api3.qoder.sh`. It takes `machineId` as input and fails closed when it, the user id or the token is empty; it never generates or persists one. Follow-up PR must add: a dispatch hook with a body-aware signature (the signature covers the exact outbound body and URL, which `Hook.OpenAIHeaders` does not see), `machineId` supplied from the connection meta minted at onboarding (`onboarding/providers.go:455`), and consumption of the full header set. |
 | Model listing | azure | none at the pin: `registry/azure.js:15-20` declares no models fetcher and `src/app/api/providers/validate/route.js:155-181` validates by a deployment chat request | **no listing**: discovery is a clean no-op (no credential read, no request, no error); `{endpoint}/openai/models` is not invented because it cannot be verified |
 | Claude models to the Messages endpoint, `/responses` fallback after a 400 | github | `executors/github.js:126-165,255-297` | **not in this PR**: it selects the transport by model name and retries across wires |
 | `User-Agent: kimchi/0.1.50`, `x-opencode-client`, OpenRouter `HTTP-Referer`/`X-Title` | kimchi, opencode, openrouter, api-airforce | `registry/kimchi.js:22`, `opencode.js:17`, `openrouter.js:23`, `api-airforce.js:28` | **not shipped / not in this PR**: product identities and attributions that are not Routeweft's |
@@ -1530,9 +1531,10 @@ Owner-approved differences from the pin:
 - Explicit reasoning summaries survive. An absent summary defaults to `auto`
   only for a nonempty string reasoning effort. `none`/`off` omit effort, as in
   the pin; matching also tolerates case and surrounding whitespace.
-- The single-space assistant reasoning placeholder is restricted to CodeBuddy
-  Kimi tool-call history and DeepSeek assistant history. Existing nonempty
-  reasoning and malformed values remain for the gateway to judge.
+- The single-space assistant reasoning placeholder is no longer CodeBuddy
+  specific: it is generic finalize behaviour (section "Body sanitation at
+  finalize"). Existing nonempty reasoning and malformed values remain for the
+  gateway to judge.
 - Code 6004 (numeric or numeric string), or limit text, sets internal quota
   cooldown accounting without rewriting the client-visible status or body.
   Non-string messages cannot hide 6004. Valid future reset timestamps override
@@ -1552,3 +1554,44 @@ Remaining limits: gateway acceptance of Routeweft identity and international
 requests without a caller system prompt is unverified offline. Omitted usage
 cannot be recovered. Broader thinking-format translation remains #119. These
 fixtures establish wire behavior, not live-provider qualification or GA readiness.
+
+## Body sanitation at finalize (#115 PR F)
+
+Oracle: `1c3b9f47`. `DefaultExecutor.transformRequest` runs
+`stripUnsupportedParams` and `injectReasoningContent` on the body it is about to
+send (`open-sse/executors/default.js:106,109`); the translator only applies
+`preserveCacheControl` (`translator/index.js:152`). Routeweft now applies both
+rule sets in `wire.FinalizeBody` (`internal/providers/wire/sanitize.go`), before
+the provider's own hook, so a body is sanitised whichever leg built it. Before
+this PR none of the strip rules existed in Routeweft at any stage, and the
+reasoning placeholder existed only inside the two CodeBuddy hooks; nothing was
+moved out of a translator, every rule below except `dropClientMetadata`,
+`foldResponsesSystem` and the CodeBuddy placeholder is **added**.
+
+| Rule | Pin | Routeweft | Divergence and consequence |
+| --- | --- | --- | --- |
+| `claude` model: drop `temperature` | `paramSupport.js:10` | finalize, any provider, any wire | none |
+| github `gpt-5.4`: drop `temperature` | `paramSupport.js:12` | finalize, github | none |
+| github Claude except opus/sonnet 4.6: drop `thinking`, `reasoning_effort` | `paramSupport.js:14` | finalize, github | none |
+| cloudflare-ai: flatten content parts to a string | `paramSupport.js:16,78-86` | finalize, Chat bodies | Chat only: on a Messages body flattening would destroy `tool_use`/image blocks. A Messages body to cloudflare-ai is not flattened. |
+| xiaomi-mimo `preview`: flatten content | `paramSupport.js:19` | finalize, Chat bodies | as above |
+| volcengine-ark `kimi`: cap output at 32768 | `paramSupport.js:26,87-102` | finalize, `max_tokens`/`max_completion_tokens`/`max_output_tokens` | the pin also clamps to the model's catalogued `maxOutput`; Routeweft has no capability catalog, so only the explicit cap applies |
+| volcengine-ark `glm-5`: clamp to model max output | `paramSupport.js:20` | **not carried** | needs the same catalog; a request above the model's ceiling reaches Ark unclamped and is answered 400 there |
+| groq, mistral, cerebras: drop `reasoning_content`, `reasoning`, `reasoning_details` from assistant messages | `paramSupport.js:33-35,69-76` | finalize, Chat bodies | Chat only (Messages and Responses carry no such field) |
+| opencode-go `deepseek*`: drop `response_format` | `paramSupport.js:44` | finalize | none |
+| reasoning placeholder `" "` on assistant messages: registry providers deepseek, minimax, minimax-cn, opencode (all turns); `kimi-*` models (tool-call turns); `deepseek` models (all turns) | `reasoningContentInjector.js:6-43,70-76` | finalize, Chat bodies | Chat only: a Messages body would be sent a field its schema rejects. A non-string `reasoning_content` is left for the gateway where the pin overwrites it. A mistral/groq/cerebras request for a deepseek model is stripped then re-injected, in the pin's order. |
+| `deepseek-v4-pro-max` / `-none` aliases | `reasoningContentInjector.js:17-27,45-68` | finalize, deepseek provider, Chat bodies | an `extra_body` or `extra_body.thinking` that is present but not an object leaves the body as received (the pin spreads it into garbage) |
+| `dropClientMetadata`, `foldResponsesSystem` | `default.js:97-104` | finalize, already (earlier PRs) | see their own rows |
+| `preserveCacheControl` | `translator/index.js:152` | translator (`openai.FilterChatBody`); **not** repeated at finalize | none; a test fails if finalize touches `cache_control` |
+
+Which providers: the pin reaches only DefaultExecutor-derived executors.
+Routeweft therefore applies neither set to antigravity, azure (its
+`transformRequest` returns the body, `azure.js:54`), codex, commandcode, cursor,
+devin-cli, gemini-cli, grok-cli, grok-web, iflow, kiro, mimo-free,
+perplexity-web, qoder, trae, vertex, vertex-partner, windsurf or zed; github gets
+the strip rules only (`github.js:109`) and opencode the injection only
+(`opencode.js:464`).
+
+Hot path: `FinalizeBody` now parses the body for every provider that takes either
+set (all but the list above), where before only providers with a hook did. It is
+one top-level decode and a re-encode only when a rule fires; no benchmark was run.

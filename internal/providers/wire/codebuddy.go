@@ -32,14 +32,14 @@ import (
 var codebuddyCN = Hook{
 	ForceStream:         true,
 	StripEmptyToolCalls: true,
-	Finalize:            chain(codebuddyStream, codebuddyReasoning, reasoningPlaceholder),
+	Finalize:            chain(codebuddyStream, codebuddyReasoning),
 	ClassifyError:       codebuddyFrequencyLimit,
 }
 
 var codebuddyIntl = Hook{
 	ForceStream:         true,
 	StripEmptyToolCalls: true,
-	Finalize:            chain(codebuddyStream, codebuddyReasoning, codebuddyIntlMessages, reasoningPlaceholder),
+	Finalize:            chain(codebuddyStream, codebuddyReasoning, codebuddyIntlMessages),
 	ClassifyError:       codebuddyFrequencyLimit,
 }
 
@@ -182,80 +182,6 @@ func codebuddyIntlMessages(protocol string, body Body) bool {
 		return false
 	}
 	return setJSON(body, "messages", ordered)
-}
-
-var (
-	reasoningPlaceholderKimi     = regexp.MustCompile(`(?i)^kimi-`)
-	reasoningPlaceholderDeepseek = regexp.MustCompile(`(?i)deepseek`)
-)
-
-// reasoningPlaceholder: thinking-mode models require reasoning_content echoed on
-// assistant messages and OpenAI-format clients do not send it, so the reference
-// injects a single space (open-sse/utils/reasoningContentInjector.js:7,12-15,
-// 29-43, reached through DefaultExecutor.transformRequest, default.js:109).
-// kimi-* models need it only on an assistant message that carries tool_calls;
-// deepseek models on every assistant message.
-//
-// The space is a structural placeholder, not invented content: the model is
-// told no reasoning text. It is scoped to the two CodeBuddy hooks. The same rule
-// for the direct deepseek and kimi providers is a separate ticket and is not
-// generalised here.
-//
-// An assistant message that already has a non-empty string reasoning_content is
-// kept. The pin also overwrites a reasoning_content of another type; that is a
-// client's malformed value and is left for the gateway to judge, so only an
-// absent, null or empty one is filled.
-func reasoningPlaceholder(protocol string, body Body) bool {
-	if protocol != openaiadapter.ChatProtocol {
-		return false
-	}
-	var model string
-	_ = json.Unmarshal(body["model"], &model)
-	var toolCallsOnly bool
-	switch {
-	case reasoningPlaceholderDeepseek.MatchString(model):
-	case reasoningPlaceholderKimi.MatchString(model):
-		toolCallsOnly = true
-	default:
-		return false
-	}
-	var messages []json.RawMessage
-	if json.Unmarshal(body["messages"], &messages) != nil {
-		return false
-	}
-	changed := false
-	for i, raw := range messages {
-		var message map[string]json.RawMessage
-		if json.Unmarshal(raw, &message) != nil || message == nil {
-			continue
-		}
-		var role string
-		if json.Unmarshal(message["role"], &role) != nil || role != "assistant" {
-			continue
-		}
-		if existing, present := message["reasoning_content"]; present && !isNullRaw(existing) {
-			var text string
-			if json.Unmarshal(existing, &text) != nil || text != "" {
-				continue // non-empty text, or a type the gateway should judge
-			}
-		}
-		if toolCallsOnly {
-			var calls []json.RawMessage
-			if json.Unmarshal(message["tool_calls"], &calls) != nil || len(calls) == 0 {
-				continue
-			}
-		}
-		message["reasoning_content"] = json.RawMessage(`" "`)
-		encoded, err := json.Marshal(message)
-		if err != nil {
-			return false
-		}
-		messages[i], changed = encoded, true
-	}
-	if !changed {
-		return false
-	}
-	return setJSON(body, "messages", messages)
 }
 
 // codebuddyLimitText is the reference's text test (codebuddy-error.js:6).
