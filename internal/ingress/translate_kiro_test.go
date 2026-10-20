@@ -18,11 +18,11 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
-// Kiro's four legs exist, the pin dispatches the Messages pair directly, and the
-// wire hook binds its URL, auth and account headers (PR 4d), so Kiro is routable
-// from every client wire. A Messages client must not pivot through Chat where the
-// pin has a direct pair.
-func TestKiroLegsAreDeclaredAndRoutable(t *testing.T) {
+// Kiro's four legs exist and the pin dispatches the Messages pair directly, but
+// the endpoint binding (three-host order, region rewrite, 401/403/404 fallback)
+// is not built, so nothing may route to Kiro yet. A Messages client must not
+// pivot through Chat where the pin has a direct pair.
+func TestKiroLegsAreDeclaredButKiroStaysUnwired(t *testing.T) {
 	for _, leg := range []hub.Leg{
 		{From: openai.ChatProtocol, To: kiroadapter.Protocol, Kind: hub.Request},
 		{From: kiroadapter.Protocol, To: openai.ChatProtocol, Kind: hub.Response},
@@ -42,12 +42,12 @@ func TestKiroLegsAreDeclaredAndRoutable(t *testing.T) {
 			t.Errorf("%s Messages<->Kiro is %v, want the direct leg", kind, route)
 		}
 	}
-	if unwired[kiroadapter.Protocol] {
-		t.Error("Kiro is still unwired")
-	}
 	for _, client := range []string{openai.ChatProtocol, openai.ResponsesProtocol, anthropic.MessagesProtocol} {
-		if !CanTranslate(client, kiroadapter.Protocol) {
-			t.Errorf("%s client cannot reach Kiro", client)
+		if !hub.CanTranslate(client, kiroadapter.Protocol) {
+			t.Errorf("%s client has no legs to Kiro", client)
+		}
+		if CanTranslate(client, kiroadapter.Protocol) {
+			t.Errorf("%s client can reach Kiro before its endpoint binding exists", client)
 		}
 	}
 }
@@ -149,6 +149,10 @@ func TestMessagesBetaHeaderSelectsThinkingAndIsNotForwarded(t *testing.T) {
 		_, _ = w.Write(append(kiroFrame("assistantResponseEvent", `{"content":"<thinking>plan</thinking>\nanswer"}`), kiroFrame("messageStopEvent", `{}`)...))
 	}))
 	defer upstream.Close()
+	// Kiro is unwired, so the handler would skip it; this test is about the leg and
+	// the header, which a later PR's unwire will exercise for real.
+	unwired[kiroadapter.Protocol] = false
+	defer func() { unwired[kiroadapter.Protocol] = true }()
 	ref := routing.ProviderRef{ProviderID: "kiro", Protocol: kiroadapter.Protocol, BaseURL: upstream.URL, APIToken: "fixture-token",
 		Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{ProfileARN: "arn:fixture", AuthMethod: "external_idp"}}}
 	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, TranslateChat: TranslateChat, TranslateResponses: TranslateResponses, TranslateMessages: TranslateMessages,
