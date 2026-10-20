@@ -36,7 +36,11 @@ func FinalizeBody(provider routing.ProviderRef, body []byte) []byte {
 		return body
 	}
 	changed := sanitizeBody(provider.ProviderID, provider.Protocol, parsed)
-	if finalize := For(provider.ProviderID).Finalize; finalize != nil && finalize(provider.Protocol, parsed) {
+	hook := For(provider.ProviderID)
+	if finalize := hook.Finalize; finalize != nil && finalize(provider.Protocol, parsed) {
+		changed = true
+	}
+	if finalize := hook.FinalizeAccount; finalize != nil && finalize(provider, parsed) {
 		changed = true
 	}
 	if !changed {

@@ -27,6 +27,7 @@ func TestProviderSettingsPublishRotateAndRestore(t *testing.T) {
 		data            map[string]string
 		want            routing.ProviderSettings
 	}{
+		{"kiro", "fixture-model", map[string]string{"profileArn": "arn:aws:codewhisperer:us-east-1:123456789012:profile/fixture", "authMethod": "external_idp"}, routing.ProviderSettings{ProfileARN: "arn:aws:codewhisperer:us-east-1:123456789012:profile/fixture", AuthMethod: "external_idp"}},
 		{"azure", "gpt-4", map[string]string{"azureEndpoint": "https://fixture.openai.azure.com", "apiVersion": "2024-10-01-preview", "deployment": "fixture-deploy", "organization": "fixture-org"}, routing.ProviderSettings{AzureEndpoint: "https://fixture.openai.azure.com", APIVersion: "2024-10-01-preview", Deployment: "fixture-deploy", Organization: "fixture-org"}},
 		{"xiaomi-tokenplan", "fixture-model", map[string]string{"region": "cn"}, routing.ProviderSettings{Region: "cn"}},
 		{"grok-cli", "grok-4", map[string]string{"workspaceId": "fixture-workspace", "deviceId": "fixture-device", "agentId": "fixture-agent", "email": "fixture@example.invalid", "userId": "fixture-user"}, routing.ProviderSettings{WorkspaceID: "fixture-workspace", DeviceID: "fixture-device", AgentID: "fixture-agent", Email: "fixture@example.invalid", UserID: "fixture-user"}},

@@ -8,8 +8,9 @@ import (
 	"strings"
 )
 
-// ProviderSettings is the allowlisted, non-authentication projection of sealed provider data.
+// ProviderSettings is the allowlisted, non-secret projection of sealed provider data.
 type ProviderSettings struct {
+	ProfileARN, AuthMethod                                              string
 	BaseURL, AzureEndpoint, APIVersion, Deployment, Organization        string
 	Region, WorkspaceID, DeviceID, AgentID                              string
 	Email, UserID, SystemID, OrganizationID, DefaultOrganizationID, UID string

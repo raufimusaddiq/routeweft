@@ -34,8 +34,8 @@ func TestResolveTargetWithoutHookIsTheRoute(t *testing.T) {
 func TestBetaQueryIsMessagesOnlyAndOnlyForTheDeclaringProviders(t *testing.T) {
 	declaring := map[string]bool{"claude": true, "glm": true, "kimi": true, "minimax": true, "minimax-cn": true}
 	for _, id := range providerIDs() {
-		if id == "azure" || id == "vertex-partner" {
-			continue // azure: api-version is in TestAzureTargetCrossProduct; vertex-partner needs a project, see its own tests
+		if id == "azure" || id == "vertex-partner" || id == "kiro" {
+			continue // These providers require settings covered by their own target tests.
 		}
 		for _, protocol := range []string{chat, responses, messages} {
 			got, err := ResolveTarget(ref(id, protocol, "https://x.example", routing.ProviderSettings{}), "messages")

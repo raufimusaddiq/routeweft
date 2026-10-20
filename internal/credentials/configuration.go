@@ -149,6 +149,7 @@ func loadConfiguration(ctx context.Context, db *sql.DB, sealer *Sealer, settings
 
 func projectSettings(data map[string]string) routing.ProviderSettings {
 	return routing.ProviderSettings{
+		ProfileARN: data["profileArn"], AuthMethod: data["authMethod"],
 		BaseURL: data["baseUrl"], AzureEndpoint: data["azureEndpoint"], APIVersion: data["apiVersion"],
 		Deployment: data["deployment"], Organization: data["organization"], Region: data["region"],
 		WorkspaceID: data["workspaceId"], DeviceID: data["deviceId"], AgentID: data["agentId"],
