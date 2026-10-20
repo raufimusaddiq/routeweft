@@ -98,6 +98,7 @@ func TestKiroFailsClosed(t *testing.T) {
 	for _, field := range []string{"profileArn", "authMethod"} {
 		for _, value := range []string{"", "  ", "invalid\r\nheader", "invalid\x00header"} {
 			p := kiroRef()
+			p.Connection.Settings.AuthMethod = "external_idp"
 			if field == "profileArn" {
 				p.Connection.Settings.ProfileARN = value
 			} else {
@@ -168,6 +169,74 @@ func TestKiroCredentialHeadersAreRedacted(t *testing.T) {
 	for _, name := range []string{"Authorization", "x-amz-sso-bearer"} {
 		if got := telemetry.RedactHeaderValue(name, headers.Get(name)); got != "[redacted]" {
 			t.Errorf("credential header %s escaped redaction", name)
+		}
+	}
+}
+
+func TestKiroMatchingProfilePreservesOriginalBytes(t *testing.T) {
+	p := kiroRef()
+	encoded, err := json.Marshal(p.Connection.Settings.ProfileARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, profile := range []string{string(encoded), strings.Replace(string(encoded), "arn:", `\u0061rn:`, 1)} {
+		original := []byte("{ \n  \"future\": true, \"profileArn\" : " + profile + " }")
+		var parsed Body
+		if err := json.Unmarshal(original, &parsed); err != nil {
+			t.Fatal(err)
+		}
+		if kiroBody(p, parsed) {
+			t.Fatal("matching profile reported a change")
+		}
+		if got := FinalizeBody(p, original); string(got) != string(original) {
+			t.Fatalf("unchanged body was re-encoded: %s", got)
+		}
+	}
+}
+
+func TestKiroAPIKeyMayOmitStoredProfile(t *testing.T) {
+	for _, profile := range []string{"", "  "} {
+		p := kiroRef()
+		p.Connection.Settings.ProfileARN = profile
+		if _, err := ResolveTarget(p, "chat/completions"); err != nil {
+			t.Fatalf("API key without profile refused: %v", err)
+		}
+		if _, present := OpenAIHeaders(p)["X-Amzn-Codewhisperer-Profile-Arn"]; present {
+			t.Fatal("missing profile produced a header")
+		}
+		original := []byte(`{ "conversationState" : {"future": true} }`)
+		if got := FinalizeBody(p, original); string(got) != string(original) {
+			t.Fatalf("absent profile changed body: %s", got)
+		}
+		var fields Body
+		if err := json.Unmarshal(FinalizeBody(p, []byte(`{"profileArn":"client-selected-profile","future":true}`)), &fields); err != nil {
+			t.Fatal(err)
+		}
+		if _, present := fields["profileArn"]; present || string(fields["future"]) != "true" {
+			t.Fatalf("client profile survived omission: %s", fields["profileArn"])
+		}
+	}
+	for _, auth := range []string{"external_idp", "idc", "builder-id", "google", "github", "import"} {
+		p := kiroRef()
+		p.Connection.Settings.AuthMethod, p.Connection.Settings.ProfileARN = auth, ""
+		if _, err := ResolveTarget(p, "generateAssistantResponse"); err == nil || !strings.Contains(err.Error(), "profileArn") {
+			t.Fatalf("%s without profile: %v", auth, err)
+		}
+	}
+}
+
+func TestKiroCredentialHeadersUseOneTrimmedToken(t *testing.T) {
+	for _, token := range []string{"", "  ", "\t\r\n", "fixture-token", " \tfixture-token\r\n"} {
+		p := kiroRef()
+		p.APIToken = token
+		headers := OpenAIHeaders(p)
+		trimmed := strings.TrimSpace(token)
+		if trimmed == "" {
+			if len(headers) != 0 {
+				t.Fatal("blank credential emitted headers")
+			}
+		} else if headers.Get("Authorization") != "Bearer "+trimmed || headers.Get("x-amz-sso-bearer") != trimmed {
+			t.Fatal("credential headers disagree with the trimmed token")
 		}
 	}
 }

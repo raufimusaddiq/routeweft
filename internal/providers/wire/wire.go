@@ -97,7 +97,7 @@ var hooks = map[string]Hook{
 	"kimi":             {OpenAIHeaders: kimiDeviceHeaders, MessagesHeaders: kimiDeviceHeaders, Target: betaQuery},
 	"kilocode":         {OpenAIHeaders: kilocodeOrgHeaders},
 	"iflow":            {OpenAIHeaders: iflowHeaders, RequireCredential: true},
-	"kiro":             {OpenAIHeaders: kiroHeaders, Target: kiroTarget, FinalizeAccount: kiroBody, RequireCredential: true},
+	"kiro":             {NoOpenAIBearer: true, OpenAIHeaders: kiroHeaders, Target: kiroTarget, FinalizeAccount: kiroBody, RequireCredential: true},
 	"github":           githubHook,
 	"kimchi":           {Finalize: kimchiBody},
 	"cline":            clineHook,
@@ -106,6 +106,7 @@ var hooks = map[string]Hook{
 	"codebuddy-intl":   codebuddyIntl,
 	"opencode":         {Target: opencodeTarget, ForceStream: true, Finalize: codebuddyStream},
 	"vertex-partner":   {Target: vertexPartnerTarget},
+	"cloudflare-ai":    {Target: cloudflareTarget},
 }
 
 var minimaxHook = Hook{Finalize: chain(dropOutputConfig, requireClaudeToolType), Target: betaQuery}

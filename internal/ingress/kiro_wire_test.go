@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
+	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
 	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
@@ -84,7 +86,7 @@ func TestKiroMissingSettingsDoesNotDispatch(t *testing.T) {
 	up := newRecorder(t)
 	for _, missing := range []string{"profileArn", "authMethod"} {
 		ref := routing.ProviderRef{ProviderID: "kiro", Protocol: openai.ChatProtocol, BaseURL: up.srv.URL, APIToken: "fixture-token",
-			Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{ProfileARN: "fixture-profile", AuthMethod: "api_key"}}}
+			Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{ProfileARN: "fixture-profile", AuthMethod: "external_idp"}}}
 		if missing == "profileArn" {
 			ref.Connection.Settings.ProfileARN = ""
 		} else {
@@ -99,5 +101,51 @@ func TestKiroMissingSettingsDoesNotDispatch(t *testing.T) {
 	defer up.mu.Unlock()
 	if len(up.seen) != 0 {
 		t.Fatal("Kiro request with missing settings reached upstream")
+	}
+}
+
+type kiroImportClient struct {
+	t     *testing.T
+	calls int
+}
+
+func (c *kiroImportClient) Do(r *http.Request) (*http.Response, error) {
+	c.calls++
+	if r.URL.String() != "https://q.us-east-1.amazonaws.com/listAvailableModels" || r.Header.Get("Authorization") != "Bearer fixture-api-key" {
+		c.t.Fatalf("unexpected onboarding request: %s", r.URL)
+	}
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+}
+
+func TestKiroAPIKeyOnboardingResultConstructsRequestWithoutProfile(t *testing.T) {
+	client := &kiroImportClient{t: t}
+	result, err := onboarding.ManualFlows()["kiro"].Import(context.Background(), onboarding.Params{Input: "fixture-api-key", Client: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := result.Secret.ProviderData
+	if client.calls != 1 || data["authMethod"] != "api_key" || data["profileArn"] != "" {
+		t.Fatal("unexpected API-key onboarding result")
+	}
+	p := routing.ProviderRef{ProviderID: "kiro", Protocol: "kiro", BaseURL: "https://q.us-east-1.amazonaws.com", APIToken: result.Secret.AccessToken,
+		Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{AuthMethod: data["authMethod"], ProfileARN: data["profileArn"], Region: data["region"]}}}
+	h := &Handler{}
+	request, err := h.newUpstreamRequest(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil), nil, p, "chat/completions", []byte(`{"conversationState":{},"profileArn":"client-selected-profile"}`), openAIProviderHeaders(p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer request.Body.Close()
+	if request.URL.Path != "/generateAssistantResponse" || request.Header.Get("TokenType") != "API_KEY" || request.Header.Get("Authorization") != "Bearer fixture-api-key" {
+		t.Fatal("API-key request has wrong target or auth headers")
+	}
+	if _, present := request.Header["X-Amzn-Codewhisperer-Profile-Arn"]; present {
+		t.Fatal("API-key request emitted a profile header")
+	}
+	var body map[string]json.RawMessage
+	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := body["profileArn"]; present {
+		t.Fatal("API-key request retained a client-supplied profile")
 	}
 }

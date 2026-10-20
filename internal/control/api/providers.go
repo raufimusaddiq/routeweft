@@ -523,14 +523,6 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	if custom, ok := spec.EndpointFor(registry.Protocol(transportName)); ok {
 		endpoint = custom
 	}
-	if node.Kind == credentials.NodeBuiltin && node.ProviderID == "cloudflare-ai" {
-		var valid bool
-		endpoint, valid = cloudflare.Endpoint(transportName, connection.AccountID, modelID)
-		if !valid {
-			result.Error = "Cloudflare account ID or model transport is not configured"
-			return result
-		}
-	}
 	if connection.ProviderID == "openai" && transportName == string(registry.TransportOpenAIChat) {
 		endpoint = "chat/completions"
 	}
@@ -550,7 +542,12 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	route := probeRef(node, connection, spec, transportName, modelID, "")
 	target, err := wire.ResolveTarget(route, nativeEndpointPath(route.BaseURL, transportName, endpoint))
 	if err != nil {
-		result.Error = "provider endpoint is not configured for this connection"
+		var refused *wire.TargetError
+		if errors.As(err, &refused) {
+			result.Error = refused.Error()
+		} else {
+			result.Error = "provider endpoint is not configured for this connection"
+		}
 		return result
 	}
 	parsed, err := target.URL(h.validateOutboundURL)

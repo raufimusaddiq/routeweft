@@ -517,7 +517,7 @@ Every provider row below has its own pinned source `open-sse/providers/registry/
 | `claude` | OAuth/PKCE | M / default | seed/provider-specific | 5/5/0 | P/P/P/P/P/P/P | PARTIAL | P04/P05: auth/refresh actions/auto-ping absent; PKCE/usage helpers only. R11: product decision: provider qualification remains #76/P02-P08; no GA waiver (PRD-PROV-004). |
 | `cline` | oauth | C / default | seed/provider-specific | 8/8/0 | P/M/-/P/P/P/P | PARTIAL | P02-P05: onboarding/provider hooks/refresh; quota where advertised; app contracts missing. R11: product decision: provider qualification remains #76/P02-P08; no GA waiver (PRD-PROV-004). |
 | `clinepass` | apikey+oauth | C / default | seed/provider-specific | 10/10/0 | P/M/-/P/P/P/P | PARTIAL | P02-P05: onboarding/provider hooks/refresh; quota where advertised; app contracts missing. R11: product decision: provider qualification remains #76/P02-P08; no GA waiver (PRD-PROV-004). |
-| `cloudflare-ai` | apikey | C+SO / default | seed/provider-specific | 15/0/15 | P/P/-/P/P/P/P | PARTIAL | R04 supplies Clef/Clef-flash System One transport and usage; Cloudflare chat/account-scoped catalog qualification remains #76/P03/P08. R11: product decision: provider qualification remains #76/P02-P08; no GA waiver (PRD-PROV-004). |
+| `cloudflare-ai` | apikey | C+SO / default | seed/provider-specific | 15/0/15 | P/P/-/P/P/P/P | PARTIAL | R04 supplies Clef/Clef-flash System One transport and usage; #115 PR-H: the account-scoped URLs (`{accountId}/ai/v1/chat/completions` for Chat, `{accountId}/ai/run/{model}` for Clef; pin `registry/cloudflare-ai.js:26,30`, `executors/default.js:158-161`) are built only by `wire.ResolveTarget` (`wire/cloudflare.go`), fail closed on a missing or unsafe account ID, and auth is the default Bearer; implemented from the pin and unit tests, unverified against a live Workers AI gateway. Cloudflare chat/account-scoped catalog qualification remains #76/P03/P08. R11: product decision: provider qualification remains #76/P02-P08; no GA waiver (PRD-PROV-004). |
 | `codebuddy-cn` | oauth+apikey | C / codebuddy-cn | seed/provider-specific | 13/13/0 | P/M/M/P/P/P/P | PARTIAL | P02-P05: onboarding/provider hooks/refresh; quota where advertised; app contracts missing. R11: product decision: provider qualification remains #76/P02-P08; no GA waiver (PRD-PROV-004). |
 | `codebuddy-intl` | oauth+apikey | C / codebuddy-intl | seed/provider-specific | 15/15/0 | P/M/M/P/P/P/P | PARTIAL | P02-P05: onboarding/provider hooks/refresh; quota where advertised; app contracts missing. R11: product decision: provider qualification remains #76/P02-P08; no GA waiver (PRD-PROV-004). |
 | `codex` | OAuth/PKCE | R / codex | seed/provider-specific | 17/18/1 | P/P/P/P/P/P/P | PARTIAL | P04/P05: import/bulk/reset actions and refresh wiring absent; PKCE/usage helpers only. R11: product decision: provider qualification remains #76/P02-P08; no GA waiver (PRD-PROV-004). |
@@ -1456,12 +1456,16 @@ reader remain the PR 4a/4b implementations described in 6.6 and 6.8.
 
 `internal/providers/wire` registers the connection-aware Kiro hooks.
 `FinalizeBody` injects the stored profile after the saver/cache pipeline; the
-Target hook refuses missing `providerData.profileArn` or
-`providerData.authMethod` before constructing an outbound request. Neither a
-profile default nor a discovery probe supplies a missing value. These two
+Target hook requires `providerData.authMethod` and requires
+`providerData.profileArn` for every method except `api_key` before constructing
+an outbound request. API-key onboarding stores no profile, so that method may
+omit it; onboarding itself is unchanged. Neither a profile default nor a
+discovery probe supplies a missing value. These two
 non-secret settings travel in the immutable connection projection, with no
 serving-path SQLite read. The credential still comes from the credential
-registry and `RequireCredential` refuses an empty one.
+registry and `RequireCredential` refuses an empty one. Kiro builds Authorization
+and SSO bearer headers from the same trimmed token and emits neither for a blank
+credential.
 
 | Hook | Pin evidence | Routeweft behavior |
 |---|---|---|
@@ -1476,10 +1480,10 @@ registry and `RequireCredential` refuses an empty one.
 | x-amz-sso-bearer | `executors/kiro.js:271-273` | The connection access token, including API-key connections |
 | x-amzn-kiro-agent-mode | `executors/kiro.js:274` | `spec` |
 | x-amzn-codewhisperer-machine-id | `executors/kiro.js:275` | `kiro-desktop` |
-| x-amzn-codewhisperer-profile-arn | `executors/kiro.js:276-279` | The stored connection `profileArn` |
+| x-amzn-codewhisperer-profile-arn | `executors/kiro.js:276-279` | The stored connection `profileArn`, omitted when an API-key connection has none |
 | X-Amz-Target | `executors/kiro.js:241-245`; `config/kiroConstants.js:26-27` | `AmazonCodeWhispererStreamingService.GenerateAssistantResponse` only for a parsed hostname starting with `codewhisperer.`; no target header for Q, Kiro runtime or a proxy path containing that name |
 | POST operation | `providers/registry/kiro.js:19-23`; `executors/kiro.js:330-334` | `generateAssistantResponse` under the configured base; the Target hook overrides a caller's endpoint |
-| Body profileArn | `translator/request/openai-to-kiro.js:325-341,419-421`; `translator/request/claude-to-kiro.js:248-255` | Stored value replaces any caller value. Missing fails closed for every auth method, including OAuth/social; the pin allows account-bound omission and shared OAuth/social defaults |
+| Body profileArn | `translator/request/openai-to-kiro.js:325-341,419-421`; `translator/request/claude-to-kiro.js:248-255` | Stored value replaces any caller value. For `api_key` only, a missing/blank stored profile removes any client-supplied profile and emits neither body field nor profile header, matching the pin's account-bound omission. Other auth methods still fail closed without a stored profile; no shared OAuth/social default is used. An already matching profile preserves the original bytes |
 | Other body fields | `executors/kiro.js:344-346`; `translator/request/openai-to-kiro.js:398-430` | Executor leaves the body alone. Conversation state, inference config and additional model fields belong to the existing request leg; the hook adds no other account field |
 | anthropic-beta / interleaved thinking | `config/kiroConstants.js:44,144-158`; `translator/request/claude-to-kiro.js:238-242`; `executors/kiro.js:235-282` | The pin sends **no outbound beta header**. It reads original inbound headers only after body thinking configuration returns no setting. A string beta value containing `interleaved-thinking`, case-insensitively, selects the default budget 16000. Explicit body thinking, including disabled, wins. This inbound Messages behavior remains with PR 4c; no fabricated outbound header is added |
 | Endpoint ordering and region | `executors/kiro.js:299-334` | Pin orders Q, other Amazon surfaces, then Kiro runtime, and rewrites Amazon regions from stored `region` (default `us-east-1`). This PR keeps the configured base; automatic surface selection remains a binding prerequisite |
@@ -1498,9 +1502,9 @@ published snapshot and survive restart; no migration changes.
 
 Local Go 1.22.12 benchmark (`go test ./internal/providers/wire -run '^$'
 -bench BenchmarkKiroFinalizeBody -benchmem -count=3`): for the small synthetic
-conversation, median finalization was 30.8 microseconds without an account hook
-and 48.1 microseconds with the Kiro profile injection; allocation cost was
-1000 B / 14 allocations versus 1296 B / 19 allocations. Other checks were
+conversation, median finalization was 8.15 microseconds without an account hook
+and 10.49 microseconds with the Kiro profile injection; allocation cost was
+1000 B / 14 allocations versus 1312 B / 20 allocations. Other checks were
 running concurrently, so these timings do not establish production latency.
 
 ## 7. Validation, limits and completion

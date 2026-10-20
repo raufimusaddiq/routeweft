@@ -12,10 +12,10 @@ import (
 
 // excludedURLProviders are skipped on purpose, not tracked: the oracle URL is a
 // template ({accountId}, {model}) that only exists once a connection supplies the
-// account, so a literal comparison cannot hold. internal/providers/cloudflare
+// account, so a literal comparison cannot hold. wire.ResolveTarget
 // builds that path from the connection and has its own tests.
 var excludedURLProviders = map[string]string{
-	"cloudflare-ai": "templated URL ({accountId}); built per connection by internal/providers/cloudflare",
+	"cloudflare-ai": "templated URL ({accountId}); built per connection by wire.ResolveTarget (wire/cloudflare.go)",
 }
 
 // trackedURLGaps are "provider/protocol" pairs whose effective Routeweft upstream

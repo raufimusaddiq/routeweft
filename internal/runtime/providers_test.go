@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
+	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
 func TestProbeModelPreservesNativeIDsAndRejectsDisabledAliases(t *testing.T) {
@@ -63,18 +65,26 @@ func TestSystemOneSeedsAndCloudflareAccountEndpoints(t *testing.T) {
 		}
 	}
 	snapshot, _ := m.Load()
+	target := func(p routing.ProviderRef) (string, error) {
+		resolved, err := wire.ResolveTarget(p, p.Endpoint)
+		return resolved.Endpoint, err
+	}
 	for _, tc := range []struct{ model, account, source, endpoint string }{
 		{"typesafe/jev-latest", "typesafe", "systemone", ""},
 		{"cloudflare-ai/@cf/cloudflare/clef", "cloudflare-ai", "systemone", "account-a/ai/run/@cf/cloudflare/clef"},
 		{"cloudflare-ai/@cf/cloudflare/clef-flash", "cloudflare-ai", "systemone", "account-a/ai/run/@cf/cloudflare/clef-flash"},
 	} {
 		got, ok := snapshot.AccountProvider(tc.model, tc.account, tc.source, nil)
-		if !ok || got.Protocol != tc.source || got.Endpoint != tc.endpoint {
-			t.Fatalf("provider=%+v ok=%v expected=%+v", got, ok, tc)
+		endpoint, err := target(got)
+		if !ok || got.Protocol != tc.source || err != nil || endpoint != tc.endpoint {
+			t.Fatalf("provider=%+v ok=%v endpoint=%q err=%v expected=%+v", got, ok, endpoint, err, tc)
 		}
 	}
-	if _, ok := snapshot.AccountProvider("cloudflare-ai/@cf/cloudflare/clef", "cloudflare-ai", "openai-chat", nil); ok {
-		t.Fatal("typed model selected as chat")
+	// A typed model on the chat wire is selected but the seam refuses it.
+	if got, ok := snapshot.AccountProvider("cloudflare-ai/@cf/cloudflare/clef", "cloudflare-ai", "openai-chat", nil); ok {
+		if _, err := target(got); err == nil {
+			t.Fatal("typed model resolved a chat endpoint")
+		}
 	}
 	connection, err := s.GetConnection(ctx, "cloudflare-ai")
 	if err != nil {
@@ -87,16 +97,19 @@ func TestSystemOneSeedsAndCloudflareAccountEndpoints(t *testing.T) {
 	current, _ := m.Load()
 	old, _ := snapshot.AccountProvider("cloudflare-ai/@cf/cloudflare/clef", "cloudflare-ai", "systemone", nil)
 	updated, _ := current.AccountProvider("cloudflare-ai/@cf/cloudflare/clef", "cloudflare-ai", "systemone", nil)
-	if old.Endpoint != "account-a/ai/run/@cf/cloudflare/clef" || updated.Endpoint != "account-b/ai/run/@cf/cloudflare/clef" {
-		t.Fatalf("snapshot account metadata mutated: %s / %s", old.Endpoint, updated.Endpoint)
+	oldEndpoint, _ := target(old)
+	updatedEndpoint, _ := target(updated)
+	if oldEndpoint != "account-a/ai/run/@cf/cloudflare/clef" || updatedEndpoint != "account-b/ai/run/@cf/cloudflare/clef" {
+		t.Fatalf("snapshot account metadata mutated: %s / %s", oldEndpoint, updatedEndpoint)
 	}
 	connection.AccountID = ""
 	if _, err := s.PutConnection(ctx, connection); err != nil {
 		t.Fatal(err)
 	}
 	current, _ = m.Load()
-	if _, ok := current.AccountProvider("cloudflare-ai/@cf/cloudflare/clef", "cloudflare-ai", "systemone", nil); ok {
-		t.Fatal("unconfigured Cloudflare account selected")
+	got, ok := current.AccountProvider("cloudflare-ai/@cf/cloudflare/clef", "cloudflare-ai", "systemone", nil)
+	if _, err := target(got); !ok || err == nil || !strings.Contains(err.Error(), "account ID") {
+		t.Fatalf("unconfigured Cloudflare account must fail closed naming the account ID: ok=%v err=%v", ok, err)
 	}
 }
 
