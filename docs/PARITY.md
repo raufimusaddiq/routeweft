@@ -783,7 +783,7 @@ The checklists in #75-#78 are normative follow-up scope for this inventory. Ever
 | IDs | Explicit gap / decision required | Authority | Owner |
 | --- | --- | --- | --- |
 | R01 | Native configured app account resolution/fallback/retry is implemented. Retained actual Combo/Fusion/capacity serving and pinned Fusion defaults remain open; no PRD 11 / BDR-011 waiver. | PRD 5/10/11; SPEC 8/13-16; Sprint 5.1 | #75 |
-| R02 | Chat/Responses and Messages<->Chat translation are implemented (#119). The Gemini family, Kiro, Cursor, CommandCode and Ollama legs, count-tokens and provider compact behavior remain open under SPEC 9/10; #119 tracks each leg. | PRD 5; SPEC 9/10; Sprint 5.2 | #75 |
+| R02 | Chat/Responses, Messages<->Chat and Ollama (provider side) translation are implemented (#119). The Gemini family, Kiro, Cursor and CommandCode legs, count-tokens and provider compact behavior remain open under SPEC 9/10; #119 tracks each leg. | PRD 5; SPEC 9/10; Sprint 5.2 | #75 |
 | R03 | Serving pipeline slice resolved: normative per-attempt savers/final cache, bypass and fail-open tests in internal/app/transforms_test.go. Native helper parity stays R09. | PRD 12; SPEC 17/18; BDR-012; Sprint 5.3 | #75 |
 | R04 | Typed validation, native/custom/Cloudflare transports, streams/cancel and shared usage are implemented; internal/app/systemone_test.go. R11 adds pinned handler comparison; no broad-provider claim. | PRD 5/14; SPEC 10/28; #73 explicit System One | #75 |
 | R05 | Historical aliases, Ollama tags and id/kind/access catalog semantics are implemented (SPEC 34). Legacy /api/v1 is retained with identical inference auth/CORS; media kinds stay excluded. | PRD-API-001-004; SPEC 34 | #75 |
@@ -941,6 +941,79 @@ Every other `input` shape (empty array, non-message items, object, number) is by
 | Auth-adjacent rate limit + Retry-After | R11: login/password throttle computes Retry-After from the remaining fixed window; A/api_test.go covers expiry and rounding. | PRESENT; token-sync is an external service, not a new application route. |
 | Caddy X-Sync-Secret redaction / token log suppression | No Caddy/token-sync application implementation found in pinned src/open-sse/scripts; RW log buffer has generic secret markers but not deployed ingress evidence | MISSING evidence; C07/C08 require explicit external deployment ownership/fixtures. Do not claim default access-log redaction. R11: product decision: #74 owns deployed ingress redaction/token-sync evidence; R11 cannot attest to or modify an unprovided deployment. |
 | Image retention at deploy, not timer | v1 `scripts/post-deploy.sh`, `tests/unit/production-image-retention.test.js`; RW no deploy workflow/post-deploy retention script | MISSING; C08/#74 decision: keep running+recorded rollback images, bounded deploy-time cleanup if adopted; no timer or cleanup run in Phase 1. R11: product decision: #74 owns deploy-time cleanup policy/rehearsal; retain running and recorded rollback images, do not introduce a timer or run production cleanup. |
+
+### 6.4 Ollama legs: where Routeweft differs from the pin (#119, PR 2)
+
+The pin's two Ollama legs are `request openai-chat>ollama` (`translator/request/openai-to-ollama.js:195`) and `response ollama>openai-chat` (`translator/response/ollama-to-openai.js:134`); the buffered body is converted by `nonStreamingHandler.js:313-316`. Neither bypasses the hub, and the pin has no leg that makes Ollama a *client* wire, so Ollama is a provider wire only (`internal/protocol/hub`). A Messages client reaches Ollama as `Messages>Chat>Ollama` and the Chat body between the two hops is not filtered for OpenAI-compatible upstreams, as at `translator/index.js:150`.
+
+| ID | Pin behavior | Routeweft behavior | Why |
+| --- | --- | --- | --- |
+| V21 | `openai-to-ollama.js:125` forwards the `developer` role unchanged. | It is sent as `system`. | Ollama has no `developer` role; the instruction would be ignored or rejected. Same choice as the Messages leg (V12). |
+| V22 | `openai-to-ollama.js:35` reads only `max_tokens`. | `max_completion_tokens` is `options.num_predict` when `max_tokens` is absent. | The pin leaves a caller that used the current name unbounded. Same as V12. |
+| V23 | Everything the wire cannot carry is dropped without a word: `n>1`, `logprobs`, audio output, `functions`/`function_call`, parts other than text and data-URI images, roles it does not know, non-`function` tool calls (`:156-163,179-189`). A remote `image_url` is fetched and inlined first by `concerns/prefetch.js:10-12,45`. | Each is a translation error, so the dispatcher tries the next candidate; a request with no surviving message is refused too. A remote image is refused: fetching it is an outbound request with its own SSRF rules (`concerns/image.js`), which this wire does not make. | A dropped image or tool is a confident wrong answer with a 200. Prefetch is tracked separately. |
+| V24 | `ollama-to-openai.js:93` numbers a response tool call `function.index ?? i`, with `i` restarting at 0 on every line; `openai-to-ollama.js:108` gives every request call index 0 unless the client sent one. | Response: the count of calls so far in the whole response. Request: the call's place in its turn. | Two calls on two lines shared index 0 and a Chat accumulator merges them. |
+| V25 | `concerns/toolCall.js:9` mints `call_<i>_<Date.now()>` for a call with no id. | `call_msg0_tc<n>_<name>` (`GenerateToolCallID`), stable for the same response. | A clock in an id makes the round trip untestable and defeats prompt-cache reuse. |
+| V26 | `ollama-to-openai.js:44-46,129` always attach `usage`, with zeros when the response reports no counts. | Usage is present only when `prompt_eval_count` or `eval_count` is positive (`concerns.OllamaUsage`), the same rule the accounting parser uses; `prompt_eval_cached_count` is the cache-read subset of the prompt. | A zero that was never measured is not a measurement (V8). The accounting parser (`shared.parseOllamaUsage`) now reads the cached count too, so a native Ollama record gains `cache_read`; this changes recorded usage, not stored schema. |
+| V27 | `ollama-to-openai.js:35-47` returns at `done:true` without reading `message`. | Text, thinking and tool calls on the final line are emitted before the finish chunk. | Some Ollama versions put the last text there; the pin loses it. |
+| V28 | An `{"error":...}` line or body becomes an empty completion; a stream that stops before `done:true` ends silently (`ollama-to-openai.js:49-58`). | The error object, or the generic incomplete-stream error, ends the stream in the client's protocol (an error object then `[DONE]`), and a buffered error body is a 502. | SPEC 9.3: a failed stream never claims success. |
+| V29 | `openai-to-ollama.js:28-44` sends only `temperature`, `num_predict` and `top_p`. | `stop` is `options.stop`, `seed`, `presence_penalty` and `frequency_penalty` are `options.*`, and `response_format` is `format` (`json_object` is `"json"`, `json_schema` is the schema). An unknown format type, a schema-less `json_schema`, or a `stop` that is not a string or list of strings is refused. | Ollama's `/api/chat` takes `format` ("`json` or a JSON schema") and `options` (`stop`, `seed`, `presence_penalty`, `frequency_penalty`, ...) (ollama `docs/api.md`, checked for this round). The pin drops them, so JSON the client asked for arrives as prose and a stop string is run past, with a 200. The Messages leg already carries the same fields from the same hub body. |
+| V30 | `openai-to-ollama.js:51-54` forwards `tool_choice` verbatim; `/api/chat` has no such field. | `none` withholds the tools. `auto` or absent sends no `tool_choice` (absent already means auto). `required` or a named function is refused. A non-empty `logit_bias` is refused. | A forwarded `none` lets the model call a tool the client forbade; a forwarded `required` is not honoured. `/api/chat` has no `tool_choice`, `n`, `logit_bias`, or logprobs control. |
+
+Mirrored though odd, each asserted by a test:
+
+- **M1** `openai-to-ollama.js:130`: a non-assistant turn with no text is dropped even when it holds an image, and the image goes with it.
+- **M2** `openai-to-ollama.js:87`: an empty tool result is dropped, which leaves its call unanswered (the empty replies `FixMissingToolResponses` inserts are therefore dropped too, so it is not run for this wire).
+- **M3** `openai-to-ollama.js:90`: a tool result whose call id is unknown takes `msg.name`, then `unknown_tool`.
+- **M4** `ollama-to-openai.js:78`: the first chunk carries no `role`.
+- **M5** `openai-to-ollama.js:110-112`: unparseable tool arguments are `{}`. (Valid JSON that is not an object is `{}` here; the pin would forward an array.)
+
+#### `ReportsUsage` and `ollama-local`
+
+The pin advertises usage for `ollama` only (`registry/ollama.js:36-39`, `features.usage`); `registry/ollama-local.js:1-19` declares no features, and `TestUsageCapabilityMatchesOracle` asserts `ollama-local` is `usage=false`. Routeweft still accounts usage for `ollama-local` requests through `shared.ParseUsage(FamilyOllama)` (`prompt_eval_count`, `eval_count`, `prompt_eval_cached_count`). The flag mirrors the pin's capability advertisement, the Ollama Cloud limits API, not our accounting, so the read model describes the two Ollama providers differently on purpose.
+
+#### Thinking
+
+The Ollama wire sends thinking and Routeweft carries it: `message.thinking` is `reasoning_content` in a stream and in a buffered body (`ollama-to-openai.js:54,70,111,116`). **Known gap, not carried by this wire:** the request side. Ollama takes a top-level `think` (and `thinking` on a message), but it rejects `think` for a model that does not think, and the pin sends neither (`providers/capabilities.js:336-343` records that it drops the toggle). Which models accept it is per-model knowledge this PR does not have, so `reasoning_effort` and `reasoning` are not carried and an assistant turn's `reasoning_content` is not sent back.
+
+#### Request fields, Chat to Ollama (`TestChatRequestFieldsAreCarriedOrRefused`)
+
+| Chat request field | Ollama | Why |
+| --- | --- | --- |
+| `model`, `stream`, `messages` | carried | pin |
+| `temperature`, `top_p` | carried (`options`) | pin |
+| `max_tokens`; `max_completion_tokens` when `max_tokens` is absent | carried (`options.num_predict`) | pin; V22 |
+| `tools` | carried | pin |
+| part `text`, `refusal`; `image_url` data URI | carried (text joined with a newline; `images[]` raw base64) | pin |
+| `developer` role | carried (as `system`) | V21 |
+| `tool` message, assistant `tool_calls` | carried (`tool_name`; arguments as an object) | pin; V24 |
+| `stop` (string or list) | carried (`options.stop`) | V29 |
+| `seed`, `presence_penalty`, `frequency_penalty` | carried (`options.*`) | V29 |
+| `response_format` (`json_object`, `json_schema`; `text` asks for nothing) | carried (`format`) | V29 |
+| `tool_choice` `auto` (nothing to send); `none` (withholds the tools) | carried | V30 |
+| `top_logprobs`, `store`, `metadata`, `user`, `stream_options`, `prompt_cache_key`, `service_tier`, `modalities` (text only) | not carried | bookkeeping or caching hints; `/api/chat` has no field for them and none changes the answer. `top_logprobs` only means something with `logprobs`, which is refused |
+| `parallel_tool_calls:false` | not carried | **known gap**: `/api/chat` has no control for it, so a response may hold several tool calls; the client still receives a valid list |
+| `reasoning_effort`, `reasoning`, assistant `reasoning_content` | not carried | known gap, see Thinking |
+| `n>1`, `logprobs:true`, audio output, `audio`, `functions`, `function_call`, non-empty `logit_bias`, `tool_choice` `required` or a named function, a `response_format` or `stop` that cannot be expressed | refused | V23, V29, V30 |
+| part `input_audio`, `file`, unknown types; `image_url` that is not a base64 data URI; image in a tool-call turn or tool result; unknown roles; non-`function` tool calls; nothing left after conversion | refused | V23 |
+
+#### Response fields, Ollama to Chat (`TestStreamIsConvertedLineByLine`, `TestBufferedBodyIsConverted`)
+
+| Ollama field | Chat | Notes |
+| --- | --- | --- |
+| `message.content` | `content` | |
+| `message.thinking` | `reasoning_content` | |
+| `message.tool_calls[]` | `tool_calls[]` (`index`, `id`, `type`, `function.name`, `function.arguments` as a string) | V24, V25 |
+| `done_reason` | `finish_reason`: `tool_calls`/`tool_use` to `tool_calls`, `length`/`max_tokens` to `length`, anything else `stop` (`finishReason.js:40-48`) | forced to `tool_calls` when the response made calls |
+| `prompt_eval_count` | `prompt_tokens` | cache-inclusive |
+| `prompt_eval_cached_count` | `prompt_tokens_details.cached_tokens` | subset of the prompt |
+| `eval_count` | `completion_tokens` | |
+| `model` | `model` | request model (stream) or `"ollama"` (buffered) when absent |
+| `error` | failure (V28) | |
+| `total_duration`, `load_duration`, `created_at` and other timing fields | not carried | no Chat equivalent |
+
+#### Errors
+
+A translation error (refusal) moves the dispatcher to the next candidate. A non-2xx upstream answer is relayed with its status and body, as for every leg. A 2xx answer that cannot be converted is a 502 for a buffered body; for a stream it is a failure terminal (V28). A cancelled client gets no terminal.
 
 ## 7. Validation, limits and completion
 

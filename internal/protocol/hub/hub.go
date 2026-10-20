@@ -11,6 +11,7 @@ package hub
 
 import (
 	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 )
 
@@ -45,7 +46,9 @@ type Leg struct {
 
 // legs lists every implemented conversion. Chat and Responses are converted
 // directly in both directions (translate*.go in internal/protocol/openai), and
-// so are Chat and Messages (internal/protocol/anthropic).
+// so are Chat and Messages (internal/protocol/anthropic). Ollama is a provider
+// wire only: the pin has a Chat>Ollama request leg and an Ollama>Chat response
+// leg and nothing the other way, so a client never speaks it through the hub.
 var legs = []Leg{
 	{anthropic.MessagesProtocol, openai.ChatProtocol, Request},
 	{openai.ChatProtocol, anthropic.MessagesProtocol, Request},
@@ -55,6 +58,8 @@ var legs = []Leg{
 	{openai.ResponsesProtocol, openai.ChatProtocol, Request},
 	{openai.ResponsesProtocol, openai.ChatProtocol, Response},
 	{openai.ChatProtocol, openai.ResponsesProtocol, Response},
+	{openai.ChatProtocol, ollama.Protocol, Request},
+	{ollama.Protocol, openai.ChatProtocol, Response},
 }
 
 // Legs returns a copy of the implemented legs.

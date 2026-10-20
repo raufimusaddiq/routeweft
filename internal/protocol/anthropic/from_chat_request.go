@@ -201,21 +201,8 @@ func ChatToMessages(body map[string]any, model string, stream bool) (map[string]
 // cannot do, instead of answering without it. Dropped hints that only shape
 // sampling (seed, penalties, logit_bias, top_logprobs) are recorded in PARITY 6.3.
 func rejectUncarriable(body map[string]any) error {
-	if n := concerns.Int(body["n"]); n > 1 {
-		return unsupported("n=%d: Anthropic returns one completion", n)
-	}
-	if concerns.Truthy(body["logprobs"]) {
-		return unsupported("logprobs: Anthropic reports none")
-	}
-	for _, modality := range concerns.Items(body["modalities"]) {
-		if concerns.Text(modality) == "audio" {
-			return unsupported("audio output")
-		}
-	}
-	for _, field := range []string{"audio", "functions", "function_call"} {
-		if concerns.Truthy(body[field]) {
-			return unsupported("request field %q (use tools)", field)
-		}
+	if reason := concerns.UncarriableChat(body, "Anthropic"); reason != "" {
+		return unsupported("%s", reason)
 	}
 	return nil
 }

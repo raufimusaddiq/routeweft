@@ -26,15 +26,7 @@ func lastRoleIsUser(body map[string]any) bool {
 // parameter here: the leg rebuilds every block without cache_control, so there
 // is nothing for the filter to keep on this path.
 func MessagesRequestToChat(raw []byte, model string, stream bool) ([]byte, error) {
-	body, err := concerns.WireObject(raw)
-	if err != nil {
-		return nil, err
-	}
-	if !lastRoleIsUser(body) {
-		delete(body, "thinking")
-	}
-	concerns.EnsureToolCallIDs(body)
-	chat, err := MessagesToChat(body, model, stream)
+	body, chat, err := messagesRequestToHubChat(raw, model, stream)
 	if err != nil {
 		return nil, err
 	}
@@ -87,4 +79,26 @@ func ChatRequestToMessages(body map[string]any, model string, stream, repair, cl
 	result["messages"] = EnsureTrailingUserTurn(messages, clientEndsAssistant)
 	encoded, err := json.Marshal(result)
 	return encoded, names, err
+}
+
+// MessagesRequestToHubChat is the request pipeline up to the Chat body the hub
+// pivots on, without the normalisation for OpenAI-compatible upstreams: a
+// provider wire that is not Chat reads that body directly (the pin filters only
+// when the target format is OpenAI, translator/index.js:150).
+func MessagesRequestToHubChat(raw []byte, model string, stream bool) (map[string]any, error) {
+	_, chat, err := messagesRequestToHubChat(raw, model, stream)
+	return chat, err
+}
+
+func messagesRequestToHubChat(raw []byte, model string, stream bool) (body, chat map[string]any, err error) {
+	body, err = concerns.WireObject(raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !lastRoleIsUser(body) {
+		delete(body, "thinking")
+	}
+	concerns.EnsureToolCallIDs(body)
+	chat, err = MessagesToChat(body, model, stream)
+	return body, chat, err
 }

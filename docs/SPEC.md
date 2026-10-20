@@ -369,7 +369,12 @@ every leg shares (finish reasons, tool ids and names, reasoning text, usage
 shape) live in `internal/protocol/concerns`. Deliberate divergence from the
 pin: a translated Messages-to-Chat stream sets `stream_options.include_usage`
 so the usage is observable, unless the client set `stream_options` itself, in
-which case its value is forwarded. Native Chat is never modified. Error bodies are not
+which case its value is forwarded. Native Chat is never modified. The Ollama adapter
+(`internal/protocol/ollama`) is the provider side of the pin's two Ollama legs:
+a Chat, Responses or Messages client reaches an Ollama provider through the
+hub, and a stream is read as NDJSON (`concerns.ReadLines`), not SSE. Ollama is
+never a client wire of the hub. What each leg carries, refuses or does not carry
+is PARITY 6.4. Error bodies are not
 converted: a non-2xx answer from a translated attempt is relayed with its
 status and body as the provider sent it, so a Messages client served by a Chat
 provider can receive an OpenAI-shaped error. Where
