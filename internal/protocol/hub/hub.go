@@ -60,9 +60,10 @@ type Leg struct {
 // registers no openai>gemini response leg). Gemini CLI and Antigravity are the
 // same wires in the Cloud Code envelope: both are provider wires, and
 // Antigravity alone has the response leg a client of its own would read. Kiro is
-// a provider wire with a Chat request leg and a Chat response leg; its two
-// Messages legs are PR 4c, until which a Messages client would pivot through
-// Chat where the pin has a direct pair, so ingress keeps Kiro unwired.
+// a provider wire with a Chat request leg and a Chat response leg, and the pin
+// registers a direct Messages pair for it as well (claude-to-kiro.js:366,
+// kiro-to-claude.js:285), which a Messages client uses instead of a pivot through
+// Chat.
 var legs = []Leg{
 	{anthropic.MessagesProtocol, openai.ChatProtocol, Request},
 	{openai.ChatProtocol, anthropic.MessagesProtocol, Request},
@@ -92,6 +93,8 @@ var legs = []Leg{
 	{openai.ChatProtocol, gemini.AntigravityProtocol, Response},
 	{openai.ChatProtocol, kiro.Protocol, Request},
 	{kiro.Protocol, openai.ChatProtocol, Response},
+	{anthropic.MessagesProtocol, kiro.Protocol, Request},
+	{kiro.Protocol, anthropic.MessagesProtocol, Response},
 }
 
 // Legs returns a copy of the implemented legs.

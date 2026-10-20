@@ -783,7 +783,7 @@ The checklists in #75-#78 are normative follow-up scope for this inventory. Ever
 | IDs | Explicit gap / decision required | Authority | Owner |
 | --- | --- | --- | --- |
 | R01 | Native configured app account resolution/fallback/retry is implemented. Retained actual Combo/Fusion/capacity serving and pinned Fusion defaults remain open; no PRD 11 / BDR-011 waiver. | PRD 5/10/11; SPEC 8/13-16; Sprint 5.1 | #75 |
-| R02 | Chat/Responses, Messages<->Chat, Ollama (provider side), the Gemini and Vertex legs (Gemini routable, Vertex gated on #115 PR-C: see 6.7), the Kiro Chat legs (not yet routable: see 6.8) and the Cursor and CommandCode conversion legs (not yet routable: see 6.5) are implemented (#119). The Gemini CLI and Antigravity legs are implemented and unrouted (see 6.9). The Kiro Messages legs, the Cursor, CommandCode, Gemini CLI and Antigravity transports, count-tokens and provider compact behavior remain open under SPEC 9/10; #119 tracks each leg. | PRD 5; SPEC 9/10; Sprint 5.2 | #75 |
+| R02 | Chat/Responses, Messages<->Chat, Ollama (provider side), the Gemini and Vertex legs (Gemini routable, Vertex gated on #115 PR-C: see 6.7), the Kiro Chat and Messages legs (implemented, not routable: see 6.8, 6.12) and the Cursor and CommandCode conversion legs (not yet routable: see 6.5) are implemented (#119). The Gemini CLI and Antigravity legs are implemented and unrouted (see 6.9). The Cursor, CommandCode, Gemini CLI and Antigravity transports, count-tokens and provider compact behavior remain open under SPEC 9/10; #119 tracks each leg. | PRD 5; SPEC 9/10; Sprint 5.2 | #75 |
 | R03 | Serving pipeline slice resolved: normative per-attempt savers/final cache, bypass and fail-open tests in internal/app/transforms_test.go. Native helper parity stays R09. | PRD 12; SPEC 17/18; BDR-012; Sprint 5.3 | #75 |
 | R04 | Typed validation, native/custom/Cloudflare transports, streams/cancel and shared usage are implemented; internal/app/systemone_test.go. R11 adds pinned handler comparison; no broad-provider claim. | PRD 5/14; SPEC 10/28; #73 explicit System One | #75 |
 | R05 | Historical aliases, Ollama tags and id/kind/access catalog semantics are implemented (SPEC 34). Legacy /api/v1 is retained with identical inference auth/CORS; media kinds stay excluded. | PRD-API-001-004; SPEC 34 | #75 |
@@ -1143,7 +1143,7 @@ with available Chat pivots that must lose to the direct pair. It preserves the
 source request bytes, including a Messages-only system field and a nested
 extension. It proves incremental output, failure terminals, no replay,
 non-2xx status/body preservation and upstream cancellation. It is a framing and
-dispatch test, not a Kiro translator or live-provider qualification. The two Kiro Chat legs are PR 4b (6.8); the two Messages legs remain tracked for PR 4c.
+dispatch test, not a Kiro translator or live-provider qualification. The two Kiro Chat legs are PR 4b (6.8); the two Messages legs are PR 4c (6.12).
 
 Framing provenance, all at oracle `1c3b9f47837d42ea64992063309064af755a14a3`:
 
@@ -1285,7 +1285,7 @@ This PR builds the two Chat legs of the Kiro wire: `request openai-chat>kiro` (`
 
 **The response leg is not where the ticket says.** `kiro-to-openai.js:37-55` returns the chunks it is given, because the pin's executor already turned the EventStream into Chat chunks (`executors/kiro.js:629-1190`, `transformEventStreamToSSE`); the raw-event branch below it (`:57-181`) reads `usageEvent` and `done`, which that transform never emits, so no real stream reaches it. The leg is therefore the executor transform, reading frames with `concerns.ReadEventStream` instead of the pin's parser (`:1216-1300`). Where the ticket and the pin disagree, the pin wins.
 
-**Routing.** Kiro stays in `ingress.unwired`. Its transport needs the account-aware body and headers from `internal/providers/wire` (#135), and without PR 4c a Messages client would pivot through Chat where the pin has a direct pair. `hub.CanTranslate` is true for Chat and Responses clients and, until 4c, also for Messages; `TestKiroLegsExistButKiroStaysUnwired` pins that the ingress answer is false for all three. The legs receive the raw upstream body: ingress passes `response.Body` to `translation.Stream` (`ingress/openai.go:211-215`) and the whole body to `translation.Response` (`:231-242`), and the Kiro wire hook (6.10) does not wrap responses, so the legs still read EventStream directly.
+**Routing.** Kiro stays in `ingress.unwired`: its transport needed the account-aware body and headers from `internal/providers/wire` (6.10), and without the Messages legs (6.12) a Messages client would pivot through Chat where the pin has a direct pair. It is still unwired for the endpoint binding named in 6.10 and 6.11. The legs receive the raw upstream body: ingress passes `response.Body` to `translation.Stream` (`ingress/openai.go:211-215`) and the whole body to `translation.Response` (`:231-242`), and the Kiro wire hook (6.10) does not wrap responses, so the legs still read EventStream directly.
 
 #### Request, Chat to Kiro
 
@@ -1311,7 +1311,7 @@ This PR builds the two Chat legs of the Kiro wire: `request openai-chat>kiro` (`
 | `max_tokens`, else `max_completion_tokens` | carried to `inferenceConfig.maxTokens` | the pin sends a fixed 32000 (`:311`). Absent sends nothing: whether Kiro applies a default is not verifiable offline. Zero, negative, fractional and non-numbers are refused |
 | thinking intent: `reasoning_effort`, `reasoning.effort`, `thinking`, `output_config.effort`, `enable_thinking`, `thinking_budget`, `thinkingConfig`, the `model(level)` suffix, `-thinking`, a `<thinking_mode>` tag in a system or user message | carried | `kiroConstants.js:44-259` and `thinkingUnified.js:34-103`, ported inside the Kiro package: the budget prefix and, for Claude 4.6+ and GPT 5.6, `additionalModelRequestFields`. Unknown effort values and unrecognized parenthesized model overrides are refused instead of falling back to a default budget or dropping the suffix. The Gemini envelope shapes nested under `generationConfig` and `request` are refused as unknown fields |
 | `-agentic` model suffix | carried | the pin's chunked-write prompt, verbatim, in front of the first user turn |
-| `anthropic-beta: interleaved-thinking` | **not readable by a leg** | the legs get no request headers (`ChatRequest` has none). Matters for the Messages legs; recorded on the ticket |
+| `anthropic-beta: interleaved-thinking` | **Messages only** | a Chat client has no such header and `ChatRequest` carries none; the Messages leg reads it (6.12) |
 | `tool_choice` other than absent, `null`, `"auto"`; `parallel_tool_calls:false` | **refused** | Kiro has neither; the pin ignores both. Non-boolean `parallel_tool_calls` is also refused |
 | `stop`, `seed`, `logit_bias`, `top_logprobs`, `logprobs:true`, `n` other than numeric `1`, audio, `functions`, `function_call`, `web_search_options`, `prediction`, `response_format` other than text, non-zero `presence_penalty` / `frequency_penalty`, any field not listed here | **refused** | Kiro's request has no equivalent. A zero penalty is the identity |
 | `stream`, `stream_options`, `user`, `store`, `metadata`, `service_tier`, `prompt_cache_key`, `prompt_cache_retention`, `safety_identifier` | advisory | the answer is the same without them |
@@ -1359,7 +1359,7 @@ Kiro does not accept some keywords. Each row below is a decision, and `RequestIn
 | tool id absent | a stable generated id; the pin embeds the clock (`:854-855`) |
 | tool name | restored from the request's name map; a name not in the map passes through, as at the pin |
 
-**Known gaps, each its own follow-up under #119.** *Kiro saver view:* conversation history and the current message have no saver view; the transform order is unchanged. *Token estimates:* the pin's `contextUsagePercentage × context window` and `chars/4` estimates (`:1102-1113`) are not reported; no usage is better than an invented one. *Credits:* `meteringEvent` credits (`:895-905`) are counted, not reported, and no `kiro_credits` key is added to `usage`. *Time context:* see above. *Header-driven thinking:* `anthropic-beta` needs request headers in the Messages legs.
+**Known gaps, each its own follow-up under #119.** *Kiro saver view:* conversation history and the current message have no saver view; the transform order is unchanged. *Token estimates:* the pin's `contextUsagePercentage × context window` and `chars/4` estimates (`:1102-1113`) are not reported; no usage is better than an invented one. *Credits:* `meteringEvent` credits (`:895-905`) are counted, not reported, and no `kiro_credits` key is added to `usage`. *Time context:* see above.
 
 **Wire prerequisites for #135 (header/body hooks in 6.10; endpoint binding complete in 6.11).** `profileArn` in the body and `x-amzn-codewhisperer-profile-arn` in the headers, account-aware: API-key, IdC and external-IdP accounts never use the shared default (`openai-to-kiro.js:325-341`, `executors/kiro.js:276-279`); the auth headers `TokenType`, `x-amz-sso-bearer`, `x-amzn-kiro-agent-mode`, `X-Amz-Target` for `codewhisperer.*` hosts and `Accept: application/vnd.amazon.eventstream` (`:235-282`); the three-host order and region rewrite (`:299-328`); endpoint-fallback statuses 401/403/404 (`kiroConstants.js:28`).
 
@@ -1485,12 +1485,12 @@ credential.
 | POST operation | `providers/registry/kiro.js:19-23`; `executors/kiro.js:330-334` | `generateAssistantResponse` under the configured base; the Target hook overrides a caller's endpoint |
 | Body profileArn | `translator/request/openai-to-kiro.js:325-341,419-421`; `translator/request/claude-to-kiro.js:248-255` | Stored value replaces any caller value. For `api_key` only, a missing/blank stored profile removes any client-supplied profile and emits neither body field nor profile header, matching the pin's account-bound omission. Other auth methods still fail closed without a stored profile; no shared OAuth/social default is used. An already matching profile preserves the original bytes |
 | Other body fields | `executors/kiro.js:344-346`; `translator/request/openai-to-kiro.js:398-430` | Executor leaves the body alone. Conversation state, inference config and additional model fields belong to the existing request leg; the hook adds no other account field |
-| anthropic-beta / interleaved thinking | `config/kiroConstants.js:44,144-158`; `translator/request/claude-to-kiro.js:238-242`; `executors/kiro.js:235-282` | The pin sends **no outbound beta header**. It reads original inbound headers only after body thinking configuration returns no setting. A string beta value containing `interleaved-thinking`, case-insensitively, selects the default budget 16000. Explicit body thinking, including disabled, wins. This inbound Messages behavior remains with PR 4c; no fabricated outbound header is added |
+| anthropic-beta / interleaved thinking | `config/kiroConstants.js:44,144-158`; `translator/request/claude-to-kiro.js:238-242`; `executors/kiro.js:235-282` | The pin sends **no outbound beta header**. It reads original inbound headers only after body thinking configuration returns no setting. A string beta value containing `interleaved-thinking`, case-insensitively, selects the default budget 16000. Explicit body thinking, including disabled, wins. The inbound Messages behavior is the Messages request leg's (PR 4c, 6.12); no fabricated outbound header is added, and `TestKiroWireRequestConstruction` pins that none is forwarded |
 | Endpoint ordering and region | `executors/kiro.js:299-334` | Pin orders Q, other Amazon surfaces, then Kiro runtime, and rewrites Amazon regions from stored `region` (default `us-east-1`). PR 4e completes the bounded surface binding in 6.11; the configured connection base takes precedence over the built-in order |
 | Endpoint fallback | `executors/kiro.js:336-341`; `config/kiroConstants.js:28` | Pin adds 401/403/404 to endpoint fallback. PR 4e implements response-driven, bounded endpoint fallback in 6.11 |
 
 **Endpoint binding is complete in PR 4e (6.11).** Public routing remains closed:
-Messages legs (PR 4c) remain in review, and Kiro remains in `ingress.unwired`.
+Messages legs (PR 4c, 6.12) are merged, and Kiro remains in `ingress.unwired`.
 Neither PR claims provider readiness, the saver view or live-provider qualification. It retains the existing
 Chat/direct-leg/EventStream tests, tests every emitted header and auth/host
 condition, refuses missing/invalid settings and missing credentials, and checks
@@ -1583,13 +1583,71 @@ hits the default ten-minute timeout during password hashing in the
 subtest passes alone under the race detector; no assertion or data-race failure
 was reported. No password or timeout policy was changed.
 
-Kiro stays in `ingress.unwired`. Removing it requires the reviewed/merged direct
-Messages legs (PR 4c), agreement to enable public routing, and one coherent
+Kiro stays in `ingress.unwired`. The direct Messages legs (PR 4c, 6.12) are
+merged. Removing the gate still requires agreement to enable public routing
+and one coherent
 change to the ingress translation arms, reachability declarations and actual-app
 streaming/non-streaming, fallback and cancellation fixtures. Endpoint binding
 alone does not certify the outstanding saver view, onboarding/refresh/model/
 quota workflows or provider readiness. No SQLite schema/storage changes, new
 service/dependency, live provider call or production prompt fixture is involved.
+
+### 6.12 Kiro Messages legs: where Routeweft differs from the pin (#119, PR 4c)
+
+This PR builds the two Messages legs of the Kiro wire: `request anthropic-messages>kiro` (`translator/request/claude-to-kiro.js:231-366`, registered `:366`) and `response kiro>anthropic-messages` (`translator/response/kiro-to-claude.js:57-285`, registered `:285`). The pin dispatches both directly, with no Chat pivot (`translator/index.js:106-108`, `:208-213`), and so does `hub.Route`. The code is `internal/protocol/kiro` (`messages_request.go`, `messages_response.go`).
+
+**Shape.** The request leg reads Messages blocks into the same alternating turns, tool specifications and thinking intent the Chat leg builds, and then runs the Chat leg's one assembly and its one conversation check (`assembly.payload`, `checkConversation`), so the two legs produce the same Kiro body for the same conversation and refuse the same malformed histories. The response leg reads the EventStream through the Chat leg's machine and writes Messages events directly; the pin's executor makes Chat chunks first (`executors/kiro.js:629-1190`) and `kiro-to-claude.js` turns the chunks into Messages events (`:9-14`), which is the same transform with no chunk built in between. Everything in 6.8 about events, stop reasons, tool buffering, tag splitting, truncation and cancellation therefore holds here unchanged.
+
+**The interleaved-thinking header is read, not written.** The wire-hook brief says PR 4d added it; it did not, and the pin does not send one (6.10). `claude-to-kiro.js:241` hands the *inbound* request headers to `resolveKiroThinkingBudget`, which treats an `anthropic-beta` value containing `interleaved-thinking` (case-insensitive) as the default budget, after the body's own thinking configuration and before the `<thinking_mode>` tag and the model name (`kiroConstants.js:144-169`). So the Messages request leg is the thing that needs it: `RequestOptions.AnthropicBeta` carries it, `ingress` fills `MessagesRequest.AnthropicBeta` from every `Anthropic-Beta` header value, and `resolveBudget` takes it as a parameter that only the Messages leg sets. The condition is tested both ways (`TestMessagesThinkingIntent`: header alone, among other betas, an unrelated beta, explicit `thinking:disabled`, a budget, an effort and a `(none)` suffix over it) and end to end (`TestMessagesBetaHeaderSelectsThinkingAndIsNotForwarded`: the thinking prefix reaches Kiro, no `Anthropic-Beta` does, and the tags in the answer come back as a `thinking` block). The Chat leg never reads it.
+
+#### Request, Messages to Kiro
+
+| Messages content | Disposition | Pin and consequence |
+| --- | --- | --- |
+| `system` (string or text blocks) | carried, in front of the first user turn after the thinking and agentic prefixes, text blocks joined with a newline | `claude-to-kiro.js:216-226`, `:257-270`. Not wrapped in `<instructions>`: the pin wraps only on the Chat route (`openai-to-kiro.js:165-169`). A non-text system block is **refused**; the pin reads its `text` and drops the rest. The `x-anthropic-billing-header` text Claude Code puts in `system` is sent as the client wrote it; the Messages>Chat leg strips it, the direct pin leg does not |
+| `messages[].content` text (string, or blocks) | carried; each text block is a paragraph of its turn (`\n\n`), turns of one role merge | `:86-92`, `:181-207` |
+| assistant text blocks of one message | joined with a newline | the pin concatenates them with nothing between (`:135-136`), which runs words together |
+| `image` with a base64 source | carried as `images[{format, source.bytes}]`, `format` the media subtype | `:93-96`. Whether Kiro accepts every subtype is not verifiable offline |
+| `image` with a `url` or `file` source, an image with no or a non-image `media_type`, invalid base64 | **refused** | the pin silently drops a non-base64 image (`:93`) and defaults a missing type (`:94`) |
+| `tool_result` (string or text blocks) | carried as `toolResults`, `is_error` as status error, text blocks joined with a newline | `:97-125` |
+| `tool_result` containing an image | **refused** | the pin moves the image to the user turn and writes `(image attached)` (`:102-116`); the image no longer says which result it belongs to |
+| `tool_result` content that is not a string or text blocks | **refused** | the pin sends its JSON (`:116-118`) |
+| `tool_use` | carried as `toolUses`; `input` must be a JSON object or absent | `:137-143`; the pin takes `|| {}` for anything falsy and passes a non-object through |
+| `thinking`, `redacted_thinking` blocks in history | advisory, dropped | `:135-147` reads only text and `tool_use`. Kiro has no reasoning history and the answer does not depend on replaying it; as the Chat leg's echoed `reasoning_content` |
+| `document`, `search_result`, `server_tool_use`, `web_search_tool_result`, `mcp_tool_use`, any other block, any unread key on a block | **refused** | the pin ignores every block type it does not list (`:90-126`) |
+| `cache_control` on a system, text, image, `tool_use`, `tool_result` or tool, and at the top level | advisory when `{type: ephemeral[, ttl: 5m\|1h]}` | Kiro has no cache field and the answer is the same without the marker (the pin drops it, `:90-126`). Any other marker is **refused**. **Known gap:** prompt-cache anchoring does not reach Kiro, as at the pin |
+| `tools` (custom) | carried as `toolSpecification` on the current message; the schema, name, description and collision rows of 6.8 apply unchanged | `kiroConversation.js:92-123`, `:429-431`. A server tool (`web_search_*`, `computer_*`, `bash_*`, `text_editor_*`, `code_execution_*`), `strict: true`, `defer_loading`, `input_examples`, `allowed_callers` and any other tool key are **refused**; the pin ignores the type and passes the tool |
+| `tool_choice` | `{type: auto}` carried (identity); `any`, `tool`, `none`, a string, and `disable_parallel_tool_use: true` **refused** | Kiro has neither; the pin ignores the field |
+| `max_tokens` | carried to `inferenceConfig.maxTokens`; absent sends nothing | the pin sends `body.max_tokens \|\| 32000` (`:234`); a zero, negative, fractional or non-number value is refused |
+| `temperature`, `top_p` | carried, an explicit `0` as `0` | `:235-236`, `:343-348` |
+| `thinking`, `output_config.effort`, the `model(level)`, `-thinking` and `-agentic` suffixes, a `<thinking_mode>` tag, the `anthropic-beta` header | carried as in 6.8; the tag is found in a user message, a string `system` or a `system` text block (the pin looks at a string `system` only, `kiroConstants.js:379-380`, so a block list would have sent the tag to Kiro without reading the answer as thinking) | `claude-to-kiro.js:238-243`, `:262-265`. `thinking.display` and any unread `thinking` key are **refused** |
+| `output_config.format` (structured output) | **refused** | Kiro has no structured-output mode; the pin never reads the field |
+| `top_k`, non-empty `stop_sequences`, `mcp_servers`, `container`, `context_management`, any unlisted field | **refused** | Kiro's request has no equivalent and the first three change what the server does. `stop_sequences: []` is the identity. The pin reads none of them |
+| `model`, `stream`, `metadata`, `service_tier` | advisory | `stream` is Kiro's only mode; the rest have no Kiro field |
+| message `role` other than user or assistant, a message key other than `role` and `content` | **refused** | |
+| conversation ending on an assistant turn (**prefill**), starting on one, a user turn with no text (an image alone) | **refused** | the pin invents turns (`kiroConversation.js:181-186`). Prefill continues a sentence Kiro cannot continue |
+| unanswered, orphaned, twice-answered or undeclared-tool calls; ids with no usable characters or over 64 characters | **refused** with the turn named | the pin flattens both sides to text (`kiroConversation.js:261-338`) or, for an unusable id, generates a different id for the call and its result (`translator/concerns/toolCall.js:27-75`), which breaks the pairing |
+| tool names | as 6.8: valid names unchanged, the rest rewritten and restored on the response | `claude-to-kiro.js:356-362` |
+
+**Deliberate divergences carried from 6.8.** No session replay cache and no frozen first message (`claude-to-kiro.js:272-294`, `kiroSessionReplay.js:65-130`): `conversationId` is a fresh random UUID per request, so there is no state to scope by client or connection and no way for one client's conversation to be continued by another (`TestMessagesKeepNoStateBetweenRequests`). The `[Context: Current time is …]` line (`:269`) is not sent. Kiro signs no reasoning, so the leg stores no signature and the `thinking` blocks it writes carry none; there is nothing a signature cache could be keyed by, and none is built. `profileArn` is the wire hook's (6.10), not the leg's (`:248-255`, `:338`).
+
+#### Response, Kiro EventStream to Messages
+
+| Event or condition | Disposition |
+| --- | --- |
+| text, `<thinking>` tags, `reasoningContentEvent`, `codeEvent` | `text` and `thinking` blocks in arrival order, one open at a time (`kiro-to-claude.js:121-158`). The tags are read only when the request injected thinking mode (6.8). No `signature` is written |
+| `toolUseEvent` | one `tool_use` block per call, opened with the client's own tool name and closed with its whole `input` in one `input_json_delta` once the body is confirmed whole (`:160-215`); an empty input is `{}`. Failure rules as 6.8 |
+| stop reason | `end_turn`, none, `stop_sequence`: `end_turn`; with a call, `tool_use`; `max_tokens` and `model_context_window_exceeded` after output: `max_tokens`. Every other reason is an `error` event. The pin maps all unknown reasons to `end_turn` (`:32-43`) |
+| usage | from `concerns.KiroUsage` as in 6.8: `input_tokens` is what Kiro reported, cache counts separate (`cache_read_input_tokens`, `cache_creation_input_tokens` when positive). The pin copies the prompt into `input_tokens` and the cache counts beside it (`:77-95`). No measurement is `{input_tokens: 0, output_tokens: 0}`, the shape Messages requires, not an estimate. `message_start` carries zeros as the pin's does (`:115`) and `message_delta` carries the totals (`:219-223`) |
+| message id and model | `msg_` plus the completion id's number; the request's model (`:100-103`) |
+| failure (no terminal, truncation, corrupt bytes, content after the stop, an unknown content-bearing event, a `refusal` or other failing reason, upstream `exception`) | an `error` event with the upstream's own message and **no** `message_stop`; blocks already open are not closed. A cancelled client gets nothing more. The pin counts a clean EOF with output as success |
+| buffered answer | the same machine, folded into one `message` body: thinking, text and tool blocks in order, `stop_sequence: null`, an answer with no content is one empty text block. The pin has no buffered Kiro path (its executor only streams, `:230-234`); `TestMessagesBufferedMatchesStream` pins that the two agree |
+
+**Not ported from the Chat route:** the Read-tool argument repair that `openai-to-claude.js:14-47` does for other providers. The pin's Kiro leg does not do it either (`kiro-to-claude.js:203-215` sends the buffered arguments as they came), so a Kiro tool input is never edited.
+
+**Routing after PR 4e: Kiro stays in `ingress.unwired`.** The four legs exist and `TranslateChat`, `TranslateResponses` and `TranslateMessages` each have a Kiro arm (Responses goes through Chat, as the pin does, `translator/index.js:116-125`; compact is not translated). Endpoint ordering, regionalization and response-driven fallback are now the binding in 6.11; public enablement remains a separate decision. `TestKiroLegsAreDeclaredButKiroStaysUnwired` pins that the legs are declared, Messages uses the direct leg, and `CanTranslate` is false for all three client wires; `TestEveryProviderIsReachableOrTracked` keeps `kiro` tracked as unreachable. The saver view, token estimates, credits and live-provider qualification remain the follow-ups of 6.8.
+
+Validation: sanitized synthetic EventStream fixtures and the pinned leg inventory (`trackedLegGaps` is now empty). Every refusal row has a test that names the field; request and response cross-products are in `messages_request_test.go` and `messages_response_test.go`. No live provider calls were made. No SQLite schema, credential or runtime-dependency change. Security: no new network surface; the inbound `Anthropic-Beta` header is read for one decision and never forwarded or logged.
 
 ## 7. Validation, limits and completion
 

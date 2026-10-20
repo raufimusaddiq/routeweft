@@ -34,6 +34,10 @@ type RequestOptions struct {
 	// Repair is true when the body is the client's own Chat body, because the pin
 	// repairs tool ids only on the client's body (translator/index.js:82).
 	Repair bool
+	// AnthropicBeta is the client's inbound anthropic-beta header value. Only a
+	// Messages request has one; it is read by MessagesRequestToKiro and never sent
+	// to Kiro (PARITY 6.11).
+	AnthropicBeta string
 	// NewConversationID names the upstream conversation. Every request gets its
 	// own: nothing is kept between requests, so no client's conversation can be
 	// continued by another (the pin's replay cache is not built). Nil is a random UUID.
@@ -218,6 +222,12 @@ func validateImage(url any) (map[string]any, error) {
 	if !ok {
 		return nil, unsupported("image_url must be a base64 data URI: Kiro takes image bytes, not a link")
 	}
+	return kiroImage(media, data)
+}
+
+// kiroImage is an image Kiro takes: the media subtype names the format and the
+// bytes stay base64 (openai-to-kiro.js:118-124, claude-to-kiro.js:93-96).
+func kiroImage(media, data string) (map[string]any, error) {
 	kind, format, found := strings.Cut(strings.ToLower(media), "/")
 	if !found || kind != "image" || format == "" {
 		return nil, unsupported("image media type %q is not an image", media)
@@ -442,26 +452,12 @@ func ChatRequestToKiro(body map[string]any, options RequestOptions) ([]byte, *co
 	if !isList || len(messages) == 0 {
 		return nil, nil, info, unsupported("messages must be a non-empty list")
 	}
-	intent := resolveModel(options.Model)
-	if intent.override == nil && suffixPattern.MatchString(options.Model) {
-		return nil, nil, info, unsupported("model %q has an unrecognized thinking override", options.Model)
-	}
-	if intent.override != nil && intent.override.mode == "budget" && intent.override.budget <= 0 {
-		return nil, nil, info, unsupported("model thinking budget must be positive")
-	}
-	if strings.TrimSpace(intent.upstream) == "" {
-		return nil, nil, info, unsupported("model %q names no Kiro model", options.Model)
+	intent, err := intentOf(options.Model)
+	if err != nil {
+		return nil, nil, info, err
 	}
 	info.UpstreamModel = intent.upstream
-	temperature, hasTemperature, err := optionalNumber(body, "temperature")
-	if err != nil {
-		return nil, nil, info, err
-	}
-	topP, hasTopP, err := optionalNumber(body, "top_p")
-	if err != nil {
-		return nil, nil, info, err
-	}
-	limit, hasLimit, err := maxTokens(body)
+	sampling, err := samplingOf(body)
 	if err != nil {
 		return nil, nil, info, err
 	}
@@ -506,24 +502,86 @@ func ChatRequestToKiro(body map[string]any, options RequestOptions) ([]byte, *co
 	if err != nil {
 		return nil, nil, info, err
 	}
+	built := assembly{turns: turns, specs: specs, intent: intent, thinkingBody: applyOverride(body, intent.override),
+		sampling: sampling, newID: options.NewConversationID}
+	encoded, err := built.payload(&info)
+	return encoded, names, info, err
+}
+
+// intentOf reads the routed model: its suffixes and the Kiro model they name.
+func intentOf(model string) (modelIntent, error) {
+	intent := resolveModel(model)
+	if intent.override == nil && suffixPattern.MatchString(model) {
+		return intent, unsupported("model %q has an unrecognized thinking override", model)
+	}
+	if intent.override != nil && intent.override.mode == "budget" && intent.override.budget <= 0 {
+		return intent, unsupported("model thinking budget must be positive")
+	}
+	if strings.TrimSpace(intent.upstream) == "" {
+		return intent, unsupported("model %q names no Kiro model", model)
+	}
+	return intent, nil
+}
+
+// sampling is the inferenceConfig a request asks for.
+type sampling struct {
+	temperature, topP       json.Number
+	hasTemperature, hasTopP bool
+	limit                   int64
+	hasLimit                bool
+}
+
+func samplingOf(body map[string]any) (sampling, error) {
+	var s sampling
+	var err error
+	if s.temperature, s.hasTemperature, err = optionalNumber(body, "temperature"); err != nil {
+		return s, err
+	}
+	if s.topP, s.hasTopP, err = optionalNumber(body, "top_p"); err != nil {
+		return s, err
+	}
+	s.limit, s.hasLimit, err = maxTokens(body)
+	return s, err
+}
+
+// assembly is a request both client wires reduce to: alternating turns, tool
+// specifications, and the thinking intent. The pin builds the same payload from
+// the Chat body (openai-to-kiro.js:308-447) and from the Messages body
+// (claude-to-kiro.js:231-366); what differs is how the turns are read.
+type assembly struct {
+	turns        []*turn
+	specs        []toolSpec
+	intent       modelIntent
+	thinkingBody map[string]any
+	// beta is the client's anthropic-beta header; only a Messages client has one.
+	beta string
+	// system is text that goes in front of the first user turn after the thinking
+	// and agentic prefixes. A Chat client's system messages are turns of their own.
+	system   string
+	sampling sampling
+	newID    func() string
+}
+
+func (a *assembly) payload(info *RequestInfo) ([]byte, error) {
+	turns, specs, intent := a.turns, a.specs, a.intent
 	declared := map[string]string{}
 	for _, spec := range specs {
 		declared[spec.original] = spec.name
 	}
 	if err := checkConversation(turns, declared); err != nil {
-		return nil, nil, info, err
+		return nil, err
 	}
-
-	thinkingBody := applyOverride(body, intent.override)
 	var prefixes []string
-	if budget, on := resolveBudget(thinkingBody, intent.model); on && !usesNativeGPTEffort(thinkingBody, intent.upstream) {
+	if budget, on := resolveBudget(a.thinkingBody, intent.model, a.beta); on && !usesNativeGPTEffort(a.thinkingBody, intent.upstream) {
 		prefixes = append(prefixes, thinkingPrefix(budget))
 		info.ThinkingTags = true
 	}
 	if intent.agentic {
 		prefixes = append(prefixes, agenticSystemPrompt)
 	}
-
+	if a.system != "" {
+		prefixes = append(prefixes, a.system)
+	}
 	var history []any
 	var current map[string]any
 	for i, t := range turns {
@@ -586,30 +644,29 @@ func ChatRequestToKiro(body map[string]any, options RequestOptions) ([]byte, *co
 	if history == nil {
 		history = []any{}
 	}
-	newID := options.NewConversationID
+	newID := a.newID
 	if newID == nil {
 		newID = uuid.NewString
 	}
 	state := map[string]any{"chatTriggerType": "MANUAL", "conversationId": newID(), "currentMessage": current, "history": history}
 	payload := map[string]any{"conversationState": state}
-	if fields := additionalFields(thinkingBody, intent.upstream); fields != nil {
+	if fields := additionalFields(a.thinkingBody, intent.upstream); fields != nil {
 		payload["additionalModelRequestFields"] = fields
 	}
-	if hasTemperature || hasTopP || hasLimit {
+	if sampling := a.sampling; sampling.hasTemperature || sampling.hasTopP || sampling.hasLimit {
 		config := map[string]any{}
-		if hasLimit {
-			config["maxTokens"] = limit
+		if sampling.hasLimit {
+			config["maxTokens"] = sampling.limit
 		}
-		if hasTemperature {
-			config["temperature"] = temperature
+		if sampling.hasTemperature {
+			config["temperature"] = sampling.temperature
 		}
-		if hasTopP {
-			config["topP"] = topP
+		if sampling.hasTopP {
+			config["topP"] = sampling.topP
 		}
 		payload["inferenceConfig"] = config
 	}
-	encoded, err := json.Marshal(payload)
-	return encoded, names, info, err
+	return json.Marshal(payload)
 }
 
 // checkConversation holds the rules the pin repairs by rewriting the
