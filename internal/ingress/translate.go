@@ -101,7 +101,7 @@ func geminiTranslation(chat map[string]any, model, scope string, stream, repair 
 	if err != nil {
 		return ChatTranslation{}, err
 	}
-	options := geminiwire.ResponseOptions{Model: model, Names: names, Signatures: geminiSignatures, Scope: scope}
+	options := geminiwire.ResponseOptions{Model: model, Names: names, Signatures: geminiSignatures, Scope: scope, Wire: geminiwire.Protocol}
 	response := func(body []byte) ([]byte, error) { return geminiwire.GeminiResponseToChat(body, options) }
 	streamer := func(ctx context.Context, src io.Reader, dst io.Writer) error {
 		return geminiwire.GeminiStreamToChat(ctx, src, dst, options)

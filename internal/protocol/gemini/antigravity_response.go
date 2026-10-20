@@ -343,6 +343,51 @@ func (s *antigravityStream) finalResponse() (map[string]any, error) {
 	return s.response(parts, s.finish), nil
 }
 
+// ChatResponseToAntigravity is the buffered half of the same registration
+// (openai-to-antigravity.js:123 registers one function, which the pin's
+// non-streaming path never calls; a registered Response leg without it would
+// hand a non-streaming client the raw Chat body). It folds the one completion
+// through the stream's own state machine, so the two halves cannot disagree
+// about parts, tool calls, the finish or the usage.
+func ChatResponseToAntigravity(body []byte) ([]byte, error) {
+	chunk, err := concerns.WireObject(body)
+	if err != nil {
+		return nil, err
+	}
+	// A buffered body carries the same content as one message that a stream
+	// would have sent as a delta; renaming it is the whole difference. Its tool
+	// calls are whole and unnumbered, so their position is their index.
+	for _, raw := range concerns.Items(chunk["choices"]) {
+		choice := concerns.Object(raw)
+		if choice == nil || choice["delta"] != nil {
+			continue
+		}
+		if message, present := choice["message"]; present {
+			choice["delta"] = message
+		}
+		delta := concerns.Object(choice["delta"])
+		for index, raw := range concerns.Items(delta["tool_calls"]) {
+			if call := concerns.Object(raw); call != nil {
+				if _, set := call["index"]; !set {
+					call["index"] = index
+				}
+			}
+		}
+	}
+	state := &antigravityStream{}
+	if _, err := state.consume(chunk); err != nil {
+		return nil, err
+	}
+	if state.finish == "" {
+		return nil, errors.New("the upstream sent a completion with no finish_reason")
+	}
+	response, err := state.finalResponse()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(response)
+}
+
 // ChatStreamToAntigravity is the response leg openai-chat>antigravity
 // (translator/response/openai-to-antigravity.js:9-120, registered :123): a Chat
 // stream as the Cloud Code SSE an Antigravity client reads, one

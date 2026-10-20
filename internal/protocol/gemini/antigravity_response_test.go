@@ -287,6 +287,65 @@ func TestAntigravityRepeatedFinishKeepsContent(t *testing.T) {
 	}
 }
 
+// The buffered half of the registration: a non-streaming client gets the same
+// candidate the stream would have built, not the raw Chat body.
+func TestAntigravityBufferedResponse(t *testing.T) {
+	convert := func(t *testing.T, body string) (map[string]any, error) {
+		t.Helper()
+		out, err := ChatResponseToAntigravity([]byte(body))
+		if err != nil {
+			return nil, err
+		}
+		result, err := concerns.WireObject(out)
+		if err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		return result, nil
+	}
+	// Text, reasoning, a tool call and usage: one event, everything held to it.
+	result, err := convert(t, `{"id":"chatcmpl-1","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hi","reasoning_content":"hm",`+
+		`"tool_calls":[{"id":"c1","type":"function","function":{"name":"f","arguments":"{\"a\":1}"}},{"id":"c2","type":"function","function":{"name":"g","arguments":"{}"}}]},`+
+		`"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := concerns.Object(result["response"])
+	if response == nil {
+		t.Fatalf("no response envelope: %s", asJSON(result))
+	}
+	parts := concerns.Items(at(response, "candidates.0.content.parts"))
+	if got := asJSON(parts); got != `[{"text":"hm","thought":true},{"text":"hi"},{"functionCall":{"args":{"a":1},"id":"c1","name":"f"}},{"functionCall":{"args":{},"id":"c2","name":"g"}}]` {
+		t.Errorf("parts %s", got)
+	}
+	for path, want := range map[string]string{
+		"candidates.0.finishReason": `"STOP"`, "responseId": `"chatcmpl-1"`, "modelVersion": `"m"`,
+		"usageMetadata.promptTokenCount": `3`, "usageMetadata.totalTokenCount": `5`,
+	} {
+		if got := asJSON(at(response, path)); got != want {
+			t.Errorf("%s = %s, want %s", path, got, want)
+		}
+	}
+	// No content at all still yields the empty text part the stream sends.
+	result, err = convert(t, `{"id":"r","choices":[{"index":0,"message":{"role":"assistant","content":""},"finish_reason":"stop"}]}`)
+	if err != nil || asJSON(at(result, "response.candidates.0.content.parts")) != `[{"text":""}]` {
+		t.Errorf("empty answer: %v %s", err, asJSON(result))
+	}
+	// The failures the stream refuses are refused here too.
+	for name, body := range map[string]string{
+		"no finish":      `{"choices":[{"index":0,"message":{"role":"assistant","content":"x"}}]}`,
+		"unknown finish": `{"choices":[{"index":0,"message":{"content":"x"},"finish_reason":"mystery"}]}`,
+		"refusal":        `{"choices":[{"index":0,"message":{"content":"x","refusal":"no"},"finish_reason":"stop"}]}`,
+		"two choices":    `{"choices":[{"index":0,"message":{"content":"a"}},{"index":1,"message":{"content":"b"}}]}`,
+		"bad arguments":  `{"choices":[{"index":0,"message":{"tool_calls":[{"id":"c","function":{"name":"f","arguments":"nope"}}]},"finish_reason":"tool_calls"}]}`,
+		"not an object":  `[]`,
+		"upstream error": `{"error":{"code":500,"message":"boom"}}`,
+	} {
+		if _, err := ChatResponseToAntigravity([]byte(body)); err == nil {
+			t.Errorf("%s was served", name)
+		}
+	}
+}
+
 func TestAntigravityStreamFailures(t *testing.T) {
 	for name, src := range map[string]string{
 		"two choices":     chatSSE(`{"choices":[{"index":0,"delta":{"content":"a"}},{"index":1,"delta":{"content":"b"}}]}`, `[DONE]`),
@@ -399,7 +458,7 @@ func TestCloudCodeResponseLegsServeBothWires(t *testing.T) {
 	object := `{"response":{"candidates":[{"content":{"parts":[{"text":"hi"},{"functionCall":{"id":"c1","name":"lookup","args":{"q":1}},"thoughtSignature":"SIG"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":2,"thoughtsTokenCount":1},"modelVersion":"m","responseId":"r"}}`
 	for _, model := range []string{"gemini-3-flash", "claude-sonnet-4-6"} {
 		cache := NewSignatures(10, time.Hour)
-		options := ResponseOptions{Model: model, Signatures: cache, Scope: "alice|conn"}
+		options := ResponseOptions{Model: model, Signatures: cache, Scope: "alice|conn", Wire: AntigravityProtocol}
 		result, err := buffered(t, object, options)
 		if err != nil {
 			t.Fatal(err)

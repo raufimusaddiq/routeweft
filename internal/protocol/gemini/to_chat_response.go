@@ -21,6 +21,16 @@ type ResponseOptions struct {
 	// request that continues this conversation. An empty Scope keeps none.
 	Signatures *Signatures
 	Scope      string
+	// Wire is the protocol the upstream speaks, when the caller knows it: one of
+	// the constants of this package (Protocol, GeminiCLIProtocol,
+	// AntigravityProtocol, VertexProtocol). The two Cloud Code wires store
+	// signatures under FamilyScope in their request legs, so their response leg
+	// must read back from the same place. The wire decides that, never the
+	// payload: a Cloud Code upstream that answered unwrapped would otherwise
+	// store one family's signature where no request leg looks, and tenant
+	// isolation would follow a key the upstream controls. Empty means the plain
+	// Gemini wire.
+	Wire string
 }
 
 // fallbackModel is what the pin reports when neither the response nor the
@@ -77,8 +87,13 @@ func (s *responseState) consume(chunk map[string]any) ([]map[string]any, error) 
 	response := chunk
 	scope := s.options.Scope
 	if wrapped := concerns.Object(chunk["response"]); wrapped != nil {
-		// Cloud Code wraps every chunk (:45); the envelope selects family-scoped storage.
+		// Cloud Code wraps every chunk (:45).
 		response = wrapped
+	}
+	if s.options.Wire == GeminiCLIProtocol || s.options.Wire == AntigravityProtocol {
+		// The Cloud Code request legs store under FamilyScope, so the response leg
+		// reads back from there. The wire decides this, not the envelope: see
+		// ResponseOptions.Wire.
 		scope = FamilyScope(scope, s.options.Model)
 	}
 	if raw, present := response["error"]; present && raw != nil {

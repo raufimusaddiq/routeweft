@@ -427,7 +427,7 @@ func TestSignaturesAreScopedByTenantAndFamily(t *testing.T) {
 		stored := func(tenant, model, signature string) {
 			t.Helper()
 			object := `{"response":{"candidates":[{"content":{"parts":[{"functionCall":{"id":"call_1","name":"lookup","args":{}},"thoughtSignature":"` + signature + `"}]},"finishReason":"STOP"}]}}`
-			options := ResponseOptions{Model: model, Signatures: cache, Scope: tenant}
+			options := ResponseOptions{Model: model, Signatures: cache, Scope: tenant, Wire: AntigravityProtocol}
 			var err error
 			if stream {
 				_, _, err = streamed(t, context.Background(), sse(object, object), options)
@@ -473,6 +473,45 @@ func TestSignaturesAreScopedByTenantAndFamily(t *testing.T) {
 		stored("", "claude-x", "S")
 		if cache.Len() != before {
 			t.Errorf("stored %d with no tenant", cache.Len()-before)
+		}
+	}
+}
+
+// The wire decides the scope, not the payload. A Cloud Code upstream that
+// answered unwrapped still stores under the family scope its request leg reads,
+// and a Gemini-wire upstream that wrapped its body is not family-scoped.
+func TestSignatureScopeFollowsTheWireNotThePayload(t *testing.T) {
+	inner := `{"candidates":[{"content":{"parts":[{"functionCall":{"id":"call_1","name":"lookup","args":{}},"thoughtSignature":"SIG"}]},"finishReason":"STOP"}]}`
+	for name, c := range map[string]struct {
+		body   string
+		wire   string
+		family bool
+	}{
+		"cloud code, wrapped":   {`{"response":` + inner + `}`, AntigravityProtocol, true},
+		"cloud code, unwrapped": {inner, AntigravityProtocol, true},
+		"gemini, wrapped":       {`{"response":` + inner + `}`, Protocol, false},
+		"gemini, unwrapped":     {inner, Protocol, false},
+	} {
+		for _, stream := range []bool{false, true} {
+			cache := NewSignatures(10, time.Hour)
+			options := ResponseOptions{Model: "claude-opus-4-6-thinking", Signatures: cache, Scope: "alice|conn", Wire: c.wire}
+			var err error
+			if stream {
+				_, _, err = streamed(t, context.Background(), sse(c.body), options)
+			} else {
+				_, err = buffered(t, c.body, options)
+			}
+			if err != nil {
+				t.Fatalf("%s stream=%v: %v", name, stream, err)
+			}
+			_, family := cache.Get(FamilyScope("alice|conn", options.Model), "call_1", "lookup", `{}`)
+			_, bare := cache.Get("alice|conn", "call_1", "lookup", `{}`)
+			if family != c.family {
+				t.Errorf("%s stream=%v: stored under the family scope = %v", name, stream, family)
+			}
+			if bare == c.family {
+				t.Errorf("%s stream=%v: stored under the bare scope = %v", name, stream, bare)
+			}
 		}
 	}
 }
