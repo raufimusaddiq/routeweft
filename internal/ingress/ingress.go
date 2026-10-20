@@ -622,7 +622,9 @@ func (s *usageScanner) Write(chunk []byte) (int, error) {
 }
 
 func (s *usageScanner) usage() (promptcache.Usage, bool) {
-	if s.family == shared.FamilySystemOne && len(s.buffer) > 0 {
+	// A line-delimited stream's last line may arrive without its newline; for
+	// Ollama that line is the done:true one that holds the counts.
+	if (s.family == shared.FamilySystemOne || s.family == shared.FamilyOllama) && len(s.buffer) > 0 {
 		s.Write([]byte("\n"))
 	}
 	return s.merged, s.found

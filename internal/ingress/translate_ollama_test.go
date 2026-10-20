@@ -98,3 +98,32 @@ func TestTruncatedOllamaStreamIsAFailure(t *testing.T) {
 		})
 	}
 }
+
+// The last NDJSON line is the one that holds the counts and the done marker, and
+// an upstream may close without its newline. The stream is converted and the
+// usage it reported is recorded, not zeroed.
+func TestOllamaFinalLineWithoutNewlineIsAccounted(t *testing.T) {
+	scanner := &usageScanner{family: "ollama"}
+	_, _ = scanner.Write([]byte(`{"model":"m","message":{"content":"po"},"done":false}` + "\n" +
+		`{"model":"m","message":{"content":"ng"},"done":true,"prompt_eval_count":130,"prompt_eval_cached_count":100,"eval_count":42}`))
+	usage, found := scanner.usage()
+	if !found || !scanner.reportsUsage(true) || usage.InputTokens != 130 || usage.CacheReadTokens != 100 || usage.OutputTokens != 42 {
+		t.Fatalf("scanner: %+v found=%v complete=%v", usage, found, scanner.complete)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		fmt.Fprint(w, strings.TrimSuffix(upstreamBodies[ollama.Protocol][true], "\n"))
+	}))
+	defer upstream.Close()
+	for _, client := range []string{openai.ChatProtocol, anthropic.MessagesProtocol, openai.ResponsesProtocol} {
+		t.Run(client, func(t *testing.T) {
+			w, outcomes := serveOllamaClient(t, upstream.URL, map[string]string{"local": ollama.Protocol}, []string{"local"},
+				struct{ path, body string }{clientRequests[client].path, fmt.Sprintf(clientRequests[client].body, true)})
+			assertClientSees(t, client, true, w.Body.String())
+			if len(outcomes) != 1 || outcomes[0].UsageUnobserved || outcomes[0].Status != 200 ||
+				outcomes[0].InputTokens != 130 || outcomes[0].CacheRead != 100 || outcomes[0].OutputTokens != 42 {
+				t.Errorf("outcomes %+v", outcomes)
+			}
+		})
+	}
+}
