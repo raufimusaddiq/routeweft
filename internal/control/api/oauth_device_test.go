@@ -188,7 +188,7 @@ func TestOAuthDeviceApprovalStoresNonExpiringBearerOnce(t *testing.T) {
 		t.Fatalf("connections=%v err=%v", connections, err)
 	}
 	stored := connections[0]
-	if stored.AuthKind != credentials.AuthOAuth || stored.Name != "Work" || stored.Identity != "work@example.test" || stored.Secret.AccessToken != deviceTestToken || stored.Secret.RefreshToken != "" || !stored.Secret.Expiry.IsZero() || !stored.Enabled {
+	if stored.AuthKind != credentials.AuthOAuth || stored.Name != "Work" || stored.Identity != "work@example.test" || stored.Secret.AccessToken != deviceTestToken || stored.Secret.RefreshToken != "" || !stored.Secret.Expiry.IsZero() || !stored.Enabled || len(stored.Secret.ProviderData) != 0 {
 		t.Fatalf("stored=%+v", stored)
 	}
 	clock.now = clock.now.Add(3 * time.Second)
@@ -339,7 +339,13 @@ func TestOAuthDeviceSaveFailureKeepsAttemptOpen(t *testing.T) {
 
 func TestOAuthFlowsReserveIsExclusive(t *testing.T) {
 	flows := newOAuthFlows()
-	state, _, ok := flows.begin(oauthFlow{sessionID: "s", provider: "kilocode", deviceCode: "c"})
+	state, ok := newState()
+	if !ok {
+		t.Fatal("state mint failed")
+	}
+	if _, ok := flows.begin(state, oauthFlow{sessionID: "s", provider: "kilocode", deviceCode: "c"}); !ok {
+		t.Fatal("begin refused")
+	}
 	if !ok {
 		t.Fatal("begin failed")
 	}

@@ -67,7 +67,7 @@ Gate:
 Deliver:
 
 - implementation-ready PRD;
-- 80-provider first-class requirement matrix with no TBD rows;
+- 81-provider first-class requirement matrix with no TBD rows;
 - built-in vs Generic Provider definition;
 - public route/alias/auth/body/h2c compatibility;
 - exact Combo/Fusion/capability scope;
@@ -79,7 +79,7 @@ Deliver:
 Gate:
 
 - docs-only PR reviewed/merged;
-- provider baseline contains exactly 80 active rows;
+- provider baseline contains exactly 81 active rows;
 - no product-area blocker in REQUIREMENTS_TRACEABILITY;
 - implementation-start gate in PRD §22 is satisfied.
 
@@ -330,7 +330,7 @@ in isolation.
   family (for example Google/AWS, cookie/session, device-token).
 - Evidence: PROVIDER_BASELINE §11 acceptance items per provider row.
 
-Broad-provider GA is reached only when every one of the 80 active rows is
+Broad-provider GA is reached only when every one of the 81 active rows is
 `ready` under SPEC §36.
 
 ## Sprint 6 — Telemetry and control plane

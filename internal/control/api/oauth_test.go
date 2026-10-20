@@ -18,6 +18,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/adminauth"
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/oauthrefresh"
+	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 )
 
@@ -35,7 +36,10 @@ type oauthExchangeCall struct {
 }
 
 func (e *oauthExchange) Do(request *http.Request) (*http.Response, error) {
-	raw, _ := io.ReadAll(request.Body)
+	var raw []byte
+	if request.Body != nil {
+		raw, _ = io.ReadAll(request.Body)
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.requests = append(e.requests, oauthExchangeCall{contentType: request.Header.Get("Content-Type"), body: string(raw)})
@@ -63,10 +67,15 @@ func newOAuthAPI(t *testing.T, exchange *oauthExchange) (*Handler, *http.ServeMu
 	h, mux, store, creds, cookie := newProvidersAPI(t, false, nil)
 	t.Cleanup(func() { store.Close() })
 	h.opts.OAuthClient = exchange
+	// Sign-in callbacks are built from the configured origin, never a request
+	// header, so every test that starts a flow needs one.
+	h.opts.PublicOrigin = "https://dashboard.example.test"
 	h.opts.Providers = append(h.opts.Providers,
 		registry.Spec{ID: "claude", Transports: []registry.Protocol{registry.TransportAnthropic}, Auth: registry.AuthOAuth, DefaultBaseURL: "https://api.anthropic.com/v1", ModelCatalog: registry.CatalogStatic},
 		registry.Spec{ID: "kilocode", Transports: []registry.Protocol{registry.TransportOpenAIChat}, Auth: registry.AuthOAuth, DefaultBaseURL: "https://api.kilo.ai/api", ModelCatalog: registry.CatalogDynamic},
 		registry.Spec{ID: "codex", Transports: []registry.Protocol{registry.TransportOpenAIResponses}, Auth: registry.AuthOAuth, DefaultBaseURL: "https://chatgpt.com/backend-api/codex", ModelCatalog: registry.CatalogStatic},
+		// A flow that consumes Params.RedirectURI, for the fail-closed assertion.
+		registry.Spec{ID: "gemini-cli", Transports: []registry.Protocol{registry.TransportGeminiCLI}, Auth: registry.AuthOAuth, DefaultBaseURL: "https://cloudcode-pa.googleapis.com/v1internal", ModelCatalog: registry.CatalogStatic},
 	)
 	return h, mux, creds, cookie
 }
@@ -88,7 +97,12 @@ type startedFlow struct {
 
 func startFlow(t *testing.T, mux *http.ServeMux, cookie *http.Cookie, provider string) startedFlow {
 	t.Helper()
-	recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/"+provider+"/start", `{"name":"Work","identity":"work@example.test"}`)
+	body := `{"name":"Work","identity":"work@example.test"}`
+	if provider == "gitlab" {
+		// GitLab is self-hosted: its client id is operator-supplied.
+		body = `{"name":"Work","identity":"work@example.test","meta":{"clientId":"fixture-client"}}`
+	}
+	recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/"+provider+"/start", body)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("start status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -377,7 +391,11 @@ func TestOAuthUnusablePasteDoesNotBurnTheAttempt(t *testing.T) {
 func TestOAuthGlobalPendingLimit(t *testing.T) {
 	h, mux, _, cookie := newOAuthAPI(t, &oauthExchange{body: tokenBody()})
 	for i := 0; i < oauthMaxPending; i++ {
-		if _, _, ok := h.oauth.begin(oauthFlow{sessionID: "other-" + strconv.Itoa(i), provider: "claude"}); !ok {
+		state, ok := newState()
+		if !ok {
+			t.Fatal("state mint failed")
+		}
+		if _, ok := h.oauth.begin(state, oauthFlow{sessionID: "other-" + strconv.Itoa(i), provider: "claude"}); !ok {
 			t.Fatalf("begin %d refused below the limit", i)
 		}
 	}
@@ -391,7 +409,11 @@ func TestOAuthSignInRefreshesThroughTheRegistry(t *testing.T) {
 	// expires_in inside the refresh lead makes the first read refresh at once.
 	exchange := &oauthExchange{body: `{"access_token":"` + oauthTestAccess + `","refresh_token":"` + oauthTestRefresh + `","expires_in":5}`}
 	h, mux, creds, cookie := newOAuthAPI(t, exchange)
-	h.opts.CredentialRegistry.SetExchangerResolver(oauthrefresh.Resolver(exchange))
+	resolver, err := oauthrefresh.Resolver(exchange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.opts.CredentialRegistry.SetExchangerResolver(resolver)
 	flow := startFlow(t, mux, cookie, "claude")
 	if recorder := callback(t, mux, cookie, "claude", flow.State, oauthTestCode); recorder.Code != http.StatusOK {
 		t.Fatalf("callback status=%d body=%s", recorder.Code, recorder.Body.String())
@@ -402,5 +424,346 @@ func TestOAuthSignInRefreshesThroughTheRegistry(t *testing.T) {
 	}
 	if exchange.calls() != 2 || !strings.Contains(exchange.requests[1].body, "refresh_token") {
 		t.Fatalf("expired sign-in credential was not refreshed: %+v", exchange.requests)
+	}
+}
+
+// newOnboardingAPI builds a handler with the providers the new flow shapes need.
+func newOnboardingAPI(t *testing.T, exchange OAuthClient) (*Handler, *http.ServeMux, *credentials.Store, *http.Cookie) {
+	t.Helper()
+	h, mux, store, creds, cookie := newProvidersAPI(t, false, nil)
+	t.Cleanup(func() { store.Close() })
+	h.opts.OAuthClient = exchange
+	h.opts.PublicOrigin = "https://dashboard.example.test"
+	t.Setenv(onboarding.GoogleClientIDEnv, "fixture-client-id")
+	t.Setenv(onboarding.GoogleClientSecretEnv, "fixture-client-secret")
+	t.Setenv(onboarding.IflowClientIDEnv, "fixture-iflow-client-id")
+	t.Setenv(onboarding.IflowClientSecretEnv, "fixture-iflow-client-secret")
+	h.opts.Providers = append(h.opts.Providers,
+		registry.Spec{ID: "github", Transports: []registry.Protocol{registry.TransportOpenAIChat}, Auth: registry.AuthOAuth, DefaultBaseURL: "https://api.githubcopilot.com", ModelCatalog: registry.CatalogStatic},
+		registry.Spec{ID: "kimchi", Transports: []registry.Protocol{registry.TransportOpenAIChat}, Auth: registry.AuthAPIKey, AuthModes: []registry.AuthKind{registry.AuthAPIKey, registry.AuthOAuth}, DefaultBaseURL: "https://llm.kimchi.dev/openai/v1", ModelCatalog: CatalogPassthroughForTest(), PassthroughModels: true},
+		registry.Spec{ID: "gitlab", Transports: []registry.Protocol{registry.TransportOpenAIChat}, Auth: registry.AuthOAuth, DefaultBaseURL: "https://gitlab.com", ModelCatalog: registry.CatalogStatic},
+		registry.Spec{ID: "cursor", Transports: []registry.Protocol{registry.TransportCursor}, Auth: registry.AuthOAuth, DefaultBaseURL: "https://api2.cursor.sh", ModelCatalog: registry.CatalogStatic},
+	)
+	return h, mux, creds, cookie
+}
+
+// CatalogPassthroughForTest names the passthrough catalog class.
+func CatalogPassthroughForTest() registry.ModelCatalog { return registry.CatalogPassthrough }
+
+// routeExchange answers per URL fragment, which a multi-call flow needs (a device
+// start and its poll hit different endpoints).
+type routeExchange struct {
+	mu     sync.Mutex
+	routes map[string]string
+	status int
+	// lastTokenBody and seenURLs let a test assert what a flow actually sent, which
+	// is how a dropped operator field is caught rather than assumed.
+	lastTokenBody string
+	seenURLs      []string
+}
+
+func (r *routeExchange) Do(request *http.Request) (*http.Response, error) {
+	var raw []byte
+	if request.Body != nil {
+		raw, _ = io.ReadAll(request.Body)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.seenURLs = append(r.seenURLs, request.URL.String())
+	body := "{}"
+	matched := ""
+	for fragment, payload := range r.routes {
+		// Longest fragment wins so a generic key cannot shadow a specific one.
+		if strings.Contains(request.URL.String(), fragment) && len(fragment) > len(matched) {
+			matched, body = fragment, payload
+		}
+	}
+	if strings.Contains(request.URL.String(), "token") {
+		r.lastTokenBody = string(raw)
+	}
+	status := r.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
+}
+
+// TestDeviceStartReturnsVerificationAndPollCompletes proves a device flow needs no
+// browser redirect: start returns the user code, poll stores the connection.
+func TestDeviceStartReturnsVerificationAndPollCompletes(t *testing.T) {
+	exchange := &routeExchange{routes: map[string]string{
+		"login/device/code":        `{"device_code":"fixture-device","user_code":"ABCD-1234","verification_uri":"https://example.invalid/device","expires_in":900,"interval":5}`,
+		"login/oauth/access_token": `{"access_token":"` + oauthTestAccess + `","refresh_token":"` + oauthTestRefresh + `"}`,
+		"copilot_internal":         `{"token":"fixture-copilot","expires_at":1761000000}`,
+		"api.github.com/user":      `{"login":"fixture-login","id":42}`,
+	}}
+	h, mux, creds, cookie := newOnboardingAPI(t, exchange)
+	// The device poll is throttled per attempt, so the test advances the clock the
+	// same way a real browser's interval would.
+	clock := &deviceClock{now: time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)}
+	h.oauth.now = func() time.Time { return clock.now }
+
+	recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/github/device", `{"name":"Work","identity":"work@example.test"}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("start status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var started struct {
+		State           string `json:"state"`
+		FlowType        string `json:"flowType"`
+		UserCode        string `json:"userCode"`
+		VerificationURL string `json:"verificationUrl"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	if started.FlowType != "device_code" || started.UserCode == "" || started.VerificationURL == "" {
+		t.Fatalf("device start=%+v", started)
+	}
+	assertNoSecrets(t, recorder.Body.String())
+
+	// A pending poll must not fail and must not store anything.
+	clock.now = clock.now.Add(3 * time.Second)
+	exchange.status = http.StatusBadRequest
+	exchange.routes["login/oauth/access_token"] = `{"error":"authorization_pending"}`
+	pending := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/github/poll", `{"state":"`+started.State+`","deviceCode":"fixture-device"}`)
+	if pending.Code != http.StatusOK || !strings.Contains(pending.Body.String(), `"pending"`) {
+		t.Fatalf("pending poll status=%d body=%s", pending.Code, pending.Body.String())
+	}
+	if connections, _ := creds.ListConnections(context.Background(), "github"); len(connections) != 0 {
+		t.Fatalf("a pending poll stored a connection: %+v", connections)
+	}
+
+	// A completed poll stores the connection.
+	clock.now = clock.now.Add(3 * time.Second)
+	exchange.status = http.StatusOK
+	exchange.routes["login/oauth/access_token"] = `{"access_token":"` + oauthTestAccess + `","refresh_token":"` + oauthTestRefresh + `"}`
+	done := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/github/poll", `{"state":"`+started.State+`","deviceCode":"fixture-device"}`)
+	if done.Code != http.StatusOK || !strings.Contains(done.Body.String(), `"connected"`) {
+		t.Fatalf("done poll status=%d body=%s", done.Code, done.Body.String())
+	}
+	assertNoSecrets(t, done.Body.String())
+	connections, err := creds.ListConnections(context.Background(), "github")
+	if err != nil || len(connections) != 1 {
+		t.Fatalf("connections=%+v err=%v", connections, err)
+	}
+	if connections[0].Secret.AccessToken != oauthTestAccess {
+		t.Fatalf("stored secret=%+v", connections[0].Secret)
+	}
+
+	// The state is single use.
+	clock.now = clock.now.Add(3 * time.Second)
+	replay := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/github/poll", `{"state":"`+started.State+`","deviceCode":"fixture-device"}`)
+	if replay.Code != http.StatusBadRequest {
+		t.Fatalf("replayed poll status=%d want 400", replay.Code)
+	}
+}
+
+// TestPollRejectsBrowserFlow keeps a device poll from being used on a flow that
+// has no device code.
+func TestPollRejectsBrowserFlow(t *testing.T) {
+	_, mux, _, cookie := newOnboardingAPI(t, &oauthExchange{})
+	flow := startFlow(t, mux, cookie, "gitlab")
+	recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/gitlab/poll", `{"state":"`+flow.State+`"}`)
+	// A browser flow has no device provider, so the poll route refuses it outright.
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("poll on a browser flow status=%d want 404", recorder.Code)
+	}
+}
+
+// TestImportStoresManualToken proves the manual-token path persists without a
+// browser step and still publishes to the credential registry.
+// TestImportRejectsUnverifiedCredential is the negative half of the import path:
+// a token the host rejects is not stored. It is named for that, not for storing.
+func TestImportRejectsUnverifiedCredential(t *testing.T) {
+	exchange := &routeExchange{status: http.StatusUnauthorized, routes: map[string]string{}}
+	_, mux, creds, cookie := newOnboardingAPI(t, exchange)
+	body := `{"name":"Work","identity":"work@example.test","input":"` + oauthTestAccess + `"}`
+	recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/gitlab/import", body)
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("unverified import status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if connections, _ := creds.ListConnections(context.Background(), "gitlab"); len(connections) != 0 {
+		t.Fatal("stored an unverified import")
+	}
+}
+
+// TestImportStoresAVerifiedCredential is the positive half the old name claimed but
+// never tested: a verified import must produce a stored connection.
+func TestImportStoresAVerifiedCredential(t *testing.T) {
+	exchange := &routeExchange{routes: map[string]string{
+		"api/v4/user": `{"username":"fixture","email":"fixture@example.invalid","name":"Fixture"}`,
+	}}
+	_, mux, creds, cookie := newOnboardingAPI(t, exchange)
+	body := `{"name":"Work","identity":"work@example.test","input":"fixture-pat"}`
+	recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/gitlab/import", body)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("import status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	assertNoSecrets(t, recorder.Body.String(), "fixture-pat")
+	connections, err := creds.ListConnections(context.Background(), "gitlab")
+	if err != nil || len(connections) != 1 {
+		t.Fatalf("connections=%+v err=%v", connections, err)
+	}
+	stored := connections[0]
+	if stored.Secret.AccessToken != "fixture-pat" || !stored.Enabled {
+		t.Fatalf("stored=%+v", stored)
+	}
+	if stored.Secret.ProviderData["authKind"] != "personal_access_token" {
+		t.Fatalf("provider data=%v", stored.Secret.ProviderData)
+	}
+	if stored.Identity != "fixture@example.invalid" {
+		t.Fatalf("identity=%q, want the provider-reported account", stored.Identity)
+	}
+}
+
+// TestImportCursorStoresAConnection proves the import-only provider works with the
+// body a real client sends. It previously required meta fields the UI never posts.
+func TestImportCursorStoresAConnection(t *testing.T) {
+	exchange := &routeExchange{routes: map[string]string{
+		"GetUsableModels": `{"models":[]}`,
+	}}
+	_, mux, creds, cookie := newOnboardingAPI(t, exchange)
+	body := `{"name":"Work","identity":"work@example.test","input":"fixture-cursor-token","meta":{"machineId":"fixture-machine"}}`
+	recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/cursor/import", body)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("cursor import status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	connections, err := creds.ListConnections(context.Background(), "cursor")
+	if err != nil || len(connections) != 1 {
+		t.Fatalf("connections=%+v err=%v", connections, err)
+	}
+	if connections[0].Secret.AccessToken != "fixture-cursor-token" {
+		t.Fatalf("stored=%+v", connections[0].Secret)
+	}
+}
+
+// TestGitlabStartMetaReachesTheTokenRequest is the plumbing test: operator input
+// supplied at start must survive to the exchange. It previously vanished, so the
+// token request carried an empty client_id.
+func TestGitlabStartMetaReachesTheTokenRequest(t *testing.T) {
+	exchange := &routeExchange{routes: map[string]string{
+		"oauth/token": `{"access_token":"fixture-access","refresh_token":"fixture-refresh","expires_in":3600}`,
+		"api/v4/user": `{"username":"fixture","email":"fixture@example.invalid","name":"Fixture"}`,
+	}}
+	_, mux, _, cookie := newOnboardingAPI(t, exchange)
+	started := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/gitlab/start",
+		`{"name":"Work","identity":"work@example.test","meta":{"clientId":"fixture-client-id","baseUrl":"https://gitlab.example.test"}}`)
+	if started.Code != http.StatusOK {
+		t.Fatalf("start status=%d body=%s", started.Code, started.Body.String())
+	}
+	var flow struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(started.Body.Bytes(), &flow); err != nil {
+		t.Fatal(err)
+	}
+	exchange.mu.Lock()
+	exchange.lastTokenBody = ""
+	exchange.mu.Unlock()
+	done := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/gitlab/callback", `{"state":"`+flow.State+`","input":"fixture-code"}`)
+	if done.Code != http.StatusOK {
+		t.Fatalf("callback status=%d body=%s", done.Code, done.Body.String())
+	}
+	exchange.mu.Lock()
+	sent := exchange.lastTokenBody
+	exchange.mu.Unlock()
+	if !strings.Contains(sent, "client_id=fixture-client-id") {
+		t.Fatalf("token request dropped the operator client id: %q", sent)
+	}
+	// The self-hosted base URL must also survive: the exchange must have gone to it.
+	exchange.mu.Lock()
+	urls := strings.Join(exchange.seenURLs, " ")
+	exchange.mu.Unlock()
+	if !strings.Contains(urls, "gitlab.example.test") {
+		t.Fatalf("exchange did not use the operator base URL: %v", urls)
+	}
+}
+
+// TestOAuthRoutesRequireSession covers the new endpoints' auth guard.
+func TestOAuthRoutesRequireSession(t *testing.T) {
+	_, mux, _, _ := newOnboardingAPI(t, &oauthExchange{})
+	for _, path := range []string{
+		"/admin/v1/oauth/github/poll",
+		"/admin/v1/oauth/gitlab/import",
+	} {
+		if recorder := doJSON(t, mux, nil, http.MethodPost, path, `{}`); recorder.Code != http.StatusUnauthorized {
+			t.Errorf("%s anonymous status=%d want 401", path, recorder.Code)
+		}
+	}
+}
+
+// TestOnboardingFlowsWorkWithTheDefaultClient is the seam test: the handler must
+// reach the network without a caller-injected OAuthClient. Every other OAuth test
+// sets one, which is exactly how a missing production default stayed green.
+func TestOnboardingFlowsWorkWithTheDefaultClient(t *testing.T) {
+	// newProvidersAPI builds the handler with no OAuthClient, like the app does.
+	h, mux, store, _, cookie := newProvidersAPI(t, true, nil)
+	t.Cleanup(func() { store.Close() })
+	h.opts.PublicOrigin = "https://dashboard.example.test"
+	h.opts.Providers = append(h.opts.Providers,
+		registry.Spec{ID: "claude", Transports: []registry.Protocol{registry.TransportAnthropic}, Auth: registry.AuthOAuth, DefaultBaseURL: "https://api.anthropic.com/v1", ModelCatalog: registry.CatalogStatic},
+		registry.Spec{ID: "github", Transports: []registry.Protocol{registry.TransportOpenAIChat}, Auth: registry.AuthOAuth, DefaultBaseURL: "https://api.githubcopilot.com", ModelCatalog: registry.CatalogStatic},
+	)
+	if h.opts.OAuthClient == nil {
+		t.Fatal("handler has no OAuth client; sign-in would fail for every provider")
+	}
+	// A browser flow must produce an authorize URL rather than failing on a nil
+	// client.
+	if recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/claude/start", `{"name":"Work","identity":"work@example.test"}`); recorder.Code != http.StatusOK {
+		t.Fatalf("claude start status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	// A device flow's failure must be the upstream being unreachable, never a
+	// missing client. A nil client answers 502 oauth_start_failed for every
+	// provider; a wired client gets past the client check and the request fails
+	// on its own merits.
+	recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/github/device", `{"name":"Work","identity":"work@example.test"}`)
+	if recorder.Code == http.StatusInternalServerError {
+		t.Fatalf("device start hit a server error: %s", recorder.Body.String())
+	}
+}
+
+// TestDefaultOAuthClientUsesTheSSRFPolicy proves the default client is the same
+// guarded transport discovery uses, not an unguarded http.Client.
+func TestDefaultOAuthClientUsesTheSSRFPolicy(t *testing.T) {
+	h := New(Options{})
+	client, ok := h.opts.OAuthClient.(*http.Client)
+	if !ok || client == nil {
+		t.Fatalf("default OAuth client is %T", h.opts.OAuthClient)
+	}
+	if client.Transport == nil {
+		t.Fatal("default OAuth client has no transport, so it bypasses the SSRF policy")
+	}
+}
+
+// TestDeviceSignInNeedsNoPublicOrigin is the seam test for the second blocker: a
+// device flow shows a code and polls, so it must work on an install that never
+// configured ROUTEWEFT_PUBLIC_ORIGIN. A browser flow on the same install must
+// still fail closed rather than guess a redirect.
+func TestDeviceSignInNeedsNoPublicOrigin(t *testing.T) {
+	upstream := &deviceUpstream{pollStatus: http.StatusAccepted}
+	h, mux, _, cookie, clock := newDeviceAPI(t, upstream)
+	h.opts.PublicOrigin = ""
+	clock.now = time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+
+	recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/kilocode/device", `{"name":"Work","identity":"work@example.test"}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("device start without a public origin status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var started struct {
+		State    string `json:"state"`
+		UserCode string `json:"userCode"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	if started.State == "" || started.UserCode == "" {
+		t.Fatalf("device start=%+v", started)
+	}
+
+	// A browser flow that consumes the redirect still refuses to guess. gemini-cli
+	// reads Params.RedirectURI; claude pins its callback and does not, so asserting
+	// claude 503s was the regression itself.
+	if recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/gemini-cli/start", `{"name":"Work","identity":"work@example.test"}`); recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("browser start without a public origin status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }

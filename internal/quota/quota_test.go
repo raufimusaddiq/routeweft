@@ -73,7 +73,7 @@ type fakeClient struct {
 	calls int
 }
 
-func (f *fakeClient) Usage(context.Context, string) (State, error) {
+func (f *fakeClient) Usage(context.Context, Credential) (State, error) {
 	f.calls++
 	return f.state, f.err
 }
@@ -101,7 +101,7 @@ func TestObservePublishesMostConstrainedWindow(t *testing.T) {
 	}}}
 	recorder := &recorder{}
 	observer := Observer{Clients: map[string]UsageClient{"codex": client}, Now: func() time.Time { return now }, Publisher: recorder}
-	state, err := observer.Observe(context.Background(), "codex", "acct-1", "token")
+	state, err := observer.Observe(context.Background(), "codex", "acct-1", Credential{AccessToken: "token"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestObserveReadFailureIsErrorNotExhaustion(t *testing.T) {
 	client := &fakeClient{err: errors.New("usage endpoint returned HTTP 503")}
 	recorder := &recorder{}
 	observer := Observer{Clients: map[string]UsageClient{"claude": client}, Now: func() time.Time { return now }, Publisher: recorder}
-	state, err := observer.Observe(context.Background(), "claude", "acct-1", "token")
+	state, err := observer.Observe(context.Background(), "claude", "acct-1", Credential{AccessToken: "token"})
 	if err == nil {
 		t.Fatal("expected the read failure to surface")
 	}
@@ -132,7 +132,7 @@ func TestObserveReadFailureIsErrorNotExhaustion(t *testing.T) {
 
 func TestObserveUnknownProviderIsNotConfigured(t *testing.T) {
 	observer := Observer{Clients: map[string]UsageClient{}}
-	if _, err := observer.Observe(context.Background(), "blackbox", "acct", "token"); !errors.Is(err, ErrNotConfigured) {
+	if _, err := observer.Observe(context.Background(), "blackbox", "acct", Credential{AccessToken: "token"}); !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -143,7 +143,7 @@ func TestObserveExhaustedPublishesZeroRemaining(t *testing.T) {
 	client := &fakeClient{state: State{Windows: []Window{{Name: "weekly", Remaining: ptr(0), ResetAt: &reset}}}}
 	recorder := &recorder{}
 	observer := Observer{Clients: map[string]UsageClient{"codex": client}, Now: func() time.Time { return now }, Publisher: recorder}
-	state, err := observer.Observe(context.Background(), "codex", "acct-1", "token")
+	state, err := observer.Observe(context.Background(), "codex", "acct-1", Credential{AccessToken: "token"})
 	if err != nil {
 		t.Fatal(err)
 	}

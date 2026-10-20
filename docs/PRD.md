@@ -66,7 +66,7 @@ The operator needs to:
 - Ollama-compatible chat ingress;
 - System One/Jev;
 - streaming + non-streaming;
-- built-in 80-provider catalog;
+- built-in 81-provider catalog;
 - Generic Provider;
 - multiple provider connections/accounts;
 - API key/OAuth/PAT/cookie/no-auth credentials;
@@ -200,7 +200,7 @@ Support:
 
 ### PRD-PROV-001 — first-class provider definition
 
-Routeweft targets the 80 active built-in providers listed in `PROVIDER_BASELINE.md`.
+Routeweft targets the 81 active built-in providers listed in `PROVIDER_BASELINE.md`.
 
 A first-class provider:
 
@@ -238,8 +238,8 @@ ProviderSpec
 
 ### PRD-PROV-004 — release breadth
 
-- **Daily-driver beta** may ship before all 80 are ready, but only configured/advertised-ready providers may be selected as production-ready.
-- **Broad-provider GA** requires all 80 built-in provider rows implemented and green.
+- **Daily-driver beta** may ship before all 81 are ready, but only configured/advertised-ready providers may be selected as production-ready.
+- **Broad-provider GA** requires all 81 built-in provider rows implemented and green.
 - No built-in row may disappear silently because porting it is difficult.
 
 ## 7. Generic Provider contract
@@ -828,7 +828,7 @@ Unsupported built-in provider rows may remain clearly non-ready during beta, but
 
 Requires:
 
-- all 80 built-in provider rows production-ready;
+- all 81 built-in provider rows production-ready;
 - no unexplained provider requirement gaps;
 - Generic Provider;
 - all public ingress compatibility contracts;
@@ -852,7 +852,7 @@ Every accepted product change updates PRD/provider requirements/tests before imp
 Codex implementation is allowed only when all are true on Routeweft `main`:
 
 - PRD status is **Implementation-ready product requirements**;
-- `PROVIDER_BASELINE.md` has exactly 80 active built-in rows and no `TBD` disposition;
+- `PROVIDER_BASELINE.md` has exactly 81 active built-in rows and no `TBD` disposition;
 - hidden provider decisions are explicit;
 - Generic Provider contract is explicit;
 - public API/alias/auth compatibility is explicit;
@@ -888,7 +888,7 @@ Routeweft initial GA is done when a fresh standalone installation can:
 
 At the reference SHA used for this product freeze, LiteRouter exposes:
 
-- 80 active built-in provider registry entries;
+- 81 active built-in provider registry entries;
 - 3 intentionally hidden provider entries;
 - 95 internal API route files;
 - 12 dashboard page routes;

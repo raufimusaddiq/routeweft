@@ -27,16 +27,18 @@ type fakeCredentials struct {
 	err    map[string]error
 	// known mirrors a memory-first registry: only seeded ids are readable.
 	known map[string]bool
+	// cookies holds cookie-only connections, which no usage reader can read.
+	cookies map[string]string
 }
 
-func (f fakeCredentials) Credential(_ context.Context, connectionID string) (string, error) {
+func (f fakeCredentials) Secret(_ context.Context, connectionID string) (credentials.Secret, error) {
 	if err := f.err[connectionID]; err != nil {
-		return "", err
+		return credentials.Secret{}, err
 	}
 	if f.known != nil && !f.known[connectionID] {
-		return "", credentials.ErrNotFound
+		return credentials.Secret{}, credentials.ErrNotFound
 	}
-	return f.values[connectionID], nil
+	return credentials.Secret{AccessToken: f.values[connectionID], Cookie: f.cookies[connectionID]}, nil
 }
 
 type fakeSeeder struct {
@@ -194,5 +196,34 @@ func TestServiceRunStopsOnContextCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not stop after context cancellation")
+	}
+}
+
+// TestCookieOnlyConnectionIsNotConfigured proves a connection whose only credential
+// is a session cookie is reported as "no usage reader" rather than as a failed
+// read: no reader reads Credential.Cookie, and a failed read must not make an
+// otherwise healthy account look broken.
+func TestCookieOnlyConnectionIsNotConfigured(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	connections := fakeConnections{byProvider: map[string][]credentials.Connection{
+		"grok-web": {{ID: "cookie-only", ProviderID: "grok-web", Name: "Cookie", Enabled: true}},
+	}}
+	credentialsSource := fakeCredentials{cookies: map[string]string{"cookie-only": "session=fixture"}}
+	observer := Observer{Clients: map[string]UsageClient{"grok-web": &fakeClient{state: State{}}}, Now: func() time.Time { return now }}
+	service := NewService(connections, credentialsSource, observer)
+	// ErrNotConfigured means "nothing to read", so the aggregate refresh must skip
+	// it rather than report the provider as failed. Returning it here made one
+	// cookie-only connection poison RefreshProvider and RefreshAll.
+	if err := service.RefreshProvider(context.Background(), "grok-web"); err != nil {
+		t.Fatalf("cookie-only connection err=%v, want nil (skipped)", err)
+	}
+	// Not a failed read, so it must not surface as one.
+	if _, reported := service.LastError("cookie-only"); reported {
+		t.Fatal("a provider with no usage endpoint was recorded as a read failure")
+	}
+	// The sentinel must still be what the connection reports, so a caller that asks
+	// about one connection can tell "unreadable" from "healthy".
+	if err := service.refreshConnection(context.Background(), connections.byProvider["grok-web"][0]); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("per-connection err=%v, want ErrNotConfigured", err)
 	}
 }

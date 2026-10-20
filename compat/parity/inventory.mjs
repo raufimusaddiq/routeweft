@@ -45,8 +45,11 @@ for (const row of routeRows) {
 
 const providerSection = text.split('### Hidden providers and non-provider assets')[0].split('| Provider | v1 auth |')[1];
 const providers = [...providerSection.matchAll(/^\| `([a-z0-9-]+)` \|/gm)].map(m => m[1]).sort();
-assert.equal(providers.length, 81);
-assert.deepEqual(providers, [...source('open-sse/providers/registry/index.js').matchAll(/^import \w+ from "\.\/(.+)\.js";/gm)].map(m => m[1]).sort());
+// The parity doc's table and the oracle's active imports must agree, and the
+// count is derived rather than pinned: a new provider is a documentation update,
+// not a silent test failure.
+const activeImports = [...source('open-sse/providers/registry/index.js').matchAll(/^import \w+ from "\.\/(.+)\.js";/gm)].map(m => m[1]).sort();
+assert.deepEqual(providers, activeImports);
 const pageSection = text.split('## 4. Dashboard and supporting pages (16/16)')[1].split('## 5.')[0];
 const pages = [...pageSection.matchAll(/^\| `([^`]+page\.js)` \|/gm)].map(m => m[1].replace(/^V\//, 'src/app/(dashboard)/dashboard/')).sort();
 assert.equal(pages.length, 16);

@@ -1,0 +1,345 @@
+// Package onboarding implements the provider connection flows LiteRouter offers,
+// one implementation per flow shape rather than one per provider.
+//
+// The reference declares a `flowType` on each provider
+// (src/lib/oauth/providers/*.js) and a handful of separate routes for token
+// import, cookie and PAT connections. Those are the flow shapes here:
+//
+//	authorization_code_pkce  browser sign-in with PKCE, code or redirect pasted back
+//	authorization_code       browser sign-in without PKCE
+//	device_code              user enters a code, we poll the token endpoint
+//	browser_token            browser returns a token, validated then stored
+//	import_token             credential read from a local IDE install
+//	manual_token             token/cookie/PAT pasted by the operator
+//
+// Each flow owns only what differs: the authorize URL, the exchange, and any
+// post-exchange enrichment. Everything shared (state, PKCE, single-use states,
+// durable save, credential publication) lives here once.
+package onboarding
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
+)
+
+// FlowType names a flow shape.
+type FlowType string
+
+const (
+	FlowAuthorizationCodePKCE FlowType = "authorization_code_pkce"
+	FlowAuthorizationCode     FlowType = "authorization_code"
+	FlowDeviceCode            FlowType = "device_code"
+	FlowBrowserToken          FlowType = "browser_token"
+	FlowImportToken           FlowType = "import_token"
+	FlowManualToken           FlowType = "manual_token"
+)
+
+// Completion says what the operator hands back to finish a browser flow.
+type Completion string
+
+const (
+	// CompletionCode is a bare authorization code (or Claude's "code#state").
+	CompletionCode Completion = "code"
+	// CompletionRedirectURL is a full redirect URL whose query holds the code,
+	// used when the registered redirect points at a host that will not load.
+	CompletionRedirectURL Completion = "redirect-url"
+	// CompletionToken is a pasted long-lived token (browser token, PAT, cookie).
+	CompletionToken Completion = "token"
+	// CompletionCallback is a full callback URL carrying the credential itself
+	// (Windsurf's access_token, Trae's refreshToken).
+	CompletionCallback Completion = "callback"
+)
+
+// HTTPClient is the outbound client used by flows. The app passes a pooled,
+// SSRF-guarded client so a sign-in cannot reach a private address.
+type HTTPClient interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+// Flow is one provider's onboarding implementation.
+type Flow struct {
+	// Provider is the catalog id this flow connects.
+	Provider string
+	// Type is the flow shape.
+	Type FlowType
+	// Completion tells the UI what to ask the operator to paste.
+	Completion Completion
+	// FixedPort, FixedHost and CallbackPath mirror the provider's registered
+	// redirect. The host matters: Codex registers localhost:1455/auth/callback and
+	// xAI registers 127.0.0.1:56121/callback, and a mismatch is rejected upstream.
+	FixedPort    int
+	FixedHost    string
+	CallbackPath string
+	// MetaKeys lists the operator input this flow reads from Params.Meta, so the
+	// dashboard offers exactly those fields. Declared here rather than inferred by
+	// the UI, and checked against the flow's actual reads by a test.
+	MetaKeys []string
+	// AuthKind is the credential mode this flow produces, so it can be checked
+	// against the provider spec without performing a sign-in. Empty means the
+	// default, AuthOAuth.
+	AuthKind credentials.AuthKind
+	// Bulk converts one item of a bulk-import payload into a connection. Present
+	// only for providers whose reference exposes a bulk-import route (codex,
+	// grok-cli); the endpoint refuses the rest rather than accepting a batch it
+	// would silently drop.
+	Bulk func(item map[string]any) (BulkAccount, error)
+	// ResolvesIdentity means the flow reads the account identity from the provider
+	// or the credential itself (a JWT claim, /api/v4/user, the account key), so the
+	// operator is not asked for one. Without this the dashboard demanded a "stable
+	// account identity", validated it, and then stored the flow's value instead.
+	ResolvesIdentity bool
+	// RedirectSource says where the flow's redirect URI comes from. It is the
+	// single declaration that decides whether the handler must resolve one, so a
+	// flow cannot consume a URI the handler never builds, or demand one it discards.
+	RedirectSource RedirectSource
+
+	// Authorize builds the browser URL. verifier is empty for flows without PKCE.
+	Authorize func(ctx context.Context, p Params) (AuthRequest, error)
+	// Exchange completes a browser/device flow.
+	Exchange func(ctx context.Context, p Params) (Result, error)
+	// Import handles manual_token/import_token flows that need no browser step.
+	Import func(ctx context.Context, p Params) (Result, error)
+	// Poll handles device_code flows.
+	Poll func(ctx context.Context, p Params) (PollResult, error)
+}
+
+// Params is everything a flow step may need. Secrets never appear in logs and
+// the verifier stays server-side.
+type Params struct {
+	RedirectURI string
+	State       string
+	Verifier    string
+	Input       string
+	// Meta carries operator-supplied provider parameters (GitLab baseUrl and
+	// clientId, Kiro start URL and region).
+	Meta map[string]string
+	// Client is the outbound HTTP client.
+	Client HTTPClient
+	// Now is injectable for deterministic tests.
+	Now func() time.Time
+}
+
+func (p Params) now() time.Time {
+	if p.Now != nil {
+		return p.Now()
+	}
+	return time.Now()
+}
+
+// BulkAccount is one parsed entry of a bulk import: what to store, under which
+// label and identity.
+type BulkAccount struct {
+	Name     string
+	Identity string
+	AuthKind credentials.AuthKind
+	Secret   credentials.Secret
+}
+
+// Startable reports whether the flow can start a browser or device sign-in.
+func (f Flow) Startable() bool {
+	return f.Authorize != nil
+}
+
+// RedirectSource is where a flow's redirect URI comes from.
+type RedirectSource int
+
+const (
+	// RedirectFromOperator means the flow sends Params.RedirectURI, so the handler
+	// must resolve it from the configured public origin.
+	RedirectFromOperator RedirectSource = iota
+	// RedirectPinned means the flow hardcodes the redirect the provider registered
+	// (Claude's console page, Codex's localhost:1455, xAI's 127.0.0.1:56121). The
+	// handler must not resolve one: the flow would discard it.
+	RedirectPinned
+	// RedirectUnused means the flow never sends a redirect at all: a device flow
+	// shows a code and polls, Zed's native app returns to its own loopback port,
+	// and an import flow has no browser step.
+	RedirectUnused
+)
+
+// NeedsRedirectURI reports whether the handler must resolve a redirect URI for
+// this flow. It is derived from the flow's own declaration rather than from its
+// type, because the three cases do not line up with the six flow types: two
+// authorization-code flows pin their redirect and one never uses one.
+func (f Flow) NeedsRedirectURI() bool {
+	return f.RedirectSource == RedirectFromOperator
+}
+
+// AuthRequest is the result of starting a flow.
+type AuthRequest struct {
+	// URL is the browser URL, empty for device_code until the device code arrives.
+	URL string
+	// DeviceCode is the provider-issued handle the poll step redeems. It is the
+	// only way a device flow can complete, so it travels with the request and is
+	// stored server-side; the browser only ever sees the state.
+	DeviceCode string
+	// UserCode and VerificationURL are the device-code display values.
+	UserCode        string
+	VerificationURL string
+	// Interval is the device-code poll interval.
+	Interval time.Duration
+	// ExpiresIn bounds the device code lifetime.
+	ExpiresIn time.Duration
+	// Verifier overrides the caller-generated PKCE verifier when the flow mints
+	// its own (Qoder's device handshake does).
+	Verifier string
+	// Extra is flow-private state the poll step needs (Kiro's client id/secret,
+	// Qoder's machine id). It never leaves the server.
+	Extra map[string]string
+}
+
+// Result is a completed sign-in, ready to persist.
+type Result struct {
+	Secret      credentials.Secret
+	Identity    string
+	DisplayName string
+	// AuthKind is the credential mode to store. Most flows store oauth; a PAT,
+	// cookie or API-key import stores its own kind.
+	AuthKind credentials.AuthKind
+}
+
+// PollResult is one device-code poll outcome.
+type PollResult struct {
+	Done    bool
+	Pending bool
+	Result  Result
+	// Denied and Expired distinguish the two terminal rejections the reference
+	// reports separately, so the dashboard can tell "you said no" from "the code
+	// timed out". Pending is never an error.
+	Denied  bool
+	Expired bool
+	// Err describes any other terminal failure.
+	Err error
+}
+
+// HiddenProviders names flows implemented for a provider the product keeps hidden
+// (docs/PROVIDER_BASELINE.md "Hidden reference providers"). The flow exists and is
+// tested so the parity claim stays honest, but no catalog entry serves it, so no
+// endpoint can reach it. Listing them here — rather than silently omitting the
+// flow — keeps "hidden" a decision instead of an accident.
+func HiddenProviders() map[string]bool {
+	return map[string]bool{
+		"trae":     true, // no tool-calling support in the reference
+		"windsurf": true, // no tool-calling/transport support in the reference
+	}
+}
+
+// Registry holds every implemented flow, keyed by provider id.
+type Registry struct {
+	flows map[string]Flow
+}
+
+// NewRegistry builds the flow registry from the built-in flow set.
+func NewRegistry() *Registry {
+	registry := &Registry{flows: make(map[string]Flow)}
+	for _, flow := range builtinFlows() {
+		registry.flows[flow.Provider] = flow
+	}
+	return registry
+}
+
+// Lookup returns one provider's flow.
+func (r *Registry) Lookup(provider string) (Flow, bool) {
+	if r == nil {
+		return Flow{}, false
+	}
+	flow, ok := r.flows[provider]
+	return flow, ok
+}
+
+// Providers lists the providers with an implemented flow, sorted.
+func (r *Registry) Providers() []string {
+	if r == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(r.flows))
+	for id := range r.flows {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// BulkProviders lists every provider whose flow implements a bulk import, from
+// both tables, so a test can cover each one rather than naming two by hand.
+func BulkProviders() []string {
+	seen := make(map[string]bool)
+	for provider, flow := range ManualFlows() {
+		if flow.Bulk != nil {
+			seen[provider] = true
+		}
+	}
+	registry := NewRegistry()
+	for _, provider := range registry.Providers() {
+		if flow, ok := registry.Lookup(provider); ok && flow.Bulk != nil {
+			seen[provider] = true
+		}
+	}
+	providers := make([]string, 0, len(seen))
+	for provider := range seen {
+		providers = append(providers, provider)
+	}
+	sort.Strings(providers)
+	return providers
+}
+
+// OnboardingFlows reports each provider's implemented flow type, which the parity
+// gate compares against the reference's declared flows.
+func (r *Registry) OnboardingFlows() map[string]string {
+	flows := make(map[string]string, len(r.flows))
+	for id, flow := range r.flows {
+		flows[id] = string(flow.Type)
+	}
+	return flows
+}
+
+// ErrRedirectOriginUnset means the provider needs the operator-facing origin and
+// none is configured. Guessing one would send the provider a redirect_uri the
+// operator's browser never reaches.
+var ErrRedirectOriginUnset = errors.New("provider redirect origin is not configured; set the public origin")
+
+// DefaultRedirectURI builds the redirect a provider registered. Providers whose
+// client registration pins a loopback port use it; every other provider uses the
+// configured public origin, and an unset origin is an error rather than a guess.
+func DefaultRedirectURI(flow Flow, publicOrigin string) (string, error) {
+	path := flow.CallbackPath
+	if path == "" {
+		path = "/callback"
+	}
+	if flow.FixedPort > 0 {
+		host := flow.FixedHost
+		if host == "" {
+			host = "localhost"
+		}
+		return fmt.Sprintf("http://%s:%d%s", host, flow.FixedPort, path), nil
+	}
+	origin := strings.TrimSuffix(strings.TrimSpace(publicOrigin), "/")
+	if origin == "" {
+		return "", ErrRedirectOriginUnset
+	}
+	return origin + path, nil
+}
+
+// appendQuery sets query parameters on a URL, preserving existing ones.
+func appendQuery(base string, values url.Values) (string, error) {
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return "", fmt.Errorf("invalid authorize endpoint: %w", err)
+	}
+	query := parsed.Query()
+	for key, items := range values {
+		for _, value := range items {
+			query.Set(key, value)
+		}
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
+}

@@ -4,25 +4,61 @@ import { EmptyState, ErrorNotice, SkeletonRows } from './kit'
 import { Dot, Statement, Status, type Tone } from './editorial'
 import { badRate, num, largest, outlier, pct, rate, share, topByRequests, type Summary } from './format'
 
-type Provider = { id: string; transports: string[]; auth: string; authModes: string[]; defaultBaseURL?: string; modelCatalog: string; passthroughModels: boolean; staticModels?: string[]; reportsUsage: boolean; configuredNodes: number; enabledAccounts: number }
+type SignInMode = 'browser' | 'device' | 'import'
+type Provider = { id: string; transports: string[]; auth: string; authModes: string[]; defaultBaseURL?: string; modelCatalog: string; passthroughModels: boolean; staticModels?: string[]; reportsUsage: boolean; flowType?: string; signInModes?: SignInMode[]; metaKeys?: string[]; configuredNodes: number; enabledAccounts: number }
 type Node = { id: string; kind: string; providerId: string; name: string; prefix?: string; baseUrl?: string; transports: string[] }
 type Connection = { id: string; nodeId: string; providerId: string; name: string; authKind: string; identity: string; enabled: boolean; priority: number; proxyPoolId?: string; credentialConfigured: boolean }
 type Model = { providerId: string; id: string; name?: string; contextWindow?: number; capabilities: string[]; disabled: boolean; custom?: boolean }
 type Alias = { alias: string; providerId: string; modelId: string }
 type Pricing = { providerId: string; modelId: string; inputPerMTok?: number; outputPerMTok?: number; cacheReadPerMTok?: number; cacheWritePerMTok?: number }
 type ProxyPool = { id: string; name: string; enabled: boolean }
-type OAuthFlow = { state: string; authorizeUrl: string; completion: 'code' | 'redirect-url' }
+type OAuthFlow = { state: string; authorizeUrl: string; completion: 'code' | 'redirect-url' | 'token' | 'callback'; flowType?: string; signInModes?: SignInMode[] }
 type Props = { onUnauthorized: () => void }
 
-// Providers that offer browser sign-in; the rest keep the paste fields.
-const OAUTH_LABELS: Record<string, string> = { claude: 'Claude', codex: 'Codex' }
-const DEVICE_LABELS: Record<string, string> = { kilocode: 'Kilo Code' }
+// The backend reports which sign-in affordances a provider actually has, derived
+// from the same flow tables the endpoints use. Offering both panels for every
+// oauth provider is what produced buttons that 404; the UI renders only what the
+// server says exists, read straight from the field it is named after.
+// Operator fields, by the meta key the flow reads. A flow that declares none gets
+// no parameter fields: an operator should not be asked for input nothing consumes.
+const META_FIELDS: Array<{ key: string; label: string; placeholder?: string; options?: string[]; secret?: boolean }> = [
+  { key: 'clientId', label: 'Application client id' },
+  // A confidential OAuth application sends this at exchange; a public one leaves it
+  // blank. Masked like every other credential.
+  { key: 'clientSecret', label: 'Application client secret', secret: true },
+  { key: 'baseUrl', label: 'Server base URL', placeholder: 'https://gitlab.com' },
+  { key: 'machineId', label: 'Machine id' },
+  { key: 'region', label: 'AWS region', placeholder: 'us-east-1' },
+  { key: 'startUrl', label: 'AWS SSO start URL' },
+  { key: 'nativeAppPort', label: 'Native app port', placeholder: '58443' },
+  { key: 'keyName', label: 'Key name' },
+  { key: 'uid', label: 'Account uid' },
+  // Kiro's AWS SSO method: a closed set, so it is a select rather than free text.
+  { key: 'authMethod', label: 'AWS SSO method', options: ['builder-id', 'idc'] },
+]
+// Display labels for the providers whose product name differs from their id.
+// Presentation only: nothing here decides behavior, and an id without an entry
+// falls back to the id itself, which is still honest.
+const PROVIDER_LABELS: Record<string, string> = {
+  claude: 'Claude', codex: 'Codex', xai: 'xAI', github: 'GitHub Copilot',
+  gitlab: 'GitLab Duo', kimi: 'Kimi', kiro: 'Kiro', qoder: 'Qoder',
+  cursor: 'Cursor', kilocode: 'Kilo Code', iflow: 'iFlow', zed: 'Zed',
+  cline: 'Cline', clinepass: 'ClinePass', kimchi: 'Kimchi', trae: 'Trae',
+  windsurf: 'Windsurf', 'gemini-cli': 'Gemini CLI', antigravity: 'Antigravity',
+  'codebuddy-cn': 'CodeBuddy (CN)', 'codebuddy-intl': 'CodeBuddy (Intl)',
+  'xiaomi-mimo': 'Xiaomi MiMo', 'grok-cli': 'Grok CLI',
+}
+function providerLabel(id: string): string {
+  return PROVIDER_LABELS[id] ?? id
+}
 // Consecutive transient poll failures tolerated before the panel gives up.
 const DEVICE_POLL_RETRIES = 5
 type DeviceFlow = { state: string; userCode: string; verificationUrl: string; intervalSeconds: number }
 const OAUTH_HINTS: Record<OAuthFlow['completion'], string> = {
   code: 'Sign in on the provider page, then copy the code it shows and paste it below.',
   'redirect-url': 'Sign in on the provider page. Your browser then goes to an address on localhost that will not load; copy that full address from the address bar and paste it below.',
+  token: 'Paste the token, cookie or key the provider issued. It is validated before it is stored.',
+  callback: 'Sign in on the provider page. Your browser then goes to a local address that will not load; copy that full address and paste it below.',
 }
 
 class RequestError extends Error {
@@ -53,8 +89,15 @@ export function Providers({ onUnauthorized }: Props) {
   const [generic, setGeneric] = useState({ name: '', prefix: '', baseUrl: '', transports: ['openai-chat'] })
   const [account, setAccount] = useState({ name: '', identity: '', authKind: '', accessToken: '', refreshToken: '', cookie: '' })
   const [oauthFlow, setOauthFlow] = useState<OAuthFlow | null>(null)
+  // Two independent secrets: the import panel's credential and the browser flow's
+  // pasted code. They rendered together for providers with both modes (codex,
+  // gitlab, …), so one state made the second field overwrite the first.
   const [oauthInput, setOauthInput] = useState('')
+  const [importInput, setImportInput] = useState('')
   const [deviceFlow, setDeviceFlow] = useState<DeviceFlow | null>(null)
+  // Operator input a flow needs beyond name/identity: GitLab's self-hosted
+  // application client id and base URL, Kiro's region, Cursor's machine id.
+  const [metaInput, setMetaInput] = useState<Record<string, string>>({})
   const [manual, setManual] = useState({ id: '', name: '', contextWindow: '', capabilities: '' })
   const [alias, setAlias] = useState('')
   const [aliasTarget, setAliasTarget] = useState('')
@@ -106,7 +149,7 @@ export function Providers({ onUnauthorized }: Props) {
         if (cancelled) return
         failures = 0
         if (result.status === 'connected') {
-          setDeviceFlow(null); setAccountOpen(false); setAccount({ name: '', identity: '', authKind: '', accessToken: '', refreshToken: '', cookie: '' })
+          setDeviceFlow(null); setAccountOpen(false); resetSecrets(); setAccount({ name: '', identity: '', authKind: '', accessToken: '', refreshToken: '', cookie: '' })
           setNotice('Provider connection saved.'); await load(); setReload(value => value + 1)
           return
         }
@@ -213,7 +256,7 @@ export function Providers({ onUnauthorized }: Props) {
       if (account.authKind === 'cookie') secret.cookie = account.cookie
       else if (account.authKind !== 'none') { secret.accessToken = account.accessToken; if (account.refreshToken) secret.refreshToken = account.refreshToken }
       await send('/connections', 'POST', { providerId: selected, nodeId: selectedNode?.id, name: account.name, identity: account.identity, authKind: account.authKind || selectedProvider.authModes[0] || selectedProvider.auth, secret, enabled: true, priority: selectedConnections.length })
-      setAccountOpen(false); setAccount({ name: '', identity: '', authKind: '', accessToken: '', refreshToken: '', cookie: '' })
+      setAccountOpen(false); resetSecrets(); setAccount({ name: '', identity: '', authKind: '', accessToken: '', refreshToken: '', cookie: '' })
     })
   }
 
@@ -221,15 +264,45 @@ export function Providers({ onUnauthorized }: Props) {
     if (!selectedProvider || !account.name.trim() || !account.identity.trim()) return
     setOauthInput('')
     await action('oauth-start', '', async () => {
-      const flow = await send(`/oauth/${encodeURIComponent(selected)}/start`, 'POST', { name: account.name, identity: account.identity }) as OAuthFlow
+      const flow = await send(`/oauth/${encodeURIComponent(selected)}/start`, 'POST', { name: account.name, identity: account.identity, meta: flowMeta() }) as OAuthFlow
       setOauthFlow(flow)
     })
+  }
+
+  // The operator input a flow needs beyond name/identity. Empty values are dropped
+  // so a flow sees "not supplied" rather than an empty string.
+  function flowMeta(): Record<string, string> {
+    const meta: Record<string, string> = {}
+    for (const [key, value] of Object.entries(metaInput)) {
+      if (value.trim()) meta[key] = value.trim()
+    }
+    return meta
+  }
+
+  // Clears every credential-bearing field. Called on close and on successful save:
+  // a typed client secret or pasted token must not outlive the panel, and must not
+  // be re-sent by the next sign-in.
+  function resetSecrets() {
+    setOauthFlow(null)
+    setOauthInput('')
+    setImportInput('')
+    setMetaInput({})
+    setDeviceFlow(null)
   }
 
   async function startDevice() {
     if (!selectedProvider || !account.name.trim() || !account.identity.trim()) return
     await action('device-start', '', async () => {
-      setDeviceFlow(await send(`/oauth/${encodeURIComponent(selected)}/device`, 'POST', { name: account.name, identity: account.identity }) as DeviceFlow)
+      setDeviceFlow(await send(`/oauth/${encodeURIComponent(selected)}/device`, 'POST', { name: account.name, identity: account.identity, meta: flowMeta() }) as DeviceFlow)
+    })
+  }
+
+  // A provider with import only: no state, no browser step.
+  async function importOnly() {
+    if (!selectedProvider || !importInput.trim() || !account.name.trim() || !account.identity.trim()) return
+    await action('oauth-import', 'Provider connection saved.', async () => {
+      await send(`/oauth/${encodeURIComponent(selected)}/import`, 'POST', { name: account.name, identity: account.identity, input: importInput, meta: flowMeta() })
+      setAccountOpen(false); resetSecrets(); setAccount({ name: '', identity: '', authKind: '', accessToken: '', refreshToken: '', cookie: '' })
     })
   }
 
@@ -237,10 +310,14 @@ export function Providers({ onUnauthorized }: Props) {
     if (!oauthFlow || !oauthInput.trim()) return
     // The attempt is single-use: it ends here whether or not the provider accepts the code.
     const flow = oauthFlow
-    setOauthFlow(null); setOauthInput('')
+    const input = oauthInput
     await action('oauth-finish', 'Provider connection saved.', async () => {
-      await send(`/oauth/${encodeURIComponent(selected)}/callback`, 'POST', { state: flow.state, input: oauthInput })
-      setAccountOpen(false); setAccount({ name: '', identity: '', authKind: '', accessToken: '', refreshToken: '', cookie: '' })
+      // finishOAuth only ever handles a flow that came from /start, so it is always
+      // a browser flow and always completes on /callback — even when the operator
+      // pastes a token (kimchi). Import-only providers use importOnly() instead, so
+      // routing on the completion hint here sent kimchi to a 404.
+      await send(`/oauth/${encodeURIComponent(selected)}/callback`, 'POST', { state: flow.state, input })
+      setAccountOpen(false); resetSecrets(); setAccount({ name: '', identity: '', authKind: '', accessToken: '', refreshToken: '', cookie: '' })
     })
   }
 
@@ -307,7 +384,7 @@ export function Providers({ onUnauthorized }: Props) {
 
   const option = (row: typeof rows[number]) => {
     const bad = row.requests > 0 && badRate(row.errors, row.requests, fleet)
-    return <button className={`provider-option${selected === row.provider.id ? ' provider-option-selected' : ''}`} type="button" key={row.provider.id} onClick={() => { setSelected(row.provider.id); setAccountOpen(false); setOauthFlow(null); setOauthInput(''); setDeviceFlow(null); setConnectionPage(1); setSeedPage(1) }}>
+    return <button className={`provider-option${selected === row.provider.id ? ' provider-option-selected' : ''}`} type="button" key={row.provider.id} onClick={() => { setSelected(row.provider.id); setAccountOpen(false); resetSecrets(); setConnectionPage(1); setSeedPage(1) }}>
       <Status tone={tone(row)}><strong>{row.provider.id}</strong></Status>
       <span className="provider-option-meta">{row.provider.authModes.join(' / ') || row.provider.auth} · {row.provider.transports.length} transport{row.provider.transports.length === 1 ? '' : 's'}{row.total ? ` · ${row.provider.enabledAccounts}/${row.total} on` : ''}</span>
       <span className="ed-bar" aria-hidden="true"><span style={{ width: `${share(row.requests, peak)}%` }} /></span>
@@ -347,17 +424,34 @@ export function Providers({ onUnauthorized }: Props) {
         <button className="button-primary" type="button" onClick={() => { const defaultAuth = selectedProvider.authModes[0] || selectedProvider.auth; setAccountOpen(value => !value); setAccount(current => ({ ...current, authKind: defaultAuth })) }}>Add connection</button>{selectedNode && <><button className="button-secondary" type="button" onClick={() => { setGenericNodeID(selectedNode.id); setGeneric({ name: selectedNode.name, prefix: selectedNode.prefix || selectedNode.providerId, baseUrl: selectedNode.baseUrl || '', transports: selectedNode.transports }); setGenericOpen(true) }}>Edit Generic Provider</button><button className="button-danger" type="button" onClick={() => { if (window.confirm(`Delete ${selectedNode.name} and all its connections?`)) void action('delete-generic', 'Generic Provider deleted.', () => send(`/provider-nodes/${encodeURIComponent(selectedNode.id)}`, 'DELETE').then(() => { setSelected('') })) }}>Delete Generic Provider</button></>}
       </div>
 
-      {accountOpen && <form className="detail-panel provider-form" onSubmit={event => void createAccount(event)}><div className="section-heading"><div><h3>New connection</h3><p>Credential material stays server-side and is sealed at rest.</p></div><button className="button-ghost" type="button" onClick={() => { setAccountOpen(false); setOauthFlow(null); setOauthInput('') }}>Close</button></div><div className="provider-form-grid"><label>Account name<input required value={account.name} onChange={event => setAccount({ ...account, name: event.target.value })} /></label><label>Stable account identity<input required value={account.identity} onChange={event => setAccount({ ...account, identity: event.target.value })} /></label><label>Authentication<select value={account.authKind} onChange={event => { setOauthFlow(null); setOauthInput(''); setAccount({ ...account, authKind: event.target.value }) }}>{(selectedProvider.authModes.length ? selectedProvider.authModes : [selectedProvider.auth]).map(mode => <option key={mode} value={mode}>{mode}</option>)}</select></label>
-        {account.authKind === 'oauth' && DEVICE_LABELS[selected] && <div className="wide-field oauth-panel" role="group" aria-label={`Sign in with ${DEVICE_LABELS[selected]}`}>
-          {!deviceFlow ? <><p>Sign in with the provider instead of copying tokens by hand. Enter an account name and identity first.</p><div><button className="button-primary" type="button" disabled={busy !== '' || !account.name.trim() || !account.identity.trim()} onClick={() => void startDevice()}>{busy === 'device-start' ? 'Starting…' : `Sign in with ${DEVICE_LABELS[selected]}`}</button></div></>
-            : <><p>Open the page below and confirm this code. This dashboard finishes the connection on its own once you approve.</p><p><code className="technical-value" aria-label="Device code">{deviceFlow.userCode}</code></p><div className="oauth-actions"><a className="button-secondary" href={deviceFlow.verificationUrl} target="_blank" rel="noopener noreferrer">Open {DEVICE_LABELS[selected]} sign-in page</a><button className="button-ghost" type="button" onClick={() => setDeviceFlow(null)}>Cancel</button></div><p role="status">Waiting for approval…</p></>}
+      {accountOpen && <form className="detail-panel provider-form" onSubmit={event => void createAccount(event)}><div className="section-heading"><div><h3>New connection</h3><p>Credential material stays server-side and is sealed at rest.</p></div><button className="button-ghost" type="button" onClick={() => { setAccountOpen(false); resetSecrets() }}>Close</button></div><div className="provider-form-grid"><label>Account name<input required value={account.name} onChange={event => setAccount({ ...account, name: event.target.value })} /></label><label>Stable account identity<input required value={account.identity} onChange={event => setAccount({ ...account, identity: event.target.value })} /></label><label>Authentication<select value={account.authKind} onChange={event => { resetSecrets(); setAccount({ ...account, authKind: event.target.value }) }}>{(selectedProvider.authModes.length ? selectedProvider.authModes : [selectedProvider.auth]).map(mode => <option key={mode} value={mode}>{mode}</option>)}</select></label>
+        {account.authKind === 'oauth' && selectedProvider && (selectedProvider.metaKeys ?? []).length > 0 && <div className="wide-field oauth-panel" role="group" aria-label="Sign-in parameters">
+          <p>Only fill what this provider requires. Leave the rest blank.</p>
+          {(selectedProvider.metaKeys ?? []).map(key => {
+            const field = META_FIELDS.find(item => item.key === key)
+            // An unknown key still renders: better a raw label than a field the
+            // flow needs and the operator cannot see.
+            if (field?.options) {
+              return <label key={key}>{field.label}<select value={metaInput[key] ?? ''} onChange={event => setMetaInput({ ...metaInput, [key]: event.target.value })}><option value="">Default</option>{field.options.map(option => <option key={option} value={option}>{option}</option>)}</select></label>
+            }
+            return <label key={key}>{field?.label ?? key}<input type={field?.secret ? 'password' : 'text'} autoComplete="off" spellCheck={false} placeholder={field?.placeholder} value={metaInput[key] ?? ''} onChange={event => setMetaInput({ ...metaInput, [key]: event.target.value })} /></label>
+          })}
+        </div>}
+        {account.authKind === 'oauth' && selectedProvider && (selectedProvider.signInModes ?? []).includes('device') && <div className="wide-field oauth-panel" role="group" aria-label={`Sign in with ${providerLabel(selected)}`}>
+          {!deviceFlow ? <><p>Sign in with the provider instead of copying tokens by hand. Enter an account name and identity first.</p><div><button className="button-primary" type="button" disabled={busy !== '' || !account.name.trim() || !account.identity.trim()} onClick={() => void startDevice()}>{busy === 'device-start' ? 'Starting…' : `Sign in with ${providerLabel(selected)}`}</button></div></>
+            : <><p>Open the page below and confirm this code. This dashboard finishes the connection on its own once you approve.</p><p><code className="technical-value" aria-label="Device code">{deviceFlow.userCode}</code></p><div className="oauth-actions"><a className="button-secondary" href={deviceFlow.verificationUrl} target="_blank" rel="noopener noreferrer">Open {providerLabel(selected)} sign-in page</a><button className="button-ghost" type="button" onClick={() => setDeviceFlow(null)}>Cancel</button></div><p role="status">Waiting for approval…</p></>}
           <p>Or paste tokens manually below.</p>
         </div>}
-        {account.authKind === 'oauth' && OAUTH_LABELS[selected] && <div className="wide-field oauth-panel" role="group" aria-label={`Sign in with ${OAUTH_LABELS[selected]}`}>
-          {!oauthFlow ? <><p>Sign in with the provider instead of copying tokens by hand. Enter an account name and identity first.</p><div><button className="button-primary" type="button" disabled={busy !== '' || !account.name.trim() || !account.identity.trim()} onClick={() => void startOAuth()}>{busy === 'oauth-start' ? 'Starting…' : `Sign in with ${OAUTH_LABELS[selected]}`}</button></div></>
-            : <><p>{OAUTH_HINTS[oauthFlow.completion]}</p><div><a className="button-secondary" href={oauthFlow.authorizeUrl} target="_blank" rel="noopener noreferrer">Open {OAUTH_LABELS[selected]} sign-in page</a></div>
-              <label>{oauthFlow.completion === 'code' ? 'Code from the provider' : 'Address from the browser'}<input type={oauthFlow.completion === 'code' ? 'password' : 'text'} autoComplete="off" spellCheck={false} value={oauthInput} onChange={event => setOauthInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void finishOAuth() } }} /></label>
-              <div className="oauth-actions"><button className="button-primary" type="button" disabled={busy !== '' || !oauthInput.trim()} onClick={() => void finishOAuth()}>{busy === 'oauth-finish' ? 'Finishing…' : 'Finish sign-in'}</button><button className="button-ghost" type="button" onClick={() => { setOauthFlow(null); setOauthInput('') }}>Cancel</button></div></>}
+        {account.authKind === 'oauth' && selectedProvider && (selectedProvider.signInModes ?? []).includes('import') && <div className="wide-field oauth-panel" role="group" aria-label={`Import a ${providerLabel(selected)} credential`}>
+          <p>This provider has no browser sign-in. Paste the credential it issues; it is validated before it is stored.</p>
+          <label>Token, cookie or key<input type="password" autoComplete="off" spellCheck={false} value={importInput} onChange={event => setImportInput(event.target.value)} /></label>
+          <div className="oauth-actions"><button className="button-primary" type="button" disabled={busy !== '' || !importInput.trim() || !account.name.trim() || !account.identity.trim()} onClick={() => void importOnly()}>{busy === 'oauth-import' ? 'Saving…' : 'Import credential'}</button></div>
+        </div>}
+        {account.authKind === 'oauth' && selectedProvider && (selectedProvider.signInModes ?? []).includes('browser') && <div className="wide-field oauth-panel" role="group" aria-label={`Sign in with ${providerLabel(selected)}`}>
+          {!oauthFlow ? <><p>Sign in with the provider instead of copying tokens by hand. Enter an account name and identity first.</p><div><button className="button-primary" type="button" disabled={busy !== '' || !account.name.trim() || !account.identity.trim()} onClick={() => void startOAuth()}>{busy === 'oauth-start' ? 'Starting…' : `Sign in with ${providerLabel(selected)}`}</button></div></>
+            : <><p>{OAUTH_HINTS[oauthFlow.completion]}</p><div><a className="button-secondary" href={oauthFlow.authorizeUrl} target="_blank" rel="noopener noreferrer">Open {providerLabel(selected)} sign-in page</a></div>
+              <label>{oauthFlow.completion === 'code' ? 'Code from the provider' : oauthFlow.completion === 'token' ? 'Token, cookie or key' : 'Address from the browser'}<input type={oauthFlow.completion === 'code' || oauthFlow.completion === 'token' ? 'password' : 'text'} autoComplete="off" spellCheck={false} value={oauthInput} onChange={event => setOauthInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void finishOAuth() } }} /></label>
+              <div className="oauth-actions"><button className="button-primary" type="button" disabled={busy !== '' || !oauthInput.trim()} onClick={() => void finishOAuth()}>{busy === 'oauth-finish' ? 'Finishing…' : 'Finish sign-in'}</button><button className="button-ghost" type="button" onClick={() => resetSecrets()}>Cancel</button></div></>}
           <p>Or paste tokens manually below.</p>
         </div>}
         {account.authKind === 'cookie' ? <label className="wide-field">Cookie/session<input type="password" autoComplete="new-password" value={account.cookie} onChange={event => setAccount({ ...account, cookie: event.target.value })} /></label> : account.authKind !== 'none' && <><label className="wide-field">Access token / API key<input required type="password" autoComplete="new-password" value={account.accessToken} onChange={event => setAccount({ ...account, accessToken: event.target.value })} /></label>{account.authKind === 'oauth' && <label className="wide-field">Refresh token<input type="password" autoComplete="new-password" value={account.refreshToken} onChange={event => setAccount({ ...account, refreshToken: event.target.value })} /></label>}</>}

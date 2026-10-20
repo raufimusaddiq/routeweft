@@ -21,6 +21,7 @@ import (
 	controlevents "github.com/raufimusaddiq/routeweft/internal/control/events"
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/discovery"
+	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/proxy"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
@@ -66,17 +67,24 @@ type Options struct {
 	ProxyTestURL    string
 	DiscoveryClient *discovery.Client
 	OAuthClient     OAuthClient
-	Providers       []registry.Spec
-	Telemetry       TelemetryReader
-	Events          *controlevents.Bus
-	UsageFeed       *controlevents.UsageFeed
-	Logs            *LogBuffer
-	ActiveRequests  func() int64
-	Ready           func() bool
-	Build           buildinfo.Info
-	DataDir         string
-	Backup          func(context.Context, string) (backup.Metadata, error)
-	Restore         func(context.Context, string) (backup.Metadata, error)
+	// PublicOrigin is the operator-facing origin used as a provider sign-in
+	// callback, for the flows that consume one (Flow.NeedsRedirectURI). It is never
+	// derived from the request: the value becomes a provider redirect_uri, so a
+	// caller could otherwise steer a sign-in callback. Empty fails those flows with
+	// oauth_redirect_unconfigured; flows that pin or never use a redirect start
+	// without it.
+	PublicOrigin   string
+	Providers      []registry.Spec
+	Telemetry      TelemetryReader
+	Events         *controlevents.Bus
+	UsageFeed      *controlevents.UsageFeed
+	Logs           *LogBuffer
+	ActiveRequests func() int64
+	Ready          func() bool
+	Build          buildinfo.Info
+	DataDir        string
+	Backup         func(context.Context, string) (backup.Metadata, error)
+	Restore        func(context.Context, string) (backup.Metadata, error)
 }
 
 // RuntimeReader exposes immutable active configuration and process-local state.
@@ -138,6 +146,10 @@ type Handler struct {
 	saverClient *http.Client
 	// oauth holds pending sign-in attempts bound to admin sessions.
 	oauth *oauthFlows
+	// oauthFlows is the implemented onboarding flow set, and manualFlows the
+	// import/cookie/PAT flows that have no browser step.
+	oauthFlows  *onboarding.Registry
+	manualFlows map[string]onboarding.Flow
 }
 
 // New builds the control API handler.
@@ -149,7 +161,13 @@ func New(opts Options) *Handler {
 	if opts.DiscoveryClient == nil || opts.DiscoveryClient.HTTP == nil {
 		opts.DiscoveryClient = &discovery.Client{HTTP: client}
 	}
-	h := &Handler{opts: opts, throttler: newThrottler(), probeTransport: client.Transport, proxyClients: transport.NewPooledClients(), proxyTestTarget: defaultProxyTestTarget, saverClient: client, oauth: newOAuthFlows()}
+	// Provider sign-in must reach the network in a real deployment. The handler
+	// cannot rely on the caller supplying a client, so it defaults to the same
+	// SSRF-protected transport discovery uses; a caller may still inject one.
+	if opts.OAuthClient == nil {
+		opts.OAuthClient = client
+	}
+	h := &Handler{opts: opts, throttler: newThrottler(), probeTransport: client.Transport, proxyClients: transport.NewPooledClients(), proxyTestTarget: defaultProxyTestTarget, saverClient: client, oauth: newOAuthFlows(), oauthFlows: onboarding.NewRegistry(), manualFlows: onboarding.ManualFlows()}
 	if strings.TrimSpace(opts.ProxyTestURL) != "" {
 		h.proxyTestTarget = strings.TrimSpace(opts.ProxyTestURL)
 	}
@@ -189,6 +207,10 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.Handle("POST /admin/v1/oauth/{provider}/callback", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthCallback)))
 	mux.Handle("POST /admin/v1/oauth/{provider}/device", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthDeviceStart)))
 	mux.Handle("POST /admin/v1/oauth/{provider}/poll", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthDevicePoll)))
+	mux.Handle("POST /admin/v1/oauth/{provider}/import", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthImport)))
+	// Bulk import is only served where the reference exposes it (codex, grok-cli);
+	// the handler refuses the rest rather than accepting a batch it would drop.
+	mux.Handle("POST /admin/v1/oauth/{provider}/bulk-import", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthBulkImport)))
 	mux.Handle("POST /admin/v1/connections/{id}/test", h.requireSessionHandler(http.HandlerFunc(h.handleTestConnection)))
 	mux.Handle("POST /admin/v1/connections/{id}/test-models", h.requireSessionHandler(http.HandlerFunc(h.handleTestModels)))
 	mux.Handle("POST /admin/v1/connections/{id}/discover", h.requireSessionHandler(http.HandlerFunc(h.handleDiscoverModels)))

@@ -84,10 +84,33 @@ type Spec struct {
 	// providers that must forward arbitrary operator-supplied IDs.
 	ModelCatalog      ModelCatalog
 	PassthroughModels bool
-	StaticModels      []string
+	// SeedModels are the models a fresh install can route before any discovery
+	// runs. They come from the pinned LiteRouter registry (seeds_gen.go), so a
+	// provider is never shipped with an empty catalog while the reference serves
+	// models for it.
+	SeedModels []SeedModel
 	// ReportsUsage marks providers whose upstream usage is accounted.
 	ReportsUsage bool
 	Quirks       []Quirk
+}
+
+// SeedModel is one built-in model a fresh install can route immediately.
+type SeedModel struct {
+	ID            string
+	Name          string
+	ContextWindow int
+}
+
+// StaticModels returns the seed model ids in declaration order.
+func (s Spec) StaticModels() []string {
+	if len(s.SeedModels) == 0 {
+		return nil
+	}
+	ids := make([]string, len(s.SeedModels))
+	for i, model := range s.SeedModels {
+		ids[i] = model.ID
+	}
+	return ids
 }
 
 // Validate rejects incomplete or duplicated provider identities.
@@ -212,7 +235,7 @@ func NewCatalog(specs []Spec) (*Catalog, error) {
 		}
 		spec.Transports = append([]Protocol(nil), spec.Transports...)
 		spec.Quirks = append([]Quirk(nil), spec.Quirks...)
-		spec.StaticModels = append([]string(nil), spec.StaticModels...)
+		spec.SeedModels = append([]SeedModel(nil), spec.SeedModels...)
 		spec.AuthModes = append([]AuthKind(nil), spec.AuthModes...)
 		if spec.TransportEndpoints != nil {
 			copied := make(map[Protocol]string, len(spec.TransportEndpoints))
@@ -235,7 +258,7 @@ func (c *Catalog) Lookup(id string) (Spec, bool) {
 	if ok {
 		spec.Transports = append([]Protocol(nil), spec.Transports...)
 		spec.Quirks = append([]Quirk(nil), spec.Quirks...)
-		spec.StaticModels = append([]string(nil), spec.StaticModels...)
+		spec.SeedModels = append([]SeedModel(nil), spec.SeedModels...)
 		spec.AuthModes = append([]AuthKind(nil), spec.AuthModes...)
 		if spec.TransportEndpoints != nil {
 			copied := make(map[Protocol]string, len(spec.TransportEndpoints))

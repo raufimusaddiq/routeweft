@@ -362,3 +362,137 @@ func contains(haystack, needle string) bool {
 	}
 	return false
 }
+
+// TestProviderReadModelKeepsTheStaticModelsWireContract is the seam test for the
+// third blocker: the dashboard and key-access screens parse `staticModels` as an
+// array of model ids. A rename on the wire silently emptied both, so this asserts
+// the exact JSON a real client receives rather than the Go field name.
+func TestProviderReadModelKeepsTheStaticModelsWireContract(t *testing.T) {
+	handler, mux, store := newReadAPI(t)
+	defer store.Close()
+	handler.opts.Providers = []registry.Spec{{
+		ID: "openai", Transports: []registry.Protocol{registry.TransportOpenAIChat},
+		Auth: registry.AuthAPIKey, ModelCatalog: registry.CatalogStatic,
+		SeedModels: []registry.SeedModel{{ID: "gpt-5", Name: "GPT-5", ContextWindow: 400000}},
+	}}
+	ctx := context.Background()
+	if _, err := handler.opts.Accounts.Bootstrap(ctx, "a1", "operator", "s3cret"); err != nil {
+		t.Fatal(err)
+	}
+	session, err := handler.opts.Sessions.Create(adminauth.Account{ID: "a1", Username: "operator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/admin/v1/providers", nil)
+	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("providers status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	// Decoded the way the UI does: a plain array of ids under `staticModels`.
+	var raw struct {
+		Items []map[string]json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if len(raw.Items) != 1 {
+		t.Fatalf("items=%d", len(raw.Items))
+	}
+	field, ok := raw.Items[0]["staticModels"]
+	if !ok {
+		t.Fatalf("provider read model has no staticModels field: %s", recorder.Body.String())
+	}
+	var models []string
+	if err := json.Unmarshal(field, &models); err != nil {
+		t.Fatalf("staticModels is not an array of ids: %s", field)
+	}
+	if len(models) != 1 || models[0] != "gpt-5" {
+		t.Fatalf("staticModels=%v", models)
+	}
+	if _, renamed := raw.Items[0]["seedModels"]; renamed {
+		t.Fatalf("the wire name was renamed to seedModels: %s", recorder.Body.String())
+	}
+}
+
+// TestProviderReadModelReportsSignInModes is the seam test for the dashboard: it
+// must be told which affordances exist. Before this the UI offered a browser and a
+// device button for every oauth provider, so half of them 404'd.
+func TestProviderReadModelReportsSignInModes(t *testing.T) {
+	handler, mux, store := newReadAPI(t)
+	defer store.Close()
+	handler.opts.Providers = registry.Builtins()
+	handler.opts.PublicOrigin = "https://dashboard.example.test"
+	ctx := context.Background()
+	if _, err := handler.opts.Accounts.Bootstrap(ctx, "a1", "operator", "s3cret"); err != nil {
+		t.Fatal(err)
+	}
+	session, err := handler.opts.Sessions.Create(adminauth.Account{ID: "a1", Username: "operator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/admin/v1/providers?pageSize=200", nil)
+	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("providers status=%d", recorder.Code)
+	}
+	var payload struct {
+		Items []struct {
+			ID          string   `json:"id"`
+			FlowType    string   `json:"flowType"`
+			SignInModes []string `json:"signInModes"`
+			MetaKeys    []string `json:"metaKeys"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	modes := make(map[string][]string, len(payload.Items))
+	types := make(map[string]string, len(payload.Items))
+	for _, item := range payload.Items {
+		modes[item.ID] = item.SignInModes
+		types[item.ID] = item.FlowType
+	}
+	// A device provider must not advertise a browser affordance, and vice versa.
+	if types["github"] != "device_code" || !hasMode(modes["github"], "device") || hasMode(modes["github"], "browser") {
+		t.Fatalf("github flowType=%q modes=%v", types["github"], modes["github"])
+	}
+	if types["claude"] != "authorization_code_pkce" || !hasMode(modes["claude"], "browser") || hasMode(modes["claude"], "device") {
+		t.Fatalf("claude flowType=%q modes=%v", types["claude"], modes["claude"])
+	}
+	// An import mode must be advertised alongside the provider's other flow.
+	if !hasMode(modes["codex"], "import") {
+		t.Fatalf("codex modes=%v, want import", modes["codex"])
+	}
+	// A provider with no flow at all keeps the manual form only.
+	if len(modes["openai"]) != 0 {
+		t.Fatalf("openai modes=%v, want none", modes["openai"])
+	}
+	// Only the flows that read operator input advertise fields for it, so claude
+	// and github do not ask for a client id or region nothing consumes.
+	metaKeys := make(map[string][]string, len(payload.Items))
+	for _, item := range payload.Items {
+		metaKeys[item.ID] = item.MetaKeys
+	}
+	if !hasMode(metaKeys["gitlab"], "clientId") {
+		t.Fatalf("gitlab metaKeys=%v, want clientId", metaKeys["gitlab"])
+	}
+	if len(metaKeys["claude"]) != 0 {
+		t.Fatalf("claude metaKeys=%v, want none", metaKeys["claude"])
+	}
+	if len(metaKeys["github"]) != 0 {
+		t.Fatalf("github metaKeys=%v, want none", metaKeys["github"])
+	}
+}
+
+func hasMode(modes []string, want string) bool {
+	for _, mode := range modes {
+		if mode == want {
+			return true
+		}
+	}
+	return false
+}

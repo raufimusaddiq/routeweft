@@ -62,9 +62,9 @@ type codexUsageRedirect struct {
 	server *httptest.Server
 }
 
-func (c *codexUsageRedirect) Usage(ctx context.Context, credential string) (State, error) {
+func (c *codexUsageRedirect) Usage(ctx context.Context, credential Credential) (State, error) {
 	client := codexprovider.UsageClient{Client: codexprovider.HTTPClient(rewriteClient{base: c.server.Client(), server: c.server})}
-	usage, err := client.Usage(ctx, credential)
+	usage, err := client.Usage(ctx, credential.AccessToken)
 	if err != nil {
 		return State{}, err
 	}

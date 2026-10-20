@@ -16,6 +16,16 @@ bytes/error-envelope/cancel cases are differential; admin shape descriptions
 and other protocol fixtures are not a claim of complete differential coverage.
 Pending coverage stays explicit in PARITY R11.
 
+`internal/providers/parity` (build tag `oracle`) compares the whole provider
+catalog, the generated model seeds, the usage-reader set and the onboarding flow
+set against the oracle in both directions, and fails when a reference flow has no
+implementation. A provider the reference hides may have a flow without a catalog
+entry; a visible one may not.
+
+`compat/parity/generate-seeds.mjs` regenerates `internal/providers/registry/seeds_gen.go`
+from the pinned registry. Seeds are never hand-edited: running it with a new pin
+is the only way that file changes.
+
 CI runs this as the `parity` PR job, alongside existing Go/UI/container jobs.
 No test may update golden files from its actual output or turn a missing oracle
 into a passing dedicated gate. Ordinary unit tests remain usable without v1.

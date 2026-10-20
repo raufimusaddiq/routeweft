@@ -1,11 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -14,9 +17,7 @@ import (
 	"unicode"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
-	"github.com/raufimusaddiq/routeweft/internal/providers/claude"
-	"github.com/raufimusaddiq/routeweft/internal/providers/codex"
-	"github.com/raufimusaddiq/routeweft/internal/providers/kilocode"
+	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 )
 
@@ -27,6 +28,12 @@ const (
 	oauthMaxInput      = 4096
 	oauthMaxNameLength = 200
 	oauthStateEntropy  = 32
+	// oauthMaxBulkItems bounds one bulk import. Each accepted item costs a
+	// connection write and, historically, a full snapshot recompile; without a cap
+	// a 1 MiB paste is thousands of serial recompiles on the control plane. 100
+	// accounts is far past any real paste of exported tokens and keeps the work
+	// per request bounded.
+	oauthMaxBulkItems = 100
 	// oauthMinPollInterval bounds upstream polling per attempt regardless of how
 	// fast the browser asks.
 	oauthMinPollInterval = 2 * time.Second
@@ -53,9 +60,18 @@ type oauthFlow struct {
 	// completing marks an approved attempt whose connection is being saved, so a
 	// concurrent poll cannot save it twice.
 	completing bool
-	name       string
-	identity   string
-	expiresAt  time.Time
+	// extra is flow-private state the poll or exchange needs (Kiro's registered
+	// client credentials, Qoder's machine id, Kimi's device id). It never leaves
+	// the server and never reaches the browser.
+	extra map[string]string
+	// meta is the operator input supplied at start (GitLab's client id and base
+	// URL, Kiro's region and start URL). Exchange and Import read it, so it has to
+	// survive on the attempt; keeping only Extra dropped it between start and
+	// callback.
+	meta      map[string]string
+	name      string
+	identity  string
+	expiresAt time.Time
 }
 
 // oauthFlows holds pending attempts in process memory, like admin sessions: a
@@ -72,12 +88,18 @@ func newOAuthFlows() *oauthFlows {
 
 // begin registers a flow bound to sessionID and returns its state token. Expired
 // entries are swept first; a session over its limit loses its oldest attempt.
-func (f *oauthFlows) begin(flow oauthFlow) (string, time.Time, bool) {
+// newState mints one opaque sign-in state. It is minted before the flow runs so a
+// flow that embeds {p.State} in its authorize URL writes the real value, rather
+// than an empty one the handler then repairs on the returned URL.
+func newState() (string, bool) {
 	raw := make([]byte, oauthStateEntropy)
 	if _, err := rand.Read(raw); err != nil {
-		return "", time.Time{}, false
+		return "", false
 	}
-	state := base64.RawURLEncoding.EncodeToString(raw)
+	return base64.RawURLEncoding.EncodeToString(raw), true
+}
+
+func (f *oauthFlows) begin(state string, flow oauthFlow) (time.Time, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	now := f.now()
@@ -103,10 +125,10 @@ func (f *oauthFlows) begin(flow oauthFlow) (string, time.Time, bool) {
 		delete(f.pending, oldest)
 	}
 	if len(f.pending) >= oauthMaxPending {
-		return "", time.Time{}, false
+		return time.Time{}, false
 	}
 	f.pending[state] = flow
-	return state, flow.expiresAt, true
+	return flow.expiresAt, true
 }
 
 // consume redeems a state exactly once. A state that is unknown, expired, bound
@@ -208,83 +230,43 @@ func (f *oauthFlows) finish(state string) {
 	delete(f.pending, state)
 }
 
-// oauthProvider adapts one provider's engine to the shared start/callback flow.
-// Claude and Codex differ in PKCE type, authorize parameters and token-request
-// encoding; those differences stay inside the engines.
-//
-// A provider offers either the browser authorization-code flow (authorize and
-// exchange) or the device-authorization flow (device), never both.
+// oauthProvider adapts one onboarding flow to the shared start/callback/poll
+// machinery. The flow shapes and their per-provider implementations live in
+// internal/providers/onboarding, so this layer owns only the HTTP contract:
+// state, session binding, single use, durable save and publication.
 type oauthProvider struct {
-	completion string
-	authorize  func() (verifier, authorizeURL string, err error)
-	exchange   func(ctx context.Context, client OAuthClient, verifier, code string) (credentials.Secret, error)
-	device     *deviceProvider
+	flow onboarding.Flow
 }
 
-// deviceProvider is one provider's device-authorization engine. poll reports an
-// outcome for a single check; it never blocks waiting for the operator.
-type deviceProvider struct {
-	request func(ctx context.Context, client OAuthClient) (deviceStart, error)
-	poll    func(ctx context.Context, client OAuthClient, deviceCode string) (devicePoll, error)
-}
-
-type deviceStart struct {
-	deviceCode, userCode, verificationURL string
-	interval, expiresIn                   time.Duration
-}
-
-type devicePoll struct {
-	outcome string // "pending", "approved", "denied" or "expired"
-	secret  credentials.Secret
-}
-
-// OAuthClient is the HTTP client used for token exchange. A nil client uses the
-// engines' SSRF-protected default.
+// OAuthClient is the HTTP client used for provider sign-in calls. A nil client
+// uses the SSRF-protected default the handler was built with.
 type OAuthClient interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
-var oauthProviders = map[string]oauthProvider{
-	"kilocode": {device: &deviceProvider{
-		request: func(ctx context.Context, client OAuthClient) (deviceStart, error) {
-			device, err := kilocode.RequestDevice(ctx, kilocode.Config{}, client)
-			return deviceStart{deviceCode: device.Code, userCode: device.Code, verificationURL: device.VerificationURL, interval: device.Interval, expiresIn: device.ExpiresIn}, err
-		},
-		poll: func(ctx context.Context, client OAuthClient, deviceCode string) (devicePoll, error) {
-			poll, err := kilocode.PollDevice(ctx, kilocode.Config{}, deviceCode, client)
-			// The approved token is a non-expiring bearer with no refresh token.
-			return devicePoll{outcome: string(poll.Outcome), secret: credentials.Secret{AccessToken: poll.Token}}, err
-		},
-	}},
-	"claude": {
-		completion: oauthInputPasteCode,
-		authorize: func() (string, string, error) {
-			pkce, err := claude.NewPKCE()
-			return pkce.Verifier, claude.AuthorizeURL(pkce), err
-		},
-		exchange: func(ctx context.Context, client OAuthClient, verifier, code string) (credentials.Secret, error) {
-			tokens, err := claude.ExchangeCode(ctx, claude.ChallengeFor(verifier), code, client)
-			return credentials.Secret{AccessToken: tokens.AccessToken, RefreshToken: tokens.RefreshToken, Expiry: tokens.Expiry}, err
-		},
-	},
-	"codex": {
-		completion: oauthInputPasteURL,
-		authorize: func() (string, string, error) {
-			pkce, err := codex.NewPKCE()
-			return pkce.Verifier, codex.AuthorizeURL(pkce), err
-		},
-		exchange: func(ctx context.Context, client OAuthClient, verifier, code string) (credentials.Secret, error) {
-			tokens, err := codex.ExchangeCode(ctx, codex.ChallengeFor(verifier), code, client)
-			return credentials.Secret{AccessToken: tokens.AccessToken, RefreshToken: tokens.RefreshToken, IDToken: tokens.IDToken, Expiry: tokens.Expiry}, err
-		},
-	},
+// providerFor resolves the path provider to an implemented flow. A browser flow
+// and a device flow are mutually exclusive per provider, as in the reference.
+func (h *Handler) providerFor(id string, device bool) (onboarding.Flow, bool) {
+	flow, known := h.oauthFlows.Lookup(id)
+	if !known || (flow.Type == onboarding.FlowDeviceCode) != device {
+		return onboarding.Flow{}, false
+	}
+	// A flow without the step this endpoint drives (cursor has import only) is
+	// not offered by that endpoint. Refusing here keeps a nil step from becoming a
+	// panic in the handler.
+	if !flow.Startable() {
+		return onboarding.Flow{}, false
+	}
+	return flow, true
 }
 
-// oauthProviderFor resolves the path provider to an OAuth-capable catalog entry.
+// oauthProviderFor resolves the path provider to an implemented, catalog-backed
+// flow. A provider that is not in the catalog, or whose catalog entry accepts no
+// OAuth-style credential, is refused even if a flow exists for it.
 func (h *Handler) oauthProviderFor(w http.ResponseWriter, id string, device bool) (oauthProvider, bool) {
-	provider, known := oauthProviders[id]
+	flow, ok := h.providerFor(id, device)
 	spec, inCatalog := h.providerSpec(id)
-	if !known || !inCatalog || !specAllowsOAuth(spec) || (provider.device != nil) != device {
+	if !ok || !inCatalog || !specAllowsOAuth(spec) {
 		message := "this provider does not offer browser sign-in"
 		if device {
 			message = "this provider does not offer device sign-in"
@@ -292,15 +274,18 @@ func (h *Handler) oauthProviderFor(w http.ResponseWriter, id string, device bool
 		writeError(w, http.StatusNotFound, "oauth_unsupported", message)
 		return oauthProvider{}, false
 	}
-	return provider, true
+	return oauthProvider{flow: flow}, true
 }
 
+// specAllowsOAuth reports whether the provider accepts an OAuth-style credential,
+// including dual-auth providers whose default is an API key and cookie-auth
+// providers whose sign-in yields a session.
 func specAllowsOAuth(spec registry.Spec) bool {
-	if spec.Auth == registry.AuthOAuth {
+	if spec.Auth == registry.AuthOAuth || spec.Auth == registry.AuthCookie {
 		return true
 	}
 	for _, mode := range spec.AuthModes {
-		if mode == registry.AuthOAuth {
+		if mode == registry.AuthOAuth || mode == registry.AuthCookie {
 			return true
 		}
 	}
@@ -322,13 +307,24 @@ func (h *Handler) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name     string `json:"name"`
 		Identity string `json:"identity"`
+		// Meta carries operator-supplied provider parameters (GitLab's base URL and
+		// client id, Kiro's region and start URL).
+		Meta map[string]string `json:"meta"`
 	}
 	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
 	name, identity := strings.TrimSpace(body.Name), strings.TrimSpace(body.Identity)
-	if name == "" || identity == "" || len(name) > oauthMaxNameLength || len(identity) > oauthMaxNameLength {
-		writeError(w, http.StatusBadRequest, "invalid_request", "account name and stable account identity are required")
+	// A flow that resolves the identity from the provider or the credential is not
+	// asked for one: requiring a value it then discards is a field the operator
+	// fills in for nothing.
+	identityRequired := !provider.flow.ResolvesIdentity
+	if name == "" || (identityRequired && identity == "") || len(name) > oauthMaxNameLength || len(identity) > oauthMaxNameLength {
+		if identityRequired {
+			writeError(w, http.StatusBadRequest, "invalid_request", "account name and stable account identity are required")
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid_request", "account name is required")
+		}
 		return
 	}
 	session, ok := h.sessionFor(r)
@@ -336,25 +332,69 @@ func (h *Handler) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthenticated", "admin session is required")
 		return
 	}
-	verifier, authorizeURL, err := provider.authorize()
+	// Resolve the redirect only for flows that send one. Zed's native-app
+	// handshake and device flows never do, and requiring a configured origin for
+	// them refused a sign-in that would have worked.
+	redirectURI, ok := h.flowRedirectURI(w, provider.flow)
+	if !ok {
+		return
+	}
+	verifier, err := newVerifier()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "oauth_start_failed", "could not start sign-in")
 		return
 	}
-	state, expiresAt, ok := h.oauth.begin(oauthFlow{sessionID: session.ID, provider: providerID, verifier: verifier, name: name, identity: identity})
+	state, ok := newState()
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "oauth_start_failed", "could not start sign-in")
+		return
+	}
+	request, err := provider.flow.Authorize(r.Context(), onboarding.Params{
+		State:       state,
+		RedirectURI: redirectURI,
+		Verifier:    verifier,
+		Meta:        body.Meta,
+		Client:      h.opts.OAuthClient,
+	})
+	// A missing operator-supplied OAuth client is a documented precondition
+	// (SPEC 19.1), so it answers with its own code instead of a generic 500.
+	if errors.Is(err, onboarding.ErrGoogleClientUnset) {
+		writeError(w, http.StatusServiceUnavailable, "oauth_google_client_unconfigured", err.Error())
+		return
+	}
+	if errors.Is(err, onboarding.ErrIflowClientUnset) {
+		writeError(w, http.StatusServiceUnavailable, "oauth_iflow_client_unconfigured", err.Error())
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "oauth_start_failed", "could not start sign-in")
+		return
+	}
+	// Qoder's handshake mints its own PKCE pair, so its verifier wins.
+	if request.Verifier != "" {
+		verifier = request.Verifier
+	}
+	expiresAt, ok := h.oauth.begin(state, oauthFlow{
+		sessionID: session.ID, provider: providerID, verifier: verifier,
+		name: name, identity: identity, extra: request.Extra, meta: body.Meta,
+	})
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "oauth_busy", "too many sign-ins in progress; try again shortly")
 		return
 	}
-	parsed, err := url.Parse(authorizeURL)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "oauth_start_failed", "could not start sign-in")
-		return
-	}
-	query := parsed.Query()
-	query.Set("state", state)
-	parsed.RawQuery = query.Encode()
-	writeJSON(w, http.StatusOK, map[string]any{"state": state, "authorizeUrl": parsed.String(), "completion": provider.completion, "expiresAt": expiresAt})
+	// The flow wrote {p.State} itself; the URL is not rewritten here, so there is
+	// one source for the value rather than two that can disagree.
+	authorizeURL := request.URL
+	writeJSON(w, http.StatusOK, map[string]any{
+		"state":           state,
+		"authorizeUrl":    authorizeURL,
+		"completion":      provider.flow.Completion,
+		"flowType":        provider.flow.Type,
+		"userCode":        request.UserCode,
+		"verificationUrl": request.VerificationURL,
+		"intervalSeconds": int(request.Interval.Seconds()),
+		"expiresAt":       expiresAt,
+	})
 }
 
 // handleOAuthCallback completes a sign-in. The provider-registered redirect URIs
@@ -384,6 +424,20 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code, denied, pastedState := parseOAuthInput(body.Input)
+	// A callback-completion flow (zed, xiaomi-mimo) parses the pasted URL itself:
+	// the credential is not a `code` query parameter but an encrypted payload the
+	// flow decrypts. Handing it the extracted code would always be empty, so the
+	// operator would be told to paste a URL the endpoint then rejected.
+	if provider.flow.Completion == onboarding.CompletionCallback {
+		// The same bounds parseOAuthInput applies still hold: a pasted callback is
+		// operator input and must not be unbounded or carry control characters.
+		raw := strings.TrimSpace(body.Input)
+		if raw == "" || len(raw) > oauthMaxInput || strings.IndexFunc(raw, unicode.IsControl) >= 0 {
+			writeError(w, http.StatusBadRequest, "oauth_code_missing", "no callback was found in what was pasted; check it and try again")
+			return
+		}
+		code, denied, pastedState = raw, false, ""
+	}
 	if !denied && code == "" {
 		// Nothing usable was pasted. Refuse before consuming so the operator can
 		// paste again instead of restarting the single-use attempt.
@@ -404,12 +458,26 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "oauth_denied", "the provider did not approve the sign-in; start again")
 		return
 	}
-	secret, err := provider.exchange(r.Context(), h.opts.OAuthClient, flow.verifier, code)
+	// Resolve the redirect only for flows that send one. Zed's native-app
+	// handshake and device flows never do, and requiring a configured origin for
+	// them refused a sign-in that would have worked.
+	redirectURI, ok := h.flowRedirectURI(w, provider.flow)
+	if !ok {
+		return
+	}
+	result, err := provider.flow.Exchange(r.Context(), onboarding.Params{
+		RedirectURI: redirectURI,
+		State:       body.State,
+		Verifier:    flow.verifier,
+		Input:       code,
+		Meta:        mergeMeta(flow.meta, flow.extra),
+		Client:      h.opts.OAuthClient,
+	})
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "oauth_exchange_failed", "the provider did not accept the authorization code; start again")
 		return
 	}
-	if saved, _, ok := h.saveOAuthConnection(w, r, providerID, flow, secret); ok {
+	if saved, _, ok := h.saveOnboardedConnection(w, r, providerID, flow, result); ok {
 		writeJSON(w, http.StatusOK, saved)
 	}
 }
@@ -430,13 +498,24 @@ func (h *Handler) handleOAuthDeviceStart(w http.ResponseWriter, r *http.Request)
 	var body struct {
 		Name     string `json:"name"`
 		Identity string `json:"identity"`
+		// Meta carries operator-supplied provider parameters (GitLab's base URL and
+		// client id, Kiro's region and start URL).
+		Meta map[string]string `json:"meta"`
 	}
 	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
 	name, identity := strings.TrimSpace(body.Name), strings.TrimSpace(body.Identity)
-	if name == "" || identity == "" || len(name) > oauthMaxNameLength || len(identity) > oauthMaxNameLength {
-		writeError(w, http.StatusBadRequest, "invalid_request", "account name and stable account identity are required")
+	// A flow that resolves the identity from the provider or the credential is not
+	// asked for one: requiring a value it then discards is a field the operator
+	// fills in for nothing.
+	identityRequired := !provider.flow.ResolvesIdentity
+	if name == "" || (identityRequired && identity == "") || len(name) > oauthMaxNameLength || len(identity) > oauthMaxNameLength {
+		if identityRequired {
+			writeError(w, http.StatusBadRequest, "invalid_request", "account name and stable account identity are required")
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid_request", "account name is required")
+		}
 		return
 	}
 	session, ok := h.sessionFor(r)
@@ -444,8 +523,25 @@ func (h *Handler) handleOAuthDeviceStart(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusUnauthorized, "unauthenticated", "admin session is required")
 		return
 	}
-	device, err := provider.device.request(r.Context(), h.opts.OAuthClient)
-	if errors.Is(err, kilocode.ErrRateLimited) {
+	// A device flow never sends the operator to a redirect the provider registered:
+	// it shows a code and polls. Requiring a public origin here would break device
+	// sign-in for installs that never configured one.
+	redirectURI, ok := h.flowRedirectURI(w, provider.flow)
+	if !ok {
+		return
+	}
+	state, ok := newState()
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "oauth_start_failed", "could not start sign-in")
+		return
+	}
+	device, err := provider.flow.Authorize(r.Context(), onboarding.Params{
+		State:       state,
+		RedirectURI: redirectURI,
+		Meta:        body.Meta,
+		Client:      h.opts.OAuthClient,
+	})
+	if errors.Is(err, onboarding.ErrRateLimited) {
 		writeError(w, http.StatusTooManyRequests, "oauth_rate_limited", "the provider has too many pending sign-ins; wait a few minutes and try again")
 		return
 	}
@@ -453,12 +549,27 @@ func (h *Handler) handleOAuthDeviceStart(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadGateway, "oauth_start_failed", "the provider did not start a sign-in; try again shortly")
 		return
 	}
-	state, expiresAt, ok := h.oauth.begin(oauthFlow{sessionID: session.ID, provider: providerID, deviceCode: device.deviceCode, name: name, identity: identity, ttl: device.expiresIn, nextPoll: h.oauth.now().Add(device.interval)})
+	expiresAt, ok := h.oauth.begin(state, oauthFlow{
+		sessionID: session.ID, provider: providerID,
+		deviceCode: device.DeviceCode, verifier: device.Verifier,
+		extra: device.Extra, meta: body.Meta, name: name, identity: identity,
+		ttl: device.ExpiresIn, nextPoll: h.oauth.now().Add(device.Interval),
+	})
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "oauth_busy", "too many sign-ins in progress; try again shortly")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"state": state, "userCode": device.userCode, "verificationUrl": device.verificationURL, "intervalSeconds": int(device.interval / time.Second), "expiresAt": expiresAt})
+	// The device handle stays server-side: the browser holds only the opaque
+	// state, and the poll redeems it with the handle this attempt captured. The
+	// operator needs the user code, not the handle.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"state":           state,
+		"flowType":        provider.flow.Type,
+		"userCode":        device.UserCode,
+		"verificationUrl": device.VerificationURL,
+		"intervalSeconds": int(device.Interval / time.Second),
+		"expiresAt":       expiresAt,
+	})
 }
 
 // handleOAuthDevicePoll checks a device authorization once. Pending answers 200
@@ -494,12 +605,32 @@ func (h *Handler) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusOK, map[string]any{"status": "pending"})
 		return
 	}
-	poll, err := provider.device.poll(r.Context(), h.opts.OAuthClient, flow.deviceCode)
+	outcome, err := provider.flow.Poll(r.Context(), onboarding.Params{
+		State:    body.State,
+		Verifier: flow.verifier,
+		Input:    flow.deviceCode,
+		Meta:     mergeMeta(flow.meta, flow.extra),
+		Client:   h.opts.OAuthClient,
+	})
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "oauth_poll_failed", "the provider could not be reached; the sign-in is still open")
 		return
 	}
-	switch poll.outcome {
+	// A terminal failure that is not a denial is the provider failing, not the
+	// operator refusing. Collapsing the two would tell an operator "you said no"
+	// when the provider errored.
+	status := "pending"
+	switch {
+	case outcome.Expired:
+		status = "expired"
+	case outcome.Denied:
+		status = "denied"
+	case outcome.Err != nil:
+		status = "failed"
+	case outcome.Done:
+		status = "approved"
+	}
+	switch status {
 	case "approved":
 		// Reserve, save, then finish: of two concurrent approved polls only one
 		// saves, and a save that persisted nothing leaves the attempt open so the
@@ -515,7 +646,7 @@ func (h *Handler) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusBadRequest, "oauth_state_invalid", "this sign-in attempt expired or was already used; start again")
 			return
 		}
-		saved, persisted, ok := h.saveOAuthConnection(w, r, providerID, flow, poll.secret)
+		saved, persisted, ok := h.saveOnboardedConnection(w, r, providerID, flow, outcome.Result)
 		if persisted {
 			h.oauth.finish(body.State)
 		} else {
@@ -530,6 +661,14 @@ func (h *Handler) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request) 
 	case "expired":
 		h.oauth.consume(body.State, session.ID, providerID)
 		writeError(w, http.StatusBadRequest, "oauth_expired", "the sign-in code expired; start again")
+	case "failed":
+		// The attempt is burned: the provider rejected this authorization, so
+		// polling again cannot help. This needs its own code because the dashboard
+		// retries oauth_poll_failed, which is the retryable transport case above;
+		// reusing it turned a terminal provider rejection into a stale
+		// oauth_state_invalid message after five pointless retries.
+		h.oauth.consume(body.State, session.ID, providerID)
+		writeError(w, http.StatusBadGateway, "oauth_sign_in_rejected", "the provider rejected the sign-in; start again")
 	default:
 		writeJSON(w, http.StatusOK, map[string]any{"status": "pending"})
 	}
@@ -537,36 +676,45 @@ func (h *Handler) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request) 
 
 // saveOAuthConnection persists a completed sign-in as a new enabled connection,
 // last in routing order, and answers the request. Shared by both flows.
-func (h *Handler) saveOAuthConnection(w http.ResponseWriter, r *http.Request, providerID string, flow oauthFlow, secret credentials.Secret) (saved map[string]any, persisted, ok bool) {
-	node, err := h.builtinNode(r.Context(), providerID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "connection_save_failed", "provider connection could not be saved")
+func (h *Handler) saveOnboardedConnection(w http.ResponseWriter, r *http.Request, providerID string, flow oauthFlow, result onboarding.Result) (saved map[string]any, persisted, ok bool) {
+	if result.Secret.Empty() {
+		writeError(w, http.StatusBadGateway, "oauth_exchange_failed", "the provider returned no usable credential; start again")
 		return nil, persisted, false
 	}
-	// New connections go last in routing order, as the manual form does.
-	existing, err := h.opts.Credentials.ListConnections(r.Context(), providerID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "connection_save_failed", "provider connection could not be saved")
+	// A provider may report its own identity and label (the reference stores both);
+	// the operator-supplied values are the fallback so dedup always has a key.
+	name, identity := strings.TrimSpace(result.DisplayName), strings.TrimSpace(result.Identity)
+	if name == "" {
+		name = flow.name
+	}
+	if identity == "" {
+		identity = flow.identity
+	}
+	authKind := result.AuthKind
+	if authKind == "" {
+		authKind = credentials.AuthOAuth
+	}
+	// A flow may report its own mode (iflow's cookie import yields a cookie
+	// connection), so the result is checked against the provider's declared modes
+	// exactly as the manual form is. Without this, /import could store a connection
+	// the PATCH path would refuse.
+	spec, _ := h.providerSpec(providerID)
+	if !authKindPermitted(spec, authKind) {
+		writeError(w, http.StatusBadRequest, "invalid_auth_kind", "this provider does not accept the credential mode this sign-in produced")
 		return nil, persisted, false
 	}
-	priority := len(existing)
-	connection, err := h.opts.Credentials.PutConnection(r.Context(), credentials.Connection{NodeID: node.ID, Name: flow.name, AuthKind: credentials.AuthOAuth, Identity: flow.identity, Secret: secret, Enabled: true, Priority: priority})
+	flow.name, flow.identity = name, identity
+	connection, persisted, err := h.publishConnection(r.Context(), credentials.Connection{
+		ProviderID: providerID, Name: flow.name, AuthKind: authKind, Identity: flow.identity,
+		Secret: result.Secret, Enabled: true,
+	})
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
-		return nil, persisted, false
-	}
-	// PutConnection returns the metadata as given; the registry's exchanger lookup
-	// keys on the provider.
-	persisted = true
-	connection.ProviderID = node.ProviderID
-	if h.opts.CredentialRegistry != nil {
-		h.opts.CredentialRegistry.Register(connection, nil)
-	}
-	if h.opts.PoolBindings != nil {
-		if _, err := h.opts.PoolBindings.RefreshPoolBindings(r.Context()); err != nil {
-			writeError(w, http.StatusInternalServerError, "connection_publish_failed", "connection saved but runtime proxy bindings could not be refreshed")
-			return nil, persisted, false
+		if persisted {
+			writeError(w, http.StatusInternalServerError, "connection_publish_failed", "connection saved but could not be published to the runtime")
+		} else {
+			writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
 		}
+		return nil, persisted, false
 	}
 	return connectionJSON(connection), true, true
 }
@@ -604,4 +752,405 @@ func cleanCode(code string) string {
 		return ""
 	}
 	return code
+}
+
+// importFlowFor resolves the flow that implements a provider's import mode. It
+// merges the two tables rather than preferring one: an import flow is a distinct
+// auth mode, not an alternative to the browser flow.
+//
+// The manual table is checked first because that is where the import-only modes
+// live (codex, grok-cli, iflow, kiro, xiaomi-mimo). A provider can be in both
+// tables with different halves: codex's token import is manual while its bulk
+// importer belongs to the browser flow. Returning on the first table hit left
+// Bulk nil and made a documented endpoint answer 404, so the halves are merged.
+func (h *Handler) importFlowFor(providerID string) (onboarding.Flow, bool) {
+	var merged onboarding.Flow
+	found := false
+	if manual, ok := h.manualFlows[providerID]; ok && manual.Import != nil {
+		merged = manual
+		found = true
+	}
+	if flow, ok := h.oauthFlows.Lookup(providerID); ok {
+		switch {
+		case !found && flow.Import != nil:
+			merged = flow
+			found = true
+		case found && merged.Bulk == nil && flow.Bulk != nil:
+			// Only the bulk hook is taken: the manual entry owns Import, and the two
+			// halves must not shadow each other.
+			merged.Bulk = flow.Bulk
+		}
+	}
+	return merged, found
+}
+
+// handleOAuthImport completes a manual-token, cookie, PAT or API-key connection.
+// These flows have no browser step, so the operator supplies the credential and
+// the flow validates it before it is stored.
+func (h *Handler) handleOAuthImport(w http.ResponseWriter, r *http.Request) {
+	if h.opts.Credentials == nil {
+		writeError(w, http.StatusServiceUnavailable, "credentials_unavailable", "configure ROUTEWEFT_CREDENTIAL_KEY to manage provider connections")
+		return
+	}
+	providerID := r.PathValue("provider")
+	// A provider can offer both a browser flow and an import mode (codex,
+	// grok-cli, iflow, kiro, xiaomi-mimo, cursor). importFlowFor consults both
+	// tables, so a provider registered as a browser flow still resolves its import
+	// mode.
+	flow, ok := h.importFlowFor(providerID)
+	spec, inCatalog := h.providerSpec(providerID)
+	if !ok || !inCatalog || !specAllowsOAuth(spec) {
+		writeError(w, http.StatusNotFound, "oauth_unsupported", "this provider has no import flow")
+		return
+	}
+	var body struct {
+		Name     string            `json:"name"`
+		Identity string            `json:"identity"`
+		Input    string            `json:"input"`
+		Meta     map[string]string `json:"meta"`
+	}
+	if !decodeJSON(w, r, 32<<10, &body) {
+		return
+	}
+	// Same rule as /start and /device: the operator's name and identity are required
+	// up front, not discovered later as a misleading connection_save_failed from the
+	// store.
+	name, identity := strings.TrimSpace(body.Name), strings.TrimSpace(body.Identity)
+	identityRequired := !flow.ResolvesIdentity
+	if name == "" || (identityRequired && identity == "") || len(name) > oauthMaxNameLength || len(identity) > oauthMaxNameLength {
+		if identityRequired {
+			writeError(w, http.StatusBadRequest, "invalid_request", "account name and stable account identity are required")
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid_request", "account name is required")
+		}
+		return
+	}
+	// The same bounds /callback applies to pasted input: an import payload becomes a
+	// header value or a form body, so a control character must not reach it.
+	if strings.TrimSpace(body.Input) == "" || len(body.Input) > oauthMaxInput || strings.IndexFunc(body.Input, unicode.IsControl) >= 0 {
+		writeError(w, http.StatusBadRequest, "oauth_code_missing", "a credential to import is required")
+		return
+	}
+	if _, ok := h.sessionFor(r); !ok {
+		writeError(w, http.StatusUnauthorized, "unauthenticated", "admin session is required")
+		return
+	}
+	result, err := flow.Import(r.Context(), onboarding.Params{
+		Input:  body.Input,
+		Meta:   body.Meta,
+		Client: h.opts.OAuthClient,
+	})
+	// A missing field the operator must supply is a request problem with its own
+	// code, not an upstream rejection.
+	if errors.Is(err, onboarding.ErrCursorMachineIDRequired) {
+		writeError(w, http.StatusBadRequest, "oauth_meta_required", err.Error())
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "oauth_exchange_failed", "the provider did not accept the credential")
+		return
+	}
+	flowState := oauthFlow{name: name, identity: identity}
+	if saved, _, ok := h.saveOnboardedConnection(w, r, providerID, flowState, result); ok {
+		writeJSON(w, http.StatusOK, saved)
+	}
+}
+
+// newVerifier mints one PKCE verifier.
+func newVerifier() (string, error) {
+	raw := make([]byte, oauthStateEntropy)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// dashboardOrigin returns the configured operator-facing origin, which is the
+// callback host for providers without a pinned loopback redirect.
+//
+// It deliberately does not derive the origin from the request: the value becomes
+// a provider redirect_uri, so trusting Host or X-Forwarded-Proto would let a
+// caller steer a sign-in callback to an origin of their choosing. An unset
+// origin fails the sign-in instead.
+func (h *Handler) dashboardOrigin() string {
+	return strings.TrimSpace(h.opts.PublicOrigin)
+}
+
+// mergeMeta combines the operator input captured at start with the flow-private
+// state the flow itself minted. The flow's own values win on a key collision,
+// because they are the ones it must be able to trust (a private key it generated,
+// a nonce it issued) and the operator cannot usefully override them.
+func mergeMeta(operator, private map[string]string) map[string]string {
+	if len(operator) == 0 && len(private) == 0 {
+		return nil
+	}
+	merged := make(map[string]string, len(operator)+len(private))
+	for key, value := range operator {
+		merged[key] = value
+	}
+	for key, value := range private {
+		merged[key] = value
+	}
+	return merged
+}
+
+// flowRedirectURI resolves the redirect a flow sends, and answers the request when
+// it cannot. A flow that does not consume one (pinned or unused) gets an empty
+// value rather than a 503: requiring an origin for a value the flow discards is
+// what made claude, codex, xai, zed and every device provider fail to start on an
+// install that never configured one.
+func (h *Handler) flowRedirectURI(w http.ResponseWriter, flow onboarding.Flow) (string, bool) {
+	redirectURI, err := onboarding.DefaultRedirectURI(flow, h.dashboardOrigin())
+	if err != nil && !flow.NeedsRedirectURI() {
+		return "", true
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "oauth_redirect_unconfigured", "set the public origin before starting a sign-in")
+		return "", false
+	}
+	return redirectURI, true
+}
+
+// handleOAuthBulkImport imports several account JSON objects in one call, mirroring
+// the reference's /api/oauth/{codex,grok-cli}/bulk-import. The body accepts an
+// array, a single object, or {accounts: [...]} because operators paste whatever
+// their exporter produced.
+//
+// Items are processed serially: PutConnection reads and reorders within a
+// transaction, so concurrent imports would race on priority assignment.
+//
+// No credential is echoed back. The response carries an index, a status and the
+// saved connection id per item, so a partially failed batch still reports which
+// entries landed.
+func (h *Handler) handleOAuthBulkImport(w http.ResponseWriter, r *http.Request) {
+	if h.opts.Credentials == nil {
+		writeError(w, http.StatusServiceUnavailable, "credentials_unavailable", "configure ROUTEWEFT_CREDENTIAL_KEY to manage provider connections")
+		return
+	}
+	providerID := r.PathValue("provider")
+	flow, ok := h.importFlowFor(providerID)
+	spec, inCatalog := h.providerSpec(providerID)
+	if !ok || !inCatalog || !specAllowsOAuth(spec) || flow.Bulk == nil {
+		writeError(w, http.StatusNotFound, "oauth_unsupported", "this provider has no bulk import flow")
+		return
+	}
+	if _, ok := h.sessionFor(r); !ok {
+		writeError(w, http.StatusUnauthorized, "unauthenticated", "admin session is required")
+		return
+	}
+	raw, ok := decodeBulkBody(w, r)
+	if !ok {
+		return
+	}
+	type itemResult struct {
+		Index int    `json:"index"`
+		OK    bool   `json:"ok"`
+		ID    string `json:"id,omitempty"`
+		Error string `json:"error,omitempty"`
+	}
+	results := make([]itemResult, 0, len(raw))
+	saved, failed := 0, 0
+	for index, item := range raw {
+		account, err := flow.Bulk(item)
+		if err != nil {
+			results = append(results, itemResult{Index: index, Error: err.Error()})
+			failed++
+			continue
+		}
+		if account.Identity == "" {
+			results = append(results, itemResult{Index: index, Error: "account has no email or identity claim"})
+			failed++
+			continue
+		}
+		if !authKindPermitted(spec, account.AuthKind) {
+			results = append(results, itemResult{Index: index, Error: "credential mode is not accepted by this provider"})
+			failed++
+			continue
+		}
+		// The label falls back to the identity, as the reference does for a bulk
+		// item that carries no display name.
+		name := account.Name
+		if name == "" {
+			name = account.Identity
+		}
+		if len(name) > oauthMaxNameLength || len(account.Identity) > oauthMaxNameLength {
+			results = append(results, itemResult{Index: index, Error: "account name or identity is too long"})
+			failed++
+			continue
+		}
+		// Stored and registered per item, but the snapshot is recompiled once after
+		// the loop: each refresh recompiles every provider, so doing it per item made
+		// one paste cost thousands of recompiles.
+		connection, err := h.storeImportedConnection(r.Context(), providerID, name, account)
+		if err != nil {
+			results = append(results, itemResult{Index: index, Error: err.Error()})
+			failed++
+			continue
+		}
+		results = append(results, itemResult{Index: index, OK: true, ID: connection.ID})
+		saved++
+	}
+	if saved > 0 {
+		if err := h.publishBindings(r.Context()); err != nil {
+			writeError(w, http.StatusInternalServerError, "connection_publish_failed", "connections were saved but the runtime could not be updated")
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"total": len(raw), "success": saved, "failed": failed, "results": results})
+}
+
+// decodeBulkBody normalizes the three accepted shapes into a slice of objects.
+func decodeBulkBody(w http.ResponseWriter, r *http.Request) ([]map[string]any, bool) {
+	var body json.RawMessage
+	if !decodeJSON(w, r, 1<<20, &body) {
+		return nil, false
+	}
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "a JSON body is required")
+		return nil, false
+	}
+	var items []map[string]any
+	switch trimmed[0] {
+	case '[':
+		if err := json.Unmarshal(trimmed, &items); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "the body must be a JSON array of account objects")
+			return nil, false
+		}
+	case '{':
+		var wrapped struct {
+			Accounts []map[string]any `json:"accounts"`
+		}
+		if err := json.Unmarshal(trimmed, &wrapped); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "the body must be a JSON account object")
+			return nil, false
+		}
+		if wrapped.Accounts != nil {
+			items = wrapped.Accounts
+		} else {
+			var single map[string]any
+			if err := json.Unmarshal(trimmed, &single); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_request", "the body must be a JSON account object")
+				return nil, false
+			}
+			items = []map[string]any{single}
+		}
+	default:
+		writeError(w, http.StatusBadRequest, "invalid_request", "the body must be a JSON array or object")
+		return nil, false
+	}
+	if len(items) == 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "no accounts provided")
+		return nil, false
+	}
+	if len(items) > oauthMaxBulkItems {
+		writeError(w, http.StatusRequestEntityTooLarge, "bulk_too_large", fmt.Sprintf("at most %d accounts may be imported at once", oauthMaxBulkItems))
+		return nil, false
+	}
+	return items, true
+}
+
+// publishConnection is the single way a connection becomes durable and live: the
+// store write, the runtime registry registration and the proxy-binding refresh
+// happen together or not at all. Every path that creates a connection (PATCH, a
+// single import, a bulk import) goes through it.
+//
+// Bulk import previously wrote the row without registering it, so the connection
+// existed in SQLite while inference answered credentials_unavailable until some
+// later quota refresh happened to load it. A second write path is how that
+// happens; there is now one.
+// persisted reports whether the row reached durable storage, which is what decides
+// whether a sign-in attempt may be closed: a publish failure after the write must
+// not discard a token the provider already issued.
+func (h *Handler) publishConnection(ctx context.Context, connection credentials.Connection) (stored credentials.Connection, persisted bool, err error) {
+	// A caller that already resolved its node keeps it: a Generic Provider node has
+	// no built-in spec to look up, and a second resolution could disagree with the
+	// first. Onboarding callers pass only the provider and get the built-in node.
+	node := credentials.Node{ID: connection.NodeID, ProviderID: connection.ProviderID}
+	if connection.NodeID == "" || connection.ProviderID == "" {
+		resolved, err := h.builtinNode(ctx, connection.ProviderID)
+		if err != nil {
+			return credentials.Connection{}, false, err
+		}
+		node = resolved
+	}
+	connection.NodeID = node.ID
+	if connection.ID == "" {
+		// New connections go last in routing order, as the manual form does.
+		existing, err := h.opts.Credentials.ListConnections(ctx, node.ProviderID)
+		if err != nil {
+			return credentials.Connection{}, false, err
+		}
+		connection.Priority = len(existing)
+	}
+	if connection.AuthKind == "" {
+		connection.AuthKind = credentials.AuthOAuth
+	}
+	if connection.Secret.Empty() && connection.ID != "" {
+		// An edit without a secret keeps the stored blob.
+		existing, err := h.opts.Credentials.GetConnection(ctx, connection.ID)
+		if err != nil {
+			return credentials.Connection{}, false, err
+		}
+		connection.Secret = existing.Secret
+	}
+	stored, err = h.opts.Credentials.PutConnection(ctx, connection)
+	if err != nil {
+		return credentials.Connection{}, false, err
+	}
+	// PutConnection returns the metadata as given; the registry's exchanger lookup
+	// keys on the provider.
+	stored.ProviderID = node.ProviderID
+	h.register(stored)
+	if h.opts.PoolBindings != nil {
+		if _, err := h.opts.PoolBindings.RefreshPoolBindings(ctx); err != nil {
+			return stored, true, err
+		}
+	}
+	return stored, true, nil
+}
+
+// storeImportedConnection writes one imported credential and registers it with the
+// runtime, without recompiling the snapshot. Bulk import calls it per item and
+// publishes once; a single import goes through publishConnection, which does both.
+func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name string, account onboarding.BulkAccount) (credentials.Connection, error) {
+	node, err := h.builtinNode(ctx, providerID)
+	if err != nil {
+		return credentials.Connection{}, err
+	}
+	existing, err := h.opts.Credentials.ListConnections(ctx, providerID)
+	if err != nil {
+		return credentials.Connection{}, err
+	}
+	stored, err := h.opts.Credentials.PutConnection(ctx, credentials.Connection{
+		NodeID: node.ID, Name: name, Identity: account.Identity,
+		AuthKind: account.AuthKind, Secret: account.Secret, Enabled: true,
+		Priority: len(existing),
+	})
+	if err != nil {
+		return credentials.Connection{}, err
+	}
+	stored.ProviderID = node.ProviderID
+	h.register(stored)
+	return stored, nil
+}
+
+// register publishes one stored connection to the runtime registry. It is separate
+// from the store write so a batch can write many connections and publish the
+// recompiled snapshot once.
+func (h *Handler) register(connection credentials.Connection) {
+	if h.opts.CredentialRegistry != nil {
+		h.opts.CredentialRegistry.Register(connection, nil)
+	}
+}
+
+// publishBindings refreshes the compiled snapshot after a batch. Every
+// RefreshPoolBindings call recompiles the whole candidate snapshot, so a batch
+// publishes once instead of once per connection.
+func (h *Handler) publishBindings(ctx context.Context) error {
+	if h.opts.PoolBindings == nil {
+		return nil
+	}
+	_, err := h.opts.PoolBindings.RefreshPoolBindings(ctx)
+	return err
 }

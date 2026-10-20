@@ -3,7 +3,6 @@ package quota
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -16,7 +15,7 @@ import (
 // credentials.Registry satisfies it, so quota reads reuse the same durable,
 // singleflight-refreshed credential that inference uses.
 type CredentialSource interface {
-	Credential(ctx context.Context, connectionID string) (string, error)
+	Secret(ctx context.Context, connectionID string) (credentials.Secret, error)
 }
 
 // ConnectionSeeder loads a provider's durable connections into the credential
@@ -83,7 +82,10 @@ func (s *Service) RefreshProvider(ctx context.Context, providerID string) error 
 		if !connection.Enabled {
 			continue
 		}
-		if err := s.refreshConnection(ctx, connection); err != nil && firstErr == nil {
+		// ErrNotConfigured means this connection has nothing readable, not that the
+		// refresh failed. Propagating it as firstErr made one cookie-only connection
+		// report the whole provider as failed.
+		if err := s.refreshConnection(ctx, connection); err != nil && !errors.Is(err, ErrNotConfigured) && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -148,15 +150,23 @@ func (s *Service) refreshConnection(ctx context.Context, connection credentials.
 	if _, ok := s.Observer.Clients[connection.ProviderID]; !ok {
 		return nil
 	}
-	credential, err := s.Credentials.Credential(ctx, connection.ID)
+	secret, err := s.Credentials.Secret(ctx, connection.ID)
 	if err != nil {
 		s.record(connection.ID, err)
 		return err
 	}
-	if strings.TrimSpace(credential) == "" {
-		err := fmt.Errorf("connection %q has no credential for quota read", connection.Name)
-		s.record(connection.ID, err)
-		return err
+	credential := Credential{
+		AccessToken:  secret.AccessToken,
+		Cookie:       secret.Cookie,
+		ProviderData: secret.ProviderData,
+	}
+	// Every usage reader authenticates with an access token or API key; none reads
+	// a session cookie. A cookie-only connection therefore has no readable
+	// credential. It is reported as ErrNotConfigured so the caller can skip it, and
+	// deliberately not recorded: lastErr exists to surface read failures, and a
+	// provider with no usage endpoint has not failed.
+	if strings.TrimSpace(credential.AccessToken) == "" {
+		return ErrNotConfigured
 	}
 	_, err = s.Observer.Observe(ctx, connection.ProviderID, connection.ID, credential)
 	s.record(connection.ID, err)

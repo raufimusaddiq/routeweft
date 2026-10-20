@@ -53,7 +53,7 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	wantIDs := []string{
 		"antigravity", "gemini-cli", "cursor", "qoder", "kiro", "vertex", "commandcode", "grok-cli", "grok-web", "perplexity-web", "kenari", "zed", "kimchi", "azure",
 		"xai", "github", "gitlab", "iflow", "kimi", "xiaomi-mimo", "cline", "clinepass", "kilocode", "codebuddy-cn", "codebuddy-intl",
-		"vertex-partner", "tokenrouter", "perplexity-agent", "opencode-go", "cloudflare-ai",
+		"vertex-partner", "tokenrouter", "perplexity-agent", "opencode-go", "cloudflare-ai", "muse",
 		"mimo-free", "mmf", "opencode", "ollama", "ollama-local", "typesafe",
 		"deepseek", "glm", "glm-cn", "minimax", "minimax-cn", "xiaomi-tokenplan",
 		"claude",
@@ -74,7 +74,7 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 			t.Errorf("incomplete group member %q: %+v present=%v", id, spec, ok)
 		}
 	}
-	if spec, _ := catalog.Lookup("codex"); spec.Auth != AuthOAuth || spec.Transports[0] != TransportOpenAIResponses || !spec.ReportsUsage || len(spec.StaticModels) != 18 {
+	if spec, _ := catalog.Lookup("codex"); spec.Auth != AuthOAuth || spec.Transports[0] != TransportOpenAIResponses || !spec.ReportsUsage || len(spec.SeedModels) == 0 {
 		t.Fatalf("codex spec=%+v", spec)
 	}
 	if spec, _ := catalog.Lookup("openrouter"); spec.ModelCatalog != CatalogDynamic || !spec.PassthroughModels {
@@ -87,7 +87,7 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 		t.Fatalf("Vercel usage capability missing: %+v", spec)
 	}
 	openai, _ := catalog.Lookup("openai")
-	if len(openai.Transports) != 2 || openai.Transports[0] != TransportOpenAIChat || openai.Transports[1] != TransportOpenAIResponses || len(openai.StaticModels) != 20 {
+	if len(openai.Transports) != 2 || openai.Transports[0] != TransportOpenAIChat || openai.Transports[1] != TransportOpenAIResponses || len(openai.SeedModels) == 0 {
 		t.Fatalf("OpenAI native capabilities=%+v", openai)
 	}
 	if transport, ok := openai.NativeBinding("openai-responses"); !ok || transport != TransportOpenAIResponses {
@@ -99,13 +99,13 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	if spec, _ := catalog.Lookup("groq"); !spec.ReportsUsage {
 		t.Fatalf("Groq usage capability missing: %+v", spec)
 	}
-	if spec, _ := catalog.Lookup("anthropic"); spec.Auth != AuthAPIKey || spec.Transports[0] != TransportAnthropic || len(spec.StaticModels) != 3 {
+	if spec, _ := catalog.Lookup("anthropic"); spec.Auth != AuthAPIKey || spec.Transports[0] != TransportAnthropic || len(spec.SeedModels) == 0 {
 		t.Fatalf("anthropic spec=%+v", spec)
 	}
-	if spec, _ := catalog.Lookup("gemini"); spec.Auth != AuthAPIKey || spec.Transports[0] != TransportGemini || len(spec.StaticModels) != 11 {
+	if spec, _ := catalog.Lookup("gemini"); spec.Auth != AuthAPIKey || spec.Transports[0] != TransportGemini || len(spec.SeedModels) == 0 {
 		t.Fatalf("gemini spec=%+v", spec)
 	}
-	if spec, _ := catalog.Lookup("claude"); spec.Auth != AuthOAuth || spec.Transports[0] != TransportAnthropic || !spec.ReportsUsage || len(spec.StaticModels) != 5 {
+	if spec, _ := catalog.Lookup("claude"); spec.Auth != AuthOAuth || spec.Transports[0] != TransportAnthropic || !spec.ReportsUsage || len(spec.SeedModels) == 0 {
 		t.Fatalf("claude spec=%+v", spec)
 	}
 	for _, id := range []string{"deepseek", "glm", "minimax", "minimax-cn", "xiaomi-tokenplan"} {
@@ -185,7 +185,7 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	}
 	for _, id := range []string{"codebuddy-cn", "codebuddy-intl"} {
 		spec, _ := catalog.Lookup(id)
-		if !spec.ReportsUsage || spec.Transports[0] != TransportOpenAIChat || len(spec.StaticModels) == 0 {
+		if !spec.ReportsUsage || spec.Transports[0] != TransportOpenAIChat || len(spec.SeedModels) == 0 {
 			t.Errorf("codebuddy %s spec=%+v", id, spec)
 		}
 	}
@@ -261,16 +261,16 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	}
 }
 
-func TestCatalogLookupCopiesStaticModels(t *testing.T) {
-	catalog, err := NewCatalog([]Spec{{ID: "p", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, ModelCatalog: CatalogStatic, StaticModels: []string{"m"}}})
+func TestCatalogLookupCopiesSeedModels(t *testing.T) {
+	catalog, err := NewCatalog([]Spec{{ID: "p", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, ModelCatalog: CatalogStatic, SeedModels: []SeedModel{{ID: "m", Name: "M"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	spec, _ := catalog.Lookup("p")
-	spec.StaticModels[0] = "mutated"
+	spec.SeedModels[0].ID = "mutated"
 	again, _ := catalog.Lookup("p")
-	if again.StaticModels[0] != "m" {
-		t.Fatal("catalog static model slice leaked")
+	if again.SeedModels[0].ID != "m" {
+		t.Fatal("catalog seed model slice leaked")
 	}
 }
 
