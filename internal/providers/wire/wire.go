@@ -57,6 +57,8 @@ type Hook struct {
 	UnwrapResponse func(body []byte) []byte
 	// Finalize is the provider's last rewrite of the outbound body (registry quirks).
 	Finalize Finalize
+	// FinalizeAccount injects settings from the selected connection into the final body.
+	FinalizeAccount func(routing.ProviderRef, Body) bool
 	// ForceStream marks a gateway that only answers streams. Its Finalize sets
 	// stream:true on the request; a client that did not ask to stream gets the
 	// SSE folded back to one JSON body before any consumer reads it
@@ -69,10 +71,8 @@ type Hook struct {
 	// reports how Routeweft should account for it. It never changes the status or
 	// body the client sees.
 	ClassifyError func(status int, body []byte, now time.Time) (routing.Classification, bool)
-	// RequireCredential refuses a request whose connection carries no credential,
-	// for a provider whose every request is authenticated by a signature over that
-	// credential (iflow). Without it the request would be sent unsigned, which the
-	// gateway answers with an unrelated error.
+	// RequireCredential prevents unauthenticated dispatch when an empty credential
+	// would otherwise produce a misleading upstream error.
 	RequireCredential bool
 }
 
@@ -97,6 +97,7 @@ var hooks = map[string]Hook{
 	"kimi":             {OpenAIHeaders: kimiDeviceHeaders, MessagesHeaders: kimiDeviceHeaders, Target: betaQuery},
 	"kilocode":         {OpenAIHeaders: kilocodeOrgHeaders},
 	"iflow":            {OpenAIHeaders: iflowHeaders, RequireCredential: true},
+	"kiro":             {NoOpenAIBearer: true, OpenAIHeaders: kiroHeaders, Target: kiroTarget, FinalizeAccount: kiroBody, RequireCredential: true},
 	"github":           githubHook,
 	"kimchi":           {Finalize: kimchiBody},
 	"cline":            clineHook,

@@ -97,11 +97,11 @@ func TestPublishedConnectionMetadataSurvivesRestartWithoutDatabase(t *testing.T)
 		t.Fatalf("connections: %d, %v", len(connections), err)
 	}
 	c := connections[0]
-	// The real flow produces apiKey/authMethod too; neither belongs in routing metadata.
+	// The auth method is routing metadata; the API key must stay sealed.
 	if c.Secret.ProviderData["apiKey"] != "sk-fixture-key" || c.Secret.ProviderData["authMethod"] != "api_key" {
 		t.Fatal("fixture did not use the real import payload")
 	}
-	want := routing.ConnectionMetadata{NodeID: c.NodeID, NodeKind: "builtin", Name: c.Name, AuthKind: string(c.AuthKind), Identity: c.Identity, Settings: routing.ProviderSettings{BaseURL: "https://mimo.fixture.invalid/v1", UID: "fixture-user"}}
+	want := routing.ConnectionMetadata{NodeID: c.NodeID, NodeKind: "builtin", Name: c.Name, AuthKind: string(c.AuthKind), Identity: c.Identity, Settings: routing.ProviderSettings{BaseURL: "https://mimo.fixture.invalid/v1", UID: "fixture-user", AuthMethod: "api_key"}}
 	snapshot, _ := a.runtime.Load()
 	original, ok := snapshot.AccountProvider("xiaomi-mimo/mimo-v2-flash", c.ID, "openai-chat", nil)
 	if !ok {

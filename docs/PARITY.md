@@ -1285,7 +1285,7 @@ This PR builds the two Chat legs of the Kiro wire: `request openai-chat>kiro` (`
 
 **The response leg is not where the ticket says.** `kiro-to-openai.js:37-55` returns the chunks it is given, because the pin's executor already turned the EventStream into Chat chunks (`executors/kiro.js:629-1190`, `transformEventStreamToSSE`); the raw-event branch below it (`:57-181`) reads `usageEvent` and `done`, which that transform never emits, so no real stream reaches it. The leg is therefore the executor transform, reading frames with `concerns.ReadEventStream` instead of the pin's parser (`:1216-1300`). Where the ticket and the pin disagree, the pin wins.
 
-**Routing.** Kiro stays in `ingress.unwired`. Its transport needs the account-aware body and headers from `internal/providers/wire` (#135), and without PR 4c a Messages client would pivot through Chat where the pin has a direct pair. `hub.CanTranslate` is true for Chat and Responses clients and, until 4c, also for Messages; `TestKiroLegsExistButKiroStaysUnwired` pins that the ingress answer is false for all three. The legs receive the raw upstream body: ingress passes `response.Body` to `translation.Stream` (`ingress/openai.go:211-215`) and the whole body to `translation.Response` (`:231-242`), and `internal/providers/wire` has no Kiro hook, so no wire change is needed for the legs to read EventStream.
+**Routing.** Kiro stays in `ingress.unwired`. Its transport needs the account-aware body and headers from `internal/providers/wire` (#135), and without PR 4c a Messages client would pivot through Chat where the pin has a direct pair. `hub.CanTranslate` is true for Chat and Responses clients and, until 4c, also for Messages; `TestKiroLegsExistButKiroStaysUnwired` pins that the ingress answer is false for all three. The legs receive the raw upstream body: ingress passes `response.Body` to `translation.Stream` (`ingress/openai.go:211-215`) and the whole body to `translation.Response` (`:231-242`), and the Kiro wire hook (6.10) does not wrap responses, so the legs still read EventStream directly.
 
 #### Request, Chat to Kiro
 
@@ -1361,7 +1361,7 @@ Kiro does not accept some keywords. Each row below is a decision, and `RequestIn
 
 **Known gaps, each its own follow-up under #119.** *Kiro saver view:* conversation history and the current message have no saver view; the transform order is unchanged. *Token estimates:* the pin's `contextUsagePercentage × context window` and `chars/4` estimates (`:1102-1113`) are not reported; no usage is better than an invented one. *Credits:* `meteringEvent` credits (`:895-905`) are counted, not reported, and no `kiro_credits` key is added to `usage`. *Time context:* see above. *Header-driven thinking:* `anthropic-beta` needs request headers in the Messages legs.
 
-**Wire hooks #135 needs (not implemented here).** `profileArn` in the body and `x-amzn-codewhisperer-profile-arn` in the headers, account-aware: API-key, IdC and external-IdP accounts never use the shared default (`openai-to-kiro.js:325-341`, `executors/kiro.js:276-279`); the auth headers `TokenType`, `x-amz-sso-bearer`, `x-amzn-kiro-agent-mode`, `X-Amz-Target` for `codewhisperer.*` hosts and `Accept: application/vnd.amazon.eventstream` (`:235-282`); the three-host order and region rewrite (`:299-328`); endpoint-fallback statuses 401/403/404 (`kiroConstants.js:28`).
+**Wire prerequisites for #135 (header/body hooks in 6.10; region/order/fallback remain pending).** `profileArn` in the body and `x-amzn-codewhisperer-profile-arn` in the headers, account-aware: API-key, IdC and external-IdP accounts never use the shared default (`openai-to-kiro.js:325-341`, `executors/kiro.js:276-279`); the auth headers `TokenType`, `x-amz-sso-bearer`, `x-amzn-kiro-agent-mode`, `X-Amz-Target` for `codewhisperer.*` hosts and `Accept: application/vnd.amazon.eventstream` (`:235-282`); the three-host order and region rewrite (`:299-328`); endpoint-fallback statuses 401/403/404 (`kiroConstants.js:28`).
 
 The request guards also refuse unread tool, call, content-part and thinking keys (including empty values), malformed thinking configurations, and strict tool-output guarantees. Supplied IDs are validated before shared repair can rewrite them. Known response events enumerate the keys they read or treat as bookkeeping; mixed nested and flat envelopes, multiple reasoning values and conflicting object tool fragments fail rather than select one and lose another.
 
@@ -1446,6 +1446,66 @@ U = not verifiable offline (no live call exists in this repository); E = the wir
 
 Verified by test, not by a live call: the envelope shape, the project/session/request-id cross products, the tool-config rule, the family scope (`TestFamilyScopeKeepsTheTenant`, `TestSignaturesAreScopedByTenantAndFamily`), the client-leg envelope cross product, the thinking-config table, the argument matrix and the usage orderings.
 
+
+### 6.10 Kiro wire hooks (#119, PR 4d)
+
+Oracle: `1c3b9f47837d42ea64992063309064af755a14a3`. Paths below are
+under `open-sse/`. The existing Chat legs and operation path are in
+`internal/ingress/translate.go`; the direct-leg declaration and EventStream
+reader remain the PR 4a/4b implementations described in 6.6 and 6.8.
+
+`internal/providers/wire` registers the connection-aware Kiro hooks.
+`FinalizeBody` injects the stored profile after the saver/cache pipeline; the
+Target hook requires `providerData.authMethod` and requires
+`providerData.profileArn` for every method except `api_key` before constructing
+an outbound request. API-key onboarding stores no profile, so that method may
+omit it; onboarding itself is unchanged. Neither a profile default nor a
+discovery probe supplies a missing value. These two
+non-secret settings travel in the immutable connection projection, with no
+serving-path SQLite read. The credential still comes from the credential
+registry and `RequireCredential` refuses an empty one. Kiro builds Authorization
+and SSO bearer headers from the same trimmed token and emits neither for a blank
+credential.
+
+| Hook | Pin evidence | Routeweft behavior |
+|---|---|---|
+| Content-Type | `providers/registry/kiro.js:29-30` | `application/json` |
+| Accept | `providers/registry/kiro.js:31` | `application/vnd.amazon.eventstream`, regardless of the client's streaming preference |
+| User-Agent | `providers/registry/kiro.js:32` | `AWS-SDK-JS/3.0.0 kiro-ide/1.0.0` |
+| X-Amz-User-Agent | `providers/registry/kiro.js:33` | `aws-sdk-js/3.0.0 kiro-ide/1.0.0` |
+| Amz-Sdk-Request | `executors/kiro.js:235-240` | `attempt=1; max=3`; this is a wire value, not a new retry budget |
+| Amz-Sdk-Invocation-Id | `executors/kiro.js:239` | Fresh UUID v4 for each header construction |
+| Authorization | `executors/kiro.js:253-266` | `Bearer <access token>`; Routeweft stores API keys in the connection access-token slot too |
+| TokenType | `executors/kiro.js:253-265` | `API_KEY` for stored `authMethod=api_key`, `EXTERNAL_IDP` for `external_idp`, absent otherwise |
+| x-amz-sso-bearer | `executors/kiro.js:271-273` | The connection access token, including API-key connections |
+| x-amzn-kiro-agent-mode | `executors/kiro.js:274` | `spec` |
+| x-amzn-codewhisperer-machine-id | `executors/kiro.js:275` | `kiro-desktop` |
+| x-amzn-codewhisperer-profile-arn | `executors/kiro.js:276-279` | The stored connection `profileArn`, omitted when an API-key connection has none |
+| X-Amz-Target | `executors/kiro.js:241-245`; `config/kiroConstants.js:26-27` | `AmazonCodeWhispererStreamingService.GenerateAssistantResponse` only for a parsed hostname starting with `codewhisperer.`; no target header for Q, Kiro runtime or a proxy path containing that name |
+| POST operation | `providers/registry/kiro.js:19-23`; `executors/kiro.js:330-334` | `generateAssistantResponse` under the configured base; the Target hook overrides a caller's endpoint |
+| Body profileArn | `translator/request/openai-to-kiro.js:325-341,419-421`; `translator/request/claude-to-kiro.js:248-255` | Stored value replaces any caller value. For `api_key` only, a missing/blank stored profile removes any client-supplied profile and emits neither body field nor profile header, matching the pin's account-bound omission. Other auth methods still fail closed without a stored profile; no shared OAuth/social default is used. An already matching profile preserves the original bytes |
+| Other body fields | `executors/kiro.js:344-346`; `translator/request/openai-to-kiro.js:398-430` | Executor leaves the body alone. Conversation state, inference config and additional model fields belong to the existing request leg; the hook adds no other account field |
+| anthropic-beta / interleaved thinking | `config/kiroConstants.js:44,144-158`; `translator/request/claude-to-kiro.js:238-242`; `executors/kiro.js:235-282` | The pin sends **no outbound beta header**. It reads original inbound headers only after body thinking configuration returns no setting. A string beta value containing `interleaved-thinking`, case-insensitively, selects the default budget 16000. Explicit body thinking, including disabled, wins. This inbound Messages behavior remains with PR 4c; no fabricated outbound header is added |
+| Endpoint ordering and region | `executors/kiro.js:299-334` | Pin orders Q, other Amazon surfaces, then Kiro runtime, and rewrites Amazon regions from stored `region` (default `us-east-1`). This PR keeps the configured base; automatic surface selection remains a binding prerequisite |
+| Endpoint fallback | `executors/kiro.js:336-341`; `config/kiroConstants.js:28` | Pin adds 401/403/404 to endpoint fallback. No new endpoint retry loop in this hook PR; binding must provide the bounded surface fallback |
+
+**Binding remains closed.** Messages legs (PR 4c) remain unbound, and Kiro
+remains in `ingress.unwired`. This PR does not claim provider readiness, endpoint
+failover, the saver view or live-provider qualification. It retains the existing
+Chat/direct-leg/EventStream tests, tests every emitted header and auth/host
+condition, refuses missing/invalid settings and missing credentials, and checks
+that other providers receive none of the Kiro-specific headers. Both credential
+headers pass the existing telemetry redactor. Request
+construction tests exercise the existing finalization seam without a provider
+call. The SQLite integration fixture proves that the stored settings reach the
+published snapshot and survive restart; no migration changes.
+
+Local Go 1.22.12 benchmark (`go test ./internal/providers/wire -run '^$'
+-bench BenchmarkKiroFinalizeBody -benchmem -count=3`): for the small synthetic
+conversation, median finalization was 8.15 microseconds without an account hook
+and 10.49 microseconds with the Kiro profile injection; allocation cost was
+1000 B / 14 allocations versus 1312 B / 20 allocations. Other checks were
+running concurrently, so these timings do not establish production latency.
 
 ## 7. Validation, limits and completion
 
