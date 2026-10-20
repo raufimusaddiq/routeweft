@@ -994,3 +994,32 @@ func TestGitHubMissingExpiryBoundsSequentialMints(t *testing.T) {
 		}
 	}
 }
+
+func TestCodeBuddyUsesRouteweftIdentityThroughoutHandshake(t *testing.T) {
+	for _, id := range []string{"codebuddy-cn", "codebuddy-intl"} {
+		t.Run(id, func(t *testing.T) {
+			stub := &stubClient{handler: func(r *http.Request) (int, string) {
+				if r.Header.Get("User-Agent") != "Routeweft" || r.Header.Get("X-Product") != "SaaS" || r.Header.Get("X-Requested-With") != "XMLHttpRequest" || r.Header.Get("X-Domain") != r.URL.Host {
+					t.Fatalf("identity or handshake changed: %v", r.Header)
+				}
+				if strings.HasSuffix(r.URL.Path, "/state") {
+					return 200, `{"code":0,"data":{"state":"fixture-state","authUrl":"https://example.invalid/auth"}}`
+				}
+				return 200, `{"code":0,"data":{"accessToken":"fixture-access","refreshToken":"fixture-refresh","expiresIn":3600}}`
+			}}
+			flow := flowFor(t, id)
+			if _, err := flow.Authorize(context.Background(), Params{Client: stub}); err != nil {
+				t.Fatal(err)
+			}
+			if result, err := flow.Poll(context.Background(), Params{Client: stub, Input: "fixture-state"}); err != nil || !result.Done {
+				t.Fatalf("poll: %+v %v", result, err)
+			}
+			if _, err := refreshCodeBuddy(context.Background(), stub, time.Now, credentials.Secret{RefreshToken: "fixture-refresh"}, id); err != nil {
+				t.Fatal(err)
+			}
+			if len(stub.requests) != 3 || stub.last().Header.Get("X-Refresh-Token") != "fixture-refresh" {
+				t.Fatal("refresh handshake missing")
+			}
+		})
+	}
+}

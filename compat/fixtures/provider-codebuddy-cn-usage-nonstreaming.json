@@ -8,10 +8,9 @@
     "path": "/v2/chat/completions",
     "headers": {
       "content-type": "application/json",
-      "authorization": "Bearer fixture-provider-credential",
-      "user-agent": "CLI/2.108.1 CodeBuddy/2.108.1"
+      "authorization": "Bearer fixture-provider-credential"
     },
-    "body": "{\"model\":\"glm-5.2\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hi.\"}],\"max_tokens\":16}"
+    "body": "{\"model\":\"glm-5.2\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hi.\"}],\"max_tokens\":16,\"stream\":true}"
   },
   "response": {
     "status": 200,

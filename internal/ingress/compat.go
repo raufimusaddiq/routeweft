@@ -31,7 +31,7 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, source, model
 		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
 		return
 	}
-	response, provider, err := h.dispatchAttempts(r, snapshot, model, source, false, func(provider routing.ProviderRef) (ChatTranslation, error) {
+	response, provider, err := h.dispatchAttempts(r, snapshot, model, source, false, stream, func(provider routing.ProviderRef) (ChatTranslation, error) {
 		plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: source, Provider: provider})
 		if err != nil {
 			return ChatTranslation{}, err
@@ -218,7 +218,7 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	started := time.Now()
-	response, provider, err := h.dispatchAttempts(r, snapshot, request.Model, ollamaadapter.Protocol, false, func(provider routing.ProviderRef) (ChatTranslation, error) {
+	response, provider, err := h.dispatchAttempts(r, snapshot, request.Model, ollamaadapter.Protocol, false, request.Stream, func(provider routing.ProviderRef) (ChatTranslation, error) {
 		if provider.Protocol != ollamaadapter.Protocol {
 			if h.opts.TranslateChat == nil {
 				return ChatTranslation{}, fmt.Errorf("no Chat-to-provider translator registered")

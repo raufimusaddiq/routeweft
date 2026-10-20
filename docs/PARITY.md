@@ -1429,7 +1429,7 @@ const pages = [...pageSection.matchAll(/^\| `([^`]+page\.js)` \|/gm)]
 assert.deepEqual(pages, files.filter(p => /^src\/app\/(?:.*\/)?page\.js$/.test(p)).sort());
 assert.equal(pages.length, 16);
 const routeRows = text.split('### Public rewrites')[0].split('\n').filter(line => /^\| \d+ \|/.test(line));
-for (const [status, count] of Object.entries({"PRESENT":28,"PARTIAL":39,"MISSING":30})) {
+for (const [status, count] of Object.entries({"PRESENT":32,"PARTIAL":39,"MISSING":26})) {
   assert.equal(routeRows.filter(line => line.includes('| ' + status + ' |')).length, count);
 }
 assert.match(text, /013d26a2014c16e0e4f2a35aa9acf2fa5bfd4e7c/);
@@ -1445,3 +1445,57 @@ JS
 - Local Go race attempt: **not run**, executable unavailable (`go: command not found`). No production/oracle runtime calls made. Documentation changes do not alter runtime, hot-path benchmarks, SQLite schema or security implementation.
 - Local UI `npm ci`, `npm run typecheck` and `npm run build` passed. `npm audit` reports one existing high-severity transitive `source-map-js` advisory (GHSA-68fv-2mgg-jv7q); no dependency changes made in this inventory-only PR.
 - This document's inventory checks and PR CI results are recorded in the PR handoff. Passing CI validates the documentation head against existing checks only; #73 and #74 remain blocked on real parity work and reviewed divergence sign-off.
+
+## CodeBuddy CN and international wire (#115 PR D)
+
+Reference: LiteRouter `1c3b9f47837d42ea64992063309064af755a14a3`,
+`open-sse/executors/codebuddy-{cn,intl}.js`, `codebuddy-error.js`,
+`providers/registry/codebuddy-{cn,intl}.js`, `utils/reasoningContentInjector.js`
+and `services/usage/codebuddy-cn.js`. Verification uses scripted endpoints only.
+
+Both existing providers force Chat streaming at the final wire seam. A client
+requesting JSON receives a bounded folded completion, including all choices,
+reasoning, refusal, tool calls and any reported usage. A malformed, truncated,
+oversized or unrepresentable stream fails before a JSON success is exposed.
+Only the enumerated chunk fields `object` and `obfuscation` are ignored and
+counted as transport metadata. Other unknown chunk, choice, delta, tool-call or
+function fields fail folding. Native streaming carries content through and strips
+only empty delta `tool_calls` arrays, after a byte pre-check; long lines beyond
+1 MiB pass through unchanged. No request tools are hidden or replaced.
+
+Owner-approved differences from the pin:
+
+- Chat sends Routeweft's own User-Agent and no CodeBuddy identity X-headers.
+  Onboarding, token polling, refresh and usage also use Routeweft's User-Agent;
+  onboarding and refresh retain their required handshake X-headers.
+  If the gateway requires the removed identity headers, CodeBuddy is dropped,
+  not softened. This is an accepted outcome, with no impersonation fallback.
+- International keeps caller system messages at the front in order, maps
+  developer to system, and turns user strings (including empty strings) into
+  typed text blocks. It fabricates neither an identity prompt nor a message.
+- CN carries system prompts verbatim, including agent prompts over 2000
+  characters. Upstream content-filter rejections retain their real status/body.
+- Explicit reasoning summaries survive. An absent summary defaults to `auto`
+  only for a nonempty string reasoning effort. `none`/`off` omit effort, as in
+  the pin; matching also tolerates case and surrounding whitespace.
+- The single-space assistant reasoning placeholder is restricted to CodeBuddy
+  Kimi tool-call history and DeepSeek assistant history. Existing nonempty
+  reasoning and malformed values remain for the gateway to judge.
+- Code 6004 (numeric or numeric string), or limit text, sets internal quota
+  cooldown accounting without rewriting the client-visible status or body.
+  Non-string messages cannot hide 6004. Valid future reset timestamps override
+  generic cooldowns; invalid/past timestamps supply no reset. Error relay keeps
+  the full body, including when later fallback accounts cannot serve.
+- CodeBuddy does not inherit translators' default `stream_options.include_usage`.
+  Caller stream options, including null, empty and zero values, survive.
+  When the gateway omits usage, accounting remains explicitly unobserved.
+
+The usage reader now posts to the pinned billing path
+`/v2/billing/meter/get-user-resource` for each domain; the old plugin billing
+path had no support in the pinned registry. No provider is added, removed or
+marked ready, and no runtime dependency or storage migration is introduced.
+
+Remaining limits: gateway acceptance of Routeweft identity and international
+requests without a caller system prompt is unverified offline. Omitted usage
+cannot be recovered. Broader thinking-format translation remains #119. These
+fixtures establish wire behavior, not live-provider qualification or GA readiness.

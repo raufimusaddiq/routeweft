@@ -8,6 +8,7 @@ import (
 
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
 )
@@ -21,6 +22,11 @@ const maxCapturedUsageBytes = 64 << 10
 // usage is read by a tee on the side, never by buffering the response. When no
 // telemetry hook is wired the tee is skipped entirely.
 func (h *Handler) relayNative(w http.ResponseWriter, r *http.Request, response *http.Response, provider routing.ProviderRef, source string, stream bool, started time.Time) {
+	if stream && source == openaiadapter.ChatProtocol {
+		// The provider's response-side stream rewrite, when it has one (an empty
+		// tool_calls array some gateways put on every delta).
+		response.Body = wire.ResponseStream(provider.ProviderID, response.Body)
+	}
 	if h.opts.OnRequestComplete == nil {
 		if stream && source == openaiadapter.ChatProtocol {
 			h.copyStream(w, r, response)

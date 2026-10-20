@@ -8,6 +8,7 @@ import (
 
 	"github.com/raufimusaddiq/routeweft/internal/auth"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
@@ -399,5 +400,20 @@ func (h *Handler) recordUpstreamFailure(provider routing.ProviderRef, status int
 		mapped.ResetAt = classification.ResetAt
 		classification = mapped
 	}
-	h.recordClassification(provider.ConnectionID, classification, time.Now())
+	now := time.Now()
+	h.recordClassification(provider.ConnectionID, providerClassification(provider, status, peek, classification, now), now)
+}
+
+// providerClassification applies the provider's own reading of its error body to
+// the classification the status and the shared error kind produced. It only
+// refines Routeweft's cooldown accounting: the status and body relayed to the
+// client are never changed.
+func providerClassification(provider routing.ProviderRef, status int, body []byte, classification routing.Classification, now time.Time) routing.Classification {
+	if hint, ok := wire.ClassifyError(provider.ProviderID, status, body, now); ok {
+		classification.Outcome = hint.Outcome
+		if hint.ResetAt != "" {
+			classification.ResetAt = hint.ResetAt
+		}
+	}
+	return classification
 }

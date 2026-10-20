@@ -362,3 +362,18 @@ func TestEveryReaderMakesARequestOrFails(t *testing.T) {
 		}
 	}
 }
+
+func TestCodeBuddyUsageUsesRouteweftIdentity(t *testing.T) {
+	for _, id := range []string{"codebuddy-cn", "codebuddy-intl"} {
+		stub := &stubClient{status: http.StatusOK, body: `{"code":0,"data":{"Response":{"Data":{"Accounts":[{"CapacitySize":100,"CapacityUsed":0}]}}}}`}
+		if _, err := reader(t, id, stub).Usage(context.Background(), quota.Credential{AccessToken: "fixture-key"}); err != nil {
+			t.Fatal(err)
+		}
+		if stub.request.Header.Get("User-Agent") != "Routeweft" || stub.request.Header.Get("Authorization") != "Bearer fixture-key" {
+			t.Fatalf("%s headers: %v", id, stub.request.Header)
+		}
+		if stub.request.Method != http.MethodPost || stub.request.URL.Path != "/v2/billing/meter/get-user-resource" || stub.bodyRaw != "{}" {
+			t.Fatalf("%s billing request: %s %s %q", id, stub.request.Method, stub.request.URL, stub.bodyRaw)
+		}
+	}
+}

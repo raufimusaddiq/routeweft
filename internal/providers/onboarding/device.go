@@ -482,7 +482,7 @@ func kilocodeFlow() Flow {
 
 // codebuddyFlow mirrors codebuddy-cn.js and codebuddy-intl.js: a browser state
 // handshake polled by state, with code 11217 meaning pending.
-func codebuddyFlow(provider, baseURL, domain, userAgent, platform string) Flow {
+func codebuddyFlow(provider, baseURL, domain, platform string) Flow {
 	stateURL := baseURL + "/v2/plugin/auth/state"
 	tokenURL := baseURL + "/v2/plugin/auth/token"
 	return Flow{
@@ -492,7 +492,7 @@ func codebuddyFlow(provider, baseURL, domain, userAgent, platform string) Flow {
 		Completion:     CompletionToken,
 		Authorize: func(ctx context.Context, p Params) (AuthRequest, error) {
 			headers := map[string]string{
-				"User-Agent":         userAgent,
+				"User-Agent":         "Routeweft",
 				"X-Requested-With":   "XMLHttpRequest",
 				"X-Domain":           domain,
 				"X-No-Authorization": "true",
@@ -529,7 +529,7 @@ func codebuddyFlow(provider, baseURL, domain, userAgent, platform string) Flow {
 		},
 		Poll: func(ctx context.Context, p Params) (PollResult, error) {
 			headers := map[string]string{
-				"User-Agent":           userAgent,
+				"User-Agent":           "Routeweft",
 				"X-Requested-With":     "XMLHttpRequest",
 				"X-Domain":             domain,
 				"X-No-Authorization":   "true",

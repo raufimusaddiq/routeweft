@@ -291,7 +291,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var translation ChatTranslation
-	response, provider, err := h.dispatchAttempts(r, snapshot, request.Model, anthropicadapter.MessagesProtocol, false, func(provider routing.ProviderRef) (ChatTranslation, error) {
+	response, provider, err := h.dispatchAttempts(r, snapshot, request.Model, anthropicadapter.MessagesProtocol, false, request.Stream, func(provider routing.ProviderRef) (ChatTranslation, error) {
 		translation = ChatTranslation{}
 		plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: anthropicadapter.MessagesProtocol, Provider: provider})
 		if err != nil {
@@ -313,6 +313,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 			}
 			attempt.Scope = translationScope(r, provider)
 			translated, err = h.opts.TranslateMessages(&attempt, plan.TargetProtocol)
+			translated.Body = wire.RestoreStreamOptions(provider, translated.Body, request.Raw)
 			if translated.Headers == nil {
 				translated.Headers = http.Header{}
 			}
