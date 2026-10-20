@@ -546,12 +546,18 @@ Each client key carries `access: {restricted, allow[]}` (stored in `api_keys`
 `RuntimeSnapshot`). Existing keys migrate as unrestricted.
 
 - Unrestricted keys behave as before.
-- A restricted key may request only names in `allow`: a Combo name, a model
-  alias, or `provider/model`. A request also passes when the name resolves to an
-  allowed `provider/model` (so allowing a model admits its aliases). Allowing an
-  alias does not admit its canonical `provider/model`, and allowing a Combo does
-  not admit its members directly. A restricted key with an empty list can use
-  nothing.
+- A restricted key may request only what `allow` names: a Combo name, a model
+  alias, a bare model ID, or `provider/model`. Entries are compiled into
+  resolved identities once per snapshot (pin `src/sse/services/keyAccess.js`
+  `getAllowSets`): a listed Combo is granted as a unit; every other listed name
+  is resolved to the `provider/model` it routes to. A request passes when the
+  Combo it names is listed, or when the model it resolves to is a granted
+  identity, so `fast`, `openai/gpt-a` and any other spelling of one target are a
+  single grant. Allowing a Combo does not admit its members for direct use. A
+  name that resolves to nothing matches only by exact string. Matching is exact
+  and case-sensitive (the router's own resolution is), and the check judges the
+  request string byte-for-byte as it will be routed (no trimming). A restricted
+  key with an empty list can use nothing.
 - Enforcement is a single check at the top of dispatch, before model
   resolution, for Chat, Responses, Compact, Messages, System One, Gemini and
   Ollama chat; a denied request returns `403 model_not_allowed` whether or not
@@ -565,7 +571,11 @@ Each client key carries `access: {restricted, allow[]}` (stored in `api_keys`
   unit tests of the planner.
 - An unresolvable key (paused, revoked or reloaded between authentication and
   dispatch) is treated as restricted with an empty allowlist: it is denied,
-  never widened.
+  never widened. When `requireApiKey` is false a request with no or an unknown
+  key is unrestricted, but a presented known restricted key keeps its
+  restriction even if paused or disabled.
+- A stored allowlist is re-validated on load; one that cannot be decoded or
+  normalized stops the catalog load (fail closed) and never becomes a grant.
 - Discovery is access-aware: `/v1/models`, `/v1/models/{kind}`, `/v1/models/info`,
   `/v1/models/{provider}/{model}`, `/v1beta/models` and `/api/tags` list or
   return only permitted entries; hidden single lookups return 404.
