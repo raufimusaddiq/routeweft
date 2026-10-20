@@ -237,9 +237,7 @@ func refreshOAuthGrant(ctx context.Context, client HTTPClient, now func() time.T
 	return next, nil
 }
 
-// refreshGitHub re-mints the Copilot token from the GitHub access token, which is
-// what inference sends. The GitHub token itself only rotates when GitHub issues a
-// new one, so the refresh token is optional.
+// Copilot renewal uses the GitHub token; the two tokens have separate expiries.
 func refreshGitHub(ctx context.Context, client HTTPClient, now func() time.Time, current credentials.Secret, data map[string]string) (credentials.Secret, error) {
 	accessToken := current.AccessToken
 	if current.RefreshToken != "" {
@@ -275,10 +273,7 @@ func refreshGitHub(ctx context.Context, client HTTPClient, now func() time.Time,
 		providerData[key] = value
 	}
 	providerData["copilotToken"] = copilot.Token
-	if expires, ok := numberFromJSON(copilot.ExpiresAt); ok {
-		providerData["copilotTokenExpiresAt"] = fmt.Sprintf("%.0f", expires)
-		next.Expiry = time.Unix(int64(expires), 0).UTC()
-	}
+	providerData["copilotTokenExpiresAt"] = copilotExpiry(copilot.ExpiresAt, now())
 	next.ProviderData = providerData
 	return next, nil
 }
