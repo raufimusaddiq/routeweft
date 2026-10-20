@@ -343,7 +343,10 @@ every leg shares (finish reasons, tool ids and names, reasoning text, usage
 shape) live in `internal/protocol/concerns`. Deliberate divergence from the
 pin: a translated Messages-to-Chat stream sets `stream_options.include_usage`
 so the usage is observable, unless the client set `stream_options` itself, in
-which case its value is forwarded. Native Chat is never modified. Where
+which case its value is forwarded. Native Chat is never modified. Error bodies are not
+converted: a non-2xx answer from a translated attempt is relayed with its
+status and body as the provider sent it, so a Messages client served by a Chat
+provider can receive an OpenAI-shaped error. Where
 Routeweft deliberately differs from the pinned oracle, the difference and its
 reason are recorded in `docs/PARITY.md` §6.3.
 

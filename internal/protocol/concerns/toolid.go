@@ -132,36 +132,34 @@ func assistantToolCallIDs(message map[string]any) []string {
 	return ids
 }
 
-func answersToolCalls(message map[string]any, ids []string) bool {
-	if message == nil || len(ids) == 0 {
-		return false
-	}
-	has := func(id string) bool {
-		for _, candidate := range ids {
-			if candidate == id {
-				return true
+// answeredIDs lists the call ids answered by the messages that follow an
+// assistant turn: the `tool` messages directly after it, and the tool_result
+// blocks of a user turn. Every id counts, not just the first one found.
+func answeredIDs(messages []any, from int) map[string]bool {
+	answered := map[string]bool{}
+	for _, raw := range messages[from:] {
+		message := Object(raw)
+		switch Text(message["role"]) {
+		case "tool":
+			answered[Text(message["tool_call_id"])] = true
+			continue
+		case "user":
+			for _, rawBlock := range Items(message["content"]) {
+				if block := Object(rawBlock); Text(block["type"]) == "tool_result" {
+					answered[Text(block["tool_use_id"])] = true
+				}
 			}
 		}
-		return false
+		break
 	}
-	role := Text(message["role"])
-	if role == "tool" && Truthy(message["tool_call_id"]) {
-		return has(Text(message["tool_call_id"]))
-	}
-	if role == "user" {
-		for _, rawBlock := range Items(message["content"]) {
-			block := Object(rawBlock)
-			if Text(block["type"]) == "tool_result" && has(Text(block["tool_use_id"])) {
-				return true
-			}
-		}
-	}
-	return false
+	return answered
 }
 
-// FixMissingToolResponses inserts an empty `tool` message for each call of an
-// assistant turn whose next message answers none of them
-// (concerns/toolCall.js:123-154). The oracle skips it when the target is Kiro.
+// FixMissingToolResponses gives each call of an assistant turn that nothing
+// answers an empty `tool` reply, one call at a time (concerns/toolCall.js:123-154
+// does it only when none is answered; Anthropic needs every tool_use id answered,
+// so a turn that answers one of two parallel calls would be rejected; PARITY V20).
+// Chat shape only: the replies it inserts are `tool` messages.
 func FixMissingToolResponses(body map[string]any) {
 	messages := Items(body["messages"])
 	if messages == nil {
@@ -174,12 +172,16 @@ func FixMissingToolResponses(body map[string]any) {
 		if len(ids) == 0 || i+1 >= len(messages) {
 			continue
 		}
-		if answersToolCalls(Object(messages[i+1]), ids) {
-			continue
-		}
+		answered := answeredIDs(messages, i+1)
 		for _, id := range ids {
-			fixed = append(fixed, map[string]any{"role": "tool", "tool_call_id": id, "content": ""})
+			if !answered[id] {
+				fixed = append(fixed, map[string]any{"role": "tool", "tool_call_id": id, "content": ""})
+			}
 		}
 	}
 	body["messages"] = fixed
 }
+
+// RepairToolID returns id when it is a usable tool id and a generated one when
+// it is absent or unusable, so every leg that mints an id uses one rule.
+func RepairToolID(id any, generate func() string) string { return repairToolID(id, generate) }

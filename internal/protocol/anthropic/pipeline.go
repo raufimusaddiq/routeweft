@@ -67,8 +67,10 @@ func ChatRequestToMessages(body map[string]any, model string, stream, repair, cl
 			delete(body, "thinking")
 		}
 		concerns.EnsureToolCallIDs(body)
-		concerns.FixMissingToolResponses(body)
 	}
+	// Anthropic rejects a tool_use that nothing answers, whichever format the
+	// client spoke, so this is not limited to the client's own Chat body.
+	concerns.FixMissingToolResponses(body)
 	result, names, err := ChatToMessages(body, model, stream)
 	if err != nil {
 		return nil, nil, err

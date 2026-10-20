@@ -559,3 +559,45 @@ func TestToolMessagePartsBecomeToolResultBlocks(t *testing.T) {
 		t.Fatal("an unsupported part in a tool message must be refused")
 	}
 }
+
+// Every tool call must be answered, one at a time: a turn that answers one of two
+// parallel calls gets a reply for the other, in both directions.
+func TestEveryUnansweredToolCallIsAnswered(t *testing.T) {
+	// Chat client -> Messages provider.
+	body, _ := concerns.WireObject([]byte(`{"model":"m","messages":[{"role":"user","content":"q"},
+	  {"role":"assistant","tool_calls":[{"id":"a","type":"function","function":{"name":"x","arguments":"{}"}},{"id":"b","type":"function","function":{"name":"y","arguments":"{}"}}]},
+	  {"role":"tool","tool_call_id":"a","content":"ra"},{"role":"user","content":"next"}]}`))
+	for _, repair := range []bool{true, false} {
+		got, _, err := ChatRequestToMessages(body, "m", false, repair, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(got)
+		uses := strings.Count(text, `"type":"tool_use"`)
+		results := strings.Count(text, `"type":"tool_result"`)
+		if uses != 2 || results != 2 || !strings.Contains(text, `"tool_use_id":"a"`) || !strings.Contains(text, `"tool_use_id":"b"`) {
+			t.Errorf("repair=%v: %d tool_use but %d tool_result: %s", repair, uses, results, text)
+		}
+		body, _ = concerns.WireObject([]byte(`{"model":"m","messages":[{"role":"user","content":"q"},
+		  {"role":"assistant","tool_calls":[{"id":"a","type":"function","function":{"name":"x","arguments":"{}"}},{"id":"b","type":"function","function":{"name":"y","arguments":"{}"}}]},
+		  {"role":"tool","tool_call_id":"a","content":"ra"},{"role":"user","content":"next"}]}`))
+	}
+	// Messages client -> Chat provider.
+	got, err := MessagesRequestToChat([]byte(`{"model":"m","messages":[{"role":"user","content":"q"},
+	  {"role":"assistant","content":[{"type":"tool_use","id":"a","name":"x","input":{}},{"type":"tool_use","id":"b","name":"y","input":{}}]},
+	  {"role":"user","content":[{"type":"tool_result","tool_use_id":"b","content":"rb"}]}]}`), "m", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chat map[string]any
+	_ = json.Unmarshal(got, &chat)
+	answered := map[string]string{}
+	for _, message := range concerns.Items(chat["messages"]) {
+		if m := concerns.Object(message); m["role"] == "tool" {
+			answered[concerns.Text(m["tool_call_id"])] = concerns.Text(m["content"])
+		}
+	}
+	if len(answered) != 2 || answered["a"] != "[No response received]" || answered["b"] != "rb" {
+		t.Errorf("each call must have exactly one reply: %v", answered)
+	}
+}

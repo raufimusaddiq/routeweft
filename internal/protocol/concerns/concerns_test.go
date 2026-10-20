@@ -1,6 +1,7 @@
 package concerns
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -278,5 +279,19 @@ func TestResolveFinish(t *testing.T) {
 		if got != c.want || (err != nil) != c.fail {
 			t.Errorf("ResolveFinish(%q,%d,%v)=%q,%v", c.reason, c.calls, c.force, got, err)
 		}
+	}
+}
+
+// The SSE reader bounds one event, not just the whole stream.
+func TestReadEventsBoundsOneEvent(t *testing.T) {
+	huge := "data: " + strings.Repeat("x", 5<<20) + "\n\n"
+	err := ReadEvents(context.Background(), strings.NewReader(huge), func(string, map[string]any) (bool, error) { return false, nil })
+	if err == nil {
+		t.Fatal("a single 5 MiB line must be refused")
+	}
+	piece := "data: {\"a\":\"" + strings.Repeat("y", 3<<20) + "\n"
+	err = ReadEvents(context.Background(), strings.NewReader(piece+piece+"\n"), func(string, map[string]any) (bool, error) { return false, nil })
+	if err == nil {
+		t.Fatal("an event built of several lines must be bounded as a whole")
 	}
 }

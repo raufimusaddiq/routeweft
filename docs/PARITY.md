@@ -849,6 +849,7 @@ reviewed choice that needs owner sign-off, and none is silent.
 | V17 | `openai-to-claude.js:195-199` strips a "proxy_" prefix from every streamed tool name. | Not stripped. | The request leg adds no prefix, so the strip only renames a real tool such as `proxy_search`, and the buffered leg never stripped it. |
 | V18 | `utils/usageTracking.js:147-210` (`canonicalizeUsage`) stores one cache-inclusive convention. | The usage record carries the upstream's own figures (#122). For a Messages provider that is `input_tokens` without the cache read, so a request the client is shown as `prompt_tokens: 130` (cache 100) is recorded as `input=30, cache_read=100`; a Chat or Responses provider records 130. | **The reconciliation is open.** Owner decision on #119: keep the row as reported and fold in the read model, once, in one function used by every read path. That belongs to the accounting PR; until it lands, /usage totals differ by the cache-read count for identical traffic depending on the provider's wire. Pinned by `TestEveryConvertedPairServesAClient`. |
 | V19 | `claude-to-openai.js:273-283` and `openai-to-claude.js:310-338` map every `tool_choice` they do not know, `none` included, to `auto`; `claude-to-openai.js:158` makes any other role the assistant. | `none` is carried as `none`. An unknown `tool_choice`, a `tool` choice with no name and an unknown role are translation errors. A choice with no tools is not forwarded. A Chat tool message's part array becomes text/image blocks. | A default that grants a capability is the wrong direction: the pin re-enabled tools the client had forbidden. When a mapping has no answer the fallback is the restrictive one (refuse), never the permissive one. |
+| V20 | `concerns/toolCall.js:123-154` adds a reply only when the next message answers none of an assistant turn's calls. | Every unanswered call gets its own empty reply, and it runs for a Responses-sourced Chat body too. | Anthropic needs every `tool_use` id answered; a turn answering one of two parallel calls would be a 400 with nothing left to try. |
 
 #### Request fields, both directions (`TestMessagesRequestFieldsAreCarriedOrRefused`, `TestChatRequestFieldsAreCarriedOrRefused`, `TestDocumentBlocksAreCarriedBothWays`)
 
@@ -884,7 +885,10 @@ Every field is **carried**, **not carried for a stated reason** (the request is 
 | `n>1`, `logprobs:true`, `modalities` with audio, `audio`, `functions`, `function_call` | refused | Anthropic cannot do what was asked |
 | part `input_audio`, `audio_url`, unknown part types; `file` that is not an inline PDF (file_id, other types); `image_url` that is neither data URI nor http(s); unknown roles; tool calls that are not `function` | refused | the model would not see it |
 
-Pin behavior mirrored on purpose, though it looks like a defect: an unknown
+Pin behavior mirrored on purpose, though it looks like a defect: a tool-using
+request's `max_tokens` is raised to 32000 even when the client asked for less
+(`formats/maxTokens.js:15-20`, to stop truncated tool arguments; the client's
+budget is overridden upward); an unknown
 stop reason maps to `stop`/`end_turn` (`finishReason.js:6-68`; there is no
 safer finish value to fall back to); a Chat stream that reports no usage is closed with a zero usage object because
 Messages requires one (`openai-to-claude.js:250`); non-streamed tool arguments

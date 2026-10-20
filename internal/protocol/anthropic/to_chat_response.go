@@ -49,7 +49,10 @@ func MessagesStreamToChat(ctx context.Context, src io.Reader, dst io.Writer, nam
 			case "server_tool_use":
 				state.serverBlock = index
 			case "tool_use":
-				call := &streamToolCall{index: state.nextToolIndex, id: block["id"], name: names.Original(concerns.Text(block["name"]))}
+				name := names.Original(concerns.Text(block["name"]))
+				position := state.nextToolIndex
+				call := &streamToolCall{index: position, name: name,
+					id: concerns.RepairToolID(block["id"], func() string { return concerns.GenerateToolCallID(0, position, name) })}
 				state.nextToolIndex++
 				state.toolCalls[index] = call
 				return false, emit(map[string]any{"tool_calls": []any{call.start()}}, nil, nil)
@@ -274,8 +277,11 @@ func MessagesResponseToChat(body []byte, names *concerns.ToolNames) ([]byte, err
 		case "thinking":
 			thinking.WriteString(concerns.Text(block["thinking"]))
 		case "tool_use":
-			calls = append(calls, map[string]any{"id": block["id"], "type": "function", "function": map[string]any{
-				"name": names.Original(concerns.Text(block["name"])), "arguments": concerns.ToolArguments(block["input"])}})
+			name := names.Original(concerns.Text(block["name"]))
+			position := len(calls)
+			calls = append(calls, map[string]any{"type": "function",
+				"id":       concerns.RepairToolID(block["id"], func() string { return concerns.GenerateToolCallID(0, position, name) }),
+				"function": map[string]any{"name": name, "arguments": concerns.ToolArguments(block["input"])}})
 		}
 	}
 	message := map[string]any{"role": "assistant"}

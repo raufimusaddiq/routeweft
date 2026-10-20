@@ -664,3 +664,23 @@ func TestStreamedToolArgumentsAreAlwaysAnObject(t *testing.T) {
 		}
 	}
 }
+
+// A tool_use without an id still reaches a Chat client with one, in the stream
+// and buffered; a null id breaks every SDK that keys the result off it.
+func TestMessagesToolUseWithoutAnIDGetsOne(t *testing.T) {
+	var out bytes.Buffer
+	stream := `data: {"type":"message_start","message":{"id":"m1","model":"c"}}` + "\n\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","name":"lookup","input":{}}}` + "\n\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}` + "\n\n" + `data: {"type":"message_stop"}` + "\n\n"
+	if err := MessagesStreamToChat(context.Background(), strings.NewReader(stream), &out, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"id":"call_msg0_tc0_lookup"`) || strings.Contains(out.String(), `"id":null`) {
+		t.Fatalf("stream: %s", out.String())
+	}
+	got, err := MessagesResponseToChat([]byte(`{"id":"m","stop_reason":"tool_use","content":[{"type":"tool_use","name":"lookup","input":{}}]}`), nil)
+	if err != nil || !strings.Contains(string(got), `"id":"call_msg0_tc0_lookup"`) || strings.Contains(string(got), `"id":null`) {
+		t.Fatalf("buffered: %s %v", got, err)
+	}
+}
