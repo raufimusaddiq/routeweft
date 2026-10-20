@@ -63,7 +63,7 @@ func foldForcedStream(response *http.Response, provider routing.ProviderRef, str
 	if err != nil {
 		var inband *openaiadapter.StreamError
 		if errors.As(err, &inband) {
-			return &dispatchError{http.StatusBadGateway, "upstream_stream_error", inband.Error()}
+			return &dispatchError{http.StatusBadGateway, "upstream_stream_error", inband.Message()}
 		}
 		return &dispatchError{http.StatusBadGateway, "upstream_response_invalid", "upstream stream could not be returned as one response: " + err.Error()}
 	}
@@ -183,7 +183,14 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			if response.StatusCode >= 200 && response.StatusCode < 300 {
 				if err := foldForcedStream(response, provider, stream); err != nil {
 					response.Body.Close()
-					return nil, provider, err
+					if r.Context().Err() != nil {
+						return nil, provider, r.Context().Err()
+					}
+					// A 2xx that cannot be folded is this account's failure, not the
+					// request's: cool it and let the next candidate serve.
+					h.recordClassification(provider.ConnectionID, routing.Classification{Outcome: routing.OutcomeFallbackAccount}, time.Now())
+					failedAttempt(err, nil, provider)
+					break
 				}
 				return response, provider, nil
 			}

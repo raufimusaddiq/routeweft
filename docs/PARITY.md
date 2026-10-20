@@ -1536,7 +1536,8 @@ Owner-approved differences from the pin:
   Non-string messages cannot hide 6004. Valid future reset timestamps override
   generic cooldowns; invalid/past timestamps supply no reset. Error relay keeps
   the full body, including when later fallback accounts cannot serve.
-- CodeBuddy does not inherit translators' default `stream_options.include_usage`.
+- CodeBuddy keeps the translators' default `stream_options.include_usage` on translated
+  Messages and Responses streams, so those clients receive real usage.
   Caller stream options, including null, empty and zero values, survive.
   When the gateway omits usage, accounting remains explicitly unobserved.
 
