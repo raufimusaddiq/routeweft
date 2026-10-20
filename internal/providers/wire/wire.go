@@ -23,6 +23,8 @@ import (
 // Hook declares the provider-specific parts of a serving request. Every field
 // is optional; a provider with no Hook is served with only its bearer credential.
 type Hook struct {
+	// RequestHeaders signs the final body and URL, after all other headers are applied.
+	RequestHeaders func(routing.ProviderRef, []byte, string) (map[string]string, error)
 	// BearerMessages sends the credential on a native Messages request as a
 	// bearer token instead of x-api-key.
 	BearerMessages bool
@@ -96,6 +98,7 @@ var hooks = map[string]Hook{
 	"glm":              {Target: betaQuery},
 	"kimi":             {OpenAIHeaders: kimiDeviceHeaders, MessagesHeaders: kimiDeviceHeaders, Target: betaQuery},
 	"kilocode":         {OpenAIHeaders: kilocodeOrgHeaders},
+	"qoder":            {RequestHeaders: qoderHeaders, RequireCredential: true},
 	"iflow":            {OpenAIHeaders: iflowHeaders, RequireCredential: true},
 	"kiro":             {NoOpenAIBearer: true, OpenAIHeaders: kiroHeaders, Target: kiroTarget, FinalizeAccount: kiroBody, RequireCredential: true},
 	"github":           githubHook,

@@ -179,6 +179,12 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			}
 			request, err := h.newUpstreamRequest(r, snapshot, provider, outbound.Endpoint, outbound.Body, outbound.Headers)
 			if err != nil {
+				var credentialErr *wire.CredentialError
+				if errors.As(err, &credentialErr) {
+					h.recordClassification(provider.ConnectionID, routing.Classification{Outcome: routing.OutcomeAuthRefreshRequired}, time.Now())
+					preAttemptErr = &dispatchError{503, "credentials_unavailable", credentialErr.Error()}
+					break
+				}
 				var refused *wire.TargetError
 				if errors.As(err, &refused) {
 					// The provider's hook refused this route (a missing setting, a model
