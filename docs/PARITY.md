@@ -1131,6 +1131,75 @@ Mirrored though odd, each asserted by a test:
 | `start`, `start-step`, `*-start`, `*-end`, `tool-input-end`, `provider-metadata`, `message-metadata` | not carried | no client-visible content |
 | any other type | counted; fails the stream if it carries content | V38 |
 
+### 6.6 Direct routes and AWS EventStream foundation (#119, PR 4a)
+
+PR 4a adds a provider-neutral binary reader and proves the existing direct-pair
+preference in `hub.Route` through ingress against a scripted HTTP endpoint.
+The fixture registers synthetic request/response pairs only in the test binary,
+with available Chat pivots that must lose to the direct pair. It preserves the
+source request bytes, including a Messages-only system field and a nested
+extension. It proves incremental output, failure terminals, no replay,
+non-2xx status/body preservation and upstream cancellation. It is a framing and
+dispatch test, not a Kiro translator or live-provider qualification. All four
+Kiro conversion gaps remain tracked until PRs 4b/4c implement them.
+
+Framing provenance, all at oracle `1c3b9f47837d42ea64992063309064af755a14a3`:
+
+- `open-sse/executors/kiro.js:17-18`: 24 MiB message / 128 KiB header bounds.
+- `:33-39`, `:58-62`: CRC32 polynomial and checksum; Go uses `hash/crc32` IEEE.
+- `:945-967`: incremental prelude validation and frame bounds.
+- `:1216-1236`: 16-byte minimum, exact length, prelude CRC and message CRC.
+- `:1238-1288`: bounded typed headers, duplicate names and unknown-type errors.
+- `:1291-1299`: the pin's JSON payload decoding; the shared reader retains bytes
+  instead, leaving JSON/shape validation to each protocol adapter.
+
+The reader retains int64, timestamp and UUID header values that the pin advances
+past without storing (`:1272-1274`, `:1283-1285`). It additionally rejects empty
+header names and malformed UTF-8 instead of decoding with replacement characters.
+These are explicit validation differences. It shares Routeweft's 32 MiB total
+translation budget and validates frames past a terminal through EOF, so trailing
+garbage cannot turn an otherwise valid prefix into success. Unlike the pin's
+output-based clean-EOF success (`:1065-1075`), absence of a recognized terminal
+always fails. No integrity retry/replay is implemented.
+
+Guard coverage before push:
+
+| Input dimension | Crossed branches / expected result |
+| --- | --- |
+| Absent bytes | No recognized terminal: error; clean EOF after a valid terminal: success |
+| Literal `null`, short/truncated prelude, every truncated frame prefix, invalid bounds/CRCs, duplicate/empty/invalid UTF-8 headers, every unknown header type 10–255 | Alone and following a valid terminal; contiguous and byte-fragmented input; error, with no malformed frame delivered |
+| Prelude lengths 0/1/11/12/15/16/message-limit/message-limit+1/uint32-max | Header lengths 0/1/header-limit−1/header-limit/header-limit+1/uint32-max × good/bad prelude CRC; a failing source proves invalid preludes are refused before a body read |
+| Header types 0–9, including empty byte/string values | Every non-empty header prefix; complete values retained, incomplete values refused even with a valid frame CRC |
+| Empty / `null` / string / boolean / number / list / object / binary payload | Terminal absent/present × contiguous/byte-fragmented; bytes retained, EOF succeeds only with a recognized terminal |
+| Two coalesced frames | Every transport split point; exactly two deliveries |
+| Message / header limits | Limit minus one, exact limit, limit plus one; bounded acceptance/refusal |
+| Total stream budget | Exact 32 MiB and an extra frame; extra frame refused |
+| Source errors, consumer errors, canceled context | Before/during/after frames; failure propagated, no synthesized success |
+
+Approved Kiro decisions for PRs 4b/4c (not implemented by 4a): honor explicit
+client `max_tokens` instead of the Chat leg's fixed 32000
+(`request/openai-to-kiro.js:311`); use shared cache-exclusive Messages wire usage
+with separate cache counts instead of the direct leg's prompt copy
+(`response/kiro-to-claude.js:77-95`); refuse lossy description/schema/history
+normalization; never implement the session replay cache
+(`utils/kiroSessionReplay.js:65-130`); require a terminal and never replay output.
+Unknown events must be counted, proven harmless transport metadata may be
+ignored, and content-bearing unknown events must fail. The framing reader
+delivers every event; event classification/counting belongs to those legs.
+
+**Known gap / separate follow-up under #119: Kiro saver view.** Kiro conversation
+history/current-message fields have no saver view. That follow-up must preserve
+the established transform order; 4a adds neither a Kiro view nor a new order.
+
+**Pending wire integration after #135:** account-aware request preparation
+(auth method, profile ARN, region, connection/session identity and relevant
+original headers); endpoint-aware Kiro auth/identity/target headers; successful
+AWS EventStream response adaptation before translation and measured accounting,
+including bounded aggregation for non-stream clients. Non-2xx bodies, SSRF,
+cancellation and bounded account fallback must retain their existing behavior.
+No `internal/providers/wire` file changes are part of 4a. No provider, capability,
+credential flow, stored usage convention, database schema or dependency changes.
+
 ## 7. Validation, limits and completion
 
 ### Reproducible enumeration check
