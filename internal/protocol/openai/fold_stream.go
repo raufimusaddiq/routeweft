@@ -103,6 +103,30 @@ type StreamError struct{ Raw json.RawMessage }
 
 func (e *StreamError) Error() string { return "upstream stream reported an error: " + string(e.Raw) }
 
+// Message is the upstream error's own message, for a client-facing body; the
+// raw JSON when it carries none. Raw is the error object (or a bare string), and
+// an enclosing {"error": ...} envelope is tolerated.
+func (e *StreamError) Message() string {
+	raw := e.Raw
+	var envelope struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if json.Unmarshal(raw, &envelope) == nil && len(envelope.Error) > 0 {
+		raw = envelope.Error
+	}
+	var detail struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(raw, &detail) == nil && strings.TrimSpace(detail.Message) != "" {
+		return detail.Message
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil && strings.TrimSpace(text) != "" {
+		return text
+	}
+	return string(e.Raw)
+}
+
 // chunkMetadata are the chunk-level keys that carry no text: object is constant,
 // obfuscation is padding the gateway adds against length side channels.
 var chunkMetadata = map[string]bool{"object": true, "obfuscation": true}

@@ -119,9 +119,6 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 			if provider.Endpoint != "" {
 				translated.Endpoint = provider.Endpoint
 			}
-			if responses != nil {
-				translated.Body = wire.RestoreStreamOptions(provider, translated.Body, responses.Raw)
-			}
 			translation = translated
 			return translated, err
 		}

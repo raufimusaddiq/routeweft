@@ -14,6 +14,7 @@ type ProviderSettings struct {
 	Region, WorkspaceID, DeviceID, AgentID                              string
 	Email, UserID, SystemID, OrganizationID, DefaultOrganizationID, UID string
 	OrgID                                                               string // Kilo Code organization (stored as orgId)
+	ProjectID                                                           string // Vertex partner GCP project (stored as projectId)
 }
 
 // ConnectionMetadata contains immutable account configuration needed by provider wires.
