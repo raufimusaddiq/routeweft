@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,12 +9,13 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/concerns"
 )
 
 // MaxTranslatedResponseBytes bounds buffered output and the total translated
 // stream. Native streaming remains byte-preserving and does not use this limit.
 // shortcut: 32 MiB translated output; revisit with measured long-output workloads.
-const MaxTranslatedResponseBytes = 32 << 20
+const MaxTranslatedResponseBytes = concerns.MaxTranslatedResponseBytes
 
 type eventWriter struct {
 	ctx context.Context
@@ -59,71 +59,10 @@ func (w *eventWriter) done() error {
 	return err
 }
 
-// readEvents handles SSE framing, not transport chunks. Only differing protocols
-// use it; it neither buffers the complete upstream body nor starts a goroutine.
+// readEvents handles SSE framing (concerns.ReadEvents), shared with the other
+// conversion legs.
 func readEvents(ctx context.Context, src io.Reader, consume func(string, map[string]any) (bool, error)) error {
-	scanner := bufio.NewScanner(src)
-	scanner.Buffer(make([]byte, 4096), 4<<20)
-	var data strings.Builder
-	var event string
-	total := 0
-	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
-		advance, token, err := bufio.ScanLines(data, atEOF)
-		total += advance
-		if total > MaxTranslatedResponseBytes {
-			return 0, nil, errors.New("translated upstream response exceeds limit")
-		}
-		return advance, token, err
-	})
-	emit := func() (bool, error) {
-		if data.Len() == 0 {
-			return false, nil
-		}
-		payload := strings.TrimSuffix(data.String(), "\n")
-		data.Reset()
-		if payload == "[DONE]" {
-			return consume("[DONE]", nil)
-		}
-		value, err := wireObject([]byte(payload))
-		if err != nil {
-			return false, errors.New("invalid upstream stream event")
-		}
-		kind := text(value["type"])
-		if kind == "" {
-			kind = event
-		}
-		event = ""
-		return consume(kind, value)
-	}
-	for scanner.Scan() {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		line := scanner.Text()
-		if data.Len()+len(line) > 4<<20 {
-			return errors.New("translated upstream response exceeds limit")
-		}
-		if line == "" {
-			stop, err := emit()
-			event = ""
-			if err != nil || stop {
-				return err
-			}
-		} else if strings.HasPrefix(line, "data:") {
-			data.WriteString(strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
-			data.WriteByte('\n')
-		} else if strings.HasPrefix(line, "event:") {
-			event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-	stop, err := emit()
-	if err != nil || stop {
-		return err
-	}
-	return io.ErrUnexpectedEOF
+	return concerns.ReadEvents(ctx, src, consume)
 }
 
 func streamFailure(writer *eventWriter, responses bool, failure any) error {

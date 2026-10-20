@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"time"
 
+	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
+	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
 	clineprovider "github.com/raufimusaddiq/routeweft/internal/providers/cline"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
@@ -89,6 +91,19 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 				for name, values := range openAIProviderHeaders(provider) {
 					translated.Headers[name] = values
 				}
+			} else if plan.TargetProtocol == anthropicadapter.MessagesProtocol {
+				if translated.Headers == nil {
+					translated.Headers = http.Header{}
+				}
+				if provider.ProviderID == "claude" && err == nil {
+					// The legs add no system prompt of their own (PARITY V14); the
+					// Claude OAuth credential is used with its CLI identity, so that
+					// belongs to this provider's preparation.
+					translated.Body, err = claudeprovider.WithIdentity(translated.Body)
+				}
+				for name, values := range anthropicHeaders(r, provider) {
+					translated.Headers[name] = values
+				}
 			}
 			if provider.Endpoint != "" {
 				translated.Endpoint = provider.Endpoint
@@ -168,7 +183,13 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(response.StatusCode)
 		scanner := &usageScanner{family: provider.Protocol}
-		err := translation.Stream(r.Context(), io.TeeReader(response.Body, scanner), w)
+		// The body stays closable so a chained conversion can stop a read that no
+		// context check could interrupt.
+		source := struct {
+			io.Reader
+			io.Closer
+		}{io.TeeReader(response.Body, scanner), response.Body}
+		err := translation.Stream(r.Context(), source, w)
 		usage, _ := scanner.usage()
 		status := response.StatusCode
 		if err != nil || !scanner.reportsUsage(r.Context().Err() == nil) {

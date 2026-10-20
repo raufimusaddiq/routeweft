@@ -216,6 +216,7 @@ func (a *App) initialize(ctx context.Context) error {
 		},
 		TranslateChat:      ingress.TranslateChat,
 		TranslateResponses: ingress.TranslateResponses,
+		TranslateMessages:  ingress.TranslateMessages,
 		Candidates: func(snapshot *runtime.RuntimeSnapshot, model string) ([]routing.Account, bool) {
 			return snapshot.ProviderCandidates(model)
 		},

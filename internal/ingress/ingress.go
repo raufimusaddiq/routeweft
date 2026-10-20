@@ -294,7 +294,9 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
 		return
 	}
+	var translation ChatTranslation
 	response, provider, err := h.dispatchAttempts(r, snapshot, request.Model, anthropicadapter.MessagesProtocol, false, func(provider routing.ProviderRef) (ChatTranslation, error) {
+		translation = ChatTranslation{}
 		plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: anthropicadapter.MessagesProtocol, Provider: provider})
 		if err != nil {
 			return ChatTranslation{}, err
@@ -308,13 +310,28 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 			translated.Body, err = request.MarshalBody(provider.UpstreamModel)
 			translated.Headers = anthropicHeaders(r, provider)
 		} else if h.opts.TranslateMessages != nil {
-			translated, err = h.opts.TranslateMessages(request, plan.TargetProtocol)
+			attempt := *request
+			attempt.Model = provider.UpstreamModel
+			if attempt.Model == "" {
+				attempt.Model = request.Model
+			}
+			translated, err = h.opts.TranslateMessages(&attempt, plan.TargetProtocol)
+			if translated.Headers == nil {
+				translated.Headers = http.Header{}
+			}
+			for name, values := range openAIProviderHeaders(provider) {
+				translated.Headers[name] = values
+			}
+			if provider.Endpoint != "" {
+				translated.Endpoint = provider.Endpoint
+			}
 		} else {
 			err = fmt.Errorf("no Messages translator registered for target protocol %q", plan.TargetProtocol)
 		}
 		if err != nil {
 			return ChatTranslation{}, err
 		}
+		translation = translated
 		return translated, nil
 	})
 	if err != nil {
@@ -322,6 +339,10 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer response.Body.Close()
+	if response.StatusCode >= 200 && response.StatusCode < 300 && translation.Response != nil {
+		h.writeOpenAITranslation(w, r, response, provider, translation, request.Stream, started)
+		return
+	}
 	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {

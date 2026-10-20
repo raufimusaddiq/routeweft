@@ -783,7 +783,7 @@ The checklists in #75-#78 are normative follow-up scope for this inventory. Ever
 | IDs | Explicit gap / decision required | Authority | Owner |
 | --- | --- | --- | --- |
 | R01 | Native configured app account resolution/fallback/retry is implemented. Retained actual Combo/Fusion/capacity serving and pinned Fusion defaults remain open; no PRD 11 / BDR-011 waiver. | PRD 5/10/11; SPEC 8/13-16; Sprint 5.1 | #75 |
-| R02 | Chat/Responses translation is implemented. Messages/count-tokens/other protocol pairs and provider compact behavior remain open under SPEC 9/10. | PRD 5; SPEC 9/10; Sprint 5.2 | #75 |
+| R02 | Chat/Responses and Messages<->Chat translation are implemented (#119). The Gemini family, Kiro, Cursor, CommandCode and Ollama legs, count-tokens and provider compact behavior remain open under SPEC 9/10; #119 tracks each leg. | PRD 5; SPEC 9/10; Sprint 5.2 | #75 |
 | R03 | Serving pipeline slice resolved: normative per-attempt savers/final cache, bypass and fail-open tests in internal/app/transforms_test.go. Native helper parity stays R09. | PRD 12; SPEC 17/18; BDR-012; Sprint 5.3 | #75 |
 | R04 | Typed validation, native/custom/Cloudflare transports, streams/cancel and shared usage are implemented; internal/app/systemone_test.go. R11 adds pinned handler comparison; no broad-provider claim. | PRD 5/14; SPEC 10/28; #73 explicit System One | #75 |
 | R05 | Historical aliases, Ollama tags and id/kind/access catalog semantics are implemented (SPEC 34). Legacy /api/v1 is retained with identical inference auth/CORS; media kinds stay excluded. | PRD-API-001-004; SPEC 34 | #75 |
@@ -822,6 +822,91 @@ The checklists in #75-#78 are normative follow-up scope for this inventory. Ever
 | C08 | External token-sync/Caddy/retention evidence and ownership decisions; no invented endpoint/production execution | #73; RUNBOOK 7/10/13/14; #74 coordination | #78 |
 | C09 | Readiness/bootstrap/h2c/trusted-peer/shutdown/cancellation/accounting/race behavior evidence | PRD 17/19; SPEC 24/28/34 | #78 |
 | C10 | R11 adds production TLS CA trust and documented log-level handling. Trusted-proxy/verbose environment semantics still need a concrete SPEC contract; C09 owns their behavior. | PRD 18-20; SPEC 20/27/30; RUNBOOK | #78 |
+
+### 6.3 Conversion legs: where Routeweft differs from the pin (#119)
+
+Oracle paths are at `1c3b9f47`. These are not approved exceptions: each is a
+reviewed choice that needs owner sign-off, and none is silent.
+
+| ID | Pin behavior | Routeweft behavior | Why |
+| --- | --- | --- | --- |
+| V1 | `claude-to-openai.js:96-99` repeats the tool-call `id` on every argument delta. | The id is sent once, with the call's first chunk. | OpenAI clients and SDKs concatenate string fields while accumulating, so a repeated id reads back as `call_1call_1`; the matrix test caught it through the Chat to Responses leg. |
+| V2 | `claude-to-openai.js:183-187` (`message_stop` without a `stop_reason`) reports `prompt_tokens = input_tokens`, no cache. The merged path at `:127-170` folds cache in. | Both paths use the cache-folded figure. | One request must not report two prompt sizes; `:127-170` agrees with `canonicalizeUsage` (`utils/usageTracking.js:147-210`) and `openai-to-claude.js:89`. |
+| V3 | `nonStreamingHandler.js:303-309` (Messages body to Chat) reports `prompt_tokens = input_tokens`, no cache. | Cache-folded, as the stream leg. | Same as V2. |
+| V4 | `nonStreamingHandler.js:291-293` maps only `end_turn` and `tool_use`; `max_tokens` and `refusal` pass through unmapped. | `concerns.ToOpenAIFinish` (`finishReason.js:6-52`): `max_tokens` is `length`, `refusal` is `content_filter`. | The stream leg and the shared concern already say so. |
+| V5 | `nonstream-to-claude.js:25-28` (Chat body to Messages) sets `input_tokens = prompt_tokens || input_tokens`, dropping cache. | `input_tokens = prompt - cached - cache_creation` plus the cache fields, as `openai-to-claude.js:89-106`. | Same as V2. |
+| V6 | `openai-to-claude.js:72` drops any chunk without choices, and `:246-256` closes the message at `finish_reason`. A usage-only chunk after it is lost and the client sees zero usage. | The closing `message_delta` and `message_stop` wait for the end of the stream and carry the latest usage. Block events still flow as they arrive. | Otherwise a Chat provider that honours `include_usage` reports zero tokens to a Messages client. |
+| V7 | `response/claude-to-openai.js` has no case for an Anthropic `error` event; the stream just continues or stops. | Failure terminal in the client's protocol. | SPEC 9.3: a failed stream never claims success. |
+| V8 | `utils/usageTracking.js:20-57,343-404`, `utils/stream.js:101-104,238-249,414-419`, `nonStreamingHandler.js:422` add 2000 tokens to real prompt usage and replace missing usage with a chars/4 estimate, in what the client receives. | Neither. A stream without a usage chunk stays `usage_observed=0`. | An estimate or buffer is not a measurement (SPEC 21.1). Posted on #119 for a decision. |
+| V9 | No `stream_options` on a translated stream (only `executors/iflow.js:100-102` injects it). | `stream_options.include_usage` is set on a translated Messages to Chat stream unless the client set `stream_options` itself (owner decision, #119). | `ResponsesToChat` already does this; without it the Messages client gets zero usage. Native Chat is untouched (#122). |
+| V10 | `claude-to-openai.js:12` stamps a new `created` on every chunk. | One `created` per stream. | The OpenAI contract. |
+| V11 | `claude-to-openai.js:177-186` drops an image whose source is a `url`; a request left with no content becomes `messages: []`. | A `url` image is forwarded as an `image_url`, and a conversion that would leave no message keeps one empty text turn (`"Continue."` toward a Messages provider). | Chat takes remote URLs natively; an empty list is an invalid request that would be sent upstream or rejected as a 502 for a request Anthropic accepts. |
+| V12 | The pin drops `top_p`, `stop_sequences`, `metadata.user_id`, `disable_parallel_tool_use`, `document` blocks, a Chat `developer` message, `max_completion_tokens`, `stop`, `user`, `parallel_tool_calls`, and sends an empty `tools` array (`claude-to-openai.js:52-103`, `openai-to-claude.js:17-201,204-299`). | Each is carried, or refused with a translation error so the candidate is skipped. | A dropped document or instruction is a confident wrong answer with a 200. See the field tables below. |
+| V13 | `openai-to-claude.js:142,184` ask for `cache_control` `ttl: "1h"` on the system block and the last tool. | Plain `{"type":"ephemeral"}`. | Anthropic gates the 1h TTL behind the `extended-cache-ttl` beta header, which the gateway never sends; a body that asks for what the header does not grant is rejected or silently downgraded. |
+| V14 | `openai-to-claude.js:136` prepends "You are Claude Code, Anthropic's official CLI for Claude." to every request. | Only the caller's own system text is sent, and no `system` key when there is none. | A translation leg must not give third-party models (deepseek, glm, kimi, minimax, kenari, github) another vendor's identity or spend tokens on it. Not gated by provider. **Claude OAuth, decided in this PR:** the `claude` provider's credential is used with the CLI identity (`providers/claude/headers.go`), and I could not verify against the live service (no credentials, no external calls) that it accepts a request without the identity block. So the block is added in that provider's preparation (`providers/claude.WithIdentity`, applied by ingress for a translated Messages target to `claude` only), not in the leg. `github` also speaks Messages but a Chat or Responses client reaches it natively, so no leg is involved. |
+| V15 | `openai-to-claude.js:262-264` turns `reasoning_content` into an unsigned `thinking` block; `top_p` is not carried, so the pair question never arises. | Unsigned thinking is not sent (signed parts are kept); `top_p` is dropped when `temperature` is also set. | Anthropic rejects an unsigned thinking block, and current Claude models reject a request that sets both sampling controls. Reasoning continuity for providers that want it returns with #125. |
+| V16 | `concerns/toolCall.js:60-67` repairs an invalid tool_use/tool_result id but leaves an absent one; `nonstream-to-claude.js:45` mints `toolu_<time>_<n>`; `openai-to-claude.js:188` opens a streamed tool block only when the delta has an id. | An absent id is generated (`call_msg<i>_tc<j>_<name>`, deterministic), a result with no id answers the oldest unanswered call, and a streamed call with no id still opens a block. Tool input is always a JSON object. A terminal that promises tool calls when none were sent is a failure. | An id-less call reached Chat with no id, `input` could be a string or null (an upstream 400), and the client was told a tool ran when no block existed. |
+| V17 | `openai-to-claude.js:195-199` strips a "proxy_" prefix from every streamed tool name. | Not stripped. | The request leg adds no prefix, so the strip only renames a real tool such as `proxy_search`, and the buffered leg never stripped it. |
+| V18 | `utils/usageTracking.js:147-210` (`canonicalizeUsage`) stores one cache-inclusive convention. | The usage record carries the upstream's own figures (#122). For a Messages provider that is `input_tokens` without the cache read, so a request the client is shown as `prompt_tokens: 130` (cache 100) is recorded as `input=30, cache_read=100`; a Chat or Responses provider records 130. | **The reconciliation is open.** Owner decision on #119: keep the row as reported and fold in the read model, once, in one function used by every read path. That belongs to the accounting PR; until it lands, /usage totals differ by the cache-read count for identical traffic depending on the provider's wire. Pinned by `TestEveryConvertedPairServesAClient`. |
+| V19 | `claude-to-openai.js:273-283` and `openai-to-claude.js:310-338` map every `tool_choice` they do not know, `none` included, to `auto`; `claude-to-openai.js:158` makes any other role the assistant. | `none` is carried as `none`. An unknown `tool_choice`, a `tool` choice with no name and an unknown role are translation errors. A choice with no tools is not forwarded. A Chat tool message's part array becomes text/image blocks. | A default that grants a capability is the wrong direction: the pin re-enabled tools the client had forbidden. When a mapping has no answer the fallback is the restrictive one (refuse), never the permissive one. |
+| V20 | `concerns/toolCall.js:123-154` adds a reply only when the next message answers none of an assistant turn's calls. | Every unanswered call gets its own empty reply, and it runs for a Responses-sourced Chat body too. | Anthropic needs every `tool_use` id answered; a turn answering one of two parallel calls would be a 400 with nothing left to try. |
+
+#### Request fields, both directions (`TestMessagesRequestFieldsAreCarriedOrRefused`, `TestChatRequestFieldsAreCarriedOrRefused`, `TestDocumentBlocksAreCarriedBothWays`)
+
+Every field is **carried**, **not carried for a stated reason** (the request is still served; nothing it asks for is lost), or **refused** (translation error, so the dispatcher tries the next candidate). None is dropped silently.
+
+| Messages request field | Chat | Why |
+| --- | --- | --- |
+| `model`, `messages`, `system`, `stream`, `max_tokens`, `temperature` | carried | pin |
+| `top_p`, `stop_sequences` (to `stop`), `metadata.user_id` (to `user`) | carried | V12; the pin drops them |
+| `tools`, `tool_choice`, `tool_choice.disable_parallel_tool_use` (to `parallel_tool_calls:false`) | carried | pin, V12 for the flag |
+| `reasoning`, `reasoning_effort` | carried | pin |
+| `thinking`, `output_config` | not carried | thinking normalisation needs the capability table (#125) |
+| `top_k`, `service_tier` | not carried | sampling/billing hints; OpenAI-compatible upstreams reject unknown parameters |
+| `mcp_servers`, `container`, `context_management` | refused | they change what the server does; serving the rest is a wrong answer |
+| block `text`, `image` (base64, url), `tool_use`, `tool_result` | carried | pin, V11 for url |
+| block `document` (base64 to `file`, text source to `text`) | carried | V12; the pin drops it |
+| block `document` with url/content/file source; image with a file source; unknown block types | refused | the model would not see it |
+| block `thinking`, `redacted_thinking` | not carried | signed by Anthropic, meaningless to another provider (the pin drops them) |
+| block `server_tool_use`, `web_search_tool_result` | not carried | server-executed intermediate blocks of an earlier turn; the model's text reflects them |
+| `tool_result.is_error`, `cache_control` | not carried | no Chat equivalent; the error text itself is carried |
+| a message holding both `tool_use` and `tool_result` | refused | invalid in Anthropic and ambiguous in Chat |
+
+| Chat request field | Messages | Why |
+| --- | --- | --- |
+| `model`, `messages`, `stream`, `temperature`, `response_format` (system prompt), `tools`, `tool_choice` | carried | pin |
+| `max_tokens`; `max_completion_tokens` when `max_tokens` is absent | carried | V12; the pin reads only `max_tokens` and sends 64000 |
+| `top_p`, `stop` (string or list), `user` (to `metadata.user_id`), `parallel_tool_calls:false` | carried | V12 |
+| `developer` role | carried (as system) | V12; the pin drops the message |
+| `tools:[]`, and a `tool_choice` with no tools | omitted | Anthropic rejects both |
+| part `text`, `image_url` (data URI, http(s)), `image`, `file` (inline PDF to `document`), `refusal` | carried | pin, V12 for `file` title and `refusal` |
+| `reasoning_effort`, `reasoning` | not carried | thinking normalisation (#125) |
+| `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `top_logprobs`, `store`, `metadata`, `prompt_cache_key`, `service_tier`, `stream_options` | not carried | no Anthropic equivalent; none changes what is asked |
+| `n>1`, `logprobs:true`, `modalities` with audio, `audio`, `functions`, `function_call` | refused | Anthropic cannot do what was asked |
+| part `input_audio`, `audio_url`, unknown part types; `file` that is not an inline PDF (file_id, other types); `image_url` that is neither data URI nor http(s); unknown roles; tool calls that are not `function` | refused | the model would not see it |
+
+Pin behavior mirrored on purpose, though it looks like a defect: a tool-using
+request's `max_tokens` is raised to 32000 even when the client asked for less
+(`formats/maxTokens.js:15-20`, to stop truncated tool arguments; the client's
+budget is overridden upward); an unknown
+stop reason maps to `stop`/`end_turn` (`finishReason.js:6-68`; there is no
+safer finish value to fall back to); a Chat stream that reports no usage is closed with a zero usage object because
+Messages requires one (`openai-to-claude.js:250`); non-streamed tool arguments
+that are not JSON become `{}` (`nonstream-to-claude.js:5-13`); a non-streamed
+Messages text block has a leading or trailing markdown JSON fence stripped
+(`nonStreamingHandler.js:277`);
+`chatcmpl-` ids are kept, only `chatcmpl_` and `resp_` become `msg_`
+(`nonstream-to-claude.js:18`); a negative `input_tokens` is not clamped; tool-id
+repair is skipped for a Responses-sourced body (`translator/index.js:82`, no
+`messages` yet); `stop_reason` is `end_turn` when a provider says `stop` while
+returning tool calls.
+
+Not ported by the Messages legs, tracked on #119: `prepareClaudeRequest`
+(`translator/formats/claude.js:485-707`: cache anchoring, tool-use ordering,
+thinking placeholders, built-in tool filtering, OAuth cloaking); thinking
+normalisation (`concerns/thinkingUnified.js`, which needs the model capability
+table, and with it the model-aware `max_tokens` ceiling at
+`openai-to-claude.js:25`); tool-name cloaking for OAuth (`index.js:165-176`).
 
 ### Production-incident drift explicitly dispositioned
 

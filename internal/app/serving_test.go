@@ -289,7 +289,9 @@ func TestConfiguredServingSkipsTransportMismatchBeforeRotationAndCap(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	node.Transports = []string{"openai-chat"}
+	// Gemini has no conversion leg yet (#119), so neither Responses nor Messages
+	// can reach it; a Chat-only node would now be reachable from Messages.
+	node.Transports = []string{"gemini"}
 	if _, err := a.creds.PutNode(ctx, node); err != nil {
 		t.Fatal(err)
 	}

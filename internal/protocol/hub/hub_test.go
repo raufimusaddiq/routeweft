@@ -10,14 +10,15 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/protocol/systemone"
 )
 
-// The hub registry must answer exactly what ingress.CanTranslate answered before
-// the hub existed: only Chat<->Responses, in both directions.
-func TestCanTranslatePreservesCurrentBehavior(t *testing.T) {
+// The implemented pairs are exactly those reachable through the Chat hub among
+// Chat, Responses and Messages; Gemini, Ollama and System One have no legs yet
+// (#119 tracks them), so they must stay unreachable rather than appear to work.
+func TestCanTranslateCoversChatResponsesMessages(t *testing.T) {
+	converted := map[string]bool{openai.ChatProtocol: true, openai.ResponsesProtocol: true, anthropic.MessagesProtocol: true}
 	protocols := []string{openai.ChatProtocol, openai.ResponsesProtocol, anthropic.MessagesProtocol, gemini.Protocol, ollama.Protocol, systemone.Protocol}
 	for _, source := range protocols {
 		for _, target := range protocols {
-			want := source != target &&
-				(source == openai.ChatProtocol && target == openai.ResponsesProtocol || source == openai.ResponsesProtocol && target == openai.ChatProtocol)
+			want := source != target && converted[source] && converted[target]
 			got := CanTranslate(source, target)
 			if source == target {
 				got = false
