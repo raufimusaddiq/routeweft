@@ -16,6 +16,7 @@ type ProviderSettings struct {
 	Email, UserID, SystemID, OrganizationID, DefaultOrganizationID, UID string
 	OrgID                                                               string // Kilo Code organization (stored as orgId)
 	ProjectID                                                           string // Vertex partner GCP project (stored as projectId)
+	ChatGPTAccountID                                                    string // Codex ChatGPT account (stored as chatgptAccountId)
 }
 
 // ConnectionMetadata contains immutable account configuration needed by provider wires.

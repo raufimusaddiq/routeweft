@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
+	codexprovider "github.com/raufimusaddiq/routeweft/internal/providers/codex"
 	"github.com/raufimusaddiq/routeweft/internal/providers/oauthheaders"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
@@ -232,6 +233,20 @@ func kilocodeOrgHeaders(provider routing.ProviderRef) map[string]string {
 		return map[string]string{"X-Kilocode-OrganizationID": org}
 	}
 	return nil
+}
+
+// codexHeaders adds the account binding Codex needs when several ChatGPT
+// accounts are configured: ChatGPT-Account-ID from workspaceId, else
+// chatgptAccountId, else the connection's account ID (executors/codex.js:234-240).
+// Without it a request can bind to the wrong OpenAI account and surface as
+// token_invalid after a second account is added.
+func codexHeaders(provider routing.ProviderRef) map[string]string {
+	headers := codexprovider.Headers()
+	settings := provider.Connection.Settings
+	if account := firstNonEmpty(settings.WorkspaceID, settings.ChatGPTAccountID, provider.Connection.AccountID); account != "" {
+		headers["ChatGPT-Account-ID"] = account
+	}
+	return headers
 }
 
 func firstNonEmpty(values ...string) string {

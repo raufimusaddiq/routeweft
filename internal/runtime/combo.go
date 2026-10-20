@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
 // Combo is a compiled ordered route candidate list with strategy metadata.
@@ -15,7 +17,10 @@ type Combo struct {
 	StickyLimit   uint64
 	JudgeModel    string
 	FusionEnabled bool
-	Members       []ComboMember
+	// FusionTuning overrides the default panel timing for this Combo only
+	// (v1 comboStrategies[name].fusionTuning). The zero value keeps the default.
+	FusionTuning routing.FusionTuning
+	Members      []ComboMember
 }
 
 // ComboMember is one ordered Combo route candidate.
@@ -35,6 +40,12 @@ func (c Combo) Resolve() []ComboMember {
 		}
 	}
 	return members
+}
+
+// FusionConfig resolves this Combo's panel timing over base for its selected
+// members, the way v1 resolves fusionTuning over FUSION_DEFAULTS.
+func (c Combo) FusionConfig(base routing.FusionConfig) (routing.FusionConfig, error) {
+	return c.FusionTuning.Apply(base, len(c.Resolve()))
 }
 
 func cloneCombos(combos map[string]Combo) map[string]Combo {
@@ -89,6 +100,9 @@ func compileCombos(combos []Combo, models map[string]Model, aliases map[string]M
 				return nil, fmt.Errorf("combo %q: duplicate member %s", name, key)
 			}
 			seen[key] = struct{}{}
+		}
+		if err := combo.FusionTuning.Validate(); err != nil {
+			return nil, fmt.Errorf("combo %q: %w", name, err)
 		}
 		if combo.StickyLimit == 0 {
 			combo.StickyLimit = 1

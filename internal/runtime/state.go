@@ -73,6 +73,17 @@ func (s *RuntimeState) ClearCooldown(account string) {
 	delete(s.cooldowns, account)
 }
 
+// ForgetAccount drops every process-local record kept for one account:
+// cooldown and the latest quota observation. A deleted connection's ID is never
+// reused, so this is hygiene and not correctness, but without it the maps grow
+// by one entry per deleted connection for the life of the process.
+func (s *RuntimeState) ForgetAccount(account string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.cooldowns, account)
+	delete(s.quotas, account)
+}
+
 // ObserveQuota replaces one account's latest quota observation.
 func (s *RuntimeState) ObserveQuota(account string, observation QuotaObservation) {
 	if account == "" {
