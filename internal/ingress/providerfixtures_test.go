@@ -267,12 +267,15 @@ func TestCodeBuddyCNUsageFixtureReplays(t *testing.T) {
 		ProviderResolver: providerResolver("codebuddy-cn", openaiadapter.ChatProtocol, server.URL(), "v2/chat/completions"),
 	})
 	recorder := httptest.NewRecorder()
-	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(exchange.Request.Body)))
+	// The client does not ask to stream; the fixture's request is what the gateway
+	// must see, which is the same body with stream forced on.
+	client := `{"model":"glm-5.2","messages":[{"role":"user","content":"Say hi."}],"max_tokens":16}`
+	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(client)))
 	if recorder.Code != http.StatusOK || recorder.Body.String() != exchange.Response.Body {
 		t.Fatalf("codebuddy status %d body %s", recorder.Code, recorder.Body.String())
 	}
 	seen := server.Requests()
-	if len(seen) != 1 || seen[0].Path != "/v2/chat/completions" || seen[0].Headers.Get("User-Agent") != "CLI/2.108.1 CodeBuddy/2.108.1" {
+	if len(seen) != 1 || seen[0].Path != "/v2/chat/completions" || seen[0].Headers.Get("User-Agent") != "Routeweft" {
 		t.Fatalf("codebuddy upstream %+v", seen)
 	}
 }

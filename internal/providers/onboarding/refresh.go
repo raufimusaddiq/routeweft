@@ -386,11 +386,9 @@ func refreshKiro(ctx context.Context, client HTTPClient, now func() time.Time, c
 func refreshCodeBuddy(ctx context.Context, client HTTPClient, now func() time.Time, current credentials.Secret, provider string) (credentials.Secret, error) {
 	endpoint := "https://copilot.tencent.com/v2/plugin/auth/token/refresh"
 	domain := "copilot.tencent.com"
-	userAgent := "CLI/2.63.2 CodeBuddy/2.63.2"
 	if provider == "codebuddy-intl" {
 		endpoint = "https://www.codebuddy.ai/v2/plugin/auth/token/refresh"
 		domain = "www.codebuddy.ai"
-		userAgent = "IDE/2.63.2 CodeBuddy/2.63.2"
 	}
 	var document struct {
 		Code int `json:"code"`
@@ -401,7 +399,7 @@ func refreshCodeBuddy(ctx context.Context, client HTTPClient, now func() time.Ti
 		} `json:"data"`
 	}
 	status, err := postJSONTargetWithHeaders(ctx, client, endpoint, map[string]string{
-		"User-Agent":            userAgent,
+		"User-Agent":            "Routeweft",
 		"X-Requested-With":      "XMLHttpRequest",
 		"X-Domain":              domain,
 		"X-Refresh-Token":       current.RefreshToken,

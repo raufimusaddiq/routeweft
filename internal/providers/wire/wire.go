@@ -10,6 +10,7 @@ package wire
 
 import (
 	"net/http"
+	"time"
 
 	anthropicprovider "github.com/raufimusaddiq/routeweft/internal/providers/anthropic"
 	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
@@ -56,6 +57,18 @@ type Hook struct {
 	UnwrapResponse func(body []byte) []byte
 	// Finalize is the provider's last rewrite of the outbound body (registry quirks).
 	Finalize Finalize
+	// ForceStream marks a gateway that only answers streams. Its Finalize sets
+	// stream:true on the request; a client that did not ask to stream gets the
+	// SSE folded back to one JSON body before any consumer reads it
+	// (internal/ingress dispatchAttempts, FoldForcedStream).
+	ForceStream bool
+	// StripEmptyToolCalls removes an empty tool_calls array from the deltas of a
+	// Chat stream relayed to the client (ResponseStream).
+	StripEmptyToolCalls bool
+	// ClassifyError reads a provider's own error body on a non-2xx response and
+	// reports how Routeweft should account for it. It never changes the status or
+	// body the client sees.
+	ClassifyError func(status int, body []byte, now time.Time) (routing.Classification, bool)
 }
 
 var hooks = map[string]Hook{
@@ -82,6 +95,8 @@ var hooks = map[string]Hook{
 	"kimchi":           {Finalize: kimchiBody},
 	"cline":            clineHook,
 	"clinepass":        clineHook,
+	"codebuddy-cn":     codebuddyCN,
+	"codebuddy-intl":   codebuddyIntl,
 }
 
 var minimaxHook = Hook{Finalize: chain(dropOutputConfig, requireClaudeToolType), Target: betaQuery}
@@ -171,4 +186,16 @@ func set(headers http.Header, values map[string]string) {
 	for name, value := range values {
 		headers.Set(name, value)
 	}
+}
+
+// ForcesStream reports whether the provider only answers streams.
+func ForcesStream(providerID string) bool { return For(providerID).ForceStream }
+
+// ClassifyError reports the provider's own account of a failed response, when it
+// has one for this body.
+func ClassifyError(providerID string, status int, body []byte, now time.Time) (routing.Classification, bool) {
+	if classify := For(providerID).ClassifyError; classify != nil {
+		return classify(status, body, now)
+	}
+	return routing.Classification{}, false
 }

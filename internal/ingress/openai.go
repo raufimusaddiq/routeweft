@@ -57,7 +57,7 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 	}
 	started := time.Now()
 	var translation ChatTranslation
-	response, provider, err := h.dispatchAttempts(r, snapshot, model, source, compact, func(provider routing.ProviderRef) (ChatTranslation, error) {
+	response, provider, err := h.dispatchAttempts(r, snapshot, model, source, compact, stream, func(provider routing.ProviderRef) (ChatTranslation, error) {
 		translation = ChatTranslation{}
 		plan, err := routing.BuildPlan(routing.PlanOptions{SourceProtocol: source, Provider: provider})
 		if err != nil {
@@ -118,6 +118,9 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 			}
 			if provider.Endpoint != "" {
 				translated.Endpoint = provider.Endpoint
+			}
+			if responses != nil {
+				translated.Body = wire.RestoreStreamOptions(provider, translated.Body, responses.Raw)
 			}
 			translation = translated
 			return translated, err

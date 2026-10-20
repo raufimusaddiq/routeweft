@@ -5,11 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
@@ -41,9 +45,43 @@ func (h *Handler) dispatchError(w http.ResponseWriter, r *http.Request, err erro
 	h.writeError(w, http.StatusBadGateway, "upstream_request_failed", "upstream request failed")
 }
 
+// foldForcedStream turns the SSE a stream-only gateway answered into one JSON
+// body for a client that did not ask to stream, so every consumer past
+// dispatchAttempts (native relay, usage capture, response translation) sees an
+// ordinary non-stream response. A response that is not an event stream (the
+// gateway answered JSON, or the client is streaming) is left alone. The fold
+// fails rather than drop a field that could carry text (FoldChatStream).
+func foldForcedStream(response *http.Response, provider routing.ProviderRef, stream bool) error {
+	if stream || !wire.ForcesStream(provider.ProviderID) {
+		return nil
+	}
+	mediaType := strings.ToLower(strings.TrimSpace(strings.SplitN(response.Header.Get("Content-Type"), ";", 2)[0]))
+	if mediaType != "text/event-stream" {
+		return nil
+	}
+	folded, err := openaiadapter.FoldChatStream(response.Body, provider.UpstreamModel, time.Now)
+	if err != nil {
+		var inband *openaiadapter.StreamError
+		if errors.As(err, &inband) {
+			return &dispatchError{http.StatusBadGateway, "upstream_stream_error", inband.Error()}
+		}
+		return &dispatchError{http.StatusBadGateway, "upstream_response_invalid", "upstream stream could not be returned as one response: " + err.Error()}
+	}
+	if len(folded.Ignored) > 0 {
+		slog.Debug("forced-stream fold ignored transport metadata", "provider", provider.ProviderID, "fields", folded.Ignored)
+	}
+	response.Body.Close()
+	response.Body = io.NopCloser(bytes.NewReader(folded.Body))
+	response.Header = response.Header.Clone()
+	response.Header.Set("Content-Type", "application/json")
+	response.Header.Del("Content-Length")
+	response.ContentLength = int64(len(folded.Body))
+	return nil
+}
+
 // Dispatch completes retries before exposing upstream headers. Once a stream
 // starts it is never replayed, including after a partial response or disconnect.
-func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSnapshot, model, source string, compact bool, prepare func(routing.ProviderRef) (ChatTranslation, error)) (*http.Response, routing.ProviderRef, error) {
+func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSnapshot, model, source string, compact, stream bool, prepare func(routing.ProviderRef) (ChatTranslation, error)) (*http.Response, routing.ProviderRef, error) {
 	// Key policy is checked before any resolution so a restricted key cannot
 	// probe which models, aliases or Combos exist.
 	if !requestPermitted(callerKey(r, snapshot), snapshot, model) {
@@ -79,7 +117,15 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 	var attemptErr, preAttemptErr, translationErr error
 	var attemptResponse *http.Response
 	var attemptProvider routing.ProviderRef
+	defer func() {
+		if attemptResponse != nil {
+			attemptResponse.Body.Close()
+		}
+	}()
 	failedAttempt := func(err error, response *http.Response, provider routing.ProviderRef) {
+		if attemptResponse != nil {
+			attemptResponse.Body.Close()
+		}
 		attemptErr, attemptResponse, attemptProvider = err, response, provider
 	}
 	used := 0
@@ -135,6 +181,10 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				break
 			}
 			if response.StatusCode >= 200 && response.StatusCode < 300 {
+				if err := foldForcedStream(response, provider, stream); err != nil {
+					response.Body.Close()
+					return nil, provider, err
+				}
 				return response, provider, nil
 			}
 			prefix, readErr := io.ReadAll(io.LimitReader(response.Body, errorBodyPeek))
@@ -148,6 +198,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				classification.Outcome = mapped.Outcome
 			}
 			now := time.Now()
+			classification = providerClassification(provider, response.StatusCode, prefix, classification, now)
 			// A request-scoped auth rejection must not cool the entire fallback chain.
 			if classification.Outcome != routing.OutcomeAuthRefreshRequired || !authFailureSeen {
 				h.recordClassification(provider.ConnectionID, classification, now)
@@ -171,16 +222,14 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				continue
 			}
 			if classification.AllowsFallback() && readErr == nil && index+1 < len(candidates) && used < maxAccountAttempts {
-				// Keep what this upstream said in case nothing later answers; the
-				// peeked prefix is the body a client would see for an error.
+				// Keep the unread tail too, in case later candidates cannot serve.
 				kept := *response
 				kept.Header = response.Header.Clone()
-				if int64(len(prefix)) >= errorBodyPeek {
-					kept.Header.Del("Content-Length")
-				}
-				kept.Body = io.NopCloser(bytes.NewReader(prefix))
+				kept.Body = struct {
+					io.Reader
+					io.Closer
+				}{io.MultiReader(bytes.NewReader(prefix), response.Body), response.Body}
 				failedAttempt(nil, &kept, provider)
-				response.Body.Close()
 				break
 			}
 			response.Body = struct {
@@ -192,7 +241,9 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 	}
 	switch {
 	case attemptResponse != nil:
-		return attemptResponse, attemptProvider, nil
+		response := attemptResponse
+		attemptResponse = nil
+		return response, attemptProvider, nil
 	case attemptErr != nil:
 		return nil, routing.ProviderRef{}, attemptErr
 	case translationErr != nil:

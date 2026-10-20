@@ -295,11 +295,12 @@ func miniMaxReset(model map[string]any, now time.Time, keys ...string) *time.Tim
 // bonus packs are separate windows: a refill pack resets on its cycle, a bonus
 // pack simply expires.
 func (r apiKeyReader) codebuddy(ctx context.Context, key string) (quota.State, error) {
-	endpoint := "https://copilot.tencent.com/v2/plugin/billing/usage"
+	endpoint := "https://copilot.tencent.com/v2/billing/meter/get-user-resource"
 	if r.Name == "codebuddy-intl" {
-		endpoint = "https://www.codebuddy.ai/v2/plugin/billing/usage"
+		endpoint = "https://www.codebuddy.ai/v2/billing/meter/get-user-resource"
 	}
 	reply, err := r.call(ctx, http.MethodPost, endpoint, map[string]string{
+		"User-Agent":    "Routeweft",
 		"Authorization": "Bearer " + key,
 		"Content-Type":  "application/json",
 		"Accept":        "application/json",

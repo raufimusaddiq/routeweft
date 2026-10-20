@@ -170,7 +170,7 @@ func TestPrepareMessagesMatchesLegacyForEveryProvider(t *testing.T) {
 func TestRegisteredHooksAreExactlyTheDeclaredProviders(t *testing.T) {
 	got := Registered()
 	sort.Strings(got)
-	want := []string{"anthropic", "azure", "cerebras", "claude", "cline", "clinepass", "codex", "deepseek", "github", "glm", "kenari", "kilocode", "kimchi", "kimi", "minimax", "minimax-cn", "mistral", "xiaomi-tokenplan"}
+	want := []string{"anthropic", "azure", "cerebras", "claude", "cline", "clinepass", "codebuddy-cn", "codebuddy-intl", "codex", "deepseek", "github", "glm", "kenari", "kilocode", "kimchi", "kimi", "minimax", "minimax-cn", "mistral", "xiaomi-tokenplan"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("registered hooks %v, want %v", got, want)
 	}

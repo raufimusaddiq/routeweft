@@ -35,11 +35,9 @@ const (
 	ClineTitleKey   = "X-Title"
 )
 
-// CodeBuddy identifies as its CLI/IDE product on the unified gateway.
-const (
-	CodeBuddyCNUserAgent   = "CLI/2.108.1 CodeBuddy/2.108.1"
-	CodeBuddyIntlUserAgent = "IDE/2.108.1 CodeBuddy/2.108.1"
-)
+// CodeBuddy has no entry on purpose. The reference sends a CodeBuddy CLI/IDE
+// User-Agent; Routeweft does not present itself as another client, so CodeBuddy
+// requests carry Routeweft's own User-Agent (docs/PARITY.md, CodeBuddy).
 
 // Headers returns the provider identity headers for a known OAuth-specialized
 // provider id. An unknown id returns nil so callers add no fingerprint.
@@ -63,10 +61,6 @@ func Headers(providerID string) map[string]string {
 			ClineRefererKey: ClineReferer,
 			ClineTitleKey:   ClineTitle,
 		}
-	case "codebuddy-cn":
-		return map[string]string{"User-Agent": CodeBuddyCNUserAgent}
-	case "codebuddy-intl":
-		return map[string]string{"User-Agent": CodeBuddyIntlUserAgent}
 	default:
 		return nil
 	}

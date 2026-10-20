@@ -26,8 +26,12 @@ func TestKnownProvidersCarryIdentityHeaders(t *testing.T) {
 			t.Errorf("%s headers=%v", id, headers)
 		}
 	}
-	if Headers("codebuddy-cn")["User-Agent"] != CodeBuddyCNUserAgent || Headers("codebuddy-intl")["User-Agent"] != CodeBuddyIntlUserAgent {
-		t.Fatal("codebuddy identity headers missing")
+	// CodeBuddy sends no client identity: Routeweft does not present itself as the
+	// CodeBuddy CLI or IDE.
+	for _, id := range []string{"codebuddy-cn", "codebuddy-intl"} {
+		if headers := Headers(id); headers != nil {
+			t.Errorf("%s must add no identity headers, got %v", id, headers)
+		}
 	}
 	// Mutating one returned map must not affect the next call.
 	aliased := Headers("iflow")
