@@ -239,10 +239,10 @@ func TestNamedCredentialSelectionAfterRefresh(t *testing.T) {
 		if c.ProviderID != "fixture-provider" {
 			t.Fatal("wrong provider identity")
 		}
-		return "wireToken", ""
+		return "wireToken", "wireTokenExpiresAt"
 	})
 	registry.Register(connection, func(_ context.Context, current Secret) (Secret, error) {
-		current.ProviderData = map[string]string{"wireToken": "fixture-fresh"}
+		current.ProviderData = map[string]string{"wireToken": "fixture-fresh", "wireTokenExpiresAt": fmt.Sprint(time.Now().Add(time.Hour).Unix())}
 		current.Expiry = time.Now().Add(time.Hour)
 		return current, nil
 	})
@@ -258,10 +258,10 @@ func TestNamedCredentialSelectionAfterRefresh(t *testing.T) {
 		secret Secret
 		want   string
 	}{
-		{Secret{AccessToken: "fallback", ProviderData: map[string]string{"wireToken": ""}}, "fallback"},
-		{Secret{AccessToken: "fallback"}, "fallback"},
-		{Secret{Cookie: "fixture-cookie"}, "fixture-cookie"},
-		{Secret{AccessToken: "fallback", ProviderData: map[string]string{"wireToken": "fixture-imported"}}, "fixture-imported"},
+		{Secret{AccessToken: "fallback", ProviderData: map[string]string{"wireToken": ""}}, "fixture-fresh"},
+		{Secret{AccessToken: "fallback"}, "fixture-fresh"},
+		{Secret{Cookie: "fixture-cookie"}, "fixture-fresh"},
+		{Secret{AccessToken: "fallback", ProviderData: map[string]string{"wireToken": "fixture-imported", "wireTokenExpiresAt": fmt.Sprint(time.Now().Add(time.Hour).Unix())}}, "fixture-imported"},
 	} {
 		if err := registry.Import(ctx, connection.ID, connection.Identity, tc.secret); err != nil {
 			t.Fatal(err)

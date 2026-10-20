@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -571,8 +573,11 @@ func TestGitHubRefreshRemintsCopilotToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next.ProviderData["copilotToken"] != "fixture-copilot" {
-		t.Fatalf("secret=%+v", next)
+	if next.ProviderData["copilotToken"] != "fixture-copilot" || next.ProviderData["copilotTokenExpiresAt"] != "1761000000" {
+		t.Fatal("Copilot renewal lost its own token/expiry")
+	}
+	if !next.Expiry.IsZero() {
+		t.Fatal("Copilot renewal overwrote primary GitHub expiry")
 	}
 }
 
@@ -908,4 +913,84 @@ func mustResolver(t *testing.T, client HTTPClient) func(credentials.Connection) 
 		t.Fatal(err)
 	}
 	return resolve
+}
+
+func TestGitHubMissingExpiryBoundsSequentialMints(t *testing.T) {
+	for _, response := range []struct{ name, body string }{
+		{"absent", `{"token":"fixture-copilot"}`},
+		{"unparseable", `{"token":"fixture-copilot","expires_at":"invalid"}`},
+		{"null", `{"token":"fixture-copilot","expires_at":null}`},
+		{"zero", `{"token":"fixture-copilot","expires_at":0}`},
+		{"numeric prefix", `{"token":"fixture-copilot","expires_at":"123garbage"}`},
+	} {
+		for _, legacy := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/legacy=%v", response.name, legacy), func(t *testing.T) {
+				ctx := context.Background()
+				now := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+				clock := func() time.Time { return now }
+				mints := 0
+				client := &stubClient{handler: func(r *http.Request) (int, string) {
+					switch r.URL.String() {
+					case "https://github.com/login/oauth/access_token":
+						return 200, `{"access_token":"fixture-github","token_type":"bearer","scope":"read:user"}`
+					case "https://api.github.com/user":
+						return 200, `{"login":"fixture-user","id":1}`
+					case "https://api.github.com/copilot_internal/v2/token":
+						mints++
+						return 200, response.body
+					default:
+						t.Fatalf("unexpected request %s", r.URL)
+						return 500, `{}`
+					}
+				}}
+				outcome, err := flowFor(t, "github").Poll(ctx, Params{Input: "fixture-device", Client: client, Now: clock})
+				if err != nil || outcome.Err != nil || !outcome.Done {
+					t.Fatalf("onboarding: %v, %+v", err, outcome)
+				}
+				secret := outcome.Result.Secret
+				if !secret.Expiry.IsZero() {
+					t.Fatal("GitHub OAuth response has no expires_in")
+				}
+				assertExpiry := func(s credentials.Secret) {
+					t.Helper()
+					seconds, err := strconv.ParseInt(s.ProviderData["copilotTokenExpiresAt"], 10, 64)
+					if err != nil || seconds != now.Add(10*credentials.RefreshLead).Unix() || !s.Expiry.IsZero() {
+						t.Fatalf("incorrect token expiries: named=%q primary=%v", s.ProviderData["copilotTokenExpiresAt"], s.Expiry)
+					}
+				}
+				assertExpiry(secret)
+				if legacy {
+					delete(secret.ProviderData, "copilotTokenExpiresAt")
+				}
+				connection := credentials.Connection{ID: "fixture", ProviderID: "github", AuthKind: outcome.Result.AuthKind, Secret: secret}
+				r := credentials.NewRegistry(nil, clock)
+				r.SetCredentialNameResolver(func(credentials.Connection) (string, string) { return "copilotToken", "copilotTokenExpiresAt" })
+				r.Register(connection, credentials.Exchanger(refreshFor(connection, client, clock)))
+				serve := func(wantMints int) {
+					t.Helper()
+					for i := 0; i < 20; i++ {
+						token, err := r.Credential(ctx, connection.ID)
+						if err != nil || token != "fixture-copilot" {
+							t.Fatalf("request %d: token selection failed: %v", i, err)
+						}
+					}
+					if mints != wantMints {
+						t.Fatalf("20 sequential requests: mints=%d want=%d", mints, wantMints)
+					}
+					s, err := r.Secret(ctx, connection.ID)
+					if err != nil || s.AccessToken != "fixture-github" {
+						t.Fatalf("primary token: %v", err)
+					}
+					assertExpiry(s)
+				}
+				want := 1
+				if legacy {
+					want++
+				}
+				serve(want)
+				now = now.Add(9 * time.Minute)
+				serve(want + 1)
+			})
+		}
+	}
 }

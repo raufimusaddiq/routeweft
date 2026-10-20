@@ -435,12 +435,17 @@ type ProviderSpec struct {
     ID             string
     Protocol       string
     AuthKind       AuthKind
+    CredentialName string
+    CredentialExpiryName string
     DefaultBaseURL string
     Capabilities   ProviderCapabilities
     Quirks         ProviderQuirks
 }
 ```
 
+`CredentialName` selects a sealed `Secret.ProviderData` field for inference;
+`CredentialExpiryName` names its Unix-seconds expiry. Both must be declared
+together, or both omitted. Omitted names use the primary access token/cookie.
 Provider-specific executable hooks should be small and explicit.
 
 ## 12. Client authentication
@@ -728,12 +733,23 @@ A release must not knowingly trade away controlled cache reuse for small router-
 
 Per identity:
 
-- access-token state lives in RuntimeState;
+- primary and provider-named credential state lives in the memory-first credential registry;
 - refresh uses singleflight;
 - callers wait for one refresh rather than stampeding;
 - a successful refresh updates in-memory credentials immediately;
 - rotated refresh token is committed durably before success is considered stable;
 - credential identity/dedup keys are provider-defined and must not collapse distinct accounts.
+
+Inference resolves the provider-declared credential through the memory-first
+credential registry. A named token uses its own expiry with the registry's
+60-second refresh lead, independently of the primary access token's expiry.
+GitHub stores its OAuth token as the primary token and serves the separately
+minted Copilot token. Onboarding and renewal record a ten-minute Copilot expiry
+when `expires_at` is absent, unparseable, or nonpositive. Renewal preserves the
+primary token's expiry; Copilot expiry never overwrites it. Legacy named tokens
+with missing/invalid expiry renew once to acquire the bounded expiry. Repeated
+requests reuse the token until the refresh lead is reached; renewal remains
+singleflight with durable installation. No serving-path SQLite read is added.
 
 No credential is sent to browser code.
 
