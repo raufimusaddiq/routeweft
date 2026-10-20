@@ -105,6 +105,7 @@ var hooks = map[string]Hook{
 	"codebuddy-intl":   codebuddyIntl,
 	"opencode":         {Target: opencodeTarget, ForceStream: true, Finalize: codebuddyStream},
 	"vertex-partner":   {Target: vertexPartnerTarget},
+	"cloudflare-ai":    {Target: cloudflareTarget},
 }
 
 var minimaxHook = Hook{Finalize: chain(dropOutputConfig, requireClaudeToolType), Target: betaQuery}

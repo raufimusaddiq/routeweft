@@ -24,7 +24,6 @@ type servingProvider struct {
 	endpoints map[registry.Protocol]string
 	account   routing.Account
 	name      string
-	accountID string
 }
 
 func compileProviders(config credentials.Configuration) (map[string]servingProvider, error) {
@@ -69,7 +68,7 @@ func compileProviders(config credentials.Configuration) (map[string]servingProvi
 			NodeID: node.ID, NodeKind: string(node.Kind), NodeName: node.Name, NodePrefix: node.Prefix,
 			Name: connection.Name, AuthKind: string(connection.AuthKind), Identity: connection.Identity,
 			AccountID: connection.AccountID, ProxyPoolID: connection.ProxyPoolID, Settings: connection.Settings,
-		}, node: node, endpoints: endpoints, account: routing.Account{ID: connection.ID, Enabled: connection.Enabled, Priority: connection.Priority}, name: connection.Name, accountID: connection.AccountID}
+		}, node: node, endpoints: endpoints, account: routing.Account{ID: connection.ID, Enabled: connection.Enabled, Priority: connection.Priority}, name: connection.Name}
 	}
 	return result, nil
 }
@@ -224,13 +223,6 @@ func (s *RuntimeSnapshot) AccountProvider(requested, account, source string, can
 		}
 	}
 	endpoint := config.endpoints[registry.Protocol(protocol)]
-	if config.node.Kind == credentials.NodeBuiltin && model.ProviderID == "cloudflare-ai" {
-		var valid bool
-		endpoint, valid = cloudflare.Endpoint(protocol, config.accountID, model.ID)
-		if !valid {
-			return routing.ProviderRef{}, false
-		}
-	}
 	return routing.ProviderRef{Connection: config.metadata, ProviderID: model.ProviderID, ConnectionID: account, BaseURL: baseURL, Protocol: protocol, UpstreamModel: model.ID, Endpoint: endpoint}, true
 }
 

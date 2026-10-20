@@ -459,7 +459,7 @@ func (h *Handler) handleNodeRoutes(w http.ResponseWriter, r *http.Request) {
 	routes := map[string]string{}
 	spec, _ := h.providerSpec(node.ProviderID)
 	// A listing has no connection, so a node whose base comes from the connection
-	// (Azure) has no routes to show; the rest go through the same target rules as
+	// (Azure) or whose path names the connection's account (Cloudflare) has no routes to show; the rest go through the same target rules as
 	// serving, so a Token Plan region, a deployment path or ?beta=true is what a
 	// request would reach.
 	base := wire.NodeBase(node.BaseURL, spec.DefaultBaseURL, routing.ProviderSettings{})
@@ -469,14 +469,6 @@ func (h *Handler) handleNodeRoutes(w http.ResponseWriter, r *http.Request) {
 			if custom, ok := spec.EndpointFor(registry.Protocol(protocol)); ok {
 				path = custom
 				supported = true
-			}
-			if node.ProviderID == "cloudflare-ai" {
-				switch protocol {
-				case "systemone":
-					path = "{accountId}/ai/run/{model}"
-				case "openai-chat":
-					path = "{accountId}/ai/v1/chat/completions"
-				}
 			}
 		}
 		if !supported || base == "" {

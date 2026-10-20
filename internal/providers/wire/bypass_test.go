@@ -334,3 +334,39 @@ func TestUpstreamURLsAreAssembledOnlyInTheSeam(t *testing.T) {
 		}
 	}
 }
+
+// Cloudflare Workers AI puts the account id in the path
+// ({base}/{accountId}/ai/v1/chat/completions, .../ai/run/{model}). That path is
+// produced by wire.cloudflareTarget alone, which refuses a missing account id; a
+// function elsewhere that spells either path would build the URL without the
+// fail-closed check.
+func TestCloudflarePathsAreSpelledOnlyInTheSeam(t *testing.T) {
+	root := filepath.Join("..", "..")
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		if strings.HasPrefix(rel, "providers/wire/") {
+			return nil
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			return err
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING && (strings.Contains(lit.Value, "/ai/run/") || strings.Contains(lit.Value, "/ai/v1/")) {
+				t.Errorf("%s spells a Cloudflare Workers AI path (%s): only wire.cloudflareTarget builds it", rel, lit.Value)
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
