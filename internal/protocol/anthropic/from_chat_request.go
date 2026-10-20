@@ -177,7 +177,11 @@ func ChatToMessages(body map[string]any, model string, stream bool) (map[string]
 	}
 	if result["tools"] != nil {
 		if concerns.Truthy(body["tool_choice"]) {
-			result["tool_choice"] = toolChoiceFromChat(body["tool_choice"], names)
+			choice, err := toolChoiceFromChat(body["tool_choice"], names)
+			if err != nil {
+				return nil, nil, err
+			}
+			result["tool_choice"] = choice
 		}
 		if parallel, ok := body["parallel_tool_calls"].(bool); ok && !parallel {
 			choice, _ := result["tool_choice"].(map[string]any)
@@ -291,7 +295,11 @@ func contentBlocks(message map[string]any, names *concerns.ToolNames) ([]any, er
 	var blocks []any
 	switch concerns.Text(message["role"]) {
 	case "tool":
-		blocks = append(blocks, map[string]any{"type": "tool_result", "tool_use_id": message["tool_call_id"], "content": message["content"]})
+		content, err := toolResultFromChat(message["content"])
+		if err != nil {
+			return nil, err
+		}
+		blocks = append(blocks, map[string]any{"type": "tool_result", "tool_use_id": message["tool_call_id"], "content": content})
 	case "user":
 		if text, ok := message["content"].(string); ok {
 			if text != "" {
@@ -394,40 +402,73 @@ func contentBlocks(message map[string]any, names *concerns.ToolNames) ([]any, er
 	return blocks, nil
 }
 
+// toolResultFromChat turns a Chat `tool` message's content into what a
+// tool_result accepts: a string, or text and image blocks. Chat's own part
+// shapes (image_url) are not Anthropic blocks and are converted, not forwarded.
+func toolResultFromChat(content any) (any, error) {
+	parts := concerns.Items(content)
+	if parts == nil {
+		return content, nil
+	}
+	blocks := make([]any, 0, len(parts))
+	for _, raw := range parts {
+		part := concerns.Object(raw)
+		switch kind := concerns.Text(part["type"]); kind {
+		case "text":
+			blocks = append(blocks, map[string]any{"type": "text", "text": part["text"]})
+		case "image_url":
+			url := concerns.Text(concerns.Object(part["image_url"])["url"])
+			if mediaType, data, ok := concerns.ParseDataURI(url); ok {
+				blocks = append(blocks, map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": mediaType, "data": data}})
+			} else if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+				blocks = append(blocks, map[string]any{"type": "image", "source": map[string]any{"type": "url", "url": url}})
+			} else {
+				return nil, unsupported("tool message image that is neither a data URI nor an http(s) URL")
+			}
+		default:
+			return nil, unsupported("tool message content part %q", kind)
+		}
+	}
+	return blocks, nil
+}
+
 // toolChoiceFromChat is openai-to-claude.js:310-338. Anthropic only accepts
 // auto, any, tool and none; the OpenAI "function" type is never passed through.
-func toolChoiceFromChat(choice any, names *concerns.ToolNames) any {
-	if !concerns.Truthy(choice) {
-		return map[string]any{"type": "auto"}
-	}
+func toolChoiceFromChat(choice any, names *concerns.ToolNames) (any, error) {
 	if text, ok := choice.(string); ok {
 		switch text {
+		case "auto":
+			return map[string]any{"type": "auto"}, nil
 		case "required":
-			return map[string]any{"type": "any"}
+			return map[string]any{"type": "any"}, nil
 		case "none":
-			return map[string]any{"type": "none"}
+			return map[string]any{"type": "none"}, nil
 		}
-		return map[string]any{"type": "auto"}
+		return nil, unsupported("tool_choice %q", text)
 	}
 	object := concerns.Object(choice)
 	if name := concerns.Text(concerns.Object(object["function"])["name"]); name != "" {
-		return map[string]any{"type": "tool", "name": names.Safe(strings.TrimSpace(name))}
+		return map[string]any{"type": "tool", "name": names.Safe(strings.TrimSpace(name))}, nil
 	}
-	switch concerns.Text(object["type"]) {
-	case "auto", "any", "tool", "none":
-		if concerns.Text(object["type"]) == "tool" {
-			if name, ok := object["name"].(string); ok {
-				copied := map[string]any{}
-				for key, value := range object {
-					copied[key] = value
-				}
-				copied["name"] = names.Safe(strings.TrimSpace(name))
-				return copied
-			}
+	switch kind := concerns.Text(object["type"]); kind {
+	case "auto", "any", "none":
+		return object, nil
+	case "tool":
+		name, ok := object["name"].(string)
+		if !ok || strings.TrimSpace(name) == "" {
+			return nil, unsupported("tool_choice of type tool with no name")
 		}
-		return object
+		copied := map[string]any{}
+		for key, value := range object {
+			copied[key] = value
+		}
+		copied["name"] = names.Safe(strings.TrimSpace(name))
+		return copied, nil
+	default:
+		// Not defaulted to "auto": that would grant tools the client may have
+		// restricted (PARITY V19).
+		return nil, unsupported("tool_choice type %q", kind)
 	}
-	return map[string]any{"type": "auto"}
 }
 
 // EnsureTrailingUserTurn restores a user turn when translation emptied the

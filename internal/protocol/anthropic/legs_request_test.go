@@ -222,9 +222,7 @@ func TestChatRequestToMessagesToolChoiceAndBuiltInTools(t *testing.T) {
 		`"required"`:                   `{"type":"any"}`,
 		`"none"`:                       `{"type":"none"}`,
 		`"auto"`:                       `{"type":"auto"}`,
-		`"whatever"`:                   `{"type":"auto"}`,
 		`{"type":"any"}`:               `{"type":"any"}`,
-		`{"type":"function"}`:          `{"type":"auto"}`,
 		`{"type":"tool","name":"a.b"}`: `{"type":"tool","name":"a_b"}`,
 		`{"function":{"name":"a.b"}}`:  `{"type":"tool","name":"a_b"}`,
 	}
@@ -293,7 +291,10 @@ func TestMessagesRequestFieldsAreCarriedOrRefused(t *testing.T) {
 		"metadata.user_id": {`"metadata":{"user_id":"u1"}`, `"user":"u1"`},
 		"system":           {`"system":"be brief"`, `"content":"be brief"`},
 		"tools":            {`"tools":[{"name":"t","input_schema":{"type":"object"}}]`, `"name":"t"`},
-		"tool_choice":      {`"tool_choice":{"type":"any"}`, `"tool_choice":"required"`},
+		"tool_choice any":  {`"tools":[{"name":"t"}],"tool_choice":{"type":"any"}`, `"tool_choice":"required"`},
+		"tool_choice none": {`"tools":[{"name":"t"}],"tool_choice":{"type":"none"}`, `"tool_choice":"none"`},
+		"tool_choice auto": {`"tools":[{"name":"t"}],"tool_choice":{"type":"auto"}`, `"tool_choice":"auto"`},
+		"tool_choice tool": {`"tools":[{"name":"t"}],"tool_choice":{"type":"tool","name":"t"}`, `"tool_choice":{"function":{"name":"t"},"type":"function"}`},
 		"disable_parallel": {`"tools":[{"name":"t"}],"tool_choice":{"type":"auto","disable_parallel_tool_use":true}`, `"parallel_tool_calls":false`},
 		"reasoning_effort": {`"reasoning_effort":"high"`, `"reasoning_effort":"high"`},
 		"stream":           {`"stream":true`, `"stream":true`},
@@ -519,5 +520,42 @@ func TestChatRequestToMessagesAlternatesRoles(t *testing.T) {
 	text := string(got)
 	if strings.Count(text, `"tool_result"`) != 2 || !strings.Contains(text, `"text":"next"`) {
 		t.Fatalf("both results and the text must survive: %s", text)
+	}
+}
+
+// A tool_choice with no answer is refused, never defaulted to a permissive
+// "auto": "none" must stay none, and an unknown choice must not grant tools.
+func TestToolChoiceHasNoPermissiveDefault(t *testing.T) {
+	for _, choice := range []string{`{"type":"function"}`, `{"type":"allowed_tools"}`, `"whatever"`, `{"type":"tool"}`} {
+		body, _ := concerns.WireObject([]byte(`{"model":"m","messages":[{"role":"user","content":"x"}],"tools":[{"type":"function","function":{"name":"t"}}],"tool_choice":` + choice + `}`))
+		if _, _, err := ChatRequestToMessages(body, "m", false, true, false); err == nil {
+			t.Errorf("Chat tool_choice %s must be refused", choice)
+		}
+		if _, err := MessagesRequestToChat([]byte(`{"model":"m","messages":[{"role":"user","content":"x"}],"tools":[{"name":"t"}],"tool_choice":`+choice+`}`), "m", false); err == nil {
+			t.Errorf("Messages tool_choice %s must be refused", choice)
+		}
+	}
+	for _, role := range []string{"developer", "robot"} {
+		if _, err := MessagesRequestToChat([]byte(`{"model":"m","messages":[{"role":"`+role+`","content":"x"}]}`), "m", false); err == nil {
+			t.Errorf("Messages role %q must not become the assistant", role)
+		}
+	}
+	// A choice with no tools is not forwarded, matching the documented table.
+	got, err := MessagesRequestToChat([]byte(`{"model":"m","messages":[{"role":"user","content":"x"}],"tools":[],"tool_choice":{"type":"any"}}`), "m", false)
+	if err != nil || strings.Contains(string(got), "tool_choice") || strings.Contains(string(got), `"tools"`) {
+		t.Errorf("%s %v", got, err)
+	}
+}
+
+// A Chat tool message's part array becomes what a tool_result accepts.
+func TestToolMessagePartsBecomeToolResultBlocks(t *testing.T) {
+	body, _ := concerns.WireObject([]byte(`{"model":"m","messages":[{"role":"user","content":"q"},{"role":"assistant","tool_calls":[{"id":"a","type":"function","function":{"name":"x","arguments":"{}"}}]},{"role":"tool","tool_call_id":"a","content":[{"type":"text","text":"out"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}]}`))
+	got, _, err := ChatRequestToMessages(body, "m", false, true, false)
+	if err != nil || strings.Contains(string(got), "image_url") || !strings.Contains(string(got), `"type":"image"`) || !strings.Contains(string(got), `"text":"out"`) {
+		t.Fatalf("%s %v", got, err)
+	}
+	body, _ = concerns.WireObject([]byte(`{"model":"m","messages":[{"role":"user","content":"q"},{"role":"assistant","tool_calls":[{"id":"a","type":"function","function":{"name":"x","arguments":"{}"}}]},{"role":"tool","tool_call_id":"a","content":[{"type":"input_audio"}]}]}`))
+	if _, _, err := ChatRequestToMessages(body, "m", false, true, false); err == nil {
+		t.Fatal("an unsupported part in a tool message must be refused")
 	}
 }

@@ -111,8 +111,14 @@ func MessagesToChat(body map[string]any, model string, stream bool) (map[string]
 		}
 		result["tools"] = converted
 	}
-	if concerns.Truthy(body["tool_choice"]) {
-		result["tool_choice"] = toolChoiceToChat(body["tool_choice"])
+	// A tool_choice only means something next to tools; Chat takes neither an
+	// empty tools array nor a choice with nothing to choose from.
+	if concerns.Truthy(body["tool_choice"]) && len(concerns.Items(result["tools"])) > 0 {
+		choice, err := toolChoiceToChat(body["tool_choice"])
+		if err != nil {
+			return nil, err
+		}
+		result["tool_choice"] = choice
 		if concerns.Truthy(concerns.Object(body["tool_choice"])["disable_parallel_tool_use"]) {
 			result["parallel_tool_calls"] = false
 		}
@@ -195,8 +201,14 @@ func convertMessage(message map[string]any) ([]any, error) {
 		return nil, nil
 	}
 	chatRole := "assistant"
-	if role == "user" || role == "tool" {
+	switch role {
+	case "user", "tool":
 		chatRole = "user"
+	case "assistant":
+	default:
+		// The pin treats every other role as the assistant, putting words in its
+		// mouth that nobody said.
+		return nil, unsupported("message role %q", role)
 	}
 	if text, ok := message["content"].(string); ok {
 		return []any{map[string]any{"role": chatRole, "content": text}}, nil
@@ -385,19 +397,34 @@ func systemReminderText(content any) string {
 	return "<instructions>\n" + text + "\n</instructions>"
 }
 
-// toolChoiceToChat is claude-to-openai.js:273-283.
-func toolChoiceToChat(choice any) any {
+// toolChoiceToChat is claude-to-openai.js:273-283, minus its permissive
+// default: the pin turns every type it does not know, "none" included, into
+// "auto", re-enabling tools the client forbade. A choice with no answer is
+// refused instead (PARITY V19).
+func toolChoiceToChat(choice any) (any, error) {
 	if text, ok := choice.(string); ok {
-		return text
+		switch text {
+		case "auto", "none", "required":
+			return text, nil
+		}
+		return nil, unsupported("tool_choice %q", text)
 	}
 	object := concerns.Object(choice)
-	switch concerns.Text(object["type"]) {
+	switch kind := concerns.Text(object["type"]); kind {
+	case "auto":
+		return "auto", nil
+	case "none":
+		return "none", nil
 	case "any":
-		return "required"
+		return "required", nil
 	case "tool":
-		return map[string]any{"type": "function", "function": map[string]any{"name": object["name"]}}
+		if concerns.Text(object["name"]) == "" {
+			return nil, unsupported("tool_choice of type tool with no name")
+		}
+		return map[string]any{"type": "function", "function": map[string]any{"name": object["name"]}}, nil
+	default:
+		return nil, unsupported("tool_choice type %q", kind)
 	}
-	return "auto"
 }
 
 // fixMissingToolResponses is claude-to-openai.js:97-130: every Chat tool call

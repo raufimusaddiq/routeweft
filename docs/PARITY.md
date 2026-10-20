@@ -848,6 +848,7 @@ reviewed choice that needs owner sign-off, and none is silent.
 | V16 | `concerns/toolCall.js:60-67` repairs an invalid tool_use/tool_result id but leaves an absent one; `nonstream-to-claude.js:45` mints `toolu_<time>_<n>`; `openai-to-claude.js:188` opens a streamed tool block only when the delta has an id. | An absent id is generated (`call_msg<i>_tc<j>_<name>`, deterministic), a result with no id answers the oldest unanswered call, and a streamed call with no id still opens a block. Tool input is always a JSON object. A terminal that promises tool calls when none were sent is a failure. | An id-less call reached Chat with no id, `input` could be a string or null (an upstream 400), and the client was told a tool ran when no block existed. |
 | V17 | `openai-to-claude.js:195-199` strips a "proxy_" prefix from every streamed tool name. | Not stripped. | The request leg adds no prefix, so the strip only renames a real tool such as `proxy_search`, and the buffered leg never stripped it. |
 | V18 | `utils/usageTracking.js:147-210` (`canonicalizeUsage`) stores one cache-inclusive convention. | The usage record carries the upstream's own figures (#122). For a Messages provider that is `input_tokens` without the cache read, so a request the client is shown as `prompt_tokens: 130` (cache 100) is recorded as `input=30, cache_read=100`; a Chat or Responses provider records 130. | **The reconciliation is open.** Owner decision on #119: keep the row as reported and fold in the read model, once, in one function used by every read path. That belongs to the accounting PR; until it lands, /usage totals differ by the cache-read count for identical traffic depending on the provider's wire. Pinned by `TestEveryConvertedPairServesAClient`. |
+| V19 | `claude-to-openai.js:273-283` and `openai-to-claude.js:310-338` map every `tool_choice` they do not know, `none` included, to `auto`; `claude-to-openai.js:158` makes any other role the assistant. | `none` is carried as `none`. An unknown `tool_choice`, a `tool` choice with no name and an unknown role are translation errors. A choice with no tools is not forwarded. A Chat tool message's part array becomes text/image blocks. | A default that grants a capability is the wrong direction: the pin re-enabled tools the client had forbidden. When a mapping has no answer the fallback is the restrictive one (refuse), never the permissive one. |
 
 #### Request fields, both directions (`TestMessagesRequestFieldsAreCarriedOrRefused`, `TestChatRequestFieldsAreCarriedOrRefused`, `TestDocumentBlocksAreCarriedBothWays`)
 
@@ -883,7 +884,9 @@ Every field is **carried**, **not carried for a stated reason** (the request is 
 | `n>1`, `logprobs:true`, `modalities` with audio, `audio`, `functions`, `function_call` | refused | Anthropic cannot do what was asked |
 | part `input_audio`, `audio_url`, unknown part types; `file` that is not an inline PDF (file_id, other types); `image_url` that is neither data URI nor http(s); unknown roles; tool calls that are not `function` | refused | the model would not see it |
 
-Pin behavior mirrored on purpose, though it looks like a defect: a Chat stream that reports no usage is closed with a zero usage object because
+Pin behavior mirrored on purpose, though it looks like a defect: an unknown
+stop reason maps to `stop`/`end_turn` (`finishReason.js:6-68`; there is no
+safer finish value to fall back to); a Chat stream that reports no usage is closed with a zero usage object because
 Messages requires one (`openai-to-claude.js:250`); non-streamed tool arguments
 that are not JSON become `{}` (`nonstream-to-claude.js:5-13`); a non-streamed
 Messages text block has a leading or trailing markdown JSON fence stripped
