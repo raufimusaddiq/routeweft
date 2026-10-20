@@ -25,13 +25,10 @@ type Manager struct {
 	compiler Compiler
 }
 
-// NewManager loads keyless configuration; sealed rows require NewManagerObserved.
-func NewManager(ctx context.Context, db *sql.DB) (*Manager, error) {
-	return NewManagerObserved(ctx, db, nil, nil)
-}
-
-// NewManagerObserved is NewManager with a PXPIPE diagnostics sink that is part
-// of the initial snapshot and of every later one. The sealer is used only during startup.
+// NewManagerObserved loads durable configuration and compiles the initial
+// snapshot. The sealer is required to open sealed provider settings and is used
+// only during startup; pass nil only for a database with no sealed rows. The
+// PXPIPE diagnostics sink is part of the initial snapshot and of every later one.
 func NewManagerObserved(ctx context.Context, db *sql.DB, observePXPIPE func(pxpipe.Diagnostic), sealer *credentials.Sealer) (*Manager, error) {
 	m := &Manager{mutation: make(chan struct{}, 1), db: db, state: NewState(), compiler: Compiler{PXPIPEObserver: observePXPIPE}}
 	config, err := loadConfig(ctx, db, sealer)

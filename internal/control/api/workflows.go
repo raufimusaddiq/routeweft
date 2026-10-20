@@ -246,7 +246,10 @@ func (h *Handler) handleTestBatch(w http.ResponseWriter, r *http.Request) {
 	}()
 	ctx, cancel := context.WithTimeout(r.Context(), modelBatchTimeout)
 	defer cancel()
-	config, err := h.opts.Credentials.Configuration(ctx)
+	// Inventory only: each connection opens its own secret below, so one corrupt row
+	// is reported per connection instead of failing the batch. This decrypts per
+	// call (control plane, capped at 200); SPEC §4 forbids it on a serving path.
+	config, err := credentials.LoadMetadata(ctx, h.opts.DB)
 	if err != nil {
 		writeError(w, 503, "batch_unavailable", "enabled connections could not be loaded (maximum 200)")
 		return

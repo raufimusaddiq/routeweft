@@ -349,7 +349,7 @@ func BenchmarkChatCompletionsNative(b *testing.B) {
 	if err := migrations.NewRunner(store.DB()).Apply(context.Background()); err != nil {
 		b.Fatal(err)
 	}
-	manager, err := runtime.NewManager(context.Background(), store.DB())
+	manager, err := runtime.NewManagerObserved(context.Background(), store.DB(), nil, nil)
 	if err != nil {
 		b.Fatal(err)
 	}

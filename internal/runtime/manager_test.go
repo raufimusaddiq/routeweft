@@ -69,7 +69,7 @@ func newTestManager(t *testing.T) (*Manager, *sqlite.Store) {
 	if err := migrations.NewRunner(store.DB()).Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
-	manager, err := NewManager(ctx, store.DB())
+	manager, err := NewManagerObserved(ctx, store.DB(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestUpdatePublishesAfterCommitAndSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	restarted, err := NewManager(ctx, reopened.DB())
+	restarted, err := NewManagerObserved(ctx, reopened.DB(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func TestCatalogMutationPersistsAndPublishesAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	restarted, err := NewManager(ctx, reopened.DB())
+	restarted, err := NewManagerObserved(ctx, reopened.DB(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -412,7 +412,7 @@ func TestAPIKeyAccessPolicySurvivesRestartAndMutations(t *testing.T) {
 	if err := manager.UpdateAPIKey(ctx, entry.ID, nil, &KeyAccess{Restricted: true, Allow: []string{""}}); err == nil {
 		t.Fatal("blank allowlist entry must be rejected")
 	}
-	reloaded, err := NewManager(ctx, store.DB())
+	reloaded, err := NewManagerObserved(ctx, store.DB(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

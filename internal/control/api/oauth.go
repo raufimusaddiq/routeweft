@@ -1158,7 +1158,12 @@ func (h *Handler) publishBindings(ctx context.Context) error {
 func mergeConnectionSecret(existing, update credentials.Secret) credentials.Secret {
 	data := update.ProviderData
 	if update.Empty() {
+		// Same material rule as sealSecret: an ID token alone is a real update.
+		idToken := update.IDToken
 		update = existing
+		if idToken != "" {
+			update.IDToken = idToken
+		}
 	}
 	if existing.ProviderData == nil && data == nil {
 		update.ProviderData = nil

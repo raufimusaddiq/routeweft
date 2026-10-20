@@ -93,7 +93,7 @@ func TestStageRestoreValidatesAndDiscards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := appruntime.NewManager(ctx, restored.DB()); !errors.Is(err, credentials.ErrKeyRequired) {
+	if _, err := appruntime.NewManagerObserved(ctx, restored.DB(), nil, nil); !errors.Is(err, credentials.ErrKeyRequired) {
 		t.Fatalf("keyless validation accidentally enabled serving: %v", err)
 	}
 	config, err := credentials.LoadConfiguration(ctx, restored.DB(), sealer)

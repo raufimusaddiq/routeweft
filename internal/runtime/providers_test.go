@@ -132,7 +132,7 @@ func TestProviderSeedsRemainEphemeralAcrossWritesAndRestart(t *testing.T) {
 	if err := m.db.QueryRowContext(ctx, "SELECT count(*) FROM provider_models").Scan(&rows); err != nil || rows != 0 {
 		t.Fatalf("persisted seeds=%d err=%v", rows, err)
 	}
-	restarted, err := NewManager(ctx, m.db)
+	restarted, err := NewManagerObserved(ctx, m.db, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestProviderSeedsRemainEphemeralAcrossWritesAndRestart(t *testing.T) {
 	if err := m.PutModel(ctx, Model{ProviderID: "openai", ID: "gpt-4o", Name: "Explicit override"}); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err = NewManager(ctx, m.db)
+	restarted, err = NewManagerObserved(ctx, m.db, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
