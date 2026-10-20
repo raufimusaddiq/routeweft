@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
@@ -295,7 +296,8 @@ func customInput(name string, arguments json.RawMessage) (json.RawMessage, error
 		return nil, fmt.Errorf("%w: tool %q arguments are not a JSON object", ErrCustomToolArguments, name)
 	}
 	var input string
-	if json.Unmarshal(parsed["input"], &input) != nil || len(parsed["input"]) == 0 {
+	// null unmarshals into a string without error, so the raw value must be a string.
+	if raw := bytes.TrimSpace(parsed["input"]); len(raw) == 0 || raw[0] != '"' || json.Unmarshal(raw, &input) != nil {
 		return nil, fmt.Errorf("%w: tool %q arguments carry no string \"input\"", ErrCustomToolArguments, name)
 	}
 	return parsed["input"], nil
@@ -396,6 +398,7 @@ type eventRewriter struct {
 	reader    *bufio.Reader
 	names     map[string]bool
 	converted map[string]bool // item ids announced as custom_tool_call
+	sequence  int64           // last sequence_number relayed, for the injected terminal event
 	pending   []byte
 	err       error
 }
@@ -420,7 +423,7 @@ func (r *eventRewriter) next() ([]byte, error) {
 	for {
 		line, err := r.reader.ReadSlice('\n')
 		if len(event)+len(line) > maxResponsesEvent {
-			return failedEvent(ErrResponsesEventTooLarge), io.EOF
+			return failedEvent(ErrResponsesEventTooLarge, r.sequence+1), io.EOF
 		}
 		event = append(event, line...)
 		if errors.Is(err, bufio.ErrBufferFull) {
@@ -429,14 +432,33 @@ func (r *eventRewriter) next() ([]byte, error) {
 		if err != nil || len(bytes.TrimRight(line, "\r\n")) == 0 && len(event) > len(line) {
 			rewritten, rewriteErr := r.rewrite(event)
 			if rewriteErr != nil {
-				return failedEvent(rewriteErr), io.EOF
+				return failedEvent(rewriteErr, r.sequence+1), io.EOF
 			}
 			return rewritten, err
 		}
 	}
 }
 
+var sequenceKey = []byte(`"sequence_number":`)
+
+// noteSequence remembers the last sequence_number an event carried.
+func (r *eventRewriter) noteSequence(event []byte) {
+	i := bytes.Index(event, sequenceKey)
+	if i < 0 {
+		return
+	}
+	rest := event[i+len(sequenceKey):]
+	end := 0
+	for end < len(rest) && (rest[end] == ' ' || rest[end] >= '0' && rest[end] <= '9') {
+		end++
+	}
+	if n, err := strconv.ParseInt(string(bytes.TrimSpace(rest[:end])), 10, 64); err == nil {
+		r.sequence = n
+	}
+}
+
 func (r *eventRewriter) rewrite(event []byte) ([]byte, error) {
+	r.noteSequence(event)
 	if !bytes.Contains(event, []byte("function_call")) {
 		return event, nil
 	}
@@ -537,16 +559,16 @@ func (r *eventRewriter) rewrite(event []byte) ([]byte, error) {
 	return event, nil
 }
 
-// failedEvent is the terminal event a refused stream ends with. The message names
+// failedEvent is the terminal event a refused stream ends with, numbered after the last event relayed. The message names
 // the tool, never the upstream's arguments.
-func failedEvent(err error) []byte {
+func failedEvent(err error, sequence int64) []byte {
 	code := ErrCustomToolArguments.Error()
 	if errors.Is(err, ErrResponsesEventTooLarge) {
 		code = ErrResponsesEventTooLarge.Error()
 	}
 	encoded, _ := json.Marshal(map[string]any{
 		"type":            "response.failed",
-		"sequence_number": 0,
+		"sequence_number": sequence,
 		"response":        map[string]any{"status": "failed", "error": map[string]any{"code": code, "message": err.Error()}},
 	})
 	return append(append([]byte("event: response.failed\ndata: "), encoded...), "\n\n"...)

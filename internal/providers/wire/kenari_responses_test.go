@@ -82,6 +82,8 @@ func TestRewriteResponsesBodyRefusesArgumentsItCannotRead(t *testing.T) {
 		"empty":           ``,
 		"no input":        `{\"cmd\":\"ls\"}`,
 		"non-string":      `{\"input\":[\"ls\"]}`,
+		"null input":      `{\"input\":null}`,
+		"number input":    `{\"input\":5}`,
 		"json not object": `[1]`,
 	} {
 		in := `{"output":[{"type":"function_call","id":"fc_1","name":"exec","arguments":"` + arguments + `"}]}`
@@ -206,5 +208,13 @@ func TestResponsesStreamWithoutNamesIsTheBodyItself(t *testing.T) {
 	body := io.NopCloser(strings.NewReader("x"))
 	if ResponsesStream(nil, body) != body {
 		t.Error("a request with no converted tool wrapped the stream")
+	}
+}
+
+func TestResponsesStreamRefusalContinuesTheSequence(t *testing.T) {
+	in := strings.Replace(kenariStream, `"type":"response.output_item.added","output_index":0`, `"type":"response.output_item.added","sequence_number":7,"output_index":0`, 1)
+	in = strings.Replace(in, `"name":"exec","arguments":"{\"input\":\"ls\"}"}`, `"name":"exec","arguments":"{\"input\":null}"}`, 1)
+	if got := relay(t, in); !strings.Contains(got, `"sequence_number":8`) {
+		t.Errorf("injected event not numbered after 7:\n%s", got)
 	}
 }

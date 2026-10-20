@@ -191,7 +191,12 @@ func (h *Handler) writeRewrittenResponses(w http.ResponseWriter, r *http.Request
 	}
 	rewritten, err := wire.RewriteResponsesBody(names, body)
 	if err != nil {
+		// The upstream answered 2xx and was billed for this body; the 502 is
+		// Routeweft's refusal, not an upstream error, so it is recorded with the
+		// usage the upstream reported to keep spend reconcilable.
 		h.writeError(w, 502, wire.ErrCustomToolArguments.Error(), err.Error())
+		usage, _ := shared.ParseUsage(provider.Protocol, body)
+		h.emitOutcome(r, provider, 502, false, usage, started)
 		return
 	}
 	copyResponseHeaders(w.Header(), response.Header)
