@@ -196,7 +196,16 @@ func (s *RuntimeSnapshot) AccountProvider(requested, account, source string, can
 		return routing.ProviderRef{}, false
 	}
 	config, ok := s.providers[account]
-	if !ok || config.node.ProviderID != model.ProviderID || !config.account.Enabled || len(config.node.Transports) == 0 || config.node.BaseURL == "" {
+	// A node with no base URL of its own (Azure OpenAI) takes the one the
+	// connection names; a connection that names none is not selectable.
+	baseURL := config.node.BaseURL
+	if baseURL == "" {
+		baseURL = config.metadata.Settings.AzureEndpoint // azure.js:9
+		if baseURL == "" {
+			baseURL = config.metadata.Settings.BaseURL
+		}
+	}
+	if !ok || config.node.ProviderID != model.ProviderID || !config.account.Enabled || len(config.node.Transports) == 0 || baseURL == "" {
 		return routing.ProviderRef{}, false
 	}
 	protocol := config.node.Transports[0]
@@ -224,7 +233,7 @@ func (s *RuntimeSnapshot) AccountProvider(requested, account, source string, can
 			return routing.ProviderRef{}, false
 		}
 	}
-	return routing.ProviderRef{Connection: config.metadata, ProviderID: model.ProviderID, ConnectionID: account, BaseURL: config.node.BaseURL, Protocol: protocol, UpstreamModel: model.ID, Endpoint: endpoint}, true
+	return routing.ProviderRef{Connection: config.metadata, ProviderID: model.ProviderID, ConnectionID: account, BaseURL: baseURL, Protocol: protocol, UpstreamModel: model.ID, Endpoint: endpoint}, true
 }
 
 func (s *RuntimeSnapshot) compileServingIndexes() {

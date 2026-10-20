@@ -413,22 +413,32 @@ func (h *Handler) newUpstreamRequest(r *http.Request, snapshot *runtime.RuntimeS
 	if h.opts.AllowPrivateUpstreams {
 		validate = transport.ValidateTrustedLocalURL
 	}
-	base, err := validate(provider.BaseURL)
+	target, err := wire.ResolveTarget(provider, endpoint)
 	if err != nil {
 		return nil, err
 	}
-	if endpoint != "" {
-		if strings.HasPrefix(endpoint, "/") || strings.ContainsAny(endpoint, "?#") {
+	base, err := validate(target.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	if target.Endpoint != "" {
+		if strings.HasPrefix(target.Endpoint, "/") || strings.ContainsAny(target.Endpoint, "?#") {
 			return nil, errors.New("provider endpoint must be a relative path without query or fragment")
 		}
-		for _, segment := range strings.Split(endpoint, "/") {
+		for _, segment := range strings.Split(target.Endpoint, "/") {
 			if segment == "." || segment == ".." {
 				return nil, errors.New("provider endpoint must not traverse paths")
 			}
 		}
-		base.Path = strings.TrimRight(base.Path, "/") + "/" + endpoint
+		base.Path = strings.TrimRight(base.Path, "/") + "/" + target.Endpoint
 	}
 	base.RawPath = ""
+	if target.Query != "" {
+		// The provider's own query: a declared suffix such as ?beta=true, or
+		// Azure's api-version. A base URL cannot carry one (the validator
+		// rejects it), so nothing here can be smuggled in from configuration.
+		base.RawQuery = target.Query
+	}
 	body = h.finalBody(r, snapshot, provider.Protocol, body)
 	// Registry quirks are provider normalization, step 8 of AGENTS §6: they run on
 	// what the savers and prompt-cache anchoring (steps 2-7) left, so nothing after

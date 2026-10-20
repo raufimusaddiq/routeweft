@@ -5,6 +5,8 @@
 // never included here; the dispatch layer injects them.
 package oauthheaders
 
+import "strings"
+
 // iFlow identifies as its CLI on every request.
 const (
 	iflowUserAgent = "iFlow-Cli"
@@ -67,5 +69,22 @@ func Headers(providerID string) map[string]string {
 		return map[string]string{"User-Agent": CodeBuddyIntlUserAgent}
 	default:
 		return nil
+	}
+}
+
+// KimiDevice is the X-Msh device identity every Kimi request carries
+// (open-sse/config/appConstants.js:215-244 buildKimiHeaders). The device id is the
+// connection's own and must stay stable for its OAuth session; an API-key
+// connection has none and sends the shared placeholder. The identity is
+// Routeweft's, not the reference's "9router", and the host name and OS are not
+// disclosed: the same three headers onboarding and usage already send.
+func KimiDevice(deviceID string) map[string]string {
+	if strings.TrimSpace(deviceID) == "" {
+		deviceID = "routeweft"
+	}
+	return map[string]string{
+		"X-Msh-Platform":    "routeweft",
+		"X-Msh-Device-Id":   strings.TrimSpace(deviceID),
+		"X-Msh-Device-Name": "routeweft",
 	}
 }

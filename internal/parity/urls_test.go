@@ -23,8 +23,7 @@ var excludedURLProviders = map[string]string{
 // the list only shrinks (ratchet).
 var trackedURLGaps = map[string]string{
 	// Missing wires, not URL defects: Routeweft declares no such transport.
-	"kimi/openai-responses": "#115 cluster B: kimi serves Responses natively at /coding/v1/responses; transport not declared",
-	"qoder/openai-chat":     "#115 cluster G: qoder has its own envelope wire; the registry URL is not an OpenAI Chat endpoint",
+	"qoder/openai-chat": "#115 cluster G: qoder has its own envelope wire; the registry URL is not an OpenAI Chat endpoint",
 	// The registry baseUrl is only a base; the oracle executor builds the sent URL.
 	"opencode/openai-chat":       "#115 cluster B: executor builds the URL (opencode.js:16)",
 	"vertex-partner/openai-chat": "#115 cluster C: executor builds the URL (vertex-partner.js:21)",

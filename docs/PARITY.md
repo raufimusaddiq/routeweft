@@ -931,6 +931,31 @@ Divergences, all so no instruction or tool pairing is silently broken or lost:
 
 Every other `input` shape (empty array, non-message items, object, number) is byte-identical.
 
+### 6.5 Provider headers, URLs and chat-body quirks (#115 PR-C)
+
+Applied by `internal/providers/wire` (Target, header and Finalize hooks). Pin `1c3b9f47837d42ea64992063309064af755a14a3`.
+
+| Behaviour | Providers | Pin | Status |
+| --- | --- | --- | --- |
+| `{azureEndpoint}/openai/deployments/{dep}/chat/completions?api-version=`, `api-key` header, `OpenAI-Organization` | azure | `executors/azure.js:8-52` | ported; base URL comes from the connection (`runtime/providers.go`) |
+| Region host and `…/anthropic/v1/messages` | xiaomi-tokenplan | `executors/xiaomi-tokenplan.js:13-19`, `config/providers.js:13-19` | ported |
+| `?beta=true` on the Messages transport | claude, glm, kimi, minimax, minimax-cn | `registry/{claude:23,glm:21,42,kimi:29,51,minimax:21,52,minimax-cn:21,52}.js`, `executors/default.js:154` | ported |
+| `X-Msh-*` device headers on every transport | kimi | `executors/default.js:66`, `registry/kimi.js:38,46,53,59` | ported with Routeweft identity |
+| Responses transport (`/coding/v1/responses`) | kimi | `registry/kimi.js:55-59` | ported (was a tracked URL gap) |
+| `X-Kilocode-OrganizationID` | kilocode | `executors/default.js:68`, `registry/kilocode.js:24-26` | ported (`orgId` is now projected) |
+| `max_completion_tokens`, `reasoning_effort:"none"`, content-part sanitising on /chat/completions | github | `executors/github.js:56-107,144-147` | ported |
+| Gateway field drops, `system` merge, artifact stripping | kimchi | `executors/kimchi.js:4-120` | ported |
+| Claude models to the Messages endpoint, `/responses` fallback after a 400 | github | `executors/github.js:126-165,255-297` | **not in this PR**: it selects the transport by model name and retries across wires |
+| `User-Agent: kimchi/0.1.50`, `x-opencode-client`, OpenRouter `HTTP-Referer`/`X-Title` | kimchi, opencode, openrouter, api-airforce | `registry/kimchi.js:22`, `opencode.js:17`, `openrouter.js:23`, `api-airforce.js:28` | **not shipped / not in this PR**: product identities and attributions that are not Routeweft's |
+
+Divergences, each so a credential or an instruction is not sent or dropped without the operator knowing:
+
+- **azure.** The pin falls back to `AZURE_ENDPOINT` and then `https://api.openai.com` (`azure.js:9-11`), which would send an Azure key to OpenAI; Routeweft has no ambient environment config and refuses a connection with no endpoint. The deployment name is a path segment and must look like a name (`[A-Za-z0-9][A-Za-z0-9._-]*`, no `..`); the pin splices it in raw (`azure.js:23`).
+- **kimi.** The pin sends `X-Msh-Platform: 9router`, `X-Msh-Version`, the host name and the OS (`appConstants.js:215-244`). Routeweft sends `X-Msh-Platform: routeweft`, the connection's device id and `X-Msh-Device-Name: routeweft`, the same three headers onboarding and usage already send; host and OS are not disclosed. An API-key connection has no device id and sends the placeholder `routeweft` where the pin invents `kimi-<timestamp>` per request.
+- **github.** When a client sends both `max_tokens` and `max_completion_tokens`, the pin overwrites the explicit one (`github.js:100-103`); Routeweft keeps it.
+- **kimchi.** The pin consults live Kimchi model metadata to decide whether a model is Anthropic-backed (`kimchi.js:89-93`); Routeweft uses the model name alone. When a top-level `system` cannot be merged (no messages array, a first system message whose content is neither string nor array, or a `system` that is not a string or text parts) the body is left as received, where the pin deletes the `system` text anyway (`kimchi.js:104-108`).
+- **xiaomi-tokenplan.** An unknown region falls back to the default region, as in the pin; a connection whose base URL is not an official Xiaomi host keeps its own base.
+
 ### Production-incident drift explicitly dispositioned
 
 | #73 incident | Pinned source / Routeweft evidence | Status / decision |

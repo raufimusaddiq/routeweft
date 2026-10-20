@@ -13,6 +13,7 @@ type ProviderSettings struct {
 	BaseURL, AzureEndpoint, APIVersion, Deployment, Organization        string
 	Region, WorkspaceID, DeviceID, AgentID                              string
 	Email, UserID, SystemID, OrganizationID, DefaultOrganizationID, UID string
+	OrgID                                                               string // Kilo Code organization (stored as orgId)
 }
 
 // ConnectionMetadata contains immutable account configuration needed by provider wires.

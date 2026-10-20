@@ -157,9 +157,10 @@ func OAuthSpecialized() []Spec {
 		}, ModelCatalog: CatalogStatic, ReportsUsage: true},
 		{ID: "gitlab", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://gitlab.com", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "api/v4/chat/completions"}, ModelCatalog: CatalogStatic},
 		{ID: "iflow", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, AuthModes: []AuthKind{AuthOAuth, AuthCookie}, DefaultBaseURL: "https://apis.iflow.cn/v1", ModelCatalog: CatalogStatic},
-		{ID: "kimi", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.kimi.com/coding/v1", TransportEndpoints: map[Protocol]string{
-			TransportOpenAIChat: "chat/completions",
-			TransportAnthropic:  "messages",
+		{ID: "kimi", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic, TransportOpenAIResponses}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.kimi.com/coding/v1", TransportEndpoints: map[Protocol]string{
+			TransportOpenAIChat:      "chat/completions",
+			TransportAnthropic:       "messages",
+			TransportOpenAIResponses: "responses",
 		}, ModelCatalog: CatalogStatic, ReportsUsage: true},
 		{ID: "xiaomi-mimo", Transports: []Protocol{TransportOpenAIChat, TransportAnthropic}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api.xiaomimimo.com", TransportEndpoints: map[Protocol]string{
 			TransportOpenAIChat: "v1/chat/completions",
