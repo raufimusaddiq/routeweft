@@ -43,27 +43,6 @@ var codebuddyIntl = Hook{
 	ClassifyError:       codebuddyFrequencyLimit,
 }
 
-// RestoreStreamOptions keeps CodeBuddy from inheriting a translator's usage opt-in.
-func RestoreStreamOptions(provider routing.ProviderRef, translated, original []byte) []byte {
-	if !ForcesStream(provider.ProviderID) || provider.Protocol != openaiadapter.ChatProtocol {
-		return translated
-	}
-	var source, target Body
-	if json.Unmarshal(original, &source) != nil || json.Unmarshal(translated, &target) != nil || target == nil {
-		return translated
-	}
-	if options, present := source["stream_options"]; present {
-		target["stream_options"] = options
-	} else {
-		delete(target, "stream_options")
-	}
-	encoded, err := json.Marshal(target)
-	if err != nil {
-		return translated
-	}
-	return encoded
-}
-
 // codebuddyStream: the gateway rejects a non-stream request (HTTP 400, code
 // 11101 "Non-stream chat request is currently not supported"), so stream is
 // true whatever the client sent or omitted (codebuddy-cn.js:20, intl:19). The
