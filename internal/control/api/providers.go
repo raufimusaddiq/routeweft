@@ -536,11 +536,10 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 			endpoint = "messages"
 		}
 	}
-	// The probe goes where a request would: the same base and target rules serving
-	// uses (wire.NodeBase, wire.ResolveTarget), so a connection that probes fine
-	// is a connection that serves, and a probe never tests a different URL.
+	// Probe the first serving target through the shared URL rules.
+	// Probes do not exercise serving's response-driven Kiro surface fallback.
 	route := probeRef(node, connection, spec, transportName, modelID, "")
-	target, err := wire.ResolveTarget(route, nativeEndpointPath(route.BaseURL, transportName, endpoint))
+	target, err := wire.ResolveTarget(route, nativeEndpointPath(route.BaseURL, transportName, endpoint), 0)
 	if err != nil {
 		var refused *wire.TargetError
 		if errors.As(err, &refused) {
@@ -565,9 +564,7 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 		result.Error = "model probe request could not be encoded"
 		return result
 	}
-	// The probe sends the body serving would: the provider's registry quirks apply
-	// to it too (github's max_completion_tokens, kimchi, deepseek, minimax...), so
-	// a connection that probes fine is one that serves.
+	// Apply serving's body quirks to the probe too (github, kimchi, deepseek, minimax...).
 	encoded = wire.FinalizeBody(route, encoded)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, parsed.String(), bytes.NewReader(encoded))
 	if err != nil {
