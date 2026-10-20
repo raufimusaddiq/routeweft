@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,12 +39,15 @@ type Registry struct {
 	entries map[string]*entry
 	// resolve supplies the refresh implementation for connections registered
 	// without one, so every registration path refreshes the same way.
-	resolve func(Connection) Exchanger
+	resolve        func(Connection) Exchanger
+	credentialName func(Connection) (name, expiryName string)
 }
 
 type entry struct {
-	connection Connection
-	exchanger  Exchanger
+	connection           Connection
+	credentialName       string
+	credentialExpiryName string
+	exchanger            Exchanger
 
 	// installMu serializes every credential install (durable write + memory
 	// publish) for one connection. The generation check and its durable write
@@ -90,6 +94,13 @@ func (r *Registry) SetExchangerResolver(resolve func(Connection) Exchanger) {
 	r.resolve = resolve
 }
 
+// SetCredentialNameResolver installs token/expiry field names before connections are registered.
+func (r *Registry) SetCredentialNameResolver(resolve func(Connection) (name, expiryName string)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.credentialName = resolve
+}
+
 // Register seeds one connection into memory-first state. An already-registered
 // connection is replaced, which is how an import or edit installs new material.
 func (r *Registry) Register(connection Connection, exchanger Exchanger) {
@@ -98,10 +109,16 @@ func (r *Registry) Register(connection Connection, exchanger Exchanger) {
 	if exchanger == nil && r.resolve != nil {
 		exchanger = r.resolve(connection)
 	}
+	name, expiryName := "", ""
+	if r.credentialName != nil {
+		name, expiryName = r.credentialName(connection)
+	}
 	if existing, ok := r.entries[connection.ID]; ok {
 		existing.installMu.Lock()
 		existing.mu.Lock()
 		existing.connection = connection
+		existing.credentialName = name
+		existing.credentialExpiryName = expiryName
 		existing.current = connection.Secret
 		existing.seeded = true
 		existing.exchanger = exchanger
@@ -110,7 +127,7 @@ func (r *Registry) Register(connection Connection, exchanger Exchanger) {
 		existing.installMu.Unlock()
 		return
 	}
-	r.entries[connection.ID] = &entry{connection: connection, exchanger: exchanger, current: connection.Secret, seeded: true, generation: 1}
+	r.entries[connection.ID] = &entry{connection: connection, credentialName: name, credentialExpiryName: expiryName, exchanger: exchanger, current: connection.Secret, seeded: true, generation: 1}
 }
 
 // Forget drops one connection's in-memory credential state.
@@ -138,9 +155,21 @@ func (r *Registry) Load(ctx context.Context, providerID string) ([]Connection, e
 // Credential returns a currently valid access token for one connection,
 // refreshing once under singleflight when needed.
 func (r *Registry) Credential(ctx context.Context, connectionID string) (string, error) {
+	current, err := r.lookup(connectionID)
+	if err != nil {
+		return "", err
+	}
+	current.mu.Lock()
+	name := current.credentialName
+	current.mu.Unlock()
 	secret, err := r.Secret(ctx, connectionID)
 	if err != nil {
 		return "", err
+	}
+	if name != "" {
+		if token := secret.ProviderData[name]; token != "" {
+			return token, nil
+		}
 	}
 	if secret.AccessToken != "" {
 		return secret.AccessToken, nil
@@ -336,8 +365,16 @@ func (r *Registry) validLocked(current *entry) bool {
 	if secret.AccessToken == "" && secret.Cookie == "" {
 		return false
 	}
-	if secret.Expiry.IsZero() {
+	expiry := secret.Expiry
+	if current.credentialExpiryName != "" {
+		seconds, err := strconv.ParseInt(secret.ProviderData[current.credentialExpiryName], 10, 64)
+		if secret.ProviderData[current.credentialName] == "" || err != nil || seconds <= 0 {
+			return false
+		}
+		expiry = time.Unix(seconds, 0)
+	}
+	if expiry.IsZero() {
 		return true
 	}
-	return r.now().Add(r.lead).Before(secret.Expiry)
+	return r.now().Add(r.lead).Before(expiry)
 }

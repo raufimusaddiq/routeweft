@@ -3,6 +3,7 @@ package credentials
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -222,5 +223,148 @@ func TestLoadSeedsProviderConnections(t *testing.T) {
 	credential, err := registry.Credential(ctx, connections[0].ID)
 	if err != nil || !strings.HasPrefix(credential, "k-") {
 		t.Fatalf("credential=%q err=%v", credential, err)
+	}
+}
+
+func TestNamedCredentialSelectionAfterRefresh(t *testing.T) {
+	ctx := context.Background()
+	store, _ := testStore(t)
+	node := seedNode(t, store, "fixture-provider")
+	connection, err := store.PutConnection(ctx, Connection{NodeID: node.ID, ProviderID: "fixture-provider", AuthKind: AuthOAuth, Name: "primary", Identity: "fixture", Secret: Secret{AccessToken: "fixture-access", Expiry: time.Now().Add(-time.Hour), ProviderData: map[string]string{"wireToken": "fixture-stale"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := NewRegistry(store, nil)
+	registry.SetCredentialNameResolver(func(c Connection) (string, string) {
+		if c.ProviderID != "fixture-provider" {
+			t.Fatal("wrong provider identity")
+		}
+		return "wireToken", ""
+	})
+	registry.Register(connection, func(_ context.Context, current Secret) (Secret, error) {
+		current.ProviderData = map[string]string{"wireToken": "fixture-fresh"}
+		current.Expiry = time.Now().Add(time.Hour)
+		return current, nil
+	})
+	got, err := registry.Credential(ctx, connection.ID)
+	if err != nil || got != "fixture-fresh" {
+		t.Fatalf("named credential not selected after refresh: %v", err)
+	}
+	secret, err := registry.Secret(ctx, connection.ID)
+	if err != nil || secret.AccessToken != "fixture-access" {
+		t.Fatalf("primary credential changed: %v", err)
+	}
+	for _, tc := range []struct {
+		secret Secret
+		want   string
+	}{
+		{Secret{AccessToken: "fallback", ProviderData: map[string]string{"wireToken": ""}}, "fallback"},
+		{Secret{AccessToken: "fallback"}, "fallback"},
+		{Secret{Cookie: "fixture-cookie"}, "fixture-cookie"},
+		{Secret{AccessToken: "fallback", ProviderData: map[string]string{"wireToken": "fixture-imported"}}, "fixture-imported"},
+	} {
+		if err := registry.Import(ctx, connection.ID, connection.Identity, tc.secret); err != nil {
+			t.Fatal(err)
+		}
+		got, err := registry.Credential(ctx, connection.ID)
+		if err != nil || got != tc.want {
+			t.Fatalf("credential selection failed: %v", err)
+		}
+	}
+}
+
+func TestNamedCredentialExpiryRefreshesSingleflight(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+	future := fmt.Sprint(now.Add(time.Hour).Unix())
+	for _, tc := range []struct {
+		name, token, expires string
+		refresh              bool
+	}{
+		{"fresh", "fixture-old", future, false},
+		{"near expiry", "fixture-old", fmt.Sprint(now.Add(30 * time.Second).Unix()), true},
+		{"refresh boundary", "fixture-old", fmt.Sprint(now.Add(RefreshLead).Unix()), true},
+		{"expired", "fixture-old", fmt.Sprint(now.Add(-time.Second).Unix()), true},
+		{"missing expiry", "fixture-old", "", true},
+		{"invalid expiry", "fixture-old", "invalid", true},
+		{"zero expiry", "fixture-old", "0", true},
+		{"missing token", "", future, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, _ := testStore(t)
+			node := seedNode(t, store, "fixture-provider")
+			connection, err := store.PutConnection(ctx, Connection{
+				NodeID: node.ID, ProviderID: "fixture-provider", Name: "primary", Identity: "fixture", AuthKind: AuthOAuth,
+				Secret: Secret{AccessToken: "fixture-primary", ProviderData: map[string]string{"wireToken": tc.token, "wireTokenExpiresAt": tc.expires}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			registry := NewRegistry(store, func() time.Time { return now })
+			registry.SetCredentialNameResolver(func(Connection) (string, string) { return "wireToken", "wireTokenExpiresAt" })
+			var remints atomic.Int32
+			registry.Register(connection, func(_ context.Context, current Secret) (Secret, error) {
+				remints.Add(1)
+				current.ProviderData = map[string]string{"wireToken": "fixture-fresh", "wireTokenExpiresAt": future}
+				return current, nil
+			})
+			var wg sync.WaitGroup
+			results := make([]string, 8)
+			failures := make([]error, len(results))
+			for i := range results {
+				wg.Add(1)
+				go func(i int) { defer wg.Done(); results[i], failures[i] = registry.Credential(ctx, connection.ID) }(i)
+			}
+			wg.Wait()
+			want, calls := tc.token, int32(0)
+			if tc.refresh {
+				want, calls = "fixture-fresh", 1
+			}
+			if remints.Load() != calls {
+				t.Fatalf("remints=%d, want %d", remints.Load(), calls)
+			}
+			for i := range results {
+				if failures[i] != nil || results[i] != want {
+					t.Fatalf("caller %d selected the wrong credential: %v", i, failures[i])
+				}
+			}
+			saved, err := store.GetConnection(ctx, connection.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if saved.Secret.ProviderData["wireToken"] != want || saved.Secret.AccessToken != "fixture-primary" || !saved.Secret.Expiry.IsZero() {
+				t.Fatal("named-token renewal did not preserve the primary token and its absent expiry")
+			}
+		})
+	}
+}
+
+func BenchmarkCredential(b *testing.B) {
+	now := time.Now()
+	for _, named := range []bool{false, true} {
+		name := "primary"
+		if named {
+			name = "named-expiry"
+		}
+		b.Run(name, func(b *testing.B) {
+			registry := NewRegistry(nil, func() time.Time { return now })
+			want := "fixture-primary"
+			if named {
+				registry.SetCredentialNameResolver(func(Connection) (string, string) { return "wireToken", "wireTokenExpiresAt" })
+				want = "fixture-wire"
+			}
+			registry.Register(Connection{ID: "fixture", Secret: Secret{
+				AccessToken:  "fixture-primary",
+				ProviderData: map[string]string{"wireToken": "fixture-wire", "wireTokenExpiresAt": fmt.Sprint(now.Add(time.Hour).Unix())},
+			}}, nil)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				got, err := registry.Credential(context.Background(), "fixture")
+				if err != nil || got != want {
+					b.Fatal("credential selection failed", err)
+				}
+			}
+		})
 	}
 }
