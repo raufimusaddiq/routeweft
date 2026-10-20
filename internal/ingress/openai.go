@@ -149,6 +149,19 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 		h.writeOpenAITranslation(w, r, response, provider, translation, stream, started)
 		return
 	}
+	if responses != nil && translation.Response == nil && response.StatusCode >= 200 && response.StatusCode < 300 {
+		// A provider whose Responses endpoint takes function tools only answers a
+		// converted custom tool with a function_call; the client declared a custom
+		// tool and gets a custom_tool_call back.
+		if names := wire.ResponsesCustomToolNames(provider.ProviderID, responses.Raw); len(names) > 0 {
+			if responseIsSSE(response, stream) {
+				response.Body = wire.ResponsesStream(names, response.Body)
+			} else {
+				h.writeRewrittenResponses(w, r, response, provider, names, started)
+				return
+			}
+		}
+	}
 	if !stream && response.StatusCode >= 200 && response.StatusCode < 300 && wire.UnwrapResponse(provider.ProviderID) != nil {
 		h.writeUnwrapped(w, r, response, provider, started)
 		return
@@ -161,6 +174,32 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 		return
 	}
 	h.relayNative(w, r, response, provider, source, stream, started)
+}
+
+// writeRewrittenResponses relays a non-stream Responses body with the function_call
+// items of converted custom tools turned back into custom_tool_call items. A call
+// whose arguments cannot be turned into freeform input is refused with 502 and the
+// code wire.ErrCustomToolArguments, never relayed as a wrong custom call.
+func (h *Handler) writeRewrittenResponses(w http.ResponseWriter, r *http.Request, response *http.Response, provider routing.ProviderRef, names map[string]bool, started time.Time) {
+	body, err := io.ReadAll(io.LimitReader(response.Body, openaiadapter.MaxTranslatedResponseBytes+1))
+	if r.Context().Err() != nil {
+		return
+	}
+	if err != nil || len(body) > openaiadapter.MaxTranslatedResponseBytes {
+		h.writeError(w, 502, "upstream_response_invalid", "upstream response could not be read")
+		return
+	}
+	rewritten, err := wire.RewriteResponsesBody(names, body)
+	if err != nil {
+		h.writeError(w, 502, wire.ErrCustomToolArguments.Error(), err.Error())
+		return
+	}
+	copyResponseHeaders(w.Header(), response.Header)
+	w.Header().Del("Content-Length")
+	w.WriteHeader(response.StatusCode)
+	_, _ = w.Write(rewritten)
+	usage, _ := shared.ParseUsage(provider.Protocol, body)
+	h.emitOutcome(r, provider, response.StatusCode, false, usage, started)
 }
 
 // writeUnwrapped relays a non-stream response with the provider's gateway

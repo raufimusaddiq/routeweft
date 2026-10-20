@@ -69,6 +69,11 @@ type Hook struct {
 	// StripEmptyToolCalls removes an empty tool_calls array from the deltas of a
 	// Chat stream relayed to the client (ResponseStream).
 	StripEmptyToolCalls bool
+	// ResponsesFunctionToolsOnly marks a Responses endpoint that takes function
+	// tools only (kenari): Finalize declares custom tools as functions and the
+	// response is rewritten back (ResponsesCustomToolNames, ResponsesStream,
+	// RewriteResponsesBody).
+	ResponsesFunctionToolsOnly bool
 	// ClassifyError reads a provider's own error body on a non-2xx response and
 	// reports how Routeweft should account for it. It never changes the status or
 	// body the client sees.
@@ -92,7 +97,7 @@ var hooks = map[string]Hook{
 	"minimax":          minimaxHook,
 	"minimax-cn":       minimaxHook,
 	"deepseek":         {Finalize: supportedToolTypes("web_search_20250305", "web_search_20260209")},
-	"kenari":           {Finalize: foldResponsesSystem},
+	"kenari":           {Finalize: chain(responsesFunctionToolsOnly, foldResponsesSystem), ResponsesFunctionToolsOnly: true},
 	"azure":            {NoOpenAIBearer: true, OpenAIHeaders: azureHeaders, Target: azureTarget, Unlisted: true},
 	"xiaomi-tokenplan": {Target: tokenplanTarget, Base: tokenplanBase},
 	"glm":              {Target: betaQuery},
