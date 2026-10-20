@@ -152,8 +152,16 @@ func chatRequestToCloudCode(body map[string]any, options RequestOptions, cloud C
 	if err := json.Unmarshal(encoded, &fields); err != nil {
 		return nil, nil, err
 	}
+	// One list for both jobs: cloudCodeInner is the set of keys the Gemini body
+	// may carry, so the copy cannot fall behind it. The four decided below are
+	// set there instead (their value is checked, not copied), and
+	// system_instruction is an input alias the body names systemInstruction.
 	request := map[string]any{}
-	for _, key := range []string{"contents", "systemInstruction", "tools"} {
+	for _, key := range cloudCodeInner {
+		switch key {
+		case "generationConfig", "toolConfig", "safetySettings", "system_instruction":
+			continue
+		}
 		if raw, ok := fields[key]; ok {
 			request[key] = raw
 		}

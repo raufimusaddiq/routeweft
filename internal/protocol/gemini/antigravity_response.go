@@ -59,6 +59,10 @@ func (c *antigravityCall) arguments() (map[string]any, error) {
 		return map[string]any{}, nil
 	}
 	decoder := json.NewDecoder(strings.NewReader(text))
+	// Numbers stay as written: an argument above 2^53 (an id, a timestamp) must
+	// reach the client byte for byte, as every other wire decoder does
+	// (concerns/wire.go, kiro/response.go, chunks.go).
+	decoder.UseNumber()
 	var value any
 	if err := decoder.Decode(&value); err != nil {
 		return nil, fmt.Errorf("the arguments of tool call %q are not valid JSON", c.name)
@@ -197,7 +201,18 @@ func (s *antigravityStream) consume(chunk map[string]any) ([]any, error) {
 			return nil, errors.New("delta images is not a list")
 		}
 		for _, raw := range images {
-			url := concerns.Text(concerns.Object(concerns.Object(raw)["image_url"])["url"])
+			image := concerns.Object(raw)
+			if image == nil {
+				return nil, errors.New("a generated image is not an object")
+			}
+			link := concerns.Object(image["image_url"])
+			if link == nil {
+				return nil, errors.New("a generated image has no image_url object")
+			}
+			url, isText := link["url"].(string)
+			if !isText {
+				return nil, errors.New("a generated image url is not text")
+			}
 			mediaType, data, ok := concerns.ParseDataURI(url)
 			if !ok {
 				return nil, errors.New("a generated image is not a data URI")

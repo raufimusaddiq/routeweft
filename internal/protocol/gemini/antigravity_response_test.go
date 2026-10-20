@@ -196,6 +196,12 @@ func TestAntigravityToolArgumentsCrossProduct(t *testing.T) {
 	if _, _, err := toAntigravity(t, context.Background(), chatSSE(chunk(`{"tool_calls":"x"}`, "stop"), `[DONE]`)); err == nil {
 		t.Error("a tool_calls string was served")
 	}
+	// Numbers above 2^53 stay as written. Asserted on the wire text, because the
+	// test's own decoder would round them too.
+	big := chatSSE(chunk(`{"tool_calls":[{"index":0,"id":"c","function":{"name":"f","arguments":"{\"id\":1234567890123456789,\"ts\":1700000000123456780}"}}]}`, "tool_calls"), `[DONE]`)
+	if _, raw, err := toAntigravity(t, context.Background(), big); err != nil || !strings.Contains(raw, `"args":{"id":1234567890123456789,"ts":1700000000123456780}`) {
+		t.Errorf("big integers: %v %s", err, raw)
+	}
 }
 
 // Usage that arrives after the finish chunk (stream_options) was lost at the pin
@@ -295,6 +301,9 @@ func TestAntigravityStreamFailures(t *testing.T) {
 		"content object":  chatSSE(chunk(`{"content":{}}`, "stop"), `[DONE]`),
 		"refusal":         chatSSE(chunk(`{"refusal":"no"}`, "stop"), `[DONE]`),
 		"bad image":       chatSSE(chunk(`{"images":[{"image_url":{"url":"https://x/y.png"}}]}`, "stop"), `[DONE]`),
+		"image string":    chatSSE(chunk(`{"images":["x"]}`, "stop"), `[DONE]`),
+		"image no url":    chatSSE(chunk(`{"images":[{"image_url":"data:image/png;base64,QUJD"}]}`, "stop"), `[DONE]`),
+		"image url type":  chatSSE(chunk(`{"images":[{"image_url":{"url":5}}]}`, "stop"), `[DONE]`),
 		"after finish":    chatSSE(chunk(`{}`, "stop"), chunk(`{"content":"late"}`, ""), `[DONE]`),
 		"text and finish": chatSSE(chunk(`{}`, "stop"), chunk(`{"content":"late"}`, "stop"), `[DONE]`),
 		"late tool":       chatSSE(chunk(`{"content":"x"}`, ""), chunk(`{}`, "stop"), chunk(`{"tool_calls":[{"index":0,"id":"late","function":{"name":"f","arguments":"{}"}}]}`, ""), `[DONE]`),
@@ -318,6 +327,18 @@ func TestAntigravityStreamFailures(t *testing.T) {
 		}
 		if strings.Contains(raw, "finishReason") || strings.Contains(raw, "[DONE]") {
 			t.Errorf("%s: a failed stream looks finished: %s", name, raw)
+		}
+	}
+	// A malformed image names the shape it found, not the data URI it did not.
+	for raw, want := range map[string]string{
+		`{"images":["x"]}`: "a generated image is not an object",
+		`{"images":[{"image_url":"data:image/png;base64,QUJD"}]}`: "a generated image has no image_url object",
+		`{"images":[{"image_url":{"url":5}}]}`:                    "a generated image url is not text",
+		`{"images":[{"image_url":{"url":"https://x/y.png"}}]}`:    "a generated image is not a data URI",
+	} {
+		_, _, err := toAntigravity(t, context.Background(), chatSSE(chunk(raw, "stop"), `[DONE]`))
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v, want %q", raw, err, want)
 		}
 	}
 	// The upstream's own error object reaches the client as it was sent.
