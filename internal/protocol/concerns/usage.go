@@ -1,5 +1,13 @@
 package concerns
 
+import (
+	"encoding/json"
+	"math"
+	"math/big"
+	"strconv"
+	"strings"
+)
+
 // Usage is one request's token counts in the hub convention: Prompt is
 // cache-inclusive, Cached and CacheCreation are subsets of it, and Reasoning is
 // a subset of Completion (concerns/usage.js:1-14; utils/usageTracking.js:147-210).
@@ -125,4 +133,77 @@ func GeminiUsage(raw map[string]any) (usage Usage, observed bool) {
 		total = prompt + completion
 	}
 	return Usage{Prompt: prompt, Completion: completion, Total: total, Cached: Int(raw["cachedContentTokenCount"]), Reasoning: thoughts}, true
+}
+
+// KiroUsage reads measured counts with cache-exclusive inputTokens (PARITY 6.8).
+// Explicit zeros survive; invalid, conflicting or overflowing counts are unobserved.
+func KiroUsage(raw map[string]any) (usage Usage, observed bool) {
+	measured := false
+	first := func(names ...string) (int64, bool) {
+		var count int64
+		seen := false
+		for _, name := range names {
+			value := raw[name]
+			if value == nil {
+				continue
+			}
+			var next int64
+			switch v := value.(type) {
+			case json.Number:
+				parsed, err := v.Int64()
+				if err != nil {
+					// Bound exact decimal parsing before allocating powers of ten.
+					if len(v) > 128 {
+						return 0, false
+					}
+					if _, exponent, found := strings.Cut(strings.ToLower(string(v)), "e"); found {
+						e, err := strconv.Atoi(exponent)
+						if err != nil || e < -128 || e > 128 {
+							return 0, false
+						}
+					}
+					exact, ok := new(big.Rat).SetString(string(v))
+					if !ok || !exact.IsInt() || !exact.Num().IsInt64() {
+						return 0, false
+					}
+					parsed = exact.Num().Int64()
+				}
+				next = parsed
+			case int64:
+				next = v
+			case int:
+				next = int64(v)
+			case float64:
+				if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v >= math.Exp2(63) || math.Trunc(v) != v {
+					return 0, false
+				}
+				next = int64(v)
+			default:
+				return 0, false
+			}
+			if next < 0 || (seen && next != count) {
+				return 0, false
+			}
+			count, seen, measured = next, true, true
+		}
+		return count, true
+	}
+	input, okInput := first("inputTokens")
+	output, okOutput := first("outputTokens")
+	read, okRead := first("cacheReadInputTokens", "cache_read_input_tokens")
+	create, okCreate := first("cacheCreationInputTokens", "cache_creation_input_tokens")
+	if !okInput || !okOutput || !okRead || !okCreate || !measured {
+		return Usage{}, false
+	}
+	remaining := int64(math.MaxInt64)
+	for _, count := range []int64{input, output, read, create} {
+		if count > remaining {
+			return Usage{}, false
+		}
+		remaining -= count
+	}
+	return ClaudeUsage(map[string]any{
+		"input_tokens": input, "output_tokens": output,
+		"cache_read_input_tokens": read, "cache_creation_input_tokens": create,
+	}), true
 }
