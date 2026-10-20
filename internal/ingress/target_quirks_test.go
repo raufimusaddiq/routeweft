@@ -176,6 +176,8 @@ func TestChatBodyQuirksReachTheUpstream(t *testing.T) {
 	cases := []struct{ name, provider, body, want string }{
 		{"github gpt-5", "github", `{"model":"gpt-5","max_tokens":9,"reasoning_effort":"none","messages":[{"role":"user","content":[{"type":"tool_result","content":"R"}]}]}`,
 			`{"model":"gpt-5","max_completion_tokens":9,"messages":[{"role":"user","content":[{"type":"text","text":"R"}]}]}`},
+		{"kimchi, system that cannot merge", "kimchi", `{"model":"kimi-k2","system":"S","top_k":1,"thinking":{},"messages":[{"role":"system","content":null},{"role":"user","content":"U","cache_control":{"type":"ephemeral"}}]}`,
+			`{"model":"kimi-k2","system":"S","messages":[{"role":"system","content":null},{"role":"user","content":"U"}]}`},
 		{"kimchi", "kimchi", `{"model":"kimi-k2.7","system":"S","top_k":1,"stop_sequences":["x"],"messages":[{"role":"user","content":"U","cache_control":{"type":"ephemeral"}}]}`,
 			`{"model":"kimi-k2.7","messages":[{"role":"system","content":"S"},{"role":"user","content":"U"}]}`},
 	}

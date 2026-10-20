@@ -136,7 +136,7 @@ func TestTokenplanTargetCrossProduct(t *testing.T) {
 						t.Fatalf("malformed target %+v", got)
 					}
 					official := strings.Contains(base, "xiaomimimo.com")
-					host := map[string]string{"sgp": "sgp", "cn": "cn", "ams": "ams"}[region]
+					host := map[string]string{"sgp": "sgp", "cn": "cn", "ams": "ams"}[strings.TrimSpace(region)] // "cn " is cn, not the default region
 					if host == "" {
 						host = "sgp"
 					}

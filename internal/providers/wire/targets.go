@@ -114,7 +114,7 @@ func tokenplanTarget(provider routing.ProviderRef) (Target, error) {
 	base := strings.TrimRight(provider.BaseURL, "/")
 	if parsed, err := url.Parse(base); err == nil && strings.HasSuffix(parsed.Hostname(), ".xiaomimimo.com") {
 		base = tokenplanRegions[tokenplanDefaultRegion]
-		if regional, ok := tokenplanRegions[provider.Connection.Settings.Region]; ok {
+		if regional, ok := tokenplanRegions[strings.TrimSpace(provider.Connection.Settings.Region)]; ok {
 			base = regional
 		}
 	}

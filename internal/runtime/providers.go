@@ -196,6 +196,9 @@ func (s *RuntimeSnapshot) AccountProvider(requested, account, source string, can
 		return routing.ProviderRef{}, false
 	}
 	config, ok := s.providers[account]
+	if !ok {
+		return routing.ProviderRef{}, false
+	}
 	// A node with no base URL of its own (Azure OpenAI) takes the one the
 	// connection names; a connection that names none is not selectable.
 	baseURL := config.node.BaseURL
@@ -205,7 +208,7 @@ func (s *RuntimeSnapshot) AccountProvider(requested, account, source string, can
 			baseURL = config.metadata.Settings.BaseURL
 		}
 	}
-	if !ok || config.node.ProviderID != model.ProviderID || !config.account.Enabled || len(config.node.Transports) == 0 || baseURL == "" {
+	if config.node.ProviderID != model.ProviderID || !config.account.Enabled || len(config.node.Transports) == 0 || baseURL == "" {
 		return routing.ProviderRef{}, false
 	}
 	protocol := config.node.Transports[0]

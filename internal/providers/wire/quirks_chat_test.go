@@ -71,6 +71,8 @@ func TestGithubMessageContentCrossProduct(t *testing.T) {
 		"tool_result with content": `{"type":"tool_result","tool_use_id":"1","content":"RESULT"}`, "tool_use": `{"type":"tool_use","id":"1","name":"n","input":{}}`,
 		"thinking with text": `{"type":"thinking","text":"THOUGHT"}`, "empty tool_result": `{"type":"tool_result","tool_use_id":"1","content":""}`,
 		"unknown": `{"type":"mystery","a":1}`,
+		// JavaScript treats 0.0 and -0 as falsy, so these fall through to content.
+		"zero-valued text": `{"type":"x","text":0.0,"content":"FELLTHROUGH"}`, "negative zero text": `{"type":"x","text":-0,"content":"FELLTHROUGH"}`,
 	}
 	for name, part := range parts {
 		for _, role := range []string{"user", "assistant", "tool"} {
@@ -102,6 +104,10 @@ func TestGithubMessageContentCrossProduct(t *testing.T) {
 					case "tool_result with content":
 						if !strings.Contains(out, "RESULT") {
 							t.Fatalf("tool result text lost: %s", out)
+						}
+					case "zero-valued text", "negative zero text":
+						if !strings.Contains(out, "FELLTHROUGH") || strings.Contains(out, `"text":0`) || strings.Contains(out, `\"text\"`) {
+							t.Fatalf("a falsy text was carried: %s", out)
 						}
 					case "thinking with text":
 						if !strings.Contains(out, "THOUGHT") {
@@ -234,6 +240,53 @@ func TestKimchiArtifactsAndReasoningContent(t *testing.T) {
 		raw := `{"model":"m","system":"S","thinking":{},"messages":[]}`
 		if got := finalize(t, "kimchi", p, raw); got != raw {
 			t.Errorf("%s body changed: %s", p, got)
+		}
+	}
+}
+
+// One system shape the merge cannot carry must not switch off the unrelated
+// sanitation: the field drops, reasoning strip and artifact stripping are
+// independent of it, whatever state `system` and `messages` are in.
+func TestKimchiSanitationIsIndependentOfTheSystemMerge(t *testing.T) {
+	systems := map[string]string{
+		"absent": "", "string": `"system":"SYS",`, "parts": `"system":[{"type":"text","text":"SYS"}],`, "blank": `"system":" ",`,
+		"image part": `"system":[{"type":"text","text":"SYS"},{"type":"image"}],`, "object": `"system":{"text":"SYS"},`, "number": `"system":3,`,
+	}
+	const artifact = `{"role":"assistant","cache_control":{"type":"ephemeral"},"reasoning_content":"rrrrrrrrrr","content":[{"type":"text","text":"A","signature":"sig","cache_control":{"type":"ephemeral"}}]}`
+	messageSets := map[string]string{
+		"user only":         `[{"role":"user","content":"U"},` + artifact + `]`,
+		"system string":     `[{"role":"system","content":"E"},` + artifact + `]`,
+		"system parts":      `[{"role":"system","content":[{"type":"text","text":"E"}]},` + artifact + `]`,
+		"system null":       `[{"role":"system","content":null},` + artifact + `]`,
+		"system missing":    `[{"role":"system"},` + artifact + `]`,
+		"system object":     `[{"role":"system","content":{"a":1}},` + artifact + `]`,
+		"system number":     `[{"role":"system","content":5},` + artifact + `]`,
+		"artifact only":     `[` + artifact + `]`,
+		"not an array":      `"x"`,
+		"empty":             `[]`,
+		"second system too": `[` + artifact + `,{"role":"system","content":null}]`,
+	}
+	for sn, system := range systems {
+		for mn, messages := range messageSets {
+			t.Run(sn+"/"+mn, func(t *testing.T) {
+				in := `{"model":"claude-opus-4-6",` + system + `"top_k":1,"stop_sequences":["s"],"thinking":{"type":"enabled"},"reasoning_effort":"high","anthropic_beta":"b",` +
+					`"tools":[{"name":"t","cache_control":{"type":"ephemeral"}}],"messages":` + messages + `}`
+				out := finalize(t, "kimchi", chat, in)
+				got := decode(t, out)
+				for _, key := range []string{"top_k", "stop_sequences", "thinking", "reasoning_effort", "anthropic_beta"} {
+					if has(got, key) {
+						t.Fatalf("%s reached the gateway\n in %s\nout %s", key, in, out)
+					}
+				}
+				for _, leftover := range []string{"cache_control", `"signature"`, "rrrrrrrrrr"} {
+					if strings.Contains(out, leftover) {
+						t.Fatalf("%s reached the gateway\n in %s\nout %s", leftover, in, out)
+					}
+				}
+				if strings.Contains(in, `"SYS"`) && !strings.Contains(out, "SYS") {
+					t.Fatalf("system text lost\n in %s\nout %s", in, out)
+				}
+			})
 		}
 	}
 }

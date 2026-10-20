@@ -3,6 +3,7 @@ package wire
 import (
 	"encoding/json"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf16"
 
@@ -12,12 +13,15 @@ import (
 // jsTruthy mirrors JavaScript truthiness for a raw JSON value: missing, null,
 // false, 0 and "" are falsy; everything else (including [] and {}) is truthy.
 func jsTruthy(raw json.RawMessage) bool {
-	switch s := strings.TrimSpace(string(raw)); s {
-	case "", "null", "false", "0", `""`:
+	s := strings.TrimSpace(string(raw))
+	switch s {
+	case "", "null", "false", `""`:
 		return false
-	default:
-		return true
 	}
+	if number, err := strconv.ParseFloat(s, 64); err == nil && number == 0 {
+		return false // 0, 0.0, -0, 0e5
+	}
+	return true
 }
 
 func isObjectRaw(raw json.RawMessage) bool {
@@ -191,21 +195,21 @@ var kimchiAnthropicModel = regexp.MustCompile(`(?i)(^|[-_/])(?:claude|anthropic)
 // Anthropic-backed is decided by the model name alone (kimchi.js:89-93); and when a
 // top-level `system` cannot be merged (no messages array, a first system message
 // whose content is neither a string nor an array, or a `system` that is not a
-// string or an array of text) the body is left as received, where the pin deletes
-// the `system` text anyway (kimchi.js:104-108).
+// string or an array of text) the `system` field is left in place, where the pin
+// deletes its text anyway (kimchi.js:104-108); every other sanitation still runs.
 func kimchiBody(protocol string, body Body) bool {
 	if protocol != openaiadapter.ChatProtocol {
 		return false
 	}
 	changed := false
 	if raw, present := body["system"]; present {
-		merged, ok := mergeKimchiSystem(body, raw)
-		if !ok {
-			return false
+		// A `system` that cannot be carried stays where it is; that failure is
+		// local. The field drops, reasoning strip and artifact stripping below
+		// are independent of it and always run.
+		if _, ok := mergeKimchiSystem(body, raw); ok {
+			delete(body, "system")
+			changed = true
 		}
-		changed = merged || changed
-		delete(body, "system")
-		changed = true
 	}
 	for _, key := range kimchiGatewayDrops {
 		if _, ok := body[key]; ok {
