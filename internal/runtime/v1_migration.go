@@ -170,7 +170,21 @@ func PlanV1Migration(export []byte) (*V1Plan, error) {
 func (p *V1Plan) planSettings(pin map[string]json.RawMessage, refuse func(string, string, ...any)) error {
 	carried, notes, err := ImportPinSettings(pin)
 	if err != nil {
-		return err
+		// One malformed C04 value must not fail the plan. Retry without the
+		// offending key so the remaining settings are still planned; the error
+		// names a key, never a value.
+		bad := v1BadKey(pin)
+		if bad == "" {
+			return err
+		}
+		refuse("settings."+bad, "is malformed (%v), not carried", err)
+		rest := make(map[string]json.RawMessage, len(pin))
+		for key, value := range pin {
+			if key != bad {
+				rest[key] = value
+			}
+		}
+		return p.planSettings(rest, refuse)
 	}
 	for key, value := range carried {
 		p.Settings[key] = value
@@ -202,12 +216,26 @@ func (p *V1Plan) planSettings(pin map[string]json.RawMessage, refuse func(string
 			}
 		}
 		if err := validateSettingValue(key, value); err != nil {
-			refuse(path, "is rejected by Routeweft (%v), not carried", err)
+			refuse(path, "is rejected by Routeweft's validation, not carried")
 			continue
 		}
 		p.Settings[key] = value
 	}
 	return nil
+}
+
+// v1BadKey finds the one C04 key ImportPinSettings fails on, by probing each
+// key alone. It returns "" when no single key is responsible.
+func v1BadKey(pin map[string]json.RawMessage) string {
+	for key, value := range pin {
+		if _, ok := v1C04Settings[key]; !ok {
+			continue
+		}
+		if _, _, err := ImportPinSettings(map[string]json.RawMessage{key: value}); err != nil {
+			return key
+		}
+	}
+	return ""
 }
 
 func (p *V1Plan) refuseUnmapped(key string, raw json.RawMessage, refuse func(string, string, ...any)) {
@@ -274,6 +302,9 @@ func (p *V1Plan) planKeys(raw json.RawMessage, refuse func(string, string, ...an
 		refuse("apiKeys", "is not an array of keys; none reissued, none read")
 		return
 	}
+	if len(keys) == 0 {
+		return
+	}
 	for i, key := range keys {
 		entry := V1KeyReissue{Name: key.Name, Active: key.IsActive == nil || *key.IsActive}
 		if entry.Name == "" {
@@ -301,6 +332,9 @@ func (p *V1Plan) planConnections(raw json.RawMessage, refuse func(string, string
 	}
 	if json.Unmarshal(raw, &rows) != nil {
 		refuse("providerConnections", "is not an array of connections; none listed, none read")
+		return
+	}
+	if len(rows) == 0 {
 		return
 	}
 	for _, row := range rows {
@@ -386,7 +420,7 @@ func (p *V1Plan) planCombos(raw json.RawMessage, settings map[string]json.RawMes
 		}
 		combo := Combo{ID: "v1-" + row.Name, Name: row.Name}
 		bad := false
-		for _, item := range row.Models {
+		for i, item := range row.Models {
 			var text string
 			var object struct {
 				Model string `json:"model"`
@@ -396,7 +430,7 @@ func (p *V1Plan) planCombos(raw json.RawMessage, settings map[string]json.RawMes
 			case json.Unmarshal(item, &object) == nil && object.Model != "":
 				text = object.Model
 			default:
-				refuse(path, "member %s is not a model string, combo not carried", strings.TrimSpace(string(item)))
+				refuse(path, "models[%d] is not a model string, combo not carried", i)
 				bad = true
 			}
 			if bad {
@@ -446,7 +480,7 @@ func (p *V1Plan) dropSupersededFusionNotes() {
 func (p *V1Plan) applyFusion(combo *Combo, kind string, raw json.RawMessage, refuse func(string, string, ...any)) {
 	path := "combos." + combo.Name
 	if kind != "" && kind != "fusion" {
-		p.Notes = append(p.Notes, fmt.Sprintf("%s: kind %q is not read by Routeweft", path, kind))
+		p.Notes = append(p.Notes, fmt.Sprintf("%s: kind is not read by Routeweft", path))
 	}
 	var entry struct {
 		Strategy string          `json:"fallbackStrategy"`

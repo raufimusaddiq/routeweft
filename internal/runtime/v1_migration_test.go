@@ -295,3 +295,64 @@ func TestV1PlanRefusesInvalidFusionTuningByName(t *testing.T) {
 		t.Fatal("invalid tuning stored")
 	}
 }
+
+// Every refusal and note path fed a value that holds a secret: none may echo it.
+func TestV1PlanNoRefusalOrNoteEchoesInputValues(t *testing.T) {
+	const s = "SENTINEL-sk-live-123"
+	secret := `{"apiKey":"` + s + `"}`
+	document := `{
+ "settings": {
+  "headroomEnabled": ` + secret + `, "headroomTimeoutMs": "` + s + `", "cavemanLevel": "` + s + `",
+  "outboundProxyUrl": "` + s + `", "observabilityMaxRecords": ` + secret + `, "quotaVisibility": "` + s + `",
+  "stickyRoundRobinLimit": ` + secret + `, "comboStickyRoundRobinLimit": "` + s + `",
+  "observabilityMaxJsonSize": ` + secret + `, "dnsToolEnabled": ` + secret + `,
+  "fallbackStrategy": ` + secret + `, "comboStrategy": ` + secret + `, "password": "` + s + `",
+  "capacityAdapter": {"vision": {"enabled": ` + secret + `}, "pdf": {"roundRobin": "` + s + `"}, "audioInput": {"models": ` + secret + `},
+    "videoInput": ` + secret + `, "other": {"models": [` + secret + `]}},
+  "providerStrategies": {"p": {"stickyRoundRobinLimit": ` + secret + `, "fallbackStrategy": ` + secret + `, "x": ` + secret + `}},
+  "comboStrategies": {"c": {"fallbackStrategy": ` + secret + `, "fusionTuning": "` + s + `", "judgeModel": ` + secret + `},
+   "f": {"fallbackStrategy": "fusion", "fusionTuning": {"minPanel": ` + secret + `, "stragglerGraceMs": "` + s + `", "k": ` + secret + `}}}
+ },
+ "apiKeys": "` + s + `", "providerConnections": ` + secret + `, "providerNodes": "` + s + `", "proxyPools": ` + secret + `,
+ "modelAliases": {"a": ` + secret + `, "b": "` + s + `"},
+ "combos": [{"name":"c","kind":"` + s + `","models":[` + secret + `]}, {"name":"f","models":["openai/x"]}],
+ "usageHistory": "` + s + `", "` + `extra": "` + s + `"
+}`
+	plan, err := PlanV1Migration([]byte(document))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(plan)
+	if strings.Contains(string(encoded), s) {
+		t.Fatalf("plan echoes an input value: %s", encoded)
+	}
+	if len(plan.Refused) < 10 {
+		t.Fatalf("adversarial input reached too few refusal paths: %+v", plan.Refused)
+	}
+	if got := refusal(plan, "combos.c"); got != "models[0] is not a model string, combo not carried" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestV1PlanEmptyTablesProduceNoRefusal(t *testing.T) {
+	plan, err := PlanV1Migration([]byte(`{"apiKeys":[],"providerConnections":[],"combos":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Refused) != 0 || len(plan.Reauth) != 0 || len(plan.KeyReissue) != 0 {
+		t.Fatalf("%+v", plan)
+	}
+}
+
+func TestV1PlanMalformedCapacityAdapterFailsOnlyItself(t *testing.T) {
+	plan, err := PlanV1Migration([]byte(`{"settings":{"capacityAdapter":[1],"headroomEnabled":true,"stickyRoundRobinLimit":4}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(refusal(plan, "settings.capacityAdapter"), "capacityAdapter must be an object") {
+		t.Fatalf("%+v", plan.Refused)
+	}
+	if plan.Settings["headroomEnabled"] != "true" || plan.Settings["stickyRoundRobinLimit"] != "4" {
+		t.Fatalf("other settings lost: %v", plan.Settings)
+	}
+}

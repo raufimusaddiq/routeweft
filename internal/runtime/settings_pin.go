@@ -28,7 +28,7 @@ func ImportPinSettings(pin map[string]json.RawMessage) (settings map[string]stri
 	limit := func(where string, raw json.RawMessage, def uint64) (uint64, bool) {
 		value, ok := pinUint(raw)
 		if !ok {
-			note("%s: %s is not a non-negative integer, not carried", where, strings.TrimSpace(string(raw)))
+			note("%s: %s is not a non-negative integer, not carried", where, pinShape(raw))
 			return def, false
 		}
 		return value, true
@@ -127,7 +127,7 @@ func ImportPinSettings(pin map[string]json.RawMessage) (settings map[string]stri
 	if raw, ok := pin["fallbackStrategy"]; ok {
 		var strategy string
 		if json.Unmarshal(raw, &strategy) != nil {
-			note("fallbackStrategy: %s is not a string, not carried", strings.TrimSpace(string(raw)))
+			note("fallbackStrategy: %s is not a string, not carried", pinShape(raw))
 		} else {
 			switch strategy {
 			case "fill-first":
@@ -142,7 +142,7 @@ func ImportPinSettings(pin map[string]json.RawMessage) (settings map[string]stri
 	if raw, ok := pin["comboStrategy"]; ok {
 		var strategy string
 		if json.Unmarshal(raw, &strategy) != nil {
-			note("comboStrategy: %s is not a string, not carried", strings.TrimSpace(string(raw)))
+			note("comboStrategy: %s is not a string, not carried", pinShape(raw))
 		} else {
 			switch strategy {
 			case "fallback":
@@ -202,7 +202,7 @@ func importCapacityAdapter(pinName string, raw json.RawMessage) (encoded string,
 		case json.Unmarshal(item, &object) == nil && object.Model != "":
 			models = append(models, object.Model)
 		default:
-			notes = append(notes, fmt.Sprintf("capacityAdapter.%s: model entry %s is not a model string, not carried", pinName, strings.TrimSpace(string(item))))
+			notes = append(notes, fmt.Sprintf("capacityAdapter.%s: model entry %s is not a model string, not carried", pinName, pinShape(item)))
 		}
 	}
 	raw = bytes.TrimSpace(raw)
@@ -226,25 +226,25 @@ func importCapacityAdapter(pinName string, raw json.RawMessage) (encoded string,
 		enabled = true
 		if value, ok := fields["enabled"]; ok {
 			if err := json.Unmarshal(value, &enabled); err != nil {
-				return bad("enabled %s is not a boolean", strings.TrimSpace(string(value)))
+				return bad("enabled %s is not a boolean", pinShape(value))
 			}
 		}
 		if value, ok := fields["roundRobin"]; ok {
 			if err := json.Unmarshal(value, &roundRobin); err != nil {
-				return bad("roundRobin %s is not a boolean", strings.TrimSpace(string(value)))
+				return bad("roundRobin %s is not a boolean", pinShape(value))
 			}
 		}
 		if value, ok := fields["models"]; ok {
 			var items []json.RawMessage
 			if err := json.Unmarshal(value, &items); err != nil {
-				return bad("models %s is not an array", strings.TrimSpace(string(value)))
+				return bad("models %s is not an array", pinShape(value))
 			}
 			for _, item := range items {
 				addModel(item)
 			}
 		}
 	default:
-		return bad("entry %s is neither an object nor an array", string(raw))
+		return bad("entry %s is neither an object nor an array", pinShape(raw))
 	}
 	pool := make([]map[string]string, 0, len(models))
 	seen := make(map[string]struct{}, len(models))
@@ -285,7 +285,7 @@ func importStrategyOverrides(key string, raw json.RawMessage, combo bool, global
 		if !combo {
 			if raw, ok := fields["stickyRoundRobinLimit"]; ok {
 				if own, valid := pinUint(raw); !valid {
-					notes = append(notes, fmt.Sprintf("%s.%s: stickyRoundRobinLimit %s is not a non-negative integer, not carried", key, name, strings.TrimSpace(string(raw))))
+					notes = append(notes, fmt.Sprintf("%s.%s: stickyRoundRobinLimit %s is not a non-negative integer, not carried", key, name, pinShape(raw)))
 				} else if own > 0 {
 					limit = own
 					entry["stickyRoundRobinLimit"] = own
@@ -297,7 +297,7 @@ func importStrategyOverrides(key string, raw json.RawMessage, combo bool, global
 		strategyErr := json.Unmarshal(fields["fallbackStrategy"], &strategy)
 		switch {
 		case hasStrategy && (strategyErr != nil || string(bytes.TrimSpace(fields["fallbackStrategy"])) == "null"):
-			notes = append(notes, fmt.Sprintf("%s.%s: fallbackStrategy %s is not a string, not carried", key, name, bytes.TrimSpace(fields["fallbackStrategy"])))
+			notes = append(notes, fmt.Sprintf("%s.%s: fallbackStrategy %s is not a string, not carried", key, name, pinShape(fields["fallbackStrategy"])))
 		case strategy == "":
 		case strategy == "fill-first" && !combo, strategy == "fallback" && combo:
 			entry["fallbackStrategy"] = strategy
@@ -347,4 +347,25 @@ func pinUint(raw json.RawMessage) (value uint64, ok bool) {
 		}
 	}
 	return 0, false
+}
+
+// pinShape names the JSON type of a v1 value for a note. Notes never echo the
+// value itself: a v1 field is free-form and may hold a credential.
+func pinShape(raw json.RawMessage) string {
+	switch trimmed := bytes.TrimSpace(raw); {
+	case string(trimmed) == "null":
+		return "null"
+	case len(trimmed) == 0:
+		return "empty"
+	case trimmed[0] == '{':
+		return "an object"
+	case trimmed[0] == '[':
+		return "an array"
+	case trimmed[0] == '"':
+		return "a string"
+	case trimmed[0] == 't' || trimmed[0] == 'f':
+		return "a boolean"
+	default:
+		return "a number"
+	}
 }

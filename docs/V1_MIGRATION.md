@@ -15,7 +15,7 @@ The plan is a **plan, not a commit**: nothing is stored until the operator commi
 `Settings` through `SetSettings` and the catalog through `ApplyCatalog`, so every value
 still passes the normal validate → compile → commit → publish protocol. Nothing is
 stored-and-ignored: every v1 value is carried, or named in the plan's `Refused`,
-`Recreate`, `KeyReissue` or `Reauth` list. No list holds a secret.
+`Recreate`, `KeyReissue` or `Reauth` list. No list holds a secret: refusals and notes name a path and describe a value's JSON type, never its content (`TestV1PlanNoRefusalOrNoteEchoesInputValues`). Names the operator chose (setting keys, combo and alias names, and strategy values such as `"fusion"`) are echoed. A malformed value, including a malformed `capacityAdapter`, refuses only itself.
 
 Not yet provided: an operator-facing command or admin route that calls the plan.
 Today it is a tested library; see "Open questions".
