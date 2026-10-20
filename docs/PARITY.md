@@ -1429,7 +1429,7 @@ const pages = [...pageSection.matchAll(/^\| `([^`]+page\.js)` \|/gm)]
 assert.deepEqual(pages, files.filter(p => /^src\/app\/(?:.*\/)?page\.js$/.test(p)).sort());
 assert.equal(pages.length, 16);
 const routeRows = text.split('### Public rewrites')[0].split('\n').filter(line => /^\| \d+ \|/.test(line));
-for (const [status, count] of Object.entries({"PRESENT":28,"PARTIAL":39,"MISSING":30})) {
+for (const [status, count] of Object.entries({"PRESENT":32,"PARTIAL":39,"MISSING":26})) {
   assert.equal(routeRows.filter(line => line.includes('| ' + status + ' |')).length, count);
 }
 assert.match(text, /013d26a2014c16e0e4f2a35aa9acf2fa5bfd4e7c/);
