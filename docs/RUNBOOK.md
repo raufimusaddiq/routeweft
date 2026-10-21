@@ -983,7 +983,9 @@ native, translated (Chat, Responses, rewritten/unwrapped bodies), Messages and t
 Gemini/System One/Ollama compat paths, stream and non-stream. The record is
 `client_abandoned` with whatever usage had arrived (unobserved when none had).
 If no upstream response existed yet, its status is a synthetic `499`; otherwise
-it keeps the upstream's status. It is marked `Unanswered`: persisted to usage, but
+it keeps the upstream's status (a translator error caused by the client leaving
+is not rewritten to 502). A translated non-stream body that cannot be read or
+translated while the client is still connected is recorded once as a `502`. It is marked `Unanswered`: persisted to usage, but
 it publishes neither the live `request.completed` event nor a usage-feed frame,
 because nothing completed; an upstream that itself answers 499 is an ordinary
 completed request. A disconnect before any upstream request is issued records

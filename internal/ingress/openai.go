@@ -187,7 +187,9 @@ func (h *Handler) writeRewrittenResponses(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err != nil || len(body) > openaiadapter.MaxTranslatedResponseBytes {
+		// Billed upstream, unreadable body: record the 502 with unobserved usage.
 		h.writeError(w, 502, "upstream_response_invalid", "upstream response could not be read")
+		h.emitTranslated(r, provider, 502, false, promptcache.Usage{}, false, started)
 		return
 	}
 	rewritten, err := wire.RewriteResponsesBody(names, body)
@@ -218,7 +220,9 @@ func (h *Handler) writeUnwrapped(w http.ResponseWriter, r *http.Request, respons
 		return
 	}
 	if err != nil || len(body) > openaiadapter.MaxTranslatedResponseBytes {
+		// Billed upstream, unreadable body: record the 502 with unobserved usage.
 		h.writeError(w, 502, "upstream_response_invalid", "upstream response could not be read")
+		h.emitTranslated(r, provider, 502, false, promptcache.Usage{}, false, started)
 		return
 	}
 	body = wire.UnwrapResponse(provider.ProviderID)(body)
@@ -265,11 +269,12 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 		if !observed {
 			usage = promptcache.Usage{}
 		}
-		if err != nil {
+		// A translator error after the client left is the client's cancellation,
+		// not a gateway failure: keep the upstream status so abandons do not count
+		// as upstream 5xx in the operator's error rate.
+		if err != nil && r.Context().Err() == nil {
 			status = http.StatusBadGateway
-			if r.Context().Err() == nil {
-				h.recordClassification(provider.ConnectionID, classifyResponse(status, nil), time.Now())
-			}
+			h.recordClassification(provider.ConnectionID, classifyResponse(status, nil), time.Now())
 		}
 		h.emitTranslated(r, provider, status, true, usage, observed, started)
 		return
@@ -280,7 +285,9 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if err != nil || len(body) > openaiadapter.MaxTranslatedResponseBytes {
+		// Billed upstream, unreadable body: record the 502 with unobserved usage.
 		h.writeError(w, 502, "upstream_response_invalid", "upstream response could not be translated")
+		h.emitTranslated(r, provider, 502, false, promptcache.Usage{}, false, started)
 		return
 	}
 	if unwrap := wire.UnwrapResponse(provider.ProviderID); unwrap != nil {
@@ -289,6 +296,8 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 	translated, err := translation.Response(body)
 	if err != nil {
 		h.writeError(w, 502, "upstream_response_invalid", "upstream response could not be translated")
+		usage, observed := shared.ParseUsage(provider.Protocol, body)
+		h.emitTranslated(r, provider, 502, false, usage, observed, started)
 		return
 	}
 	if r.Context().Err() != nil {

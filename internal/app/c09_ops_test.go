@@ -176,9 +176,9 @@ func TestSIGTERMDrainsInFlightRequestAndFlushesAccounting(t *testing.T) {
 // c09DisconnectCase is one inference route whose abandoned requests must leave a
 // record: the relay it exercises is named by transport (the node's only wire).
 type c09DisconnectCase struct {
-	name, path, body, transport string
-	systemOne                   bool
-	modes                       []string
+	name, path, streamPath, body, transport string
+	systemOne                               bool
+	modes                                   []string
 }
 
 var c09DisconnectCases = []c09DisconnectCase{
@@ -187,9 +187,9 @@ var c09DisconnectCases = []c09DisconnectCase{
 	{name: "responses-translated", path: "/v1/responses", transport: "openai-chat", body: `{"model":"fast","input":"hi"%s}`, modes: []string{"partial", "stream"}},
 	{name: "messages-native", path: "/v1/messages", transport: "anthropic-messages", body: `{"model":"fast","max_tokens":1,"messages":[{"role":"user","content":"hi"}]%s}`, modes: []string{"partial", "stream"}},
 	{name: "messages-translated", path: "/v1/messages", transport: "openai-chat", body: `{"model":"fast","max_tokens":1,"messages":[{"role":"user","content":"hi"}]%s}`, modes: []string{"partial", "stream"}},
-	{name: "gemini-native", path: "/v1beta/models/fast:generateContent", transport: "gemini", body: `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]%s}`, modes: []string{"partial"}},
-	{name: "ollama-native", path: "/v1/api/chat", transport: "ollama", body: `{"model":"fast","messages":[{"role":"user","content":"hi"}]%s}`, modes: []string{"partial"}},
-	{name: "systemone", path: "/v1/systemone", systemOne: true, modes: []string{"partial"}},
+	{name: "gemini-native", path: "/v1beta/models/fast:generateContent", streamPath: "/v1beta/models/fast:streamGenerateContent", transport: "gemini", body: `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]%s}`, modes: []string{"partial", "stream"}},
+	{name: "ollama-native", path: "/v1/api/chat", transport: "ollama", body: `{"model":"fast","messages":[{"role":"user","content":"hi"}]%s}`, modes: []string{"partial", "stream"}},
+	{name: "systemone", path: "/v1/systemone", systemOne: true, modes: []string{"partial", "stream"}},
 }
 
 // TestClientDisconnectKeepsExactlyOneUsageRecordWithoutLeaks cancels the client
@@ -255,17 +255,23 @@ func TestClientDisconnectKeepsExactlyOneUsageRecordWithoutLeaks(t *testing.T) {
 				if mode == "stream" {
 					extra = `,"stream":true`
 				}
+				path := tc.path
+				if mode == "stream" && tc.streamPath != "" {
+					path, extra = tc.streamPath, ""
+				}
 				body := fmt.Sprintf(tc.body, extra)
 				if tc.systemOne {
 					body = fmt.Sprintf(`{"model":%q,"state":null,"questions":{"ok":null}}`, model)
 				}
-				request, _ := http.NewRequestWithContext(requestCtx, http.MethodPost, server.URL+tc.path, strings.NewReader(body))
+				request, _ := http.NewRequestWithContext(requestCtx, http.MethodPost, server.URL+path, strings.NewReader(body))
 				request.Header.Set("Authorization", "Bearer "+key)
 				request.Header.Set("X-Request-Id", "c09-cancel")
 				clientDone := make(chan error, 1)
+				gotHeaders := make(chan struct{}, 1)
 				go func() {
 					response, err := client.Do(request)
 					if err == nil {
+						gotHeaders <- struct{}{}
 						_, err = io.Copy(io.Discard, response.Body)
 						response.Body.Close()
 					}
@@ -275,6 +281,15 @@ func TestClientDisconnectKeepsExactlyOneUsageRecordWithoutLeaks(t *testing.T) {
 				case <-started:
 				case <-time.After(5 * time.Second):
 					t.Fatal("request never reached upstream")
+				}
+				if mode == "stream" {
+					// Cancel only once the response is flowing, so the record is
+					// the abandoned stream and not a pre-response cancel.
+					select {
+					case <-gotHeaders:
+					case <-time.After(5 * time.Second):
+						t.Fatal("stream response never reached the client")
+					}
 				}
 				cancel()
 				<-clientDone
@@ -309,6 +324,11 @@ func TestClientDisconnectKeepsExactlyOneUsageRecordWithoutLeaks(t *testing.T) {
 				}
 				if a.usage.Lost() != 0 {
 					t.Fatalf("lost=%d", a.usage.Lost())
+				}
+				// A client abandon is never an upstream failure: no relay may rewrite
+				// it to a gateway error, and a stream the upstream answered 200 keeps 200.
+				if rows[0].status == http.StatusBadGateway || (mode == "stream" && rows[0].status != http.StatusOK) {
+					t.Fatalf("abandoned %s recorded status %d", mode, rows[0].status)
 				}
 				// It was recorded, but never announced: nothing completed.
 				for {
@@ -528,5 +548,40 @@ func TestUpstream499IsAnOrdinaryCompletion(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("upstream 499 lost its request.completed event")
+	}
+}
+
+// TestTranslatedUnreadableBodyIsRecordedOnce covers a billed upstream whose
+// non-stream body cannot be read while the client stays connected: the client
+// gets a 502 and exactly one 502 usage row is kept (not a lost record).
+func TestTranslatedUnreadableBodyIsRecordedOnce(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "100000")
+		fmt.Fprint(w, `{"id":"x"`)
+	}))
+	defer upstream.Close()
+	a, key := servingApp(t, upstream.URL, 1)
+	setServingProtocol(t, a, "openai-chat")
+	c09Observability(t, a)
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan struct{})
+	go func() { defer close(runDone); a.usage.Run(ctx) }()
+	defer func() { cancel(); <-runDone }()
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"fast","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`))
+	request.Header.Set("Authorization", "Bearer "+key)
+	request.Header.Set("X-Request-Id", "c09-unreadable")
+	recorder := httptest.NewRecorder()
+	a.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body)
+	}
+	if err := a.usage.FlushNow(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rows := c09UsageRows(t, a)
+	if len(rows) != 1 || rows[0].requestID != "c09-unreadable" || rows[0].status != http.StatusBadGateway {
+		t.Fatalf("usage=%+v want exactly one 502 record", rows)
 	}
 }
