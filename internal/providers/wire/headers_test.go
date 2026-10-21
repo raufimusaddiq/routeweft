@@ -96,6 +96,9 @@ func TestKilocodeOrgHeaderCrossProduct(t *testing.T) {
 func TestOnlyDeclaredProvidersChangedHeaders(t *testing.T) {
 	for _, id := range providerIDs() {
 		r := ref(id, chat, "https://x.example", routing.ProviderSettings{DeviceID: "d", OrgID: "o", Organization: "g"})
+		if id == "opencode" {
+			r.APIToken = "" // its change is the public key sent when none is held
+		}
 		same := reflect.DeepEqual(OpenAIHeaders(r), legacyOpenAIProviderHeaders(r))
 		if same == headersChanged[id] {
 			t.Errorf("%s: unchanged=%v but headersChanged=%v", id, same, headersChanged[id])

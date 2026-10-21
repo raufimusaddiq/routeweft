@@ -2448,6 +2448,25 @@ this slice adds; OpenAI, Zed and OpenCode Go's Luna model are accounted for belo
 | Codex remote-image download refusal (#185) | `E/codex.js:263-278` | `internal/providers/wire/codex_body.go:20-28,150-187` | REFUSED | Do not fetch client-supplied remote image URLs to inline them. That would add an outbound destination controlled by inference input and bypass Routeweft's common SSRF policy (PRD-SEC-003). Existing image URLs remain in the upstream `input_image` document; upstream rejection remains visible. This is an intentional refusal, not a feature backlog item. |
 | Readiness of Zed, MiMo free, mmf | `E/zed.js:246-305`, `E/mimo-free.js:63-105` | Declared `ready`; the pin needs a wire Routeweft does not have. Not changed: the P08 matrix pins the readiness column and is not edited here. | PARTIAL | R11: product decision: #76/P02 retains the correction as a follow-up: a `registry.notReady` entry per provider and a regenerated matrix (`P08_WRITE=1 go test ./internal/parity -run TestP08MatrixDocIsCurrent`); `unavailable` also needs a transport change, which is a routing decision. |
 
+### Third audit slice: what is open after #170-#185, and OpenCode Zen's key (#188)
+
+Each row was re-read against the code and the pin (`1c3b9f47`, read from `/home/ubuntu/9router`;
+`/opt/9router` is absent). Served means not in `ingress.unwired` and not `unavailable`.
+
+| Provider | Missing behaviour | Pin | Class | State |
+|---|---|---|---|---|
+| opencode (served) | `Authorization: Bearer public`: the provider has no account, so Routeweft sent no Authorization header at all | `E/opencode.js:492`, `testUtils.js:767`, `src/sse/services/auth.js:94` | auth shape | **closed here** (`wire.opencodeHeaders`, TestOpenCodeSendsThePublicKey; the connection probe sends it too, TestProbeSendsOpenCodePublicKey) |
+| opencode (served) | `x-opencode-client/session/request/project` and the `opencode/1.18.31` agent; free-tier fingerprint tools `bash/glob/grep/read` appended to every request | `E/opencode.js:417-426,455-464`, `utils/opencodeFingerprint.js:112-123` | headers, envelope | open: decoy tools and a borrowed client identity exist to pass a free-tier client gate, the same class the audit declined for Antigravity; the gateway's answer without them is unverified |
+| opencode-go (served, experimental) | The Responses-only models now take a Responses transport with a forced stream (#185, `wire/opencodego.go`); still absent: the pin's session header, prior-response and reasoning-item stripping, `max_output_tokens`/reasoning normalization and the Luna field omissions | `E/opencode-go.js:139-208` | headers, envelope | open |
+| github (served, experimental) | 400-triggered Responses escalation; Claude models on `/v1/messages` with forced stream and fold; request id | `E/github.js:118-347` | envelope, stream codec | open |
+| zed, mimo-free, mmf (declared ready) | token exchange, envelope, NDJSON frames; bootstrap JWT | `E/zed.js:246-305`, `E/mimo-free.js:63-105` | signing/credential mint, stream codec | open: readiness correction needs the P08 matrix, not edited here |
+| volcengine-ark glm-5 | output clamp to the model's catalogued ceiling | `paramSupport.js:20` | metadata | open: `internal/providers/capabilities` now resolves a ceiling (128000 for glm-5.x), so the comment in `wire/sanitize.go` saying there is no catalog is stale; not implemented here, a request over the ceiling is not shown to fail |
+| qoder, gemini-cli, antigravity, vertex, kiro, cursor, commandcode | envelopes, targets, minting | see audit | | `unavailable`: honest, unchanged |
+| grok-web, perplexity-web | cookie session, browser identity, codecs | `E/grok-web.js:226-290`, `E/perplexity-web.js:396-449` | cookie session | unchanged |
+| gitlab, cline, clinepass, ollama, iflow cookie | nothing | no executor / HMAC only | | not gaps (audit above) |
+
+The list is longer than one PR: nine rows stay open. Only the first was implemented.
+
 P08 follow-up: the matrix cells for Codex and Grok CLI streaming and non-streaming are
 recorded there as gaps and name the fields these providers lacked; they are now covered by
 the tests above, and the matrix source (`internal/parity/p08_matrix_test.go`) is the owner's to

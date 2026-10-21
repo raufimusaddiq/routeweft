@@ -136,7 +136,7 @@ var hooks = map[string]Hook{
 	"codebuddy-intl":   codebuddyIntl,
 	"zed":              {ForceStream: true, Finalize: codebuddyStream},
 	"opencode-go":      {ForceStream: true, ForceStreamFor: openCodeGoForcesStream, ForcedTransport: openCodeGoTransport, FinalizeAccount: openCodeGoStream},
-	"opencode":         {Target: opencodeTarget, ForceStream: true, Finalize: codebuddyStream},
+	"opencode":         {Target: opencodeTarget, OpenAIHeaders: opencodeHeaders, ForceStream: true, Finalize: codebuddyStream},
 	"vertex-partner":   {Target: vertexPartnerTarget},
 	"cloudflare-ai":    {Target: cloudflareTarget},
 	"commandcode":      commandCodeHook,

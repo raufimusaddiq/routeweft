@@ -590,6 +590,11 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	}
 	switch connection.AuthKind {
 	case credentials.AuthNone:
+		// A provider with no account still has the headers serving sends (OpenCode
+		// Zen's public key), so the probe tests the same request.
+		for name, values := range modelWireHeaders(route) {
+			request.Header[name] = values
+		}
 	case credentials.AuthCookie:
 		request.Header.Set("Cookie", credential)
 	case credentials.AuthAPIKey, credentials.AuthOAuth:
