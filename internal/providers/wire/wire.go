@@ -118,6 +118,7 @@ var hooks = map[string]Hook{
 	"opencode":         {Target: opencodeTarget, ForceStream: true, Finalize: codebuddyStream},
 	"vertex-partner":   {Target: vertexPartnerTarget},
 	"cloudflare-ai":    {Target: cloudflareTarget},
+	"commandcode":      commandCodeHook,
 	"cursor":           {RequestHeaders: cursorHeaders, Target: cursorTarget, ForceStream: true, RequireCredential: true, Do: CursorDo},
 }
 

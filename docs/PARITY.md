@@ -535,7 +535,7 @@ Every provider row below has its own pinned source `open-sse/providers/registry/
 | `codebuddy-intl` | oauth+apikey | C / codebuddy-intl | seed/provider-specific | 15/15/0 | P/M/M/P/P/P/P | PARTIAL | P02-P05: onboarding/provider hooks/refresh; quota where advertised; app contracts missing. R11: product decision: provider qualification remains #76/P02-P08; no GA waiver (PRD-PROV-004). |
 | `codex` | OAuth/PKCE | R / codex | seed/provider-specific | 17/18/1 | P/P/P/P/P/P/P | PARTIAL | P04/P05: import/bulk/reset actions and refresh wiring absent; PKCE/usage helpers only. R11: product decision: provider qualification remains #76/P02-P08; no GA waiver (PRD-PROV-004). |
 | `cohere` | API key | C / default | seed/provider-specific | 3/0/3 | P/P/-/P/P/P/P | PARTIAL | P02/P03/P08: seed drift; shared adapter/listing not app-level provider proof. R11: product decision: provider qualification remains #76/P02-P08; no GA waiver (PRD-PROV-004). |
-| `commandcode` | API key | commandcode / commandcode | seed/provider-specific | 11/11/0 | P/P/M/M/M/M/M | PARTIAL | P02-P05: specialized wire/auth/refresh/listing/limits and stream codecs absent. R11: product decision: provider qualification remains #76/P02-P08; no GA waiver (PRD-PROV-004). |
+| `commandcode` | API key | commandcode / commandcode | seed/provider-specific | 11/11/0 | P/P/M/M/M/M/M | PARTIAL | P02: wire bound in `internal/providers/wire` (headers, forced stream, pre-stream error inspection, 502/503/504 retry; 6.13) and tested against a fake upstream; still in `ingress.unwired` because the Chat/Responses/Messages arms of `TranslateChat` and friends are not added, and usage/limits (`services/usage/commandcode.js`) and non-2xx `parseError` classification remain. R11: product decision: provider qualification remains #76/P02-P08; no GA waiver (PRD-PROV-004). |
 | `cursor` | OAuth/import | cursor / cursor | seed/provider-specific | 14/14/0 | P/M/-/M/M/M/M | PARTIAL | P02-P05: specialized wire/auth/refresh/listing/limits and stream codecs absent. R11: product decision: provider qualification remains #76/P02-P08; no GA waiver (PRD-PROV-004). |
 | `deepseek` | API key | C+M / default | seed/provider-specific | 9/0/9 | P/P/M/P/P/P/P | PARTIAL | P02/P03/P08: seed drift; shared adapter/listing not app-level provider proof; limits client absent. R11: product decision: provider qualification remains #76/P02-P08; no GA waiver (PRD-PROV-004). |
 | `featherless` | API key | C / default | seed/provider-specific | 7/0/7 | P/P/-/P/P/P/P | PARTIAL | P02/P03/P08: seed drift; shared adapter/listing not app-level provider proof. R11: product decision: provider qualification remains #76/P02-P08; no GA waiver (PRD-PROV-004). |
@@ -1100,7 +1100,7 @@ The pin's four legs are `request openai-chat>cursor` (`translator/request/openai
 **Scope.** These are the legs, as pure Chat-body and Chat-stream converters (`internal/protocol/cursor`, `internal/protocol/commandcode`). Neither provider is routable yet, and `ingress.unwired` keeps it that way, so `TestEveryProviderIsReachableOrTracked` still lists both:
 
 - **Cursor** needs a transport the pin implements in its executor, not its translator: Connect-RPC protobuf over HTTP/2 (`executors/cursor.js:114-180`, `cursorProtobuf.js:616`) and its checksum headers (`utils/cursorChecksum.js`). The pin's response leg is the identity because that executor already decodes the reply into Chat chunks.
-- **CommandCode** needs behaviour that belongs in `internal/providers/wire` (owned by #115 PR-C): the per-request `x-session-id` and the registry headers (`executors/commandcode.js:28-40`), the always-streamed upstream (`:24`; a non-stream client is served by `CommandCodeResponseToChat`, which aggregates the NDJSON), and the pre-stream error inspection and 502/503/504 retry (`:42-61, 140-241`, `parseCommandCodeError` `:80-138`).
+- **CommandCode** needs behaviour that belongs in `internal/providers/wire` (bound by #76 P02, 6.13; it was owned by #115 PR-C): the per-request `x-session-id` and the registry headers (`executors/commandcode.js:28-40`), the always-streamed upstream (`:24`; a non-stream client is served by `CommandCodeResponseToChat`, which aggregates the NDJSON), and the pre-stream error inspection and 502/503/504 retry (`:42-61, 140-241`, `parseCommandCodeError` `:80-138`).
 
 #### Two kinds of "cannot carry"
 
@@ -1711,6 +1711,50 @@ This PR builds the two Messages legs of the Kiro wire: `request anthropic-messag
 **Routing after PR 4e: Kiro stays in `ingress.unwired`.** The four legs exist and `TranslateChat`, `TranslateResponses` and `TranslateMessages` each have a Kiro arm (Responses goes through Chat, as the pin does, `translator/index.js:116-125`; compact is not translated). Endpoint ordering, regionalization and response-driven fallback are now the binding in 6.11; public enablement remains a separate decision. `TestKiroLegsAreDeclaredButKiroStaysUnwired` pins that the legs are declared, Messages uses the direct leg, and `CanTranslate` is false for all three client wires; `TestEveryProviderIsReachableOrTracked` keeps `kiro` tracked as unreachable. The saver view, token estimates, credits and live-provider qualification remain the follow-ups of 6.8.
 
 Validation: sanitized synthetic EventStream fixtures and the pinned leg inventory (`trackedLegGaps` is now empty). Every refusal row has a test that names the field; request and response cross-products are in `messages_request_test.go` and `messages_response_test.go`. No live provider calls were made. No SQLite schema, credential or runtime-dependency change. Security: no new network surface; the inbound `Anthropic-Beta` header is read for one decision and never forwarded or logged.
+
+### 6.13 CommandCode wire and the #76 P02 inventory (#76 P02)
+
+**What was actually missing, from the pin at `1c3b9f47`.** Each provider of the item was read in the pin (registry file and executor) and against `internal/providers/wire`:
+
+| Provider | Pin | Routeweft today | Status |
+|---|---|---|---|
+| iflow | `executors/iflow.js` HMAC signature | `wire/iflow.go`, `iflow_test.go` | done (#115 PR-E) |
+| qoder | `executors/qoder.js` COSY | `wire/qoder.go`, dispatched via `RequestHeaders` | done (#115 PR-I) |
+| kiro | `executors/kiro.js:235-328` headers, profile, hosts | `wire/kiro.go`, `kiro_endpoints_test.go`; still `ingress.unwired` (6.11) | wire done, enablement separate |
+| cursor | `executors/cursor.js:114-180` Connect-RPC | `wire/cursor.go` `CursorDo`; still `ingress.unwired` | wire done, enablement separate |
+| codebuddy-cn/-intl | `executors/codebuddy-*.js` | `wire/codebuddy.go` | done (#115 PR-D) |
+| github | `executors/github.js:28-165` | Chat body quirks and identity headers only (`githubChatBody`, `oauthheaders`) | **open, below** |
+| gemini-cli | `executors/gemini-cli.js:10-35,37-54,56-83` | legs only (6.9); no URL/`?alt=sse`/bearer/project/RetryInfo/refresh | **open, below** |
+| antigravity | `executors/antigravity.js:100-136,314-450` | legs only (6.9); no URL, IDE `requestId`, retry-delay parsing, refresh | **open, below** |
+| vertex | `executors/vertex.js:35-48,66-110` | `vertex-partner` target only; no SA-JSON JWT, project-scoped URL, `?alt=sse` | **open, below** |
+| gitlab | `providers/registry/gitlab.js` (no executor; default executor) | no hook; OAuth/PAT flow is P04 | no executor difference found at the pin; PAT/OAuth is P04 |
+| commandcode | `executors/commandcode.js:23-61,140-241` | legs only (6.5) until this PR | **this PR** |
+
+The ticket's list is not the work list. Cursor, Qoder, Kiro, iFlow and CodeBuddy already have their wire (the first column above), so naming them as open is stale; GitLab has no executor at the pin (`executors/index.js` registers none), so it has no executor difference to port; Antigravity, Gemini CLI, Vertex and GitHub are genuinely open; CommandCode is the slice closed here.
+
+**Implemented here: the CommandCode wire** (`wire/commandcode.go`, `wire/commandcode_test.go`). A real wire difference, because the NDJSON answer carries failures as a 200 with an `error` event:
+
+| Pin behaviour | Pin | Routeweft |
+|---|---|---|
+| Target `{base}/generate` (catalog base is `.../alpha`) | `registry/commandcode.js:21-28` | `Target{Endpoint: "generate"}`; `TestCommandCodeHeadersAndTarget` |
+| `x-command-code-version: 0.25.7`, `x-cli-environment: cli`, fresh `x-session-id` per request, bearer `apiKey\|\|accessToken`, `Accept: text/event-stream` | `registry/commandcode.js:25-28`, `executors/commandcode.js:28-40` | `commandCodeHeaders`; the session id is new per request and per retry |
+| Stream forced upstream | `executors/commandcode.js:23-25`, `chatCore.js:146` | `commandCodeStream` sets the envelope's `stream` and `params.stream` true (the pin passes `stream=true` to its translator when the provider forces it) |
+| Read until the first decisive line; an `error` event becomes an HTTP error with `{error:{message:"[CommandCode error: ...]",type,code}}` | `:140-241` | `inspectCommandCode`, `commandCodeFailure`; consumed bytes are replayed ahead of the rest, so a relayed stream is byte-identical |
+| Status of the error event: `statusCode`/`status` in 400-599, else inferred from the text (429, 401, 402, 403, 404, 503) | `parseCommandCodeError` `:80-138` | `ParseCommandCodeError`; `TestParseCommandCodeError` carries the pin's own cases |
+| Retry 502/503/504 twice, 1 s then 2 s; an upstream non-2xx status is never retried | `:42-61` | `CommandCodeDo`; the wait honours client cancellation |
+
+Divergences, each deliberate: (1) the pin buffers without bound while looking for a decisive line, Routeweft stops inspecting after 1 MiB and relays; (2) the pin returns the half-read response on a read error during inspection, Routeweft replays what it read and surfaces the error on the relayed body; (3) `ForceStream` is **not** set on the hook, because it routes a 2xx event stream through the Chat SSE fold (`foldForcedStream`), and this wire is NDJSON, which the commandcode response leg (`CommandCodeResponseToChat`) already aggregates for a non-stream client.
+
+**Routing stays closed.** `commandcode` remains in `ingress.unwired` and `unreachableProviders`: `TranslateChat`, `TranslateResponses` and `TranslateMessages` have no CommandCode arm, so a request cannot yet reach this wire from a client. That is the next CommandCode slice, together with `parseError` classification of non-2xx bodies (`executors/commandcode.js:63-78`) and the usage client (`services/usage/commandcode.js`). Nothing is hidden: the provider is still listed and still counted as unreachable by `TestEveryProviderIsReachableOrTracked`.
+
+**Residual P02 gaps, not claimed by this PR.**
+
+- **GitHub.** Claude models go to Copilot's `/v1/messages` (`github.js:28,123-130`, `executeWithMessagesEndpoint :255`); a `gpt` model whose `/chat/completions` answer is "not accessible via the /chat/completions endpoint" is replayed on `/responses` (`:123-165`, `executeWithResponsesEndpoint :167`, cached per model); the Copilot token exchange and its expiry check (`refreshCopilotToken :349`, `refreshCredentials :401`, `needsRefresh :422-437`, `credentials.copilotToken` as the bearer `:37`). Routeweft has the Chat body quirks and identity headers only.
+- **Gemini CLI.** Cloud Code URL with `streamGenerateContent?alt=sse` vs `generateContent` (`gemini-cli.js:10-14`), bearer and client headers (`:15-24`), the `project` named by the connection (`:25-35`), `RetryInfo.retryDelay` from a 429 (`:37-54`), refresh (`:56-83`).
+- **Antigravity.** URL and client headers (`antigravity.js:118-136`), the IDE-format `requestId` (`:100-111,186,309`), tool-group merge and `maxOutputTokens` rule (6.9 A5), retry-delay parsing and the transient retry loop (`:356-450`, caps 10 s / 15 s), refresh (`:314-345`).
+- **Vertex.** Service-account JSON to JWT to bearer, project-id recovery from a raw key, project/location-scoped URLs and `?alt=sse` (`vertex.js:35-48,66-110`).
+- **GitLab.** No executor at the pin; PAT/OAuth onboarding is P04 (PARITY section 5, row 31).
+- Enablement of Kiro, Cursor and CommandCode (`ingress.unwired`) and live-gateway qualification of every wire above.
 
 ## 7. Validation, limits and completion
 
