@@ -11,7 +11,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/quota"
 )
@@ -21,29 +21,36 @@ const mimoAPIUserAgent = "miNative PC/Normal Windows_NT/10.0.19045 SDKV/1.0.0 DE
 const mimoSessionRequired = "Weekly quota requires Xiaomi account session. API key alone is insufficient."
 
 func (r apiKeyReader) xiaomi(ctx context.Context, credential quota.Credential) (quota.State, error) {
-	// Bound the entire SSO exchange, in addition to Client.call’s per-hop deadline.
+	// Bound the SSO exchange and key fallback together, beyond Client.call’s per-hop deadline.
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
-	endpoint := "https://aistudio.xiaomimimo.com/open-apis/v1/user/usage"
-	headers := map[string]string{"Accept": "application/json", "X-Mimo-Source": "mimocode-cli"}
+	key := strings.TrimSpace(credential.AccessToken)
+	if key == "" {
+		key = strings.TrimSpace(credential.ProviderData["apiKey"])
+	}
 	if credential.ProviderData["mimoPassToken"] != "" {
 		cookie, err := r.mimoSession(ctx, credential.ProviderData)
-		if err != nil {
+		if err == nil {
+			state, err := r.xiaomiUsage(ctx, mimoAccountBase+"/api/user/usage", map[string]string{
+				"Cookie": cookie, "User-Agent": mimoAPIUserAgent, "Accept": "application/json",
+			})
+			if err == nil {
+				return state, nil
+			}
+		}
+		if key == "" {
 			return failure(mimoSessionRequired)
 		}
-		endpoint = mimoAccountBase + "/api/user/usage"
-		headers["Cookie"] = cookie
-		headers["User-Agent"] = mimoAPIUserAgent
-	} else {
-		key := strings.TrimSpace(credential.AccessToken)
-		if key == "" {
-			key = strings.TrimSpace(credential.ProviderData["apiKey"])
-		}
-		if key == "" {
-			return failure("Xiaomi MiMo Desktop not connected. Add credentials to view usage.")
-		}
-		headers["Authorization"] = "Bearer " + key
 	}
+	if key == "" {
+		return failure("Xiaomi MiMo Desktop not connected. Add credentials to view usage.")
+	}
+	return r.xiaomiUsage(ctx, "https://aistudio.xiaomimimo.com/open-apis/v1/user/usage", map[string]string{
+		"Authorization": "Bearer " + key, "X-Mimo-Source": "mimocode-cli", "Accept": "application/json",
+	})
+}
+
+func (r apiKeyReader) xiaomiUsage(ctx context.Context, endpoint string, headers map[string]string) (quota.State, error) {
 	reply, err := r.call(ctx, http.MethodGet, endpoint, headers, nil)
 	if err != nil {
 		return failure("Xiaomi MiMo Desktop usage request failed.")
@@ -94,7 +101,7 @@ func (r apiKeyReader) mimoSession(ctx context.Context, data map[string]string) (
 	jar := map[string]string{}
 	for name, key := range map[string]string{"passToken": "mimoPassToken", "userId": "mimoUserId", "cUserId": "mimoCUserId"} {
 		value := data[key]
-		if !onboarding.ValidMimoCookieValue(value) {
+		if !credentials.ValidMimoCookieValue(value) {
 			return "", errors.New("invalid Xiaomi account credential")
 		}
 		jar[name] = value
@@ -113,7 +120,7 @@ func (r apiKeyReader) mimoSession(ctx context.Context, data map[string]string) (
 			pair, _, _ := strings.Cut(header, ";")
 			name, value, ok := strings.Cut(strings.TrimSpace(pair), "=")
 			value = strings.Trim(value, "\"")
-			if !ok || value == "" || !onboarding.ValidMimoCookieValue(value) {
+			if !ok || value == "" || !credentials.ValidMimoCookieValue(value) {
 				continue
 			}
 			switch name {

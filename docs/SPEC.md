@@ -1013,8 +1013,13 @@ secrets takes JSON in it rather than extra plain-text fields. Kiro: a bare strin
 an API key (proven against the Amazon Q model catalog); a JSON object with
 `refreshToken` (and `clientId`/`clientSecret`/`region` for an organization account)
 is proven by refreshing it; a JSON object with a `token_endpoint` or `auth_method` is a CLIProxyAPI `external_idp` export. Xiaomi MiMo: a bare `sk-` key, the JSON body
-with `apiKey`/`uid`/`baseUrl`, or the contents of MiMo Code's `auth.json`; the
-account-session `passToken` is not held while that is an open owner decision.
+with `apiKey`/`uid`/`baseUrl`, or the contents of MiMo Code's `auth.json`.
+The owner approved account credentials in #181 (same as LiteRouter): import JSON
+also accepts `mimoPassToken`, `mimoUserId`, and `mimoCUserId`, sealed alongside the
+connection's key and never echoed in read models, logs, or errors. Quota reads
+prefer the derived account session; if the session or account usage read fails,
+the stored API key is tried. If neither path yields quota, return an error
+observation with no fabricated window; failed reads retain the last good view.
 Routeweft never reads the host's home directory for an import and never returns a
 stored credential; the reference's `auto-import` routes are replaced by pasting the
 same file contents (docs/P04_ONBOARDING_AUDIT.md). A refresh dispatches on the

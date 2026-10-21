@@ -568,7 +568,7 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 		return result
 	}
 	// Apply serving's body quirks to the probe too (github, kimchi, deepseek, minimax...).
-	encoded = wire.FinalizeBody(route, encoded)
+	encoded = wire.FinalizeBodyAt(route, target.Endpoint, encoded)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, parsed.String(), bytes.NewReader(encoded))
 	if err != nil {
 		result.Error = "model probe request could not be created"

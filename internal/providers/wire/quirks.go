@@ -31,17 +31,30 @@ type Finalize func(protocol string, body Body) bool
 // applied, leaves the request exactly as it was. A body no quirk changes is
 // returned untouched, byte for byte.
 func FinalizeBody(provider routing.ProviderRef, body []byte) []byte {
+	return FinalizeBodyAt(provider, "", body)
+}
+
+// FinalizeBodyAt is FinalizeBody for a request whose final endpoint is known. A
+// provider that declares a Compact rewrite applies it, and nothing else, to a
+// body bound for its compact endpoint: that endpoint takes a different, smaller
+// document than the streaming one (executors/codex.js:420-427).
+func FinalizeBodyAt(provider routing.ProviderRef, endpoint string, body []byte) []byte {
 	var parsed Body
 	if err := json.Unmarshal(body, &parsed); err != nil || parsed == nil {
 		return body
 	}
-	changed := sanitizeBody(provider.ProviderID, provider.Protocol, parsed)
 	hook := For(provider.ProviderID)
-	if finalize := hook.Finalize; finalize != nil && finalize(provider.Protocol, parsed) {
-		changed = true
-	}
-	if finalize := hook.FinalizeAccount; finalize != nil && finalize(provider, parsed) {
-		changed = true
+	var changed bool
+	if hook.Compact != nil && isCompactEndpoint(endpoint) {
+		changed = hook.Compact(provider.Protocol, parsed)
+	} else {
+		changed = sanitizeBody(provider.ProviderID, provider.Protocol, parsed)
+		if finalize := hook.Finalize; finalize != nil && finalize(provider.Protocol, parsed) {
+			changed = true
+		}
+		if finalize := hook.FinalizeAccount; finalize != nil && finalize(provider, parsed) {
+			changed = true
+		}
 	}
 	if !changed {
 		return body
@@ -51,6 +64,12 @@ func FinalizeBody(provider routing.ProviderRef, body []byte) []byte {
 		return body
 	}
 	return out
+}
+
+// isCompactEndpoint reports whether endpoint is a provider's compact path.
+func isCompactEndpoint(endpoint string) bool {
+	endpoint = strings.TrimRight(endpoint, "/")
+	return endpoint == "compact" || strings.HasSuffix(endpoint, "/compact")
 }
 
 func (b Body) delete(key string) bool {

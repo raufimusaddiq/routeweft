@@ -316,7 +316,7 @@ func importCell(spec registry.Spec) cell {
 		"cursor":         {kindP, ref("providers/onboarding:TestCursorImportValidatesShapeAndCallsNothing"), "token + machine id import validated without a network call; auto-import is deliberately absent (PARITY row 29)"},
 		"qoder":          {kindT, ref("providers/onboarding:TestFlowTypesMatchReference", "providers/onboarding:TestEveryOracleFlowIsImplemented"), "flow type is checked against the pin; the PAT-to-job-token exchange is not implemented (PARITY 6.15)"},
 		"zed":            {kindP, ref("providers/onboarding:TestZedCallbackDecrypts"), "RSA callback decrypt (zed.js oauth block); the pin has no refresh (zed.js refreshCredentials returns null), nor does Routeweft"},
-		"xiaomi-mimo":    {kindP, ref("providers/onboarding:TestXiaomiCallbackDecrypts", "providers/onboarding:TestXiaomiImportDoesNotHoldTheAccountSession"), "callback decrypt, key import; the account session is deliberately not stored"},
+		"xiaomi-mimo":    {kindP, ref("providers/onboarding:TestXiaomiCallbackDecrypts", "providers/onboarding:TestXiaomiImportHoldsSealedAccountFields", "providers/onboarding:TestMimoImportSealedAndAbsentFromReadModelsAndLogs"), "callback decrypt, key import; account credentials stored sealed and excluded from read models and logs"},
 		"gitlab":         {kindP, ref("providers/onboarding:TestGitlabPATRequiresVerification"), "PAT verified before it is stored"},
 		"kilocode":       {kindP, ref("control/api:TestOAuthDeviceApprovalStoresNonExpiringBearerOnce"), "device approval stores a non-expiring bearer; the pin has no refresh grant for it"},
 		"kimchi":         {kindP, ref("providers/onboarding:TestKimchiRejectsInvalidToken"), "token validated on import"},

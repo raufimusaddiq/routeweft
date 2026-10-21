@@ -34,7 +34,10 @@ func TestCodeBuddyHooksForceStreamAndSendNoIdentity(t *testing.T) {
 			}
 		}
 	})
-	if ForcesStream("openai") || ForcesStream("codex") {
+	// The pin forces openai too (registry/openai.js:28), and Routeweft does not:
+	// the fold refuses a stream field it cannot carry (logprobs, annotations), and
+	// those are fields api.openai.com answers on a non-stream request.
+	if ForcesStream("openai") {
 		t.Fatal("forced stream leaked to another provider")
 	}
 }

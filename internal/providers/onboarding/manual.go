@@ -401,21 +401,11 @@ func parseXiaomiInput(p Params) (xiaomiAccount, error) {
 		return xiaomiAccount{}, fmt.Errorf("xiaomi-mimo key must start with sk-")
 	}
 	for _, value := range account.session {
-		if !ValidMimoCookieValue(value) {
+		if !credentials.ValidMimoCookieValue(value) {
 			return xiaomiAccount{}, fmt.Errorf("xiaomi-mimo account credential contains an invalid cookie value")
 		}
 	}
 	return account, nil
-}
-
-// ValidMimoCookieValue rejects cookie separators and control bytes in account credentials.
-func ValidMimoCookieValue(value string) bool {
-	for _, c := range value {
-		if c < 0x21 || c > 0x7e || strings.ContainsRune("\";,\\", c) {
-			return false
-		}
-	}
-	return true
 }
 
 // bxAuthPattern extracts the auth cookie value.

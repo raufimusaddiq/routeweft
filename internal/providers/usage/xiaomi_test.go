@@ -131,7 +131,7 @@ func TestMimoMissingAndFailedSessionNeverInventsQuotaOrLeaks(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(oldSlog) })
 	for _, data := range []map[string]string{nil, {"mimoPassToken": "fixture-account-secret", "mimoUserId": "fixture-account-user", "mimoCUserId": "fixture-account-cuser"}} {
 		client := mimoClientFunc(func(req *http.Request) (*http.Response, error) {
-			if data == nil {
+			if req.URL.Host == "aistudio.xiaomimimo.com" {
 				return &http.Response{StatusCode: 401, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
 			}
 			return nil, errors.New("fixture-account-secret fixture-account-user fixture-account-cuser")
@@ -180,36 +180,64 @@ func TestMimoEmptyCredentialIsUnknown(t *testing.T) {
 }
 
 func TestMimoSessionFailureStagesDoNotExposeCredentials(t *testing.T) {
-	for failed := 1; failed <= 6; failed++ {
-		calls := 0
-		client := mimoClientFunc(func(req *http.Request) (*http.Response, error) {
-			calls++
-			if calls == failed {
-				return nil, errors.New("fixture-private-pass fixture-private-user fixture-private-cuser")
+	for _, keySource := range []string{"none", "access", "provider"} {
+		for failed := 1; failed <= 8; failed++ {
+			failAt := min(failed, 6)
+			calls := 0
+			client := mimoClientFunc(func(req *http.Request) (*http.Response, error) {
+				calls++
+				if req.URL.Host == "aistudio.xiaomimimo.com" {
+					if req.Header.Get("Cookie") != "" || req.Header.Get("Authorization") != "Bearer sk-fixture" || req.Header.Get("X-Mimo-Source") != "mimocode-cli" {
+						t.Fatal("key fallback did not isolate credentials")
+					}
+					return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"code":"0","data":{"percent":"94"}}`))}, nil
+				}
+				if calls == failAt {
+					if failed == 7 {
+						return &http.Response{StatusCode: 401, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("fixture-private-pass"))}, nil
+					}
+					if failed == 8 {
+						return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"code":0,"data":{}}`))}, nil
+					}
+					return nil, errors.New("fixture-private-pass fixture-private-user fixture-private-cuser")
+				}
+				h := http.Header{}
+				body := ""
+				switch calls {
+				case 1:
+					h.Set("Location", "https://account.xiaomi.com/pass/serviceLogin?callback="+url.QueryEscape(mimoAccountBase+"/api/sts"))
+				case 2:
+					body = `&&&START&&&{"location":"https://account.xiaomi.com/pass/confirm?nonce=123"}`
+				case 3:
+					h.Add("Set-Cookie", "serviceToken=fixture-account; Path=/")
+				case 4:
+					body = `&&&START&&&{"location":"` + mimoAccountBase + `/api/sts?ticket=fixture"}`
+				case 5:
+					h.Add("Set-Cookie", "serviceToken=fixture-service; Path=/")
+				}
+				return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})
+			readers, _ := Readers(client, nil)
+			credential := quota.Credential{ProviderData: map[string]string{"mimoPassToken": "fixture-private-pass", "mimoUserId": "fixture-private-user", "mimoCUserId": "fixture-private-cuser"}}
+			switch keySource {
+			case "access":
+				credential.AccessToken = "sk-fixture"
+			case "provider":
+				credential.ProviderData["apiKey"] = "sk-fixture"
 			}
-			h := http.Header{}
-			body := ""
-			switch calls {
-			case 1:
-				h.Set("Location", "https://account.xiaomi.com/pass/serviceLogin?callback="+url.QueryEscape(mimoAccountBase+"/api/sts"))
-			case 2:
-				body = `&&&START&&&{"location":"https://account.xiaomi.com/pass/confirm?nonce=123"}`
-			case 3:
-				h.Add("Set-Cookie", "serviceToken=fixture-account; Path=/")
-			case 4:
-				body = `&&&START&&&{"location":"` + mimoAccountBase + `/api/sts?ticket=fixture"}`
-			case 5:
-				h.Add("Set-Cookie", "serviceToken=fixture-service; Path=/")
+			state, err := readers["xiaomi-mimo"].Usage(context.Background(), credential)
+			if keySource == "none" {
+				if err == nil || len(state.Windows) != 0 || calls != failAt {
+					t.Fatalf("failure stage %d did not stop cleanly", failed)
+				}
+				if strings.Contains(err.Error(), "fixture-private") {
+					t.Fatal("account credential leaked in failure")
+				}
+			} else {
+				if err != nil || calls != failAt+1 || len(state.Windows) != 1 || state.Windows[0].Remaining == nil || *state.Windows[0].Remaining != .94 {
+					t.Fatalf("failure stage %d did not fall back through %s key: %v", failed, keySource, err)
+				}
 			}
-			return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(body))}, nil
-		})
-		readers, _ := Readers(client, nil)
-		state, err := readers["xiaomi-mimo"].Usage(context.Background(), quota.Credential{ProviderData: map[string]string{"mimoPassToken": "fixture-private-pass", "mimoUserId": "fixture-private-user", "mimoCUserId": "fixture-private-cuser"}})
-		if err == nil || len(state.Windows) != 0 || calls != failed {
-			t.Fatalf("failure stage %d did not stop cleanly", failed)
-		}
-		if strings.Contains(err.Error(), "fixture-private") {
-			t.Fatal("account credential leaked in failure")
 		}
 	}
 }

@@ -80,6 +80,14 @@ type Hook struct {
 	// RequireCredential prevents unauthenticated dispatch when an empty credential
 	// would otherwise produce a misleading upstream error.
 	RequireCredential bool
+	// Compact rewrites the body of a request to the provider's compact endpoint,
+	// in place of Finalize and FinalizeAccount: the compact endpoint takes a
+	// smaller document than the streaming one and must not be forced to stream.
+	Compact Finalize
+	// ClientHeaders names client request headers that are forwarded to the
+	// provider unchanged when the client sent them (a beta opt-in the provider
+	// reads, not an identity or a credential).
+	ClientHeaders []string
 	// Do sends the request in place of client.Do, for a provider whose exchange is
 	// not one request and one reply (Cursor's Connect stream, which the client
 	// answers mid-turn). It returns an ordinary response for the caller to classify.
@@ -87,7 +95,8 @@ type Hook struct {
 }
 
 var hooks = map[string]Hook{
-	"codex":      {OpenAIHeaders: codexHeaders, ClassifyError: codexReset},
+	"codex":      codexHook,
+	"grok-cli":   grokCLIHook,
 	"gemini-cli": {ClassifyError: geminiCLIRetryInfo},
 	// The gateway requires SSE even for buffered clients (registry/api-airforce.js:25-32).
 	"api-airforce": {ForceStream: true, Finalize: codebuddyStream, OpenAIHeaders: func(routing.ProviderRef) map[string]string {
