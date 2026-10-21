@@ -364,40 +364,42 @@ func TestCodeBuddyMissingUsageStaysUnobserved(t *testing.T) {
 }
 
 func TestCodeBuddyForcedStreamCancellationReachesUpstream(t *testing.T) {
-	for _, streaming := range []bool{false, true} {
-		t.Run(fmt.Sprint(streaming), func(t *testing.T) {
-			started, stopped := make(chan struct{}), make(chan struct{})
-			rig := newCodeBuddyRig(t, "codebuddy-cn", func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "text/event-stream")
-				fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"half\"}}]}\n\n")
-				w.(http.Flusher).Flush()
-				close(started)
-				<-r.Context().Done()
-				close(stopped)
-			})
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(fmt.Sprintf(`{"model":"x","stream":%t,"messages":[{"role":"user","content":"ping"}]}`, streaming))).WithContext(ctx)
-			r.Header.Set("Authorization", "Bearer "+rig.key)
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-				rig.mux.ServeHTTP(httptest.NewRecorder(), r)
-			}()
-			select {
-			case <-started:
-			case <-time.After(5 * time.Second):
-				t.Fatal("upstream did not start")
-			}
-			cancel()
-			for _, ch := range []chan struct{}{stopped, done} {
+	for _, providerID := range []string{"codebuddy-cn", "api-airforce"} {
+		for _, streaming := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/%v", providerID, streaming), func(t *testing.T) {
+				started, stopped := make(chan struct{}), make(chan struct{})
+				rig := newCodeBuddyRig(t, providerID, func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"half\"}}]}\n\n")
+					w.(http.Flusher).Flush()
+					close(started)
+					<-r.Context().Done()
+					close(stopped)
+				})
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(fmt.Sprintf(`{"model":"x","stream":%t,"messages":[{"role":"user","content":"ping"}]}`, streaming))).WithContext(ctx)
+				r.Header.Set("Authorization", "Bearer "+rig.key)
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					rig.mux.ServeHTTP(httptest.NewRecorder(), r)
+				}()
 				select {
-				case <-ch:
+				case <-started:
 				case <-time.After(5 * time.Second):
-					t.Fatal("cancellation did not stop upstream and relay")
+					t.Fatal("upstream did not start")
 				}
-			}
-		})
+				cancel()
+				for _, ch := range []chan struct{}{stopped, done} {
+					select {
+					case <-ch:
+					case <-time.After(5 * time.Second):
+						t.Fatal("cancellation did not stop upstream and relay")
+					}
+				}
+			})
+		}
 	}
 }
 

@@ -90,7 +90,8 @@ var tokens = []string{
 // values. Every other provider must still match the frozen legacy result.
 // iflow is added by #115 PR-E: every request now carries a per-request HMAC
 // signature (iflow_test.go pins it), so it cannot match a frozen header set.
-var headersChanged = map[string]bool{"azure": true, "kimi": true, "kilocode": true, "iflow": true, "kiro": true}
+// API.airforce adds its registry referer/title pair (airforce_wire_test.go).
+var headersChanged = map[string]bool{"azure": true, "api-airforce": true, "kimi": true, "kilocode": true, "iflow": true, "kiro": true}
 
 func TestOpenAIHeadersMatchLegacyForEveryProvider(t *testing.T) {
 	for _, id := range providerIDs() {
@@ -172,7 +173,7 @@ func TestPrepareMessagesMatchesLegacyForEveryProvider(t *testing.T) {
 func TestRegisteredHooksAreExactlyTheDeclaredProviders(t *testing.T) {
 	got := Registered()
 	sort.Strings(got)
-	want := []string{"anthropic", "azure", "cerebras", "claude", "cline", "clinepass", "cloudflare-ai", "codebuddy-cn", "codebuddy-intl", "codex", "cursor", "deepseek", "github", "glm", "iflow", "kenari", "kilocode", "kimchi", "kimi", "kiro", "minimax", "minimax-cn", "mistral", "opencode", "qoder", "vertex-partner", "xiaomi-tokenplan"}
+	want := []string{"anthropic", "api-airforce", "azure", "cerebras", "claude", "cline", "clinepass", "cloudflare-ai", "codebuddy-cn", "codebuddy-intl", "codex", "cursor", "deepseek", "github", "glm", "iflow", "kenari", "kilocode", "kimchi", "kimi", "kiro", "minimax", "minimax-cn", "mistral", "opencode", "qoder", "vertex-partner", "xiaomi-tokenplan"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("registered hooks %v, want %v", got, want)
 	}

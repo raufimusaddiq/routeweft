@@ -61,3 +61,24 @@ for (const row of gaps) {
 }
 assert.ok(gaps.length > 0, 'inventory silently removed all gaps');
 console.log(`${pin}: ${paths.length} routes, ${operations} operations, ${providers.length} providers, ${pages.length} pages; ${gaps.length} gaps dispositioned. Shapes are inventoried; only the differential cases replay wire behavior.`);
+
+const wireAudit = text.split('## 6.14 Registry-wide wire audit and API.airforce (#115)')[1];
+assert.ok(wireAudit, 'provider wire comparison is absent');
+const wireRows = [...wireAudit.matchAll(/^\| `([a-z0-9-]+)\.js` \| (.+) \|$/gm)];
+const registryEntries = files.filter(p => /^open-sse\/providers\/registry\/(?!index\.js$)[^/]+\.js$/.test(p));
+assert.deepEqual(wireRows.map(r => `open-sse/providers/registry/${r[1]}.js`).sort(), registryEntries.sort());
+for (const row of wireRows) {
+  assert.match(row[2], new RegExp(`R/${row[1]}\\.js:\\d+`), `${row[1]} has no pinned wire citation`);
+  assert.match(row[2], /internal\/[^`]+:\d+/, `${row[1]} has no Routeweft citation`);
+  const dashboardHidden = activeImports.includes(row[1]) && /^  hidden: true/m.test(source(`open-sse/providers/registry/${row[1]}.js`));
+  assert.equal(row[2].includes('dashboard-hidden'), dashboardHidden, `${row[1]} dashboard/routing visibility drifted`);
+  if (/\| (?:PARTIAL|MISSING) \|/.test(row[0])) {
+    assert.match(row[0], /R11: (?:product decision|privileged host operation|no SPEC basis): [^|]{20,}/, `${row[1]} has no gap disposition`);
+  }
+  if (/\| TESTED \|/.test(row[0])) assert.match(row[0], /Test\w+/, `${row[1]} has no wire test`);
+}
+const nativeWires = [...readFileSync('internal/ingress/registry_wire_test.go', 'utf8').matchAll(/\{"([a-z0-9-]+)", "(https:[^"]+)"\}/g)];
+for (const [, id, endpoint] of nativeWires) {
+  assert.ok(source(`open-sse/providers/registry/${id}.js`).includes(`baseUrl: "${endpoint}"`), `${id} mock wire URL differs from pin`);
+}
+console.log(`${wireRows.length} registry wire rows compared; ${nativeWires.length} native Chat mock-wire cases anchored to pin URLs.`);
