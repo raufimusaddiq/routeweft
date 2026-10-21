@@ -625,7 +625,7 @@ What Routeweft does, exhaustively:
 | Surface | Credential | Notes |
 | --- | --- | --- |
 | `/admin/v1/*` except the three below | admin session cookie | `requireSession` (`internal/control/api/api.go:273`); non-GET also needs same-origin. Unauthenticated: 401 `unauthenticated`. |
-| `POST /admin/v1/auth/login` | username + password | 8 failures per 5 minutes per socket address, then 429 + `Retry-After`. 409 `no_admin` while no admin exists. |
+| `POST /admin/v1/auth/login` | username + password | 8 failures per 5 minutes per client host (the socket address without its port), then 429 + `Retry-After`. 409 `no_admin` while no admin exists. |
 | `POST /admin/v1/auth/logout` | none | Revokes the presented session if any; otherwise a 204 no-op. |
 | `GET /admin/v1/auth/session` | cookie | 401 without a session. No `hasPassword`/`requireLogin`/bootstrap state is exposed. |
 | `/v1/*`, `/v1beta/*`, `/api/v1*`, `/responses`, `/codex`, `/messages`, `/api/tags` | client API key | `authorize` (`internal/ingress/ingress.go:843`). Separate domain from admin sessions (SPEC 12). No loopback or forwarded-header exemption. |
@@ -636,7 +636,7 @@ What Routeweft does, exhaustively:
 | `routeweft migrate/backup/restore` | filesystem access to the data dir | Local commands, not network listeners. Their trust boundary is host file permissions (RUNBOOK 3). |
 
 Trusted-peer logic does not exist: no code path reads `X-Forwarded-For`,
-`X-Real-Ip`, `Host` or `Origin` to grant access. `RemoteAddr` is used only as the
+`X-Real-Ip`, `Host` or `Origin` to grant access. The host part of `RemoteAddr` is used only as the
 login throttle bucket, so behind a reverse proxy every client shares one bucket;
 that can lock operators out for the window but never grants access.
 

@@ -3,11 +3,13 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -380,5 +382,37 @@ func TestC03RecoveryRequiresHostWriteAccessToTheDatabase(t *testing.T) {
 	}
 	if got := login("recovered-password"); got != http.StatusOK {
 		t.Fatalf("recovered password = %d, want 200", got)
+	}
+}
+
+// TestC03LoginThrottleHoldsAcrossSourcePorts sends wrong-password logins from
+// one host with a new source port each time, as a real client opening a fresh
+// connection per attempt. Keyed on the full socket address this never throttles.
+func TestC03LoginThrottleHoldsAcrossSourcePorts(t *testing.T) {
+	a := c03App(t, true)
+	login := func(host string, port int, password string) int {
+		r := httptest.NewRequest(http.MethodPost, "/admin/v1/auth/login", strings.NewReader(`{"username":"operator","password":"`+password+`"}`))
+		r.RemoteAddr = net.JoinHostPort(host, strconv.Itoa(port))
+		return c03Do(a, r).Code
+	}
+	limited := 0
+	for i := 0; i < 30; i++ {
+		if login("203.0.113.7", 40000+i, "wrong") == http.StatusTooManyRequests {
+			limited++
+		}
+	}
+	if limited == 0 {
+		t.Fatal("30 wrong-password logins from one host on distinct ports were never throttled")
+	}
+	// Once limited, the right password from that host is refused too.
+	if got := login("203.0.113.7", 50000, c03Password); got != http.StatusTooManyRequests {
+		t.Fatalf("correct password while limited = %d, want 429", got)
+	}
+	// Another host (and an IPv6 peer) is unaffected.
+	if got := login("198.51.100.9", 40000, c03Password); got != http.StatusOK {
+		t.Fatalf("other host = %d, want 200", got)
+	}
+	if got := login("2001:db8::1", 40000, "wrong"); got != http.StatusUnauthorized {
+		t.Fatalf("ipv6 peer first failure = %d, want 401", got)
 	}
 }
