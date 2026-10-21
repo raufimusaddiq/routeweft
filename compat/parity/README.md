@@ -49,3 +49,8 @@ the pin. It runs in the existing parity CI job. Regenerate with
 `ORACLE_DIR=/path/to/literouter node compat/parity/generate-capabilities.mjs`;
 `gofmt` must be on PATH. See `docs/MODEL_CAPABILITIES.md` for the source decision
 and resolution/override rules.
+
+`selectable_test.go` also looks every pinned active provider up in the built-in
+catalog the product serves, pins `muse` to its registry entry, and makes every
+provider-table key in the pin's capability/pricing files either a provider, an
+alias, or a named table-only entry (never a provider to seed).
