@@ -130,23 +130,6 @@ func TestAdminBootstrapProvisionOnceAndSessionGate(t *testing.T) {
 	}
 }
 
-func TestTelemetryOptionsMapSettings(t *testing.T) {
-	opts := telemetryOptions(map[string]string{
-		"enableObservability":          "true",
-		"observabilityMaxRecords":      "250",
-		"observabilityBatchSize":       "50",
-		"observabilityFlushIntervalMs": "1500",
-	})
-	if !opts.Enabled || opts.MaxRecords != 250 || opts.BatchSize != 50 || opts.FlushInterval != 1500*time.Millisecond {
-		t.Fatalf("options=%+v", opts)
-	}
-	// Invalid values fall back to defaults.
-	opts = telemetryOptions(map[string]string{"observabilityMaxRecords": "nope"})
-	if opts.MaxRecords != 1000 || opts.Enabled {
-		t.Fatalf("fallback options=%+v", opts)
-	}
-}
-
 func TestQuotaServiceSkippedWithoutKey(t *testing.T) {
 	app := New(Config{Listen: ":0", DataDir: t.TempDir()}, nil)
 	if err := app.Initialize(context.Background()); err != nil {

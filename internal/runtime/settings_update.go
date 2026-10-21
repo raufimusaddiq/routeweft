@@ -136,7 +136,7 @@ func validateSettingValue(key, value string) error {
 		if value != "lite" && value != "full" && value != "ultra" {
 			return invalid()
 		}
-	case "headroomTimeoutMs", "pxpipeTimeoutMs":
+	case "headroomTimeoutMs", "pxpipeTimeoutMs", "observabilityFlushIntervalMs":
 		n, err := strconv.ParseInt(value, 10, 64)
 		if err != nil || n <= 0 || n > int64((1<<63-1)/time.Millisecond) {
 			return invalid()
@@ -153,7 +153,7 @@ func validateSettingValue(key, value string) error {
 		if _, err := transport.ValidateTrustedLocalURL(value); err != nil {
 			return invalid()
 		}
-	case "stickyRoundRobinLimit", "comboStickyRoundRobinLimit", "observabilityMaxRecords", "observabilityBatchSize", "observabilityFlushIntervalMs", "observabilityMaxJsonSize":
+	case "stickyRoundRobinLimit", "comboStickyRoundRobinLimit", "observabilityMaxRecords", "observabilityBatchSize", "observabilityMaxJsonSize":
 		number, err := strconv.Atoi(value)
 		minimum := 1
 		if key == "stickyRoundRobinLimit" || key == "comboStickyRoundRobinLimit" {

@@ -40,6 +40,7 @@ type SQLiteDetailStore struct {
 	// MaxJSONSize bounds the stored detail document; larger payloads are dropped
 	// rather than silently truncated into invalid JSON.
 	MaxJSONSize int
+	SizeLimit   func() int
 	// Now is injectable for tests; defaults to time.Now.
 	Now func() time.Time
 }
@@ -62,7 +63,11 @@ func (s *SQLiteDetailStore) WriteRequestDetail(ctx context.Context, detail Detai
 	if err != nil {
 		return fmt.Errorf("encode request detail: %w", err)
 	}
-	if len(redacted) > s.MaxJSONSize {
+	limit := s.MaxJSONSize
+	if s.SizeLimit != nil {
+		limit = s.SizeLimit()
+	}
+	if len(redacted) > limit {
 		// Over the cap: store only the attribution, never an unredacted prefix.
 		redacted, _ = json.Marshal(map[string]string{"omitted": "detail exceeded configured size limit"})
 	}

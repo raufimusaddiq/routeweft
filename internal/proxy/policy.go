@@ -36,13 +36,13 @@ type Resolver struct {
 // falls back to the global setting (an empty pool is not a hard failure, matching
 // the capacity-adapter deselect semantics for optional infrastructure).
 func (r Resolver) Policy(binding Binding) transport.ProxyPolicy {
-	proxyURL := strings.TrimSpace(binding.MemberURL)
-	if proxyURL == "" {
-		proxyURL = strings.TrimSpace(r.Global.ProxyURL)
+	globalURL := strings.TrimSpace(r.Global.ProxyURL)
+	if !r.Global.Enabled {
+		globalURL = ""
 	}
 	return transport.ProxyPolicy{
-		Enabled:            r.Global.Enabled || proxyURL != "",
-		GlobalProxyURL:     strings.TrimSpace(r.Global.ProxyURL),
+		Enabled:            globalURL != "" || strings.TrimSpace(binding.MemberURL) != "",
+		GlobalProxyURL:     globalURL,
 		ConnectionProxyURL: strings.TrimSpace(binding.MemberURL),
 		NoProxy:            append([]string(nil), r.Global.NoProxy...),
 		AllowPrivate:       r.Global.AllowLocal,

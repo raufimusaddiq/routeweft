@@ -7,12 +7,15 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/auth"
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
+	"github.com/raufimusaddiq/routeweft/internal/telemetry"
 	transformbody "github.com/raufimusaddiq/routeweft/internal/transforms/body"
 )
 
 // RuntimeSnapshot is immutable after publication. Accessors return copies of
 // mutable values so consumers cannot modify the active configuration.
 type RuntimeSnapshot struct {
+	telemetryOptions    telemetry.Options
+	detailSizeLimit     int
 	savers              *transformbody.Pipeline
 	providerConfig      credentials.Configuration
 	providers           map[string]servingProvider

@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -84,51 +83,26 @@ func loadSnapshot(manager *runtime.Manager) func() *runtime.RuntimeSnapshot {
 	}
 }
 
-// telemetryOptions maps the compiled observability settings onto the bounded
-// queue configuration (SPEC §21). Invalid values fall back to the defaults.
-func telemetryOptions(settings map[string]string) telemetry.Options {
-	opts := telemetry.DefaultOptions()
-	opts.Enabled = settings["enableObservability"] == "true"
-	if value, err := strconv.Atoi(settings["observabilityMaxRecords"]); err == nil && value > 0 {
-		opts.MaxRecords = value
-	}
-	if value, err := strconv.Atoi(settings["observabilityBatchSize"]); err == nil && value > 0 {
-		opts.BatchSize = value
-	}
-	if value, err := strconv.Atoi(settings["observabilityFlushIntervalMs"]); err == nil && value > 0 {
-		opts.FlushInterval = time.Duration(value) * time.Millisecond
-	}
-	return opts
-}
-
-// observabilityMaxJSONSize returns the configured request-detail size cap,
-// falling back to the compiled default when unset or invalid.
-func observabilityMaxJSONSize(settings map[string]string) int {
-	if value, err := strconv.Atoi(settings["observabilityMaxJsonSize"]); err == nil && value > 0 {
-		return value
-	}
-	return 5 << 20
-}
-
 type App struct {
-	cfg     Config
-	log     *slog.Logger
-	store   *sqlite.Store
-	runtime *runtime.Manager
-	pxpipe  *pxpipe.Service
-	ingress *ingress.Handler
-	quota   *quota.Service
-	usage   *telemetry.Service
-	details *telemetry.SQLiteDetailStore
-	admin   *adminauth.Store
-	creds   *credentials.Store
-	credReg *credentials.Registry
-	control *controlapi.Handler
-	events  *controlevents.Bus
-	feed    *controlevents.UsageFeed
-	logs    *controlapi.LogBuffer
-	active  atomic.Int64
-	ready   atomic.Bool
+	cfg          Config
+	log          *slog.Logger
+	store        *sqlite.Store
+	runtime      *runtime.Manager
+	pxpipe       *pxpipe.Service
+	ingress      *ingress.Handler
+	quota        *quota.Service
+	usage        *telemetry.Service
+	usageStarted bool
+	details      *telemetry.SQLiteDetailStore
+	admin        *adminauth.Store
+	creds        *credentials.Store
+	credReg      *credentials.Registry
+	control      *controlapi.Handler
+	events       *controlevents.Bus
+	feed         *controlevents.UsageFeed
+	logs         *controlapi.LogBuffer
+	active       atomic.Int64
+	ready        atomic.Bool
 	// mu serializes Initialize and restore activation. Quiescent is set while a
 	// restore reinitializes the process so new requests are refused instead of
 	// racing the database swap (SPEC §25).
@@ -196,11 +170,19 @@ func (a *App) initialize(ctx context.Context) error {
 		_ = store.Close()
 		return fmt.Errorf("load initial snapshot: %w", err)
 	}
-	settings := snapshot.Settings()
-	usage := telemetry.New(telemetry.NewSQLiteSink(store.DB()), telemetryOptions(settings))
-	a.details = telemetry.NewSQLiteDetailStore(store.DB(), observabilityMaxJSONSize(settings))
+	usage := telemetry.New(telemetry.NewSQLiteSink(store.DB()), snapshot.TelemetryOptions())
+	usage.OptionsSource = func() telemetry.Options {
+		current, _ := manager.Load()
+		return current.TelemetryOptions()
+	}
+	a.details = telemetry.NewSQLiteDetailStore(store.DB(), snapshot.DetailSizeLimit())
+	a.details.SizeLimit = func() int {
+		current, _ := manager.Load()
+		return current.DetailSizeLimit()
+	}
 	usage.WithDetails(a.details)
 	a.usage = usage
+	a.usageStarted = false
 	a.events = controlevents.New()
 	a.feed = controlevents.NewUsageFeed()
 	binder := proxy.NewBinder(loadSnapshot(manager))
@@ -561,7 +543,7 @@ func (a *App) activateRestore(ctx context.Context, candidate *backup.Candidate) 
 	// The server and its request handlers have drained. Finish accepted Usage,
 	// then close the only live SQLite writer before file replacement.
 	a.flushTelemetry()
-	if a.usage != nil {
+	if a.usage != nil && a.usageStarted {
 		a.usage.Close()
 		a.usage.Wait()
 	}
@@ -653,7 +635,7 @@ func restoreRollback(rollback, database string) error {
 }
 
 func (a *App) flushTelemetry() {
-	if a.usage == nil || !a.usage.Enabled() {
+	if a.usage == nil || !a.usageStarted {
 		return
 	}
 	flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -727,9 +709,10 @@ func (a *App) serveOnce(ctx context.Context) error {
 	errCh := make(chan error, 1)
 	serviceCtx, stopServices := context.WithCancel(ctx)
 	a.serving.Store(true)
-	if a.usage != nil && a.usage.Enabled() {
+	if a.usage != nil {
 		// SPEC §21: the batcher is the only usage writer; the request path only
 		// enqueues, so a normal success never synchronously writes SQLite.
+		a.usageStarted = true
 		go a.usage.Run(serviceCtx)
 		// PRD-OBS-002 bounded retention: prune expired request details hourly.
 		go a.pruneDetails(serviceCtx)
