@@ -6,6 +6,7 @@ import (
 
 	"github.com/raufimusaddiq/routeweft/internal/auth"
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/providers/capabilities"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/telemetry"
 	transformbody "github.com/raufimusaddiq/routeweft/internal/transforms/body"
@@ -14,6 +15,7 @@ import (
 // RuntimeSnapshot is immutable after publication. Accessors return copies of
 // mutable values so consumers cannot modify the active configuration.
 type RuntimeSnapshot struct {
+	modelCapabilities   *capabilities.Catalog
 	telemetryOptions    telemetry.Options
 	detailSizeLimit     int
 	savers              *transformbody.Pipeline
@@ -121,4 +123,11 @@ func (s *RuntimeSnapshot) ResolveModel(provider, model string) (Model, bool) {
 	entry, ok := s.models[key]
 	entry.Capabilities = append([]string(nil), entry.Capabilities...)
 	return entry, ok
+}
+
+func (s *RuntimeSnapshot) ModelCapabilityDetails(provider, model string) capabilities.Capabilities {
+	if target, ok := s.aliases[model]; ok && (provider == "" || provider == target.ProviderID) {
+		provider, model = target.ProviderID, target.ModelID
+	}
+	return s.modelCapabilities.Resolve(provider, model)
 }

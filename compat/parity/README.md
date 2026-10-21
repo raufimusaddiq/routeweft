@@ -42,3 +42,10 @@ shrink: a closed gap that is still listed also fails. Nothing in the tests is a
 copy of the oracle's lists. The `formatNames` map only translates identifiers to
 Routeweft protocol names, and the test fails when LiteRouter adds a format the
 map does not cover.
+
+`TestPinnedCapabilities` in `internal/parity` also checks capability-data
+regeneration and compares every resolved field for all served seed models to
+the pin. It runs in the existing parity CI job. Regenerate with
+`ORACLE_DIR=/path/to/literouter node compat/parity/generate-capabilities.mjs`;
+`gofmt` must be on PATH. See `docs/MODEL_CAPABILITIES.md` for the source decision
+and resolution/override rules.

@@ -1826,7 +1826,7 @@ moved out of a translator, every rule below except `dropClientMetadata`,
 | github Claude except opus/sonnet 4.6: drop `thinking`, `reasoning_effort` | `paramSupport.js:14` | finalize, github | none |
 | cloudflare-ai: flatten content parts to a string | `paramSupport.js:16,78-86` | finalize, Chat bodies | Chat only: on a Messages body flattening would destroy `tool_use`/image blocks. A Messages body to cloudflare-ai is not flattened. |
 | xiaomi-mimo `preview`: flatten content | `paramSupport.js:19` | finalize, Chat bodies | as above |
-| volcengine-ark `kimi`: cap output at 32768 | `paramSupport.js:26,87-102` | finalize, `max_tokens`/`max_completion_tokens`/`max_output_tokens` | the pin also clamps to the model's catalogued `maxOutput`; Routeweft has no capability catalog, so only the explicit cap applies |
+| volcengine-ark `kimi`: cap output at 32768 | `paramSupport.js:26,87-102` | finalize, `max_tokens`/`max_completion_tokens`/`max_output_tokens` | the pin also clamps to the model's catalogued `maxOutput`; the #125 catalog is not yet consumed by this sanitizer, so only the explicit cap applies |
 | volcengine-ark `glm-5`: clamp to model max output | `paramSupport.js:20` | **not carried** | needs the same catalog; a request above the model's ceiling reaches Ark unclamped and is answered 400 there |
 | groq, mistral, cerebras: drop `reasoning_content`, `reasoning`, `reasoning_details` from assistant messages | `paramSupport.js:33-35,69-76` | finalize, Chat bodies | Chat only (Messages and Responses carry no such field) |
 | opencode-go `deepseek*`: drop `response_format` | `paramSupport.js:44` | finalize | none |
@@ -1854,7 +1854,7 @@ scoping round described, and no code changed.
 
 | Item | Pin | Routeweft | Outcome |
 | --- | --- | --- | --- |
-| volcengine-ark `maxOutput` in seed metadata | `providers/registry/volcengine-ark.js:24-34` declares nine models with `id`/`name` only; no `maxOutput` anywhere in the entry | `seeds_gen.go` carries `ID`/`Name`/`ContextWindow`, same as the pin's shape | **gap did not exist as stated.** The pin's value comes from the capability catalog (`providers/capabilities.js:703-748`, `refine` at `:634-651`), and `PROVIDER_CAPABILITIES` has no `volcengine-ark` block. Ark models resolve by model-name pattern, the optional models.dev source, or the `64000` floor (`:67`). Seeding a number would invent one. The consequence is the one already recorded under "Body sanitation": the `glm-5` clamp is not carried because Routeweft has no capability catalog. |
+| volcengine-ark `maxOutput` in seed metadata | `providers/registry/volcengine-ark.js:24-34` declares nine models with `id`/`name` only; no `maxOutput` anywhere in the entry | `seeds_gen.go` carries `ID`/`Name`/`ContextWindow`, same as the pin's shape | **gap did not exist as stated.** The pin's value comes from the capability catalog (`providers/capabilities.js:703-748`, `refine` at `:634-651`), and `PROVIDER_CAPABILITIES` has no `volcengine-ark` block. Ark models resolve by model-name pattern, the optional models.dev source, or the `64000` floor (`:67`). Seeding a number would invent one. The consequence is the one already recorded under "Body sanitation": the `glm-5` clamp is not carried because the sanitizer does not yet consume the #125 capability catalog. |
 | xiaomi-mimo Preview models | `executors/xiaomi-mimo.js:7,30-39,41-52,54-69,71-94`; `registry/xiaomi-mimo.js:53-56`; `shared/mimoAccount.js:1-40` | the six seeded models, both transports, dual auth and the `preview` content flattening are all present (`builtins.go:165`, `sanitize.go:95`) | **real gap, not implemented.** `mimo-x-pro-preview` / `mimo-x-flash-preview` are served at `mimo-server-cn.xiaomimimo.com/api/route/chat/completions` with a Xiaomi account-session `Cookie` (not the `sk-` key), obtained by a five-step SSO exchange from a `passToken` read out of MiMo Desktop's Chromium cookie DB. Routeweft would send a Preview model to `api.xiaomimimo.com` with the key. Closing it needs host credential discovery, which rows 40-41 above hold for an approved local-only import policy (#76/P04), so it is not a small provider patch. The pin's Preview defaults (`thinking`, `temperature` 1.0, `top_p` 0.95, `max_tokens` 4096) only apply on that route and are left with it. |
 
 ## #78 C07 operational hardening evidence
@@ -1918,3 +1918,17 @@ Not answered by Routeweft today, and where it must live:
 ### Verification
 
 `go build ./...`, `go vet ./...`, and `go test -race` on `internal/routing`, `internal/credentials`, `internal/runtime`, `internal/providers/wire`, `internal/store/...`. `go test ./internal/...` (no race) passes, including `internal/control/api`. `go test -race ./internal/control/api` was not completed: it hit the 600s package deadline (per-test admin password hashing under the race detector), so no race claim is made for that package.
+
+## Pinned model capability source (#125)
+
+The source decision, field representations, lookup order, corrections and
+snapshot lifetime are specified in [MODEL_CAPABILITIES.md](MODEL_CAPABILITIES.md).
+Evidence uses only git objects at `1c3b9f47`, with no live provider calls.
+
+| Behavior | Pin evidence | Routeweft | Status | Disposition |
+| --- | --- | --- | --- | --- |
+| Capability table source and fields | `open-sse/providers/capabilities.js:46-68,71-540` | `compat/parity/generate-capabilities.mjs`, `internal/providers/capabilities/data_gen.go`; regeneration check and all-seed field differential | PRESENT | Checked-in generated data from the pin; ordinary builds work offline. |
+| Exact/provider/glob/default resolution and vision refinement | `capabilities.js:634-655,660-748`; `visionPatterns.js:8-44` | `capabilities.Catalog.Resolve`, snapshot `ModelCapabilityDetails`; alias/prefix/order/immutability tests | PRESENT | Provider exact full/base first; canonical base/full next; ordered first glob then floor, preserving CommandCode special handling. |
+| Synced models.dev overlay and runtime catalog source | `capabilities.js:606-651` | No runtime fetch, file read or setter | PARTIAL | R11: product decision: #125 selects immutable pin-generated data rather than a live models.dev source; upstream catalog deltas require regeneration or hand-written corrections. |
+| Model-aware translated Messages output ceiling | `translator/request/openai-to-claude.js:25-28` | `anthropic.ChatToMessages` uses canonical `maxOutput`; high-output/prefix/default tests | PRESENT | Removes unconditional 64000 pre-clamp for known high-output models. |
+| Thinking gating and final/native Claude preparation ceiling | `translator/concerns/thinkingUnified.js`; `translator/formats/claude.js:496-505` | Table available, preparation integration incomplete | PARTIAL | R11: product decision: retained #119 must wire captureThinking/applyThinking reasoning/format gating and provider-aware final ceiling plus budget reconciliation; #125 completes the table and canonical translation ceiling only. |
