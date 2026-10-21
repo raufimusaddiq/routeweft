@@ -219,3 +219,18 @@ func TestAutoPingCodexRetriesFailedSendWithConstantReset(t *testing.T) {
 		t.Fatalf("no retry after cooldown: calls=%d err=%v", calls, err)
 	}
 }
+
+func TestAutoPingPersistsHistoryPruneWithoutPing(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	s := NewService(fakeConnections{byProvider: map[string][]credentials.Connection{"codex": {{ID: "a", ProviderID: "codex", Enabled: true, AuthKind: credentials.AuthOAuth}}}}, fakeCredentials{values: map[string]string{"a": "x"}}, Observer{Clients: map[string]UsageClient{"codex": &fakeClient{}}, Now: func() time.Time { return now }})
+	var saved map[string]PingRecord
+	p := &AutoPinger{Service: s, Save: func(_ context.Context, h map[string]PingRecord) error { saved = h; return nil }, Send: func(context.Context, string, Credential) error { return nil }, Settings: func() map[string]string {
+		return map[string]string{"codexAutoPing": `{"connections":{"a":true}}`, PingHistorySetting: `{"gone":{"reset":"k"}}`}
+	}}
+	if err := p.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if saved == nil || len(saved) != 0 {
+		t.Fatalf("prune not persisted: %v", saved)
+	}
+}

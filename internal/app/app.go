@@ -309,6 +309,7 @@ func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager 
 		Combos:                manager,
 		QuotaRefresher:        a.RefreshQuota,
 		QuotaState:            a.quotaState,
+		QuotaForget:           a.quotaForget,
 		AllowPrivateUpstreams: a.cfg.AllowPrivateUpstreams,
 		PublicOrigin:          a.cfg.PublicOrigin,
 		PXPIPE:                a.pxpipe,
@@ -880,6 +881,12 @@ func reservedPath(p string) bool {
 		}
 	}
 	return false
+}
+
+func (a *App) quotaForget(id string) {
+	if a.quota != nil {
+		a.quota.Forget(id)
+	}
 }
 
 func (a *App) quotaState(id string) (quota.State, bool) {

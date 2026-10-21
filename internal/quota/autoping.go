@@ -115,9 +115,16 @@ func (p *AutoPinger) Tick(ctx context.Context) error {
 	}
 	// Drop suppression records for connections no longer opted in so the
 	// persisted settings row does not grow without bound.
+	pruned := false
 	for id := range history {
 		if !optedIn[id] {
 			delete(history, id)
+			pruned = true
+		}
+	}
+	if pruned {
+		if err := p.Save(ctx, history); err != nil && firstErr == nil {
+			firstErr = errors.New("quota auto-ping history could not be saved")
 		}
 	}
 	return firstErr

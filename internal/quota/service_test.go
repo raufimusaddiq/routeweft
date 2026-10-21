@@ -276,3 +276,27 @@ func TestFailedReadKeepsLastGoodDetail(t *testing.T) {
 		t.Fatalf("outage wiped last good detail: %+v", state)
 	}
 }
+
+func TestForgetAndPruneDropCachedDetail(t *testing.T) {
+	remaining := .5
+	client := &fakeClient{state: State{Plan: "plus", Windows: []Window{{Name: "session", Remaining: &remaining}}}}
+	conns := fakeConnections{byProvider: map[string][]credentials.Connection{"codex": {{ID: "a", ProviderID: "codex", Enabled: true, AuthKind: credentials.AuthOAuth}, {ID: "b", ProviderID: "codex", Enabled: true, AuthKind: credentials.AuthOAuth}}}}
+	s := NewService(conns, fakeCredentials{values: map[string]string{"a": "x", "b": "x"}}, Observer{Clients: map[string]UsageClient{"codex": client}})
+	if err := s.RefreshProvider(context.Background(), "codex"); err != nil {
+		t.Fatal(err)
+	}
+	s.Forget("a")
+	if _, ok := s.LastState("a"); ok {
+		t.Fatal("Forget kept state")
+	}
+	conns.byProvider["codex"] = conns.byProvider["codex"][:1] // "b" removed
+	if err := s.RefreshProvider(context.Background(), "codex"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.LastState("b"); ok {
+		t.Fatal("removed connection still cached")
+	}
+	if _, ok := s.LastState("a"); !ok {
+		t.Fatal("live connection not refreshed")
+	}
+}

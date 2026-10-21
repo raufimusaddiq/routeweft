@@ -61,6 +61,7 @@ type Options struct {
 	Combos                ComboManager
 	QuotaRefresher        func(context.Context) error
 	QuotaState            func(string) (quota.State, bool)
+	QuotaForget           func(string)
 	AllowPrivateUpstreams bool
 	// PXPIPE is the process-level sink compiled saver pipelines report into;
 	// it backs the PXPIPE logs and stats routes.

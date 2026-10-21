@@ -57,6 +57,8 @@ func TestCodexCreditsOperatorAction(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
+	forgotten := []string{}
+	h.opts.QuotaForget = func(id string) { forgotten = append(forgotten, id) }
 	for _, method := range []string{"GET", "POST"} {
 		if got := doJSON(t, mux, nil, method, path, `{"confirm":true}`); got.Code != 401 {
 			t.Fatalf("anonymous=%d", got.Code)
@@ -76,6 +78,22 @@ func TestCodexCreditsOperatorAction(t *testing.T) {
 	if got.Code != 200 || !strings.Contains(got.Body.String(), `"ok":true`) {
 		t.Fatalf("POST: %d %s", got.Code, got.Body)
 	}
+	if len(forgotten) != 1 || forgotten[0] != c.ID {
+		t.Fatalf("cached quota not invalidated after spend: %v", forgotten)
+	}
+	apiKey, err := creds.PutConnection(ctx, credentials.Connection{NodeID: node.ID, Name: "key", Identity: "key", AuthKind: credentials.AuthAPIKey, Enabled: true, Secret: credentials.Secret{AccessToken: "fixture-key"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := calls
+	for _, method := range []string{"GET", "POST"} {
+		if got := doJSON(t, mux, cookie, method, "/admin/v1/quota/"+apiKey.ID+"/codex-reset-credits", `{"confirm":true}`); got.Code != 400 {
+			t.Fatalf("api-key %s=%d", method, got.Code)
+		}
+	}
+	if calls != before {
+		t.Fatal("API key sent upstream as bearer")
+	}
 	noCredit = true
 	if got := doJSON(t, mux, cookie, "POST", path, `{"confirm":true}`); got.Code != 409 {
 		t.Fatalf("no credit=%d", got.Code)
@@ -92,7 +110,7 @@ func TestCodexCreditsOperatorAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := calls
+	before = calls
 	if got := doJSON(t, mux, cookie, "POST", "/admin/v1/quota/"+c.ID+"/codex-reset-credits", `{"confirm":true}`); got.Code != 400 {
 		t.Fatalf("wrong provider=%d", got.Code)
 	}

@@ -131,7 +131,7 @@ func (c CodexClient) Usage(ctx context.Context, credential Credential) (State, e
 		reset := window.ResetAt
 		windows = append(windows, Window{Name: normalizeName(name), Remaining: PercentFromUsed(window.Used), ResetAt: reset})
 	}
-	return State{Plan: usage.Plan, Windows: windows, AvailableReset: &usage.AvailableReset}, nil
+	return State{Plan: usage.Plan, Windows: windows, AvailableReset: usage.AvailableReset}, nil
 }
 
 // ResetCreditConsumer is implemented by providers that expose reset-credit

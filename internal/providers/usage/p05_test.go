@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/quota"
 )
@@ -67,7 +68,7 @@ func TestGrokPinnedRESTCredits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(state.Windows) != 2 || state.Windows[0].Name != "On-demand" || *state.Windows[0].Remaining != .65 || state.Windows[0].ResetAt == nil || *state.Windows[1].Remaining != 1 {
+	if len(state.Windows) != 1 || state.Windows[0].Name != "On-demand" || *state.Windows[0].Remaining != .65 || state.Windows[0].ResetAt == nil {
 		t.Fatalf("state=%+v", state)
 	}
 	if strings.Join(requests, ",") != "https://cli-chat-proxy.grok.com/v1/billing?format=credits,https://cli-chat-proxy.grok.com/v1/user?include=subscription" {
@@ -113,6 +114,32 @@ func TestGrokRESTPaidFreeAndMonthlyShapes(t *testing.T) {
 			}
 			if len(state.Windows) != 1 || state.Windows[0].Name != test.wantName || *state.Windows[0].Remaining != test.remaining || state.Windows[0].Unlimited {
 				t.Fatalf("windows=%+v", state.Windows)
+			}
+		})
+	}
+}
+
+// A window whose amounts are absent or null is unknown, not exhausted: an
+// exhausted status skips the account in routing.
+func TestKenariAbsentAmountsAreUnknownNotExhausted(t *testing.T) {
+	for name, body := range map[string]string{
+		"absent": `{"plan":{"name":"P","windows":{"week":{"resets_at":"2026-10-25T00:00:00Z"}}}}`,
+		"null":   `{"plan":{"name":"P","windows":{"week":{"used_rp":null,"remaining_rp":null,"resets_at":"2026-10-25T00:00:00Z"}}}}`,
+		"half":   `{"plan":{"name":"P","windows":{"week":{"used_rp":5,"resets_at":"2026-10-25T00:00:00Z"}}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			state, err := reader(t, "kenari", &stubClient{status: 200, body: body}).Usage(context.Background(), quota.Credential{AccessToken: "fixture"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(state.Windows) != 1 {
+				t.Fatalf("windows=%+v", state.Windows)
+			}
+			if w := state.Windows[0]; w.Remaining != nil {
+				t.Fatalf("absent amount read as bound %v", *w.Remaining)
+			}
+			if got := state.DeriveStatus(time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)); got == quota.StatusExhausted {
+				t.Fatalf("status=%s would skip the account", got)
 			}
 		})
 	}

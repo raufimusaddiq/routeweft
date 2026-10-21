@@ -47,11 +47,12 @@ type Service struct {
 	lastErr  map[string]error
 	lastDone time.Time
 	states   map[string]State
+	stateOf  map[string]string
 }
 
 // NewService builds a quota refresh service.
 func NewService(connections ConnectionSource, credentials CredentialSource, observer Observer) *Service {
-	return &Service{Connections: connections, Credentials: credentials, Observer: observer, lastErr: make(map[string]error), states: make(map[string]State)}
+	return &Service{Connections: connections, Credentials: credentials, Observer: observer, lastErr: make(map[string]error), states: make(map[string]State), stateOf: make(map[string]string)}
 }
 
 // WithSeeder attaches the connection seeder and returns the service.
@@ -78,6 +79,7 @@ func (s *Service) RefreshProvider(ctx context.Context, providerID string) error 
 			return err
 		}
 	}
+	s.prune(providerID, connections)
 	var firstErr error
 	for _, connection := range connections {
 		if !connection.Enabled {
@@ -181,10 +183,37 @@ func (s *Service) observe(ctx context.Context, providerID, connectionID string, 
 	// still surfaced through record() and the observer's error status.
 	if _, known := s.states[connectionID]; err == nil || !known {
 		s.states[connectionID] = state
+		s.stateOf[connectionID] = providerID
 	}
 	s.mu.Unlock()
 	s.record(connectionID, err)
 	return state, err
+}
+
+// prune drops cached detail for connections of providerID that no longer exist.
+func (s *Service) prune(providerID string, connections []credentials.Connection) {
+	present := make(map[string]bool, len(connections))
+	for _, connection := range connections {
+		present[connection.ID] = true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, owner := range s.stateOf {
+		if owner == providerID && !present[id] {
+			delete(s.states, id)
+			delete(s.stateOf, id)
+			delete(s.lastErr, id)
+		}
+	}
+}
+
+// Forget drops one connection's cached detail, for example after a reset credit
+// is spent and the cached windows are known to be stale.
+func (s *Service) Forget(connectionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.states, connectionID)
+	delete(s.stateOf, connectionID)
 }
 
 func (s *Service) LastState(connectionID string) (State, bool) {

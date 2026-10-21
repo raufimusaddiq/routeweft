@@ -489,9 +489,8 @@ func (r grokCLIReader) Usage(ctx context.Context, credential quota.Credential) (
 	} else if profileKnown && !paid && hasCap && cap == 0 && hasUsed {
 		windows = append(windows, percentWindow("On-demand", 0, reset))
 	}
-	if prepaid, ok := grokNumber(value("prepaidBalance")); ok && prepaid > 0 {
-		windows = append(windows, percentWindow("Prepaid", 100, nil))
-	}
+	// prepaidBalance is a remaining amount with no known allotment or reset, so
+	// no window is synthesized from it.
 	if percent, ok := grokNumber(value("creditUsagePercent", "credit_usage_percent")); ok && percent >= 0 {
 		windows = append(windows, window("Weekly SuperGrok", percent, 100, reset))
 	}

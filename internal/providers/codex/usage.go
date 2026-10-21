@@ -27,7 +27,7 @@ type Usage struct {
 	LimitReached       bool                   `json:"limitReached"`
 	ReviewLimitReached bool                   `json:"reviewLimitReached"`
 	SparkLimitReached  bool                   `json:"sparkLimitReached"`
-	AvailableReset     float64                `json:"availableResetCredits"`
+	AvailableReset     *float64               `json:"availableResetCredits,omitempty"`
 	Quotas             map[string]QuotaWindow `json:"quotas"`
 }
 
@@ -91,7 +91,7 @@ func (c UsageClient) Usage(ctx context.Context, accessToken string) (Usage, erro
 		LimitReached:       limitReached(primary),
 		ReviewLimitReached: limitReached(reviewWindow(payload)),
 		SparkLimitReached:  limitReached(sparkWindow(payload)),
-		AvailableReset:     nonNegative(payload.RateLimitResetCredits.AvailableCount),
+		AvailableReset:     availableReset(payload.RateLimitResetCredits.AvailableCount),
 		Quotas:             quotas,
 	}, nil
 }
@@ -232,7 +232,7 @@ type usagePayload struct {
 	SparkRateLimit        json.RawMessage   `json:"spark_rate_limit"`
 	AdditionalRateLimits  []json.RawMessage `json:"additional_rate_limits"`
 	RateLimitResetCredits struct {
-		AvailableCount float64 `json:"available_count"`
+		AvailableCount *float64 `json:"available_count"`
 	} `json:"rate_limit_reset_credits"`
 	Summary struct {
 		Plan string `json:"plan"`
@@ -402,6 +402,15 @@ func clamp(value float64) float64 {
 		return 100
 	}
 	return value
+}
+
+// availableReset keeps an omitted count unknown (nil) instead of a reported 0.
+func availableReset(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	n := nonNegative(*value)
+	return &n
 }
 
 func nonNegative(value float64) float64 {

@@ -27,8 +27,8 @@ func (h *Handler) handleCodexResetCredits(w http.ResponseWriter, r *http.Request
 		writeError(w, 500, "quota_unavailable", "connection could not be read")
 		return
 	}
-	if connection.ProviderID != "codex" || connection.AuthKind != credentials.AuthOAuth && connection.AuthKind != credentials.AuthAPIKey {
-		writeError(w, 400, "invalid_connection", "reset credits require a Codex token connection")
+	if connection.ProviderID != "codex" || connection.AuthKind != credentials.AuthOAuth {
+		writeError(w, 400, "invalid_connection", "reset credits require a Codex OAuth connection")
 		return
 	}
 	if r.Method == http.MethodPost {
@@ -83,6 +83,11 @@ func (h *Handler) handleCodexResetCredits(w http.ResponseWriter, r *http.Request
 		status = http.StatusConflict
 	} else if !result.OK {
 		status = http.StatusBadGateway
+	}
+	if result.OK && h.opts.QuotaForget != nil {
+		// The cached windows and credit count are pre-spend; drop them so the
+		// next read does not show stale numbers.
+		h.opts.QuotaForget(connection.ID)
 	}
 	result.Message = ""
 	writeJSON(w, status, result)
