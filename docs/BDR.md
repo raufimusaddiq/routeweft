@@ -331,3 +331,14 @@ Rules:
 - Routeweft's `internal/protocol/hub` is the single declaration of which legs exist. Provider selection asks it whether a source/target pair is convertible.
 
 Reopening this decision requires a reviewed BDR change.
+
+## BDR-026 — Model capabilities are generated from the parity pin
+
+Decision (#125): generate checked-in declarative Go capability data from the
+parity pin, following the provider seed generation pattern. Keep resolution in
+hand-written tested code, corrections outside the generated file, and publish
+private immutable catalog copies through `RuntimeSnapshot`. Do not install a
+runtime catalog source or fetch models.dev: the pin is the behavioral reference,
+and mutable remote data would introduce an SSRF surface and availability/drift
+failure modes. [MODEL_CAPABILITIES.md](MODEL_CAPABILITIES.md) records the exact
+fields, lookup order, override precedence and remaining #119 integration.

@@ -601,3 +601,24 @@ func TestEveryUnansweredToolCallIsAnswered(t *testing.T) {
 		t.Errorf("each call must have exactly one reply: %v", answered)
 	}
 }
+
+func TestChatToMessagesModelOutputCeiling(t *testing.T) {
+	for _, tc := range []struct {
+		model string
+		want  int64
+	}{
+		{"claude-opus-4.8", 128000},
+		{"vendor/claude-opus-4.8", 128000},
+		{"claude-haiku-new", 64000},
+		{"unknown", 64000},
+	} {
+		body := map[string]any{"messages": []any{}, "max_tokens": 200000}
+		got, _, err := ChatToMessages(body, tc.model, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got["max_tokens"] != tc.want {
+			t.Errorf("%s: max_tokens=%v want %d", tc.model, got["max_tokens"], tc.want)
+		}
+	}
+}

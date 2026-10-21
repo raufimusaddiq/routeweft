@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/protocol/concerns"
+	"github.com/raufimusaddiq/routeweft/internal/providers/capabilities"
 )
 
 // TrailingUserPlaceholder ends a conversation that would otherwise end on an
@@ -32,7 +33,7 @@ func ChatToMessages(body map[string]any, model string, stream bool) (map[string]
 		// only max_tokens and would send the default 64000 (PARITY V12).
 		limits = map[string]any{"max_tokens": body["max_completion_tokens"], "tools": body["tools"]}
 	}
-	result := map[string]any{"model": model, "max_tokens": AdjustMaxTokens(limits, 0), "stream": stream}
+	result := map[string]any{"model": model, "max_tokens": AdjustMaxTokens(limits, capabilities.Resolve("", model).MaxOutput), "stream": stream}
 	if temperature, ok := body["temperature"]; ok {
 		result["temperature"] = temperature
 	}

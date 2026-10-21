@@ -18,10 +18,7 @@ const (
 
 var billingHeader = regexp.MustCompile(`(?i)^x-anthropic-billing-header:[^\n]*(?:\r?\n)?`)
 
-// AdjustMaxTokens is translator/formats/maxTokens.js:12-33. ceiling <= 0 means
-// the default; a model-aware ceiling needs a capability table Routeweft does
-// not have yet, so every caller passes 0 (the pin does the same for a model it
-// has no capabilities for).
+// AdjustMaxTokens applies output/tool/thinking bounds; ceiling <= 0 uses the default.
 func AdjustMaxTokens(body map[string]any, ceiling int64) int64 {
 	if ceiling <= 0 {
 		ceiling = DefaultMaxTokens

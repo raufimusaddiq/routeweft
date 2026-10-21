@@ -43,6 +43,13 @@ copy of the oracle's lists. The `formatNames` map only translates identifiers to
 Routeweft protocol names, and the test fails when LiteRouter adds a format the
 map does not cover.
 
+`TestPinnedCapabilities` in `internal/parity` also checks capability-data
+regeneration and compares every resolved field for all served seed models to
+the pin. It runs in the existing parity CI job. Regenerate with
+`ORACLE_DIR=/path/to/literouter node compat/parity/generate-capabilities.mjs`;
+`gofmt` must be on PATH. See `docs/MODEL_CAPABILITIES.md` for the source decision
+and resolution/override rules.
+
 `selectable_test.go` also looks every pinned active provider up in the built-in
 catalog the product serves, pins `muse` to its registry entry, and makes every
 provider-table key in the pin's capability/pricing files either a provider, an
