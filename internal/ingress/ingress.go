@@ -490,6 +490,9 @@ func (h *Handler) newUpstreamRequest(r *http.Request, snapshot *runtime.RuntimeS
 			request.Header.Add(name, value)
 		}
 	}
+	if provider.ProviderID == "api-airforce" && provider.Protocol == openaiadapter.ChatProtocol {
+		request.Header.Set("Accept", "text/event-stream")
+	}
 	if err := wire.ApplyRequestHeaders(provider, request, body); err != nil {
 		return nil, err
 	}
