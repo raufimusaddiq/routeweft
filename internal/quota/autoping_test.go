@@ -187,3 +187,35 @@ type pingBody struct {
 
 func (b *pingBody) Read(p []byte) (int, error) { *b.read = true; return b.Reader.Read(p) }
 func (b *pingBody) Close() error               { return nil }
+
+// Production holds ResetAt constant between ticks once a window has slid; the
+// retry after a failed send must work with that sequence.
+func TestAutoPingCodexRetriesFailedSendWithConstantReset(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	reset := now.Add(time.Hour)
+	client := &fakeClient{state: State{Windows: []Window{{Name: "session", Remaining: ptr(1), ResetAt: &reset}}}}
+	s := NewService(fakeConnections{byProvider: map[string][]credentials.Connection{"codex": {{ID: "a", ProviderID: "codex", Enabled: true, AuthKind: credentials.AuthOAuth}}}}, fakeCredentials{values: map[string]string{"a": "fixture"}}, Observer{Clients: map[string]UsageClient{"codex": client}, Now: func() time.Time { return now }})
+	calls, fail := 0, true
+	p := &AutoPinger{Service: s, Settings: func() map[string]string { return map[string]string{"codexAutoPing": `{"connections":{"a":true}}`} }, Save: func(context.Context, map[string]PingRecord) error { return nil }, Send: func(context.Context, string, Credential) error {
+		calls++
+		if fail {
+			return errors.New("failed")
+		}
+		return nil
+	}}
+	p.Tick(context.Background()) // first sample
+	reset = reset.Add(time.Minute)
+	if p.Tick(context.Background()) == nil || calls != 1 {
+		t.Fatalf("slide did not attempt a ping: calls=%d", calls)
+	}
+	now = now.Add(time.Minute) // reset unchanged from here on
+	p.Tick(context.Background())
+	if calls != 1 {
+		t.Fatal("retried inside the 15 minute cooldown")
+	}
+	fail = false
+	now = now.Add(16 * time.Minute)
+	if err := p.Tick(context.Background()); err != nil || calls != 2 {
+		t.Fatalf("no retry after cooldown: calls=%d err=%v", calls, err)
+	}
+}

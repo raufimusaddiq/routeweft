@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -38,7 +39,9 @@ func (p *AutoPinger) Run(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
-		_ = p.Tick(ctx)
+		if err := p.Tick(ctx); err != nil {
+			slog.Warn("quota auto-ping failed", "error", err)
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -72,12 +75,18 @@ func (p *AutoPinger) Tick(ctx context.Context) error {
 	}
 	var firstErr error
 	active := map[string]bool{}
+	optedIn := map[string]bool{}
 	for _, provider := range []string{"claude", "codex"} {
 		var optIn struct {
 			Connections map[string]bool `json:"connections"`
 		}
 		if json.Unmarshal([]byte(settings[provider+"AutoPing"]), &optIn) != nil || len(optIn.Connections) == 0 {
 			continue
+		}
+		for id, on := range optIn.Connections {
+			if on {
+				optedIn[id] = true
+			}
 		}
 		connections, err := p.Service.Connections.ListConnections(ctx, provider)
 		if err != nil {
@@ -102,6 +111,13 @@ func (p *AutoPinger) Tick(ctx context.Context) error {
 		if !active[id] {
 			delete(p.resets, id)
 			delete(p.failures, id)
+		}
+	}
+	// Drop suppression records for connections no longer opted in so the
+	// persisted settings row does not grow without bound.
+	for id := range history {
+		if !optedIn[id] {
+			delete(history, id)
 		}
 	}
 	return firstErr
@@ -171,6 +187,9 @@ func (p *AutoPinger) attempt(ctx context.Context, provider, id string, history m
 		return nil
 	}
 	if err := p.Send(ctx, provider, credential); err != nil {
+		// The slide that triggered this attempt must still look like a slide
+		// when the cooldown expires; otherwise the retry is unreachable.
+		p.resets[id] = previous
 		return err
 	}
 	// Keep successful sends suppressed in this process even if persistence fails.

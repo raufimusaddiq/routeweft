@@ -34,12 +34,12 @@ type Window struct {
 
 // State is one account's normalized quota snapshot.
 type State struct {
-	Status         Status    `json:"status"`
-	Plan           string    `json:"plan"`
-	Windows        []Window  `json:"windows"`
-	ObservedAt     time.Time `json:"observedAt"`
-	Err            string    `json:"-"`
-	AvailableReset *float64  `json:"availableResetCredits,omitempty"`
+	Status         Status
+	Plan           string
+	Windows        []Window
+	ObservedAt     time.Time
+	Err            string
+	AvailableReset *float64
 }
 
 // PercentFromUsed converts a 0-100 used percentage into a nil-safe remaining

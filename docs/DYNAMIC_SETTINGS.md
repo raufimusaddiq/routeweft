@@ -23,7 +23,7 @@ No setting is assumed functional merely because it appears in the settings API.
 | Provider compatibility: `providerCompatibility` | None; JSON validation/storage only | Stored only, including after restart | Explicit storage-only: no defined flag schema or compatibility dispatcher |
 | `dnsToolEnabled` | None; shape validation only | Stored only, including after restart | Explicit storage-only: no DNS tool surface; pinned oracle has no consumer either |
 | Quota visibility: `quotaVisibility` | None; JSON validation/storage only | Stored only, including after restart | Explicit storage-only: Routeweft quota read model lacks the named per-window rows needed by the oracle hide/show workflow (U06) |
-| Quota auto-ping: `claudeAutoPing`, `codexAutoPing` | None; rejected by generic setting allowlist | Absent, not stored | Missing reset-window warming scheduler (P05/U06); quota refresh is a read, not a generation ping |
+| Quota auto-ping: `claudeAutoPing`, `codexAutoPing` | `internal/quota/autoping.go`; `internal/runtime/settings_update.go`, `compiler.go` | Validated and stored, default `{"connections":{}}` (off); a minute worker reads them live | Opt-in generation warming (P05); UI selection remains U06; quota refresh alone never pings |
 | Extra oracle controls: `observabilityMaxBuffered`, `headroomCodeAware`, `headroomKompress` | None; rejected by allowlist | Absent, not stored | Queue bound uses `observabilityMaxRecords`; managed helper command-line controls await R09 |
 
 ## Oracle evidence

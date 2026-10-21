@@ -259,3 +259,20 @@ func TestLastStateIsolatedFromConcurrentReaders(t *testing.T) {
 		t.Fatal("readers mutated cached state")
 	}
 }
+
+func TestFailedReadKeepsLastGoodDetail(t *testing.T) {
+	remaining := .5
+	client := &fakeClient{state: State{Plan: "plus", Windows: []Window{{Name: "session", Remaining: &remaining}}}}
+	s := NewService(fakeConnections{}, fakeCredentials{}, Observer{Clients: map[string]UsageClient{"codex": client}})
+	if _, err := s.observe(context.Background(), "codex", "a", Credential{}); err != nil {
+		t.Fatal(err)
+	}
+	client.err = errors.New("outage")
+	if _, err := s.observe(context.Background(), "codex", "a", Credential{}); err == nil {
+		t.Fatal("expected read error")
+	}
+	state, _ := s.LastState("a")
+	if state.Plan != "plus" || len(state.Windows) != 1 {
+		t.Fatalf("outage wiped last good detail: %+v", state)
+	}
+}

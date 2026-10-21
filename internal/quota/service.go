@@ -176,7 +176,12 @@ func (s *Service) refreshConnection(ctx context.Context, connection credentials.
 func (s *Service) observe(ctx context.Context, providerID, connectionID string, credential Credential) (State, error) {
 	state, err := s.Observer.Observe(ctx, providerID, connectionID, credential)
 	s.mu.Lock()
-	s.states[connectionID] = state
+	// A failed read yields a near-empty State. Keep the last good detail so an
+	// outage shows stale named windows instead of wiping them; the failure is
+	// still surfaced through record() and the observer's error status.
+	if _, known := s.states[connectionID]; err == nil || !known {
+		s.states[connectionID] = state
+	}
 	s.mu.Unlock()
 	s.record(connectionID, err)
 	return state, err
