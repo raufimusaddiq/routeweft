@@ -981,14 +981,18 @@ seconds.
 A client that disconnects mid-request is accounted exactly once on every relay:
 native, translated (Chat, Responses, rewritten/unwrapped bodies), Messages and the
 Gemini/System One/Ollama compat paths, stream and non-stream. The record is
-`client_abandoned` with whatever usage had arrived (unobserved when none had).
-If no upstream response existed yet, its status is a synthetic `499`; otherwise
-it keeps the upstream's status (a translator error caused by the client leaving
-is not rewritten to 502). A translated non-stream body that cannot be read or
-translated while the client is still connected is recorded once as a `502`. It is marked `Unanswered`: persisted to usage, but
-it publishes neither the live `request.completed` event nor a usage-feed frame,
-because nothing completed; an upstream that itself answers 499 is an ordinary
-completed request. A disconnect before any upstream request is issued records
+`client_abandoned` and carries whatever usage had arrived; it is flagged usage
+unobserved unless the relay saw the upstream report usage, because the response
+was never completed. If no upstream response existed yet, its status is a
+synthetic `499`; otherwise it keeps the upstream's status (a translator error
+caused by the client leaving is not rewritten to 502). Only client abandonment is
+`Unanswered`: persisted to usage, but publishing neither the live
+`request.completed` event nor a usage-feed frame, because nothing completed. An
+upstream that itself answers 499 is an ordinary completed request. A translated
+non-stream body that cannot be read or translated while the client is still
+connected is also an ordinary completion: it is recorded once with status `502`
+and announced on the live event bus and usage feed, so the operator sees the
+gateway failure. A disconnect before any upstream request is issued records
 nothing because nothing was billed.
 
 Evidence (`internal/app/c09_ops_test.go`, run with `-race`):

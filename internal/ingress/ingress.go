@@ -188,7 +188,9 @@ func (h *Handler) clientFor(provider routing.ProviderRef) *http.Client {
 // middleware assigned and echoed on the request.
 func (h *Handler) emitOutcome(r *http.Request, provider routing.ProviderRef, status int, stream bool, usage promptcache.Usage, started time.Time) {
 	if r != nil && r.Context().Err() != nil {
-		h.abandon(r, provider, status, stream, usage, started, usage == (promptcache.Usage{}))
+		// The response was never completed, so usage is not confirmed complete:
+		// flag it unobserved explicitly rather than inferring it from a zero value.
+		h.abandon(r, provider, status, stream, usage, started, true)
 		return
 	}
 	h.publishOutcome(r, provider, status, stream, usage, started, "", false)

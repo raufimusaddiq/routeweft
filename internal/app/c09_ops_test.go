@@ -572,6 +572,13 @@ func TestTranslatedUnreadableBodyIsRecordedOnce(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"fast","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`))
 	request.Header.Set("Authorization", "Bearer "+key)
 	request.Header.Set("X-Request-Id", "c09-unreadable")
+	liveEvents, unsubscribe := a.events.Subscribe()
+	defer unsubscribe()
+	feed, err := a.feed.Subscribe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer feed.Close()
 	recorder := httptest.NewRecorder()
 	a.Handler().ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusBadGateway {
@@ -583,5 +590,24 @@ func TestTranslatedUnreadableBodyIsRecordedOnce(t *testing.T) {
 	rows := c09UsageRows(t, a)
 	if len(rows) != 1 || rows[0].requestID != "c09-unreadable" || rows[0].status != http.StatusBadGateway {
 		t.Fatalf("usage=%+v want exactly one 502 record", rows)
+	}
+	// A gateway-side 502 is an answer and a failure the operator must see: it is
+	// announced as an ordinary completion on both live surfaces (RUNBOOK 28).
+	select {
+	case event := <-liveEvents:
+		data, _ := event.Data.(map[string]any)
+		if event.Type != "request.completed" || data["status"] != http.StatusBadGateway || data["requestId"] != "c09-unreadable" {
+			t.Fatalf("live event=%+v", event)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("502 was not announced on the live event bus")
+	}
+	select {
+	case frame := <-feed.C():
+		if frame.RequestID != "c09-unreadable" || frame.Status != http.StatusBadGateway {
+			t.Fatalf("feed frame=%+v", frame)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("502 was not announced on the usage feed")
 	}
 }

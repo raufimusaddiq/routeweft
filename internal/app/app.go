@@ -102,6 +102,8 @@ type App struct {
 	feed         *controlevents.UsageFeed
 	logs         *controlapi.LogBuffer
 	active       atomic.Int64
+	idleMu       sync.Mutex
+	idleCond     *sync.Cond
 	ready        atomic.Bool
 	// mu serializes Initialize and restore activation. Quiescent is set while a
 	// restore reinitializes the process so new requests are refused instead of
@@ -123,7 +125,9 @@ func New(cfg Config, log *slog.Logger) *App {
 		cfg.MaxBodyBytes = ingress.DefaultMaxBodyBytes
 	}
 	logs := controlapi.NewLogBuffer(0)
-	return &App{cfg: cfg, log: slog.New(controlapi.LogHandler(log.Handler(), logs)), logs: logs, restoreCh: make(chan *backup.Candidate, 1)}
+	a := &App{cfg: cfg, log: slog.New(controlapi.LogHandler(log.Handler(), logs)), logs: logs, restoreCh: make(chan *backup.Candidate, 1)}
+	a.idleCond = sync.NewCond(&a.idleMu)
+	return a
 }
 
 // Initialize creates the data directory, migrates durable state and compiles the
@@ -670,7 +674,13 @@ func (a *App) trackInference(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isInferencePath(r.URL.Path) {
 			a.active.Add(1)
-			defer a.active.Add(-1)
+			defer func() {
+				if a.active.Add(-1) == 0 {
+					a.idleMu.Lock()
+					a.idleCond.Broadcast()
+					a.idleMu.Unlock()
+				}
+			}()
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -678,9 +688,18 @@ func (a *App) trackInference(next http.Handler) http.Handler {
 
 // waitInferenceIdle waits up to d for in-flight inference handlers to return.
 func (a *App) waitInferenceIdle(d time.Duration) {
-	deadline := time.Now().Add(d)
-	for a.active.Load() > 0 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+	timedOut := false
+	timer := time.AfterFunc(d, func() {
+		a.idleMu.Lock()
+		timedOut = true
+		a.idleCond.Broadcast()
+		a.idleMu.Unlock()
+	})
+	defer timer.Stop()
+	a.idleMu.Lock()
+	defer a.idleMu.Unlock()
+	for a.active.Load() > 0 && !timedOut {
+		a.idleCond.Wait()
 	}
 }
 
