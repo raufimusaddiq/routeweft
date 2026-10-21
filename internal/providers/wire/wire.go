@@ -60,11 +60,16 @@ type Hook struct {
 	Finalize Finalize
 	// FinalizeAccount injects settings from the selected connection into the final body.
 	FinalizeAccount func(routing.ProviderRef, Body) bool
-	// ForceStream marks a gateway that only answers streams. Its Finalize sets
+	// ForceStream marks a gateway that only answers streams; ForcesStream applies model restrictions.
+	// Its finalizer sets
 	// stream:true on the request; a client that did not ask to stream gets the
 	// SSE folded back to one JSON body before any consumer reads it
 	// (internal/ingress dispatchAttempts, FoldForcedStream).
 	ForceStream bool
+	// ForceStreamFor restricts forced streaming to selected routes.
+	ForceStreamFor func(routing.ProviderRef) bool
+	// ForcedTransport restricts a model to one wire; empty keeps normal selection.
+	ForcedTransport func(model string) string
 	// StripEmptyToolCalls removes an empty tool_calls array from the deltas of a
 	// Chat stream relayed to the client (ResponseStream).
 	StripEmptyToolCalls bool
@@ -129,6 +134,8 @@ var hooks = map[string]Hook{
 	"clinepass":        clineHook,
 	"codebuddy-cn":     codebuddyCN,
 	"codebuddy-intl":   codebuddyIntl,
+	"zed":              {ForceStream: true, Finalize: codebuddyStream},
+	"opencode-go":      {ForceStream: true, ForceStreamFor: openCodeGoForcesStream, ForcedTransport: openCodeGoTransport, FinalizeAccount: openCodeGoStream},
 	"opencode":         {Target: opencodeTarget, OpenAIHeaders: opencodeHeaders, ForceStream: true, Finalize: codebuddyStream},
 	"vertex-partner":   {Target: vertexPartnerTarget},
 	"cloudflare-ai":    {Target: cloudflareTarget},
@@ -233,8 +240,19 @@ func Send(provider routing.ProviderRef, client *http.Client, request *http.Reque
 	return client.Do(request)
 }
 
-// ForcesStream reports whether the provider only answers streams.
-func ForcesStream(providerID string) bool { return For(providerID).ForceStream }
+// ForcesStream reports whether the selected provider/model route only answers streams.
+func ForcesStream(provider routing.ProviderRef) bool {
+	hook := For(provider.ProviderID)
+	return hook.ForceStream && (hook.ForceStreamFor == nil || hook.ForceStreamFor(provider))
+}
+
+// ForcedTransport returns the model's required wire, or empty for normal selection.
+func ForcedTransport(providerID, model string) string {
+	if forced := For(providerID).ForcedTransport; forced != nil {
+		return forced(model)
+	}
+	return ""
+}
 
 // RequiresCredential reports whether a request to provider must carry a
 // credential, so a caller can refuse it instead of sending an unsigned one.

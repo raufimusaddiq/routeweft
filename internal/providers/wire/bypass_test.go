@@ -178,7 +178,7 @@ func TestDialingFunctionsCallTheWireSeam(t *testing.T) {
 }
 
 // An inference body is encoded and POSTed in exactly two places, serving and the
-// model probe, and both apply wire.FinalizeBody. This finds any other function in
+// model probe, and both apply wire.FinalizeBodyAt. This finds any other function in
 // the packages that talk to providers (ingress, control/api) that POSTs a request,
 // so a third site cannot ship without choosing: go through the seam, or be listed
 // here with the reason it is not an inference body.
@@ -221,7 +221,7 @@ func TestEveryInferenceBodyPostGoesThroughFinalizeBody(t *testing.T) {
 									}
 								}
 							}
-							if id, ok := sel.X.(*ast.Ident); ok && id.Name == "wire" && (sel.Sel.Name == "FinalizeBody" || sel.Sel.Name == "FinalizeBodyAt") {
+							if id, ok := sel.X.(*ast.Ident); ok && id.Name == "wire" && sel.Sel.Name == "FinalizeBodyAt" {
 								finalizes = true
 							}
 						}
@@ -234,9 +234,9 @@ func TestEveryInferenceBodyPostGoesThroughFinalizeBody(t *testing.T) {
 				name := rel + ":" + fn.Name.Name
 				found[name] = true
 				if _, listed := providerPostSites[name]; !listed {
-					t.Errorf("%s POSTs a request but is not a listed inference site: pass the body through wire.FinalizeBody, or list it with the reason it is not an inference body", name)
+					t.Errorf("%s POSTs a request but is not a listed inference site: pass the body through wire.FinalizeBodyAt, or list it with the reason it is not an inference body", name)
 				} else if !finalizes {
-					t.Errorf("%s POSTs an inference body without wire.FinalizeBody", name)
+					t.Errorf("%s POSTs an inference body without wire.FinalizeBodyAt", name)
 				}
 			}
 		}
