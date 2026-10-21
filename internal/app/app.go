@@ -110,7 +110,8 @@ type App struct {
 	quiescent atomic.Bool
 	serving   atomic.Bool
 	restoreCh chan *backup.Candidate
-	// drainGrace overrides the SIGTERM drain deadline (default 10s); tests only.
+	// drainGrace overrides the SIGTERM drain deadline; tests only. Production
+	// always uses the documented 10 s default (RUNBOOK 28).
 	drainGrace time.Duration
 }
 

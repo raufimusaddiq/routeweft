@@ -235,6 +235,13 @@ func TestClientDisconnectKeepsExactlyOneUsageRecordWithoutLeaks(t *testing.T) {
 					}
 				}
 				c09Observability(t, a)
+				liveEvents, unsubscribe := a.events.Subscribe()
+				defer unsubscribe()
+				feed, err := a.feed.Subscribe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer feed.Close()
 				ctx, cancelService := context.WithCancel(context.Background())
 				var running sync.WaitGroup
 				running.Add(1)
@@ -302,6 +309,17 @@ func TestClientDisconnectKeepsExactlyOneUsageRecordWithoutLeaks(t *testing.T) {
 				}
 				if a.usage.Lost() != 0 {
 					t.Fatalf("lost=%d", a.usage.Lost())
+				}
+				// It was recorded, but never announced: nothing completed.
+				for {
+					select {
+					case event := <-liveEvents:
+						t.Fatalf("abandoned request announced on the live event bus: %+v", event)
+					case event := <-feed.C():
+						t.Fatalf("abandoned request announced on the usage feed: %+v", event)
+					default:
+					}
+					break
 				}
 
 				server.Close()

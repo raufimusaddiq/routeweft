@@ -211,6 +211,10 @@ func (h *Handler) abandon(r *http.Request, provider routing.ProviderRef, status 
 // publishOutcomeFlagged is publishOutcome plus the Unanswered marker for the one
 // caller (dispatchAttempts) that accounts a request with no upstream response.
 func (h *Handler) publishOutcomeFlagged(r *http.Request, provider routing.ProviderRef, status int, stream bool, usage promptcache.Usage, started time.Time, termination string, unobserved, unanswered bool) {
+	// One decision for every emitter (emitOutcome, emitTranslated, the native
+	// relay, dispatch): an abandoned request never completed, whichever path
+	// recorded it.
+	unanswered = unanswered || termination == TerminationClientAbandoned
 	if h.opts.OnRequestComplete == nil {
 		return
 	}

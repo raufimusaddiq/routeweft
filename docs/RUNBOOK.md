@@ -963,7 +963,8 @@ process restart.
 
 On SIGTERM/SIGINT `routeweft serve` runs SPEC 24 in this order: readiness goes
 false and the listener closes at once (new connections are refused); in-flight
-requests and streams get a 10 second drain deadline; background schedulers and
+requests and streams get a fixed 10 second drain deadline (not configurable; the
+`drainGrace` field exists only so tests can shorten it); background schedulers and
 the telemetry batcher keep running through the drain and stop only after it, so a
 request that finishes during the drain still has its usage record written; the
 batcher then performs its final flush, and SQLite closes. Exit status is 0 on a
