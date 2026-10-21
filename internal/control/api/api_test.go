@@ -55,7 +55,7 @@ func newAPI(t *testing.T, settings SettingsStore) (*Handler, *adminauth.Store, *
 		t.Fatal(err)
 	}
 	accounts := adminauth.NewStore(store.DB())
-	if err := bootstrapOperator(ctx, accounts); err != nil {
+	if err := bootstrapOperator(ctx, store.DB()); err != nil {
 		t.Fatal(err)
 	}
 	handler := New(Options{Accounts: accounts, Sessions: adminauth.NewSessionManager(time.Hour), Settings: settings})

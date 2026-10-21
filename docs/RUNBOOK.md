@@ -981,7 +981,10 @@ A client that disconnects mid-request is accounted exactly once. If the upstream
 response had started, usage is whatever had arrived. If the upstream request had
 been issued but no response existed yet, the record has status `499`,
 termination `client_abandoned` and unobserved usage (it is never written to the
-client). A disconnect before any upstream request is issued records nothing
+client). It is marked `Unanswered`: it is persisted to usage but publishes neither
+the live `request.completed` event nor a usage-feed frame, because nothing
+completed; an upstream that itself answers 499 is an ordinary completed request.
+A disconnect before any upstream request is issued records nothing
 because nothing was billed.
 
 Evidence (`internal/app/c09_ops_test.go`, run with `-race`):
@@ -1008,8 +1011,9 @@ an admin ran the production PBKDF2 work factor (600000 iterations, about 0.45 s
 natively and 5-7 s under the race detector) once to create the account and again
 per login. The package now finishes in about 90 s under `-race` (`-v` per-test timings; before the fix it was killed past ten minutes). Fixtures
 provision the operator with a precomputed low-iteration hash
-(`adminauth.BootstrapWithHash`); production paths (`Bootstrap`, `ChangePassword`,
+(inserted directly into `admin_users` by the test fixture; no production API accepts a caller-supplied hash); production paths (`Bootstrap`, `ChangePassword`,
 `HashPassword`) are unchanged and keep 600000 iterations, and no test is skipped.
-`make race` runs the full suite locally. `.github/workflows/ci.yml` still only
+`make race` runs the full suite locally with Go's default ten minute per-package
+timeout, so a package that nears the budget fails there instead of being masked. `.github/workflows/ci.yml` still only
 races a package subset; promoting it to the full run is a workflow change tracked
 for a follow-up.

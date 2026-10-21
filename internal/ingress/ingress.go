@@ -97,6 +97,12 @@ type RequestOutcome struct {
 	// that omits it). The token fields then hold no measurement: zero is not
 	// "measured zero". It is false on every path that predates this field.
 	UsageUnobserved bool
+	// Unanswered is true when the client left after an upstream request was
+	// issued but before any upstream response existed. No request completed:
+	// the outcome is accounting only, and the status is a synthetic 499, not
+	// something an upstream said. Consumers gate live "completed" signals on
+	// this flag, never on the status number.
+	Unanswered bool
 }
 
 const (
@@ -190,6 +196,12 @@ func (h *Handler) emitOutcome(r *http.Request, provider routing.ProviderRef, sta
 // publishOutcome builds and publishes one record without the cancellation
 // guard, so a request the client abandoned can still be accounted for.
 func (h *Handler) publishOutcome(r *http.Request, provider routing.ProviderRef, status int, stream bool, usage promptcache.Usage, started time.Time, termination string, unobserved bool) {
+	h.publishOutcomeFlagged(r, provider, status, stream, usage, started, termination, unobserved, false)
+}
+
+// publishOutcomeFlagged is publishOutcome plus the Unanswered marker for the one
+// caller (dispatchAttempts) that accounts a request with no upstream response.
+func (h *Handler) publishOutcomeFlagged(r *http.Request, provider routing.ProviderRef, status int, stream bool, usage promptcache.Usage, started time.Time, termination string, unobserved, unanswered bool) {
 	if h.opts.OnRequestComplete == nil {
 		return
 	}
@@ -225,6 +237,7 @@ func (h *Handler) publishOutcome(r *http.Request, provider routing.ProviderRef, 
 		Stream:          stream,
 		Termination:     termination,
 		UsageUnobserved: unobserved,
+		Unanswered:      unanswered,
 	})
 }
 

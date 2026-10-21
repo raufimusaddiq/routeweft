@@ -366,8 +366,11 @@ func TestForwardedHeadersAreNotRecordedAnywhere(t *testing.T) {
 	c09Observability(t, a)
 	setSavers(t, a, map[string]string{"observabilityFlushIntervalMs": "10"})
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go a.usage.Run(ctx)
+	runDone := make(chan struct{})
+	go func() { defer close(runDone); a.usage.Run(ctx) }()
+	// Join the batcher so it cannot outlive the test and skew the sibling
+	// test's goroutine-baseline assertion.
+	defer func() { cancel(); <-runDone }()
 
 	spoof := func(r *http.Request) {
 		r.RemoteAddr = "203.0.113.9:6000"
@@ -423,11 +426,44 @@ func TestForwardedHeadersAreNotRecordedAnywhere(t *testing.T) {
 				t.Fatal(err)
 			}
 			for i, value := range values {
-				if strings.Contains(fmt.Sprint(value), "198.51.100.77") || strings.Contains(fmt.Sprint(value), "203.0.113.9") {
+				// A BLOB must be compared as text; fmt.Sprint prints []byte as decimal
+				// numbers, which would let a stored address evade the scan.
+				text := fmt.Sprint(value)
+				if raw, ok := value.([]byte); ok {
+					text = string(raw)
+				}
+				if strings.Contains(text, "198.51.100.77") || strings.Contains(text, "203.0.113.9") {
 					t.Errorf("table %s column %s persisted a client address: %v", name, columns[i], value)
 				}
 			}
 		}
 		rows.Close()
+	}
+}
+
+// TestUpstream499IsAnOrdinaryCompletion guards the cause-not-number gate: an
+// upstream that itself answers 499 (some gateways do) still emits the live
+// request.completed event and feed frame, because the client did not abandon it.
+func TestUpstream499IsAnOrdinaryCompletion(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(499)
+		fmt.Fprint(w, `{"error":{"message":"gateway closed"}}`)
+	}))
+	defer upstream.Close()
+	a, key := servingApp(t, upstream.URL, 1)
+	events, unsubscribe := a.events.Subscribe()
+	defer unsubscribe()
+	w := serveRequest(a.Handler(), key, "/v1/chat/completions", `{"model":"fast","messages":[{"role":"user","content":"hi"}]}`)
+	if w.Code != 499 {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body)
+	}
+	select {
+	case event := <-events:
+		if event.Type != "request.completed" {
+			t.Fatalf("event=%+v", event)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream 499 lost its request.completed event")
 	}
 }

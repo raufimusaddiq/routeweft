@@ -221,10 +221,12 @@ func (a *App) initialize(ctx context.Context) error {
 			return binder.ClientFor(context.Background(), connectionID)
 		},
 		OnRequestComplete: func(outcome ingress.RequestOutcome) {
-			// A 499 outcome is accounting only: the client left before any upstream
-			// status existed, so no request completed and no live completion event
-			// is emitted. Usage and the usage feed still record it.
-			if outcome.Status != 499 {
+			// An unanswered outcome is accounting only: the client left before any
+			// upstream response existed, so no request completed. It is gated on
+			// the cause, not the status number: an upstream may answer 499 itself.
+			// Neither the live event bus nor the "request.completed" usage feed
+			// carries it; usage persistence below still does.
+			if !outcome.Unanswered {
 				a.events.Publish("request.completed", map[string]any{
 					"requestId":    outcome.RequestID,
 					"providerId":   outcome.ProviderID,
@@ -234,13 +236,15 @@ func (a *App) initialize(ctx context.Context) error {
 					"durationMs":   outcome.Duration.Milliseconds(),
 				})
 			}
-			a.feed.Publish(controlevents.UsageEvent{
-				RequestID: outcome.RequestID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
-				ConnectionID: outcome.ConnectionID, APIKeyID: outcome.APIKeyID, Status: outcome.Status,
-				DurationMS: outcome.Duration.Milliseconds(), InputTokens: outcome.InputTokens,
-				OutputTokens: outcome.OutputTokens, Termination: outcome.Termination, UsageUnobserved: outcome.UsageUnobserved,
-				CreatedAt: time.Now().UTC(),
-			})
+			if !outcome.Unanswered {
+				a.feed.Publish(controlevents.UsageEvent{
+					RequestID: outcome.RequestID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
+					ConnectionID: outcome.ConnectionID, APIKeyID: outcome.APIKeyID, Status: outcome.Status,
+					DurationMS: outcome.Duration.Milliseconds(), InputTokens: outcome.InputTokens,
+					OutputTokens: outcome.OutputTokens, Termination: outcome.Termination, UsageUnobserved: outcome.UsageUnobserved,
+					CreatedAt: time.Now().UTC(),
+				})
+			}
 			usage.Record(telemetry.Event{
 				Class:        telemetry.Critical,
 				RequestID:    outcome.RequestID,

@@ -31,7 +31,9 @@ parity-test:
 	go test -race ./internal/parity ./internal/protocol/hub -count=1
 
 race:
-	go test -race -timeout 20m ./...
+	# 10m is Go's default per-package budget on purpose: a package that creeps
+	# toward it (internal/app was 433s) must fail loudly here, not be masked.
+	go test -race -timeout 10m ./...
 
 bench-router:
 	go test ./bench/router -run '^$$' -bench . -benchmem -count=5

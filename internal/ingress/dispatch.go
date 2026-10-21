@@ -142,7 +142,12 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 	// relay paths do the same for responses that did arrive (native_usage.go).
 	defer func() {
 		if response == nil && resultErr != nil && used > 0 && r.Context().Err() != nil {
-			h.publishOutcome(r, chosen, statusClientClosedRequest, stream, promptcache.Usage{}, dispatchedAt, TerminationClientAbandoned, true)
+			// Candidate exhaustion returns an empty ref; attribute the record to
+			// the last attempted provider instead of an empty provider/model.
+			if chosen.ProviderID == "" && chosen.ConnectionID == "" {
+				chosen = attemptProvider
+			}
+			h.publishOutcomeFlagged(r, chosen, statusClientClosedRequest, stream, promptcache.Usage{}, dispatchedAt, TerminationClientAbandoned, true, true)
 		}
 	}()
 	authFailureSeen := false
