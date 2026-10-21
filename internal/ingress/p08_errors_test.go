@@ -113,15 +113,6 @@ func TestOpenP08ErrorClassificationGaps(t *testing.T) {
 			}
 		}
 	})
-	t.Run("codex usage_limit_reached cools for the default, not until resets_at", func(t *testing.T) {
-		// Pin: executors/codex.js:388-410 reads error.resets_at / resets_in_seconds
-		// and cools the account until then (capped at 30 min by
-		// MAX_RATE_LIMIT_COOLDOWN_MS, errorConfig.js:42). Routeweft has no codex
-		// ClassifyError hook, so the account cools for the generic 429 backoff.
-		got, cooling := cooldownAfter(t, errorShape{provider: "codex", protocol: openaiadapter.ResponsesProtocol, status: 429,
-			body: `{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","resets_at":4102444800,"resets_in_seconds":1500}}`})
-		if !cooling || got > 6*time.Minute {
-			t.Errorf("codex cools for %v (cooling=%v): it now honours resets_at; update the matrix and flip this expectation", got, cooling)
-		}
-	})
+	// Codex usage_limit_reached honouring resets_at was a gap here; P02 closed it
+	// (wire/error_reset.go, TestCodexBodyResetReachesDispatchCooldown).
 }

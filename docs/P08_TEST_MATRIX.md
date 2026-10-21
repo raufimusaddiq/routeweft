@@ -55,13 +55,13 @@ Cells by kind and column:
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Authenticated listing | 22 | 0 | 20 | 2 | 0 | 3 | 34 |
 | Quota / usage read | 23 | 0 | 0 | 0 | 0 | 1 | 57 |
-| Applicable unavailability | 18 | 1 | 0 | 52 | 5 | 5 | 0 |
+| Applicable unavailability | 19 | 1 | 0 | 52 | 5 | 4 | 0 |
 | Import / refresh | 18 | 0 | 3 | 0 | 0 | 3 | 57 |
-| Streaming | 14 | 5 | 52 | 1 | 3 | 6 | 0 |
-| Non-streaming | 15 | 5 | 51 | 1 | 3 | 6 | 0 |
+| Streaming | 14 | 5 | 51 | 1 | 3 | 7 | 0 |
+| Non-streaming | 15 | 5 | 50 | 1 | 3 | 7 | 0 |
 | Error shapes | 24 | 6 | 1 | 47 | 3 | 0 | 0 |
 | Cached vs ordinary tokens | 13 | 5 | 5 | 54 | 3 | 1 | 0 |
-| **All cells** | **147** | **22** | **132** | **157** | **17** | **25** | **148** |
+| **All cells** | **148** | **22** | **130** | **157** | **17** | **26** | **148** |
 
 648 cells in all (81 providers x 8 behaviours). `N` cells carry a pin citation in the evidence tables below.
 
@@ -103,7 +103,7 @@ Cells by kind and column:
 | `vercel-ai-gateway` | ready | T | P | P | N | T | T | S | S |
 | `volcengine-ark` | ready | T | N | S | N | T | T | S | S |
 | `openai` | ready | T | N | S | N | T | T | S | S |
-| `codex` | ready | P | P | G | P | G | G | P | T |
+| `codex` | ready | P | P | P | P | G | G | P | T |
 | `anthropic` | ready | P | N | S | N | T | T | P | P |
 | `gemini` | ready | P | N | S | N | P | P | P | P |
 | `claude` | ready | G | P | P | P | T | T | S | S |
@@ -114,7 +114,7 @@ Cells by kind and column:
 | `minimax-cn` | ready | N | P | P | N | T | T | S | S |
 | `xiaomi-tokenplan` | ready | N | N | S | N | P | P | P | S |
 | `mimo-free` | ready | P | N | S | N | G | G | S | S |
-| `mmf` | ready | N | N | S | N | T | T | S | S |
+| `mmf` | ready | N | N | S | N | G | G | S | S |
 | `opencode` | ready | P | N | S | N | P | P | P | S |
 | `ollama` | ready | P | P | P | N | P | P | P | P |
 | `ollama-local` | experimental | G | N | S | N | S | S | S | S |
@@ -275,6 +275,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 ### Applicable unavailability
 
 - **P** `vercel-ai-gateway` — a credit balance is not a usage percentage Tests: `providers/usage:TestVercelBalanceIsNotAUsagePercentage`.
+- **P** `codex` — usage_limit_reached cools until resets_at / resets_in_seconds (executors/codex.js:388-410), landed in P02 Tests: `ingress:TestCodexBodyResetReachesDispatchCooldown`, `providers/wire:TestPinnedErrorBodyResets`, `providers/codex:TestUsageFailureIsUnavailableNotExhausted`.
 - **P** `claude` — a 429 on the usage read cools and falls back; no organization reports an admin message Tests: `providers/claude:TestOAuthUsage429CoolsDownThenFallsBackToLegacy`, `providers/claude:TestLegacyWithoutOrganizationReportsAdminMessage`.
 - **P** `glm` — an expired key is an error, not a healthy account Tests: `providers/usage:TestGLMRejectsExpiredKey`.
 - **P** `minimax`, `minimax-cn` — a base_resp error is an error, not an empty quota Tests: `providers/usage:TestMiniMaxUsageEndpointsRegionsAndCountSemantics`.
@@ -296,7 +297,6 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **U** `typesafe`, `gemini-cli`, `vertex`, `grok-web`, `perplexity-web` — refused by its immutable readiness; no capacity behaviour is reachable Tests: `ingress:TestReadinessMatchesIngressReachability`.
 - **G** `groq` — the quota reader returns an error for every key (see the quota column), so no exhausted-key state is ever observed Tests: `ingress:TestOpenP08ErrorClassificationGaps`.
 - **G** `openrouter` — pin: 402 cools the account for two minutes and falls back (errorConfig.js:77). Routeweft treats 402 as a terminal client error Tests: `ingress:TestOpenP08ErrorClassificationGaps`.
-- **G** `codex` — pin: 429 usage_limit_reached cools the account until error.resets_at / resets_in_seconds (executors/codex.js:388-410). Routeweft has no codex classifier and cools for the generic 429 backoff Tests: `ingress:TestOpenP08ErrorClassificationGaps`.
 - **G** `deepseek` — pin: 402 Insufficient Balance cools the account for two minutes and falls back (errorConfig.js:77, accountFallback.js:35-46), and the balance endpoint reports is_available:false. Routeweft treats 402 as a terminal client error (no cooldown, no fallback) and reads a zero balance as unlimited Tests: `ingress:TestOpenP08ErrorClassificationGaps`, `providers/usage:TestDeepSeekReportsBalance`.
 - **G** `grok-cli` — pin: 402 personal-team-blocked:spending-limit is surfaced for fallback (executors/grok-cli.js:400-416, errorConfig.js:77). Routeweft treats 402 as a terminal client error Tests: `ingress:TestOpenP08ErrorClassificationGaps`.
 
@@ -403,7 +403,6 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **T** `anthropic`, `claude` — shared path, this provider's own URL and credential: anthropic-messages Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `deepseek` — shared path, this provider's own URL and credential: Chat, anthropic-messages Tests: `ingress:TestRegistryChatWires`, `ingress:TestRegistryNativeTransportWires`.
 - **T** `glm`, `minimax`, `minimax-cn` — shared path, this provider's own URL and credential: openai-chat, anthropic-messages Tests: `ingress:TestRegistryNativeTransportWires`.
-- **T** `mmf`, `kilocode`, `kimchi` — shared path, this provider's own URL and credential: openai-chat Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `perplexity-agent`, `muse` — shared path, this provider's own URL and credential: openai-responses Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `opencode-go` — shared path, this provider's own URL and credential: openai-chat, openai-responses, anthropic-messages. Open: Responses-only models, the session header and body normalization (executors/opencode-go.js:128-210) are not replicated (experimental) Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `xai` — shared path, this provider's own URL and credential: Chat, openai-responses Tests: `ingress:TestRegistryChatWires`, `ingress:TestRegistryNativeTransportWires`.
@@ -411,10 +410,11 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **T** `iflow` — Chat both modes through the table; the signature over the final body is asserted by TestIflowRequestIsSigned Tests: `ingress:TestRegistryNativeTransportWires`, `ingress:TestIflowRequestIsSigned`.
 - **T** `kimi` — shared path, this provider's own URL and credential: openai-chat, anthropic-messages, openai-responses Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `xiaomi-mimo` — shared path, this provider's own URL and credential: openai-chat, anthropic-messages. Open: the Preview models served through the account-session route (executors/xiaomi-mimo.js:21-99) are not replicated; Cloud API models are the shared path Tests: `ingress:TestRegistryNativeTransportWires`.
+- **T** `kilocode`, `kimchi` — shared path, this provider's own URL and credential: openai-chat Tests: `ingress:TestRegistryNativeTransportWires`.
 - **S** `ollama-local` — the shared Ollama codec; no test names ollama-local (experimental) Tests: `ingress:TestTruncatedOllamaStreamIsAFailure`, `protocol/ollama:TestBufferedBodyIsConverted`.
 - **U** `vertex`, `grok-web`, `perplexity-web` — refused by its immutable readiness; no codec exists to test Tests: `ingress:TestReadinessMatchesIngressReachability`.
 - **G** `codex` — the table row proves the URL, bearer and CLI headers only. The pin's executor also forces stream:true and store:false, injects default instructions, maps review models, drops unsupported fields and filters to an allowlist (executors/codex.js:415-515); Routeweft forwards the client's body (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`, `ingress:TestCodexProviderHeadersCarryCLIFingerprint`.
-- **G** `mimo-free` — the table row proves the URL only. The pin bootstraps a JWT and injects the MiMoCode system marker the free endpoint requires (executors/mimo-free.js:24-33,105-160: 403 "Illegal access" without it); Routeweft does neither (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`.
+- **G** `mimo-free`, `mmf` — (mmf is an alias of mimo-free, P02 audit) the table row proves the URL only. The pin bootstraps a JWT and injects the MiMoCode system marker the free endpoint requires (executors/mimo-free.js:24-33,105-160: 403 "Illegal access" without it); Routeweft does neither (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`.
 - **G** `vertex-partner` — only the URL seam is tested; the target is an absolute Google host, so no request is dispatched in a test (provider is experimental) Tests: `providers/wire:TestVertexPartnerTargetUsesTheConnectionProject`.
 - **G** `qoder` — only the request signing seam is tested; no response codec exists at the pin for dispatch (registry/qoder.js:19-26), so streamed and buffered bodies are untested Tests: `ingress:TestQoderDispatchSeamSignsFinalRequest`.
 - **G** `grok-cli` — the table row proves the URL and bearer only. The pin's executor sends the grok-shell identity (x-grok-session-id, conv-id, req-id, turn-idx, model-override, email, userid), forces stream:true and store:false and normalizes input and tools (executors/grok-cli.js:362-470); Routeweft sends none of that at inference, though its listing needs the identity (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`.
@@ -440,7 +440,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **C** `kiro` — buffered codec; the provider is unavailable Tests: `protocol/kiro:TestBufferedMatchesStreamed`, `protocol/kiro:TestMessagesBufferedMatchesStream`.
 - **C** `commandcode` — buffered aggregate codec; the provider is unavailable Tests: `protocol/commandcode:TestBufferedBodyIsAggregated`.
 - **T** `alicode-intl`, `alitp-intl`, `alicode`, `alims-intl`, `baidu`, `bazaarlink`, `blackbox`, `bluesminds`, `byteplus`, `cerebras`, `chutes`, `cohere`, `featherless`, `fireworks`, `groq`, `hyperbolic`, `kilo-gateway`, `llm7`, `mistral`, `morph`, `nebius`, `nvidia`, `perplexity`, `poolside`, `sambanova`, `siliconflow`, `tencent`, `together`, `venice`, `vercel-ai-gateway`, `volcengine-ark`, `glm-cn`, `tokenrouter`, `gitlab` — shared path, this provider's own URL and credential: Chat Tests: `ingress:TestRegistryChatWires`.
-- **T** `openrouter`, `mmf`, `kilocode`, `kimchi` — shared path, this provider's own URL and credential: openai-chat Tests: `ingress:TestRegistryNativeTransportWires`.
+- **T** `openrouter`, `kilocode`, `kimchi` — shared path, this provider's own URL and credential: openai-chat Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `openai` — shared path, this provider's own URL and credential: openai-chat, openai-responses Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `anthropic`, `claude` — shared path, this provider's own URL and credential: anthropic-messages Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `deepseek` — shared path, this provider's own URL and credential: Chat, anthropic-messages Tests: `ingress:TestRegistryChatWires`, `ingress:TestRegistryNativeTransportWires`.
@@ -453,7 +453,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **S** `ollama-local` — the shared Ollama codec; no test names ollama-local (experimental) Tests: `ingress:TestTruncatedOllamaStreamIsAFailure`, `protocol/ollama:TestBufferedBodyIsConverted`.
 - **U** `vertex`, `grok-web`, `perplexity-web` — refused by its immutable readiness; no codec exists to test Tests: `ingress:TestReadinessMatchesIngressReachability`.
 - **G** `codex` — the table row proves the URL, bearer and CLI headers only. The pin's executor also forces stream:true and store:false, injects default instructions, maps review models, drops unsupported fields and filters to an allowlist (executors/codex.js:415-515); Routeweft forwards the client's body (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`, `ingress:TestCodexProviderHeadersCarryCLIFingerprint`.
-- **G** `mimo-free` — the table row proves the URL only. The pin bootstraps a JWT and injects the MiMoCode system marker the free endpoint requires (executors/mimo-free.js:24-33,105-160: 403 "Illegal access" without it); Routeweft does neither (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`.
+- **G** `mimo-free`, `mmf` — (mmf is an alias of mimo-free, P02 audit) the table row proves the URL only. The pin bootstraps a JWT and injects the MiMoCode system marker the free endpoint requires (executors/mimo-free.js:24-33,105-160: 403 "Illegal access" without it); Routeweft does neither (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`.
 - **G** `vertex-partner` — only the URL seam is tested; the target is an absolute Google host, so no request is dispatched in a test (provider is experimental) Tests: `providers/wire:TestVertexPartnerTargetUsesTheConnectionProject`.
 - **G** `qoder` — only the request signing seam is tested; no response codec exists at the pin for dispatch (registry/qoder.js:19-26), so streamed and buffered bodies are untested Tests: `ingress:TestQoderDispatchSeamSignsFinalRequest`.
 - **G** `grok-cli` — the table row proves the URL and bearer only. The pin's executor sends the grok-shell identity (x-grok-session-id, conv-id, req-id, turn-idx, model-override, email, userid), forces stream:true and store:false and normalizes input and tools (executors/grok-cli.js:362-470); Routeweft sends none of that at inference, though its listing needs the identity (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`.
@@ -535,10 +535,10 @@ New deterministic tests (no network, sanitized synthetic bodies shaped like the 
 These are findings, not new work in this PR. Each is recorded in PARITY and stays open.
 
 1. **402 Payment Required is not an unavailability signal.** The pin cools the account for two minutes and falls back (`errorConfig.js:77`, `accountFallback.js:35-46`). Routeweft classifies 402 as a terminal client error: no cooldown and no fallback, so an out-of-credit DeepSeek, OpenRouter or Grok CLI account keeps being tried and keeps failing. `TestOpenP08ErrorClassificationGaps`.
-2. **Codex `usage_limit_reached` ignores `resets_at`.** The pin cools until the reported reset (`executors/codex.js:388-410`); Routeweft applies the generic 429 backoff.
+2. **Codex `usage_limit_reached` ignored `resets_at` when this audit began.** P02 (#177) closed it (`wire/error_reset.go`); the gap guard for it was removed and the Codex cell is now P.
 3. **Groq has no quota reader in effect.** The reader discards the `x-ratelimit-*` headers the pin reads (`usage/groq.js:44-129`) and always returns an error.
 4. **A zero DeepSeek balance reads as unlimited** (the reader's `window()` treats a total of 0 as unlimited), so the account is never seen as out of credit. P05 listed this as open; no test exists for it because the expected behaviour would fail.
-5. **Providers declared ready whose pin executor is not replicated.** The shared-path table proves their URL and credential only: Codex (`executors/codex.js:415-515`: forced stream, `store:false`, default instructions, allowlist), Grok CLI (`executors/grok-cli.js:362-470`: grok-shell identity, forced stream), Zed (`executors/zed.js:60-283`: a different endpoint, LLM-token exchange and NDJSON envelope) and MiMo Free (`executors/mimo-free.js:24-160`: JWT bootstrap and the system marker the endpoint requires). Their streaming and non-streaming cells are `G`. Whether their readiness should change is a product decision for #76 P02 and the readiness table (#176); this PR changes neither.
+5. **Providers declared ready whose pin executor is not replicated.** The shared-path table proves their URL and credential only: Codex (`executors/codex.js:415-515`: forced stream, `store:false`, default instructions, allowlist), Grok CLI (`executors/grok-cli.js:362-470`: grok-shell identity, forced stream), Zed (`executors/zed.js:60-283`: a different endpoint, LLM-token exchange and NDJSON envelope) and MiMo Free and its alias mmf (`executors/mimo-free.js:24-160`: JWT bootstrap and the system marker the endpoint requires). Their streaming and non-streaming cells are `G`. Whether their readiness should change is a product decision for #76 P02 and the readiness table (#176); this PR changes neither.
 6. Smaller, in the cell notes: Zed's `{limited:N}` quota form, Qoder's absent pool read as unlimited, Command Code's empty window, MiniMax's camelCase envelope, Zed's `trial_blocked` message rewrite, Gemini CLI's `retryDelay` hint, Claude's and Zed's authenticated listing.
 
 ## What stays open

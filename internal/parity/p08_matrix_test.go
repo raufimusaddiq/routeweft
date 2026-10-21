@@ -269,6 +269,7 @@ func unavailableCell(spec registry.Spec) cell {
 		"glm":               {kindP, ref("providers/usage:TestGLMRejectsExpiredKey"), "an expired key is an error, not a healthy account"},
 		"minimax":           {kindP, ref("providers/usage:TestMiniMaxUsageEndpointsRegionsAndCountSemantics"), "a base_resp error is an error, not an empty quota"},
 		"minimax-cn":        {kindP, ref("providers/usage:TestMiniMaxUsageEndpointsRegionsAndCountSemantics"), "a base_resp error is an error, not an empty quota"},
+		"codex":             {kindP, ref("ingress:TestCodexBodyResetReachesDispatchCooldown", "providers/wire:TestPinnedErrorBodyResets", "providers/codex:TestUsageFailureIsUnavailableNotExhausted"), "usage_limit_reached cools until resets_at / resets_in_seconds (executors/codex.js:388-410), landed in P02"},
 		"cursor":            {kindC, ref("providers/wire:TestCursorDoReportsAFailureInBandNotAsSuccess", "providers/wire:TestCursorDoPassesUpstreamRejectionsThrough"), "the resource_exhausted in-band failure (cursor.js:365-374); provider unavailable for serving"},
 	}
 	if c, ok := quotaP[id]; ok {
@@ -278,7 +279,6 @@ func unavailableCell(spec registry.Spec) cell {
 		"deepseek":   "pin: 402 Insufficient Balance cools the account for two minutes and falls back (errorConfig.js:77, accountFallback.js:35-46), and the balance endpoint reports is_available:false. Routeweft treats 402 as a terminal client error (no cooldown, no fallback) and reads a zero balance as unlimited",
 		"openrouter": "pin: 402 cools the account for two minutes and falls back (errorConfig.js:77). Routeweft treats 402 as a terminal client error",
 		"grok-cli":   "pin: 402 personal-team-blocked:spending-limit is surfaced for fallback (executors/grok-cli.js:400-416, errorConfig.js:77). Routeweft treats 402 as a terminal client error",
-		"codex":      "pin: 429 usage_limit_reached cools the account until error.resets_at / resets_in_seconds (executors/codex.js:388-410). Routeweft has no codex classifier and cools for the generic 429 backoff",
 		"groq":       "the quota reader returns an error for every key (see the quota column), so no exhausted-key state is ever observed",
 	}
 	if note, ok := gaps[id]; ok {
@@ -456,8 +456,8 @@ func modeCell(t *testing.T, spec registry.Spec, stream bool, chat, skips map[str
 		return cell{kindG, ref("ingress:TestRegistryNativeTransportWires"), "the table row proves the URL and bearer only. The pin's executor sends the grok-shell identity (x-grok-session-id, conv-id, req-id, turn-idx, model-override, email, userid), forces stream:true and store:false and normalizes input and tools (executors/grok-cli.js:362-470); Routeweft sends none of that at inference, though its listing needs the identity (ready, unqualified; PARITY P02)"}
 	case "zed":
 		return cell{kindG, ref("ingress:TestRegistryNativeTransportWires"), "the table row proves a bearer POST to cloud.zed.dev/completions, which is not Zed's wire. The pin exchanges an LLM token, posts {thread_id, provider, model, provider_request} per upstream vendor and unwraps NDJSON events (executors/zed.js:60-283; registry/zed.js transport); none of it exists in Routeweft (ready, unqualified; PARITY P02)"}
-	case "mimo-free":
-		return cell{kindG, ref("ingress:TestRegistryNativeTransportWires"), "the table row proves the URL only. The pin bootstraps a JWT and injects the MiMoCode system marker the free endpoint requires (executors/mimo-free.js:24-33,105-160: 403 \"Illegal access\" without it); Routeweft does neither (ready, unqualified; PARITY P02)"}
+	case "mimo-free", "mmf":
+		return cell{kindG, ref("ingress:TestRegistryNativeTransportWires"), "(mmf is an alias of mimo-free, P02 audit) the table row proves the URL only. The pin bootstraps a JWT and injects the MiMoCode system marker the free endpoint requires (executors/mimo-free.js:24-33,105-160: 403 \"Illegal access\" without it); Routeweft does neither (ready, unqualified; PARITY P02)"}
 	case "ollama-local":
 		return cell{kindS, ref("ingress:TestTruncatedOllamaStreamIsAFailure", "protocol/ollama:TestBufferedBodyIsConverted"), "the shared Ollama codec; no test names ollama-local (experimental)"}
 	}
@@ -918,10 +918,10 @@ New deterministic tests (no network, sanitized synthetic bodies shaped like the 
 These are findings, not new work in this PR. Each is recorded in PARITY and stays open.
 
 1. **402 Payment Required is not an unavailability signal.** The pin cools the account for two minutes and falls back (` + "`errorConfig.js:77`" + `, ` + "`accountFallback.js:35-46`" + `). Routeweft classifies 402 as a terminal client error: no cooldown and no fallback, so an out-of-credit DeepSeek, OpenRouter or Grok CLI account keeps being tried and keeps failing. ` + "`TestOpenP08ErrorClassificationGaps`" + `.
-2. **Codex ` + "`usage_limit_reached`" + ` ignores ` + "`resets_at`" + `.** The pin cools until the reported reset (` + "`executors/codex.js:388-410`" + `); Routeweft applies the generic 429 backoff.
+2. **Codex ` + "`usage_limit_reached`" + ` ignored ` + "`resets_at`" + ` when this audit began.** P02 (#177) closed it (` + "`wire/error_reset.go`" + `); the gap guard for it was removed and the Codex cell is now P.
 3. **Groq has no quota reader in effect.** The reader discards the ` + "`x-ratelimit-*`" + ` headers the pin reads (` + "`usage/groq.js:44-129`" + `) and always returns an error.
 4. **A zero DeepSeek balance reads as unlimited** (the reader's ` + "`window()`" + ` treats a total of 0 as unlimited), so the account is never seen as out of credit. P05 listed this as open; no test exists for it because the expected behaviour would fail.
-5. **Providers declared ready whose pin executor is not replicated.** The shared-path table proves their URL and credential only: Codex (` + "`executors/codex.js:415-515`" + `: forced stream, ` + "`store:false`" + `, default instructions, allowlist), Grok CLI (` + "`executors/grok-cli.js:362-470`" + `: grok-shell identity, forced stream), Zed (` + "`executors/zed.js:60-283`" + `: a different endpoint, LLM-token exchange and NDJSON envelope) and MiMo Free (` + "`executors/mimo-free.js:24-160`" + `: JWT bootstrap and the system marker the endpoint requires). Their streaming and non-streaming cells are ` + "`G`" + `. Whether their readiness should change is a product decision for #76 P02 and the readiness table (#176); this PR changes neither.
+5. **Providers declared ready whose pin executor is not replicated.** The shared-path table proves their URL and credential only: Codex (` + "`executors/codex.js:415-515`" + `: forced stream, ` + "`store:false`" + `, default instructions, allowlist), Grok CLI (` + "`executors/grok-cli.js:362-470`" + `: grok-shell identity, forced stream), Zed (` + "`executors/zed.js:60-283`" + `: a different endpoint, LLM-token exchange and NDJSON envelope) and MiMo Free and its alias mmf (` + "`executors/mimo-free.js:24-160`" + `: JWT bootstrap and the system marker the endpoint requires). Their streaming and non-streaming cells are ` + "`G`" + `. Whether their readiness should change is a product decision for #76 P02 and the readiness table (#176); this PR changes neither.
 6. Smaller, in the cell notes: Zed's ` + "`{limited:N}`" + ` quota form, Qoder's absent pool read as unlimited, Command Code's empty window, MiniMax's camelCase envelope, Zed's ` + "`trial_blocked`" + ` message rewrite, Gemini CLI's ` + "`retryDelay`" + ` hint, Claude's and Zed's authenticated listing.
 
 ## What stays open
