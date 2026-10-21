@@ -188,6 +188,26 @@ type providerReadModel struct {
 	MetaKeys        []string `json:"metaKeys,omitempty"`
 	ConfiguredNodes int      `json:"configuredNodes"`
 	EnabledAccounts int      `json:"enabledAccounts"`
+	// Readiness is the build's immutable capability for this provider (SPEC §36).
+	// It is not derived from ConfiguredNodes or EnabledAccounts: enabling is a
+	// preference, and a stored credential is account state.
+	Readiness readinessReadModel `json:"readiness"`
+}
+
+// readinessReadModel reports registry.Readiness. A provider with no declared
+// readiness reads "unknown" with no served flag, never "ready" or "unavailable".
+type readinessReadModel struct {
+	Status string `json:"status"`
+	Served *bool  `json:"served,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+func readinessOf(r registry.Readiness) readinessReadModel {
+	if r.Status == "" {
+		return readinessReadModel{Status: "unknown"}
+	}
+	served := r.Served()
+	return readinessReadModel{Status: string(r.Status), Served: &served, Reason: r.Reason}
 }
 
 func (h *Handler) providers(w http.ResponseWriter, r *http.Request) error {
@@ -221,7 +241,7 @@ FROM provider_nodes n LEFT JOIN provider_connections c ON c.node_id=n.id GROUP B
 	items := make([]providerReadModel, 0, len(specs))
 	for _, spec := range specs {
 		count := counts[spec.ID]
-		item := providerReadModel{ID: spec.ID, Auth: string(spec.Auth), DefaultBaseURL: safeURL(spec.DefaultBaseURL), ModelCatalog: string(spec.ModelCatalog), PassthroughModels: spec.PassthroughModels, StaticModels: spec.StaticModels(), ReportsUsage: spec.ReportsUsage, ConfiguredNodes: count[0], EnabledAccounts: count[1]}
+		item := providerReadModel{ID: spec.ID, Auth: string(spec.Auth), DefaultBaseURL: safeURL(spec.DefaultBaseURL), ModelCatalog: string(spec.ModelCatalog), PassthroughModels: spec.PassthroughModels, StaticModels: spec.StaticModels(), ReportsUsage: spec.ReportsUsage, ConfiguredNodes: count[0], EnabledAccounts: count[1], Readiness: readinessOf(spec.Readiness)}
 		item.FlowType, item.SignInModes, item.MetaKeys = h.signInModes(spec.ID)
 		for _, transport := range spec.Transports {
 			item.Transports = append(item.Transports, string(transport))

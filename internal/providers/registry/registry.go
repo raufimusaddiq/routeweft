@@ -96,6 +96,9 @@ type Spec struct {
 	// ReportsUsage marks providers whose upstream usage is accounted.
 	ReportsUsage bool
 	Quirks       []Quirk
+	// Readiness is the immutable build capability (SPEC §36). It never depends
+	// on an enable switch or a stored credential.
+	Readiness Readiness
 }
 
 // SeedModel is one built-in model a fresh install can route immediately.
@@ -162,6 +165,9 @@ func (s Spec) Validate() error {
 	case CatalogStatic, CatalogDynamic, CatalogPassthrough:
 	default:
 		return errors.New("unsupported provider model catalog")
+	}
+	if err := s.Readiness.validate(); err != nil {
+		return err
 	}
 	for _, quirk := range s.Quirks {
 		if quirk != QuirkCacheControl {

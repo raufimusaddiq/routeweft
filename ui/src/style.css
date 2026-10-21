@@ -168,6 +168,12 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .panel-heading { display: flex; min-height: var(--row-height); align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 8px; }
 .panel-heading h2 { margin: 0; font-size: var(--t-body); font-weight: 500; }
 .state-tag { flex: 0 0 auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); padding: 3px 5px; color: var(--text-muted); font-family: var(--font-mono); font-size: var(--t-body); font-weight: 500; }
+.provider-tags { display: inline-flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.readiness-ready { border-color: var(--success); color: var(--success); }
+.readiness-experimental { border-color: var(--warning); color: var(--warning); }
+.readiness-unavailable { border-color: var(--danger); color: var(--danger); }
+.readiness-text { border: 0; }
+.readiness-note { margin: 8px 0 0; color: var(--text-muted); font-size: var(--t-body); }
 .state-good { border-color: var(--success); color: var(--success); }
 .state-warn { border-color: var(--warning); color: var(--warning); }
 

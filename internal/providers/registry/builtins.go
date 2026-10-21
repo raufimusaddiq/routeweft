@@ -55,7 +55,7 @@ func Builtins() []Spec {
 	specs = append(specs, APIGateways()...)
 	specs = append(specs, OAuthSpecialized()...)
 	specs = append(specs, SpecializedWire()...)
-	return applySeeds(specs)
+	return applyReadiness(applySeeds(specs))
 }
 
 // applySeeds attaches the generated per-provider model seeds. Keeping them out
