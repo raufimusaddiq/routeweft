@@ -292,7 +292,7 @@ func TestForcedStreamProbesUseTheServingShape(t *testing.T) {
 	node, connection := builtinConnection("opencode-go", routing.ProviderSettings{}, credentials.AuthAPIKey)
 	node.Transports = []string{"openai-chat"}
 	result := h.testProviderModel(context.Background(), connection, node, spec, "openai-chat", "gpt-5.6-luna", time.Second)
-	if result.OK || len(calls()) != 0 || result.Error != "model requires the Responses transport" {
+	if result.OK || len(calls()) != 0 || result.UpstreamModelID != "" || result.Error != "model requires the Responses transport" {
 		t.Fatalf("%+v %+v", result, calls())
 	}
 }

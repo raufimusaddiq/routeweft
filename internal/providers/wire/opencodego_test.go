@@ -10,7 +10,7 @@ func TestOpenCodeGoForcedStreamModels(t *testing.T) {
 	for _, model := range []string{"gpt-5.6-luna", "grok-4.6", "muse-spark-1.2-contributor", "muse-spark-1.3-contributor", "deepseek-v4-pro", "glm-5.3", "unknown"} {
 		for _, protocol := range []string{chat, responses, "anthropic-messages"} {
 			p := routing.ProviderRef{ProviderID: "opencode-go", Protocol: protocol, UpstreamModel: model}
-			want := protocol == responses && OpenCodeGoResponsesModel(model)
+			want := protocol == responses && (model == "gpt-5.6-luna" || model == "grok-4.6" || model == "muse-spark-1.2-contributor" || model == "muse-spark-1.3-contributor")
 			if ForcesStream(p) != want {
 				t.Fatalf("%s/%s: wrong stream flag", model, protocol)
 			}
@@ -49,5 +49,22 @@ func BenchmarkNewForcedStreamBodies(b *testing.B) {
 				FinalizeBodyAt(p, "responses", body)
 			}
 		})
+	}
+}
+
+func TestForcedTransportIsScopedToProviderAndModel(t *testing.T) {
+	for _, tc := range []struct{ provider, model, want string }{
+		{"opencode-go", "gpt-5.6-luna", responses},
+		{"opencode-go", "grok-4.6", responses},
+		{"opencode-go", "muse-spark-1.2-contributor", responses},
+		{"opencode-go", "muse-spark-1.3-contributor", responses},
+		{"opencode-go", "glm-5.3", ""},
+		{"opencode-go", "unknown", ""},
+		{"openai", "gpt-5.6-luna", ""},
+		{"unknown", "gpt-5.6-luna", ""},
+	} {
+		if got := ForcedTransport(tc.provider, tc.model); got != tc.want {
+			t.Errorf("%s/%s: got %q want %q", tc.provider, tc.model, got, tc.want)
+		}
 	}
 }

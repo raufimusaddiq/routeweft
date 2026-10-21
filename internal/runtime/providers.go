@@ -205,11 +205,11 @@ func (s *RuntimeSnapshot) AccountProvider(requested, account, source string, can
 		return routing.ProviderRef{}, false
 	}
 	transports := config.node.Transports
-	if model.ProviderID == "opencode-go" && wire.OpenCodeGoResponsesModel(model.ID) {
-		if !slices.Contains(transports, "openai-responses") {
+	if forced := wire.ForcedTransport(model.ProviderID, model.ID); forced != "" {
+		if !slices.Contains(transports, forced) {
 			return routing.ProviderRef{}, false
 		}
-		transports = []string{"openai-responses"}
+		transports = []string{forced}
 	}
 	protocol := transports[0]
 	if source != "" {

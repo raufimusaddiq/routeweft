@@ -28,7 +28,6 @@ import (
 // own test.
 var nativeWireSkips = map[string]string{
 	"zed":              "forced stream on the declared Chat wire (TestZedForcedStreamAcrossClientProtocols); Zed exchange remains open",
-	"opencode-go":      "Responses-only models force streaming (TestOpenCodeGoForcedStreamAcrossClientProtocols)",
 	"azure":            "deployment path and api-version from connection settings (TestAzureRequestShape)",
 	"cloudflare-ai":    "account-scoped URL from connection settings (wire.TestCloudflareTargetURLs)",
 	"vertex-partner":   "project-scoped URL from connection settings (wire.TestVertexPartnerTargetUsesTheConnectionProject)",

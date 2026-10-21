@@ -5,13 +5,13 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
-// OpenCodeGoResponsesModel lists the pin's Responses-only models (registry/opencode-go.js:41,72-74).
-func OpenCodeGoResponsesModel(model string) bool {
+// openCodeGoTransport lists the pin's Responses-only models (registry/opencode-go.js:41,72-74).
+func openCodeGoTransport(model string) string {
 	switch model {
 	case "gpt-5.6-luna", "grok-4.6", "muse-spark-1.2-contributor", "muse-spark-1.3-contributor":
-		return true
+		return openaiadapter.ResponsesProtocol
 	}
-	return false
+	return ""
 }
 
 func openCodeGoStream(provider routing.ProviderRef, body Body) bool {
@@ -22,5 +22,5 @@ func openCodeGoStream(provider routing.ProviderRef, body Body) bool {
 }
 
 func openCodeGoForcesStream(provider routing.ProviderRef) bool {
-	return provider.Protocol == openaiadapter.ResponsesProtocol && OpenCodeGoResponsesModel(provider.UpstreamModel)
+	return provider.Protocol == openaiadapter.ResponsesProtocol && openCodeGoTransport(provider.UpstreamModel) == provider.Protocol
 }
