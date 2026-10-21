@@ -42,3 +42,8 @@ shrink: a closed gap that is still listed also fails. Nothing in the tests is a
 copy of the oracle's lists. The `formatNames` map only translates identifiers to
 Routeweft protocol names, and the test fails when LiteRouter adds a format the
 map does not cover.
+
+`selectable_test.go` also looks every pinned active provider up in the built-in
+catalog the product serves, pins `muse` to its registry entry, and makes every
+provider-table key in the pin's capability/pricing files either a provider, an
+alias, or a named table-only entry (never a provider to seed).
