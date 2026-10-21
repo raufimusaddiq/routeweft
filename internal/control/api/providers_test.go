@@ -118,7 +118,7 @@ func newProvidersAPI(t *testing.T, allowPrivate bool, upstream *discovery.Client
 		t.Fatal(err)
 	}
 	accounts := adminauth.NewStore(store.DB())
-	if _, err := accounts.Bootstrap(ctx, "a1", "operator", "s3cret"); err != nil {
+	if err := bootstrapOperator(ctx, accounts); err != nil {
 		t.Fatal(err)
 	}
 	sessions := adminauth.NewSessionManager(time.Hour)

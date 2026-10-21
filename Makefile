@@ -30,6 +30,9 @@ parity-test:
 	go test -race ./internal/security ./internal/ingress ./internal/providers/shared
 	go test -race ./internal/parity ./internal/protocol/hub -count=1
 
+race:
+	go test -race -timeout 20m ./...
+
 bench-router:
 	go test ./bench/router -run '^$$' -bench . -benchmem -count=5
 

@@ -110,6 +110,8 @@ type App struct {
 	quiescent atomic.Bool
 	serving   atomic.Bool
 	restoreCh chan *backup.Candidate
+	// drainGrace overrides the SIGTERM drain deadline (default 10s); tests only.
+	drainGrace time.Duration
 }
 
 func New(cfg Config, log *slog.Logger) *App {
@@ -666,6 +668,14 @@ func (a *App) trackInference(next http.Handler) http.Handler {
 	})
 }
 
+// waitInferenceIdle waits up to d for in-flight inference handlers to return.
+func (a *App) waitInferenceIdle(d time.Duration) {
+	deadline := time.Now().Add(d)
+	for a.active.Load() > 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func isInferencePath(path string) bool {
 	return path == "/v1" || strings.HasPrefix(path, "/v1/") ||
 		path == "/v1beta" || strings.HasPrefix(path, "/v1beta/") ||
@@ -707,7 +717,12 @@ func (a *App) serveOnce(ctx context.Context) error {
 		MaxHeaderBytes:    1 << 20,
 	}
 	errCh := make(chan error, 1)
-	serviceCtx, stopServices := context.WithCancel(ctx)
+	// Background services must outlive the signal context: SIGTERM cancels ctx
+	// first, and the batcher's final drain has to run after in-flight requests
+	// finish (SPEC §24 steps 3-5), or their usage records are enqueued onto a
+	// batcher that already exited and are lost. Every exit path below calls
+	// stopServices after the HTTP drain.
+	serviceCtx, stopServices := context.WithCancel(context.WithoutCancel(ctx))
 	a.serving.Store(true)
 	if a.usage != nil {
 		// SPEC §21: the batcher is the only usage writer; the request path only
@@ -768,9 +783,21 @@ func (a *App) serveOnce(ctx context.Context) error {
 		return errRestoreApplied
 	case <-ctx.Done():
 		a.ready.Store(false)
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		grace := 10 * time.Second
+		if a.drainGrace > 0 {
+			grace = a.drainGrace
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), grace)
 		err := srv.Shutdown(shutdownCtx)
 		cancel()
+		if err != nil {
+			// The drain deadline passed: cut the connections, which cancels each
+			// request context, and give the handlers a bounded moment to publish
+			// their (client_abandoned) records before the batcher takes its final
+			// drain. Records published after that point are not accepted.
+			_ = srv.Close()
+			a.waitInferenceIdle(5 * time.Second)
+		}
 		stopServices()
 		if a.usage != nil {
 			a.usage.Close()

@@ -67,7 +67,7 @@ func TestEveryReadResourceRespondsForAdmin(t *testing.T) {
 	defer store.Close()
 	handler.opts.Logs = NewLogBuffer(8)
 	ctx := context.Background()
-	if _, err := handler.opts.Accounts.Bootstrap(ctx, "a1", "operator", "s3cret"); err != nil {
+	if err := bootstrapOperator(ctx, handler.opts.Accounts); err != nil {
 		t.Fatal(err)
 	}
 	session, err := handler.opts.Sessions.Create(adminauth.Account{ID: "a1", Username: "operator"})
@@ -92,7 +92,7 @@ func TestOverviewAndProvidersShapes(t *testing.T) {
 	handler, mux, store := newReadAPI(t)
 	defer store.Close()
 	ctx := context.Background()
-	if _, err := handler.opts.Accounts.Bootstrap(ctx, "a1", "operator", "s3cret"); err != nil {
+	if err := bootstrapOperator(ctx, handler.opts.Accounts); err != nil {
 		t.Fatal(err)
 	}
 	session, err := handler.opts.Sessions.Create(adminauth.Account{ID: "a1", Username: "operator"})
@@ -151,7 +151,7 @@ func TestReadModelsBoundedPagination(t *testing.T) {
 	handler, mux, store := newReadAPI(t)
 	defer store.Close()
 	ctx := context.Background()
-	if _, err := handler.opts.Accounts.Bootstrap(ctx, "a1", "operator", "s3cret"); err != nil {
+	if err := bootstrapOperator(ctx, handler.opts.Accounts); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 5; i++ {
@@ -243,7 +243,7 @@ INSERT INTO disabled_models(provider_id,model_id) VALUES('typed-custom','generic
 		t.Fatal(err)
 	}
 	handler.opts.Runtime = manager
-	if _, err := handler.opts.Accounts.Bootstrap(ctx, "a1", "operator", "s3cret"); err != nil {
+	if err := bootstrapOperator(ctx, handler.opts.Accounts); err != nil {
 		t.Fatal(err)
 	}
 	session, err := handler.opts.Sessions.Create(adminauth.Account{ID: "a1", Username: "operator"})
@@ -278,7 +278,7 @@ func TestReadModelsNeverExposeSecrets(t *testing.T) {
 	handler, mux, store := newReadAPI(t)
 	defer store.Close()
 	ctx := context.Background()
-	if _, err := handler.opts.Accounts.Bootstrap(ctx, "a1", "operator", "s3cret"); err != nil {
+	if err := bootstrapOperator(ctx, handler.opts.Accounts); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.DB().ExecContext(ctx, "INSERT INTO provider_nodes(id,kind,provider_id,name,base_url) VALUES('n1','generic','openai','node','https://user:pass@example.invalid/v1?token=leak')"); err != nil {
@@ -326,7 +326,7 @@ func TestQuotaReadModelClassifiesStateWithoutLeakingError(t *testing.T) {
 	handler, mux, store := newReadAPI(t)
 	defer store.Close()
 	ctx := context.Background()
-	if _, err := handler.opts.Accounts.Bootstrap(ctx, "a1", "operator", "s3cret"); err != nil {
+	if err := bootstrapOperator(ctx, handler.opts.Accounts); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.DB().ExecContext(ctx, "INSERT INTO provider_nodes(id,kind,provider_id,name) VALUES('n1','builtin','openai','OpenAI')"); err != nil {
@@ -376,7 +376,7 @@ func TestProviderReadModelKeepsTheStaticModelsWireContract(t *testing.T) {
 		SeedModels: []registry.SeedModel{{ID: "gpt-5", Name: "GPT-5", ContextWindow: 400000}},
 	}}
 	ctx := context.Background()
-	if _, err := handler.opts.Accounts.Bootstrap(ctx, "a1", "operator", "s3cret"); err != nil {
+	if err := bootstrapOperator(ctx, handler.opts.Accounts); err != nil {
 		t.Fatal(err)
 	}
 	session, err := handler.opts.Sessions.Create(adminauth.Account{ID: "a1", Username: "operator"})
@@ -425,7 +425,7 @@ func TestProviderReadModelReportsSignInModes(t *testing.T) {
 	handler.opts.Providers = registry.Builtins()
 	handler.opts.PublicOrigin = "https://dashboard.example.test"
 	ctx := context.Background()
-	if _, err := handler.opts.Accounts.Bootstrap(ctx, "a1", "operator", "s3cret"); err != nil {
+	if err := bootstrapOperator(ctx, handler.opts.Accounts); err != nil {
 		t.Fatal(err)
 	}
 	session, err := handler.opts.Sessions.Create(adminauth.Account{ID: "a1", Username: "operator"})

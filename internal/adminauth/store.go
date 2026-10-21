@@ -39,13 +39,24 @@ func (s *Store) HasAdmin(ctx context.Context) (bool, error) {
 // Bootstrap creates the first admin account. It fails when an account already
 // exists so a stale bootstrap password cannot re-provision or overwrite one.
 func (s *Store) Bootstrap(ctx context.Context, id, username, password string) (Account, error) {
+	hash, err := HashPassword(password)
+	if err != nil {
+		return Account{}, err
+	}
+	return s.BootstrapWithHash(ctx, id, username, hash)
+}
+
+// BootstrapWithHash is Bootstrap for a caller that already holds a
+// self-describing password hash. Production derives the hash with HashPassword;
+// test fixtures pass a precomputed one so provisioning an admin does not repeat
+// the full PBKDF2 work factor (about 5s per call under -race).
+func (s *Store) BootstrapWithHash(ctx context.Context, id, username, hash string) (Account, error) {
 	username = strings.TrimSpace(username)
 	if strings.TrimSpace(id) == "" || username == "" {
 		return Account{}, errors.New("admin ID and username are required")
 	}
-	hash, err := HashPassword(password)
-	if err != nil {
-		return Account{}, err
+	if parts := strings.Split(hash, "$"); len(parts) != 4 || parts[0] != pbkdf2Algorithm {
+		return Account{}, ErrInvalidHash
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

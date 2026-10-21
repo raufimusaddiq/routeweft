@@ -32,7 +32,7 @@ func newKeyAPI(t *testing.T) (*Handler, *http.ServeMux, *http.Cookie, *sqlite.St
 		t.Fatal(err)
 	}
 	accounts := adminauth.NewStore(store.DB())
-	if _, err := accounts.Bootstrap(ctx, "a1", "operator", "s3cret"); err != nil {
+	if err := bootstrapOperator(ctx, accounts); err != nil {
 		t.Fatal(err)
 	}
 	sessions := adminauth.NewSessionManager(time.Hour)

@@ -21,7 +21,7 @@ func TestEventsStreamRequiresSessionAndStreams(t *testing.T) {
 	defer store.Close()
 	handler.opts.Events = controlevents.New()
 	ctx := context.Background()
-	if _, err := handler.opts.Accounts.Bootstrap(ctx, "a1", "operator", "s3cret"); err != nil {
+	if err := bootstrapOperator(ctx, handler.opts.Accounts); err != nil {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
