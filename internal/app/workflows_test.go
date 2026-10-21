@@ -17,7 +17,9 @@ func TestConfiguredWorkflowAppWiring(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/models", "/suggestions":
-			if r.URL.Path == "/models" && (r.Header.Get("x-api-key") != "synthetic-0" || r.Header.Get("Authorization") != "") {
+			// An Anthropic-compatible node is listed with the key as x-api-key and as a
+			// bearer (route.js:566-574).
+			if r.URL.Path == "/models" && (r.Header.Get("x-api-key") != "synthetic-0" || r.Header.Get("Authorization") != "Bearer synthetic-0") {
 				t.Error("wrong catalog credential")
 			}
 			if r.URL.Path == "/suggestions" && (r.Header.Get("x-api-key") != "" || r.Header.Get("Authorization") != "") {
