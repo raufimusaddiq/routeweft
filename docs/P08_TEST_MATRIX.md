@@ -55,13 +55,13 @@ Cells by kind and column:
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Authenticated listing | 22 | 0 | 20 | 2 | 0 | 3 | 34 |
 | Quota / usage read | 23 | 0 | 0 | 0 | 0 | 1 | 57 |
-| Applicable unavailability | 19 | 1 | 0 | 52 | 5 | 4 | 0 |
+| Applicable unavailability | 20 | 1 | 0 | 52 | 5 | 3 | 0 |
 | Import / refresh | 18 | 0 | 3 | 0 | 0 | 3 | 57 |
 | Streaming | 14 | 5 | 51 | 1 | 3 | 7 | 0 |
 | Non-streaming | 15 | 5 | 50 | 1 | 3 | 7 | 0 |
 | Error shapes | 24 | 6 | 1 | 47 | 3 | 0 | 0 |
 | Cached vs ordinary tokens | 13 | 5 | 5 | 54 | 3 | 1 | 0 |
-| **All cells** | **148** | **22** | **130** | **157** | **17** | **26** | **148** |
+| **All cells** | **149** | **22** | **130** | **157** | **17** | **25** | **148** |
 
 648 cells in all (81 providers x 8 behaviours). `N` cells carry a pin citation in the evidence tables below.
 
@@ -143,7 +143,7 @@ Cells by kind and column:
 | `kiro` | unavailable | P | P | P | P | C | C | C | C |
 | `vertex` | unavailable | N | N | U | G | U | U | U | U |
 | `commandcode` | unavailable | N | P | P | N | C | C | C | C |
-| `grok-cli` | ready | P | P | G | P | G | G | P | T |
+| `grok-cli` | ready | P | P | P | P | G | G | P | T |
 | `grok-web` | unavailable | N | N | U | G | U | U | U | U |
 | `perplexity-web` | unavailable | N | N | U | G | U | U | U | U |
 | `kenari` | ready | P | P | P | N | P | P | P | S |
@@ -290,6 +290,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `qoder` — a spent organization pool reads as nothing left; provider unavailable for serving Tests: `providers/usage:TestQoderUsageUserAndOrganizationPools`.
 - **P** `kiro` — free trial is its own window; provider unavailable for serving Tests: `providers/usage:TestKiroFreeTrialIsSeparateWindow`.
 - **P** `commandcode` — cap reached reads as nothing left; provider unavailable for serving Tests: `providers/usage:TestCommandCodeUsageCarriesOrgAndPlanCap`, `providers/wire:TestParseCommandCodeError`.
+- **P** `grok-cli` — 402 spending-limit cools the account for two minutes and falls back (executors/grok-cli.js:400-416, errorConfig.js:77), landed in #184 Tests: `ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin`, `providers/wire:TestGrokCLISpendingLimitFallsBackAndCoolsTheAccountForTwoMinutes`.
 - **P** `kenari` — zero capacity is exhausted; absent amounts are unknown (U/kenari.js) Tests: `providers/usage:TestKenariPinnedZeroCapacity`.
 - **P** `zed` — 500/500 reads as nothing left; trial_blocked 403 cools the account (the pin's message rewrite, zed.js:284-310, is not done) Tests: `providers/usage:TestZedUsageLimitedUnlimitedAndExhausted`, `ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin`.
 - **C** `cursor` — the resource_exhausted in-band failure (cursor.js:365-374); provider unavailable for serving Tests: `providers/wire:TestCursorDoReportsAFailureInBandNotAsSuccess`, `providers/wire:TestCursorDoPassesUpstreamRejectionsThrough`.
@@ -298,7 +299,6 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **G** `groq` — the quota reader returns an error for every key (see the quota column), so no exhausted-key state is ever observed Tests: `ingress:TestOpenP08ErrorClassificationGaps`.
 - **G** `openrouter` — pin: 402 cools the account for two minutes and falls back (errorConfig.js:77). Routeweft treats 402 as a terminal client error Tests: `ingress:TestOpenP08ErrorClassificationGaps`.
 - **G** `deepseek` — pin: 402 Insufficient Balance cools the account for two minutes and falls back (errorConfig.js:77, accountFallback.js:35-46), and the balance endpoint reports is_available:false. Routeweft treats 402 as a terminal client error (no cooldown, no fallback) and reads a zero balance as unlimited Tests: `ingress:TestOpenP08ErrorClassificationGaps`, `providers/usage:TestDeepSeekReportsBalance`.
-- **G** `grok-cli` — pin: 402 personal-team-blocked:spending-limit is surfaced for fallback (executors/grok-cli.js:400-416, errorConfig.js:77). Routeweft treats 402 as a terminal client error Tests: `ingress:TestOpenP08ErrorClassificationGaps`.
 
 ### Import / refresh
 
@@ -534,7 +534,7 @@ New deterministic tests (no network, sanitized synthetic bodies shaped like the 
 
 These are findings, not new work in this PR. Each is recorded in PARITY and stays open.
 
-1. **402 Payment Required is not an unavailability signal.** The pin cools the account for two minutes and falls back (`errorConfig.js:77`, `accountFallback.js:35-46`). Routeweft classifies 402 as a terminal client error: no cooldown and no fallback, so an out-of-credit DeepSeek, OpenRouter or Grok CLI account keeps being tried and keeps failing. `TestOpenP08ErrorClassificationGaps`.
+1. **402 Payment Required is not an unavailability signal.** The pin cools the account for two minutes and falls back (`errorConfig.js:77`, `accountFallback.js:35-46`). Routeweft classifies 402 as a terminal client error: no cooldown and no fallback, so an out-of-credit DeepSeek or OpenRouter account keeps (Grok CLI closed it in #184) being tried and keeps failing. `TestOpenP08ErrorClassificationGaps`.
 2. **Codex `usage_limit_reached` ignored `resets_at` when this audit began.** P02 (#177) closed it (`wire/error_reset.go`); the gap guard for it was removed and the Codex cell is now P.
 3. **Groq has no quota reader in effect.** The reader discards the `x-ratelimit-*` headers the pin reads (`usage/groq.js:44-129`) and always returns an error.
 4. **A zero DeepSeek balance reads as unlimited** (the reader's `window()` treats a total of 0 as unlimited), so the account is never seen as out of credit. P05 listed this as open; no test exists for it because the expected behaviour would fail.

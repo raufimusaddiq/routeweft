@@ -51,6 +51,7 @@ func TestProviderErrorBodiesCoolTheAccountLikeThePin(t *testing.T) {
 		{provider: "groq", protocol: openaiadapter.ChatProtocol, status: 429, body: `{"error":{"message":"Rate limit reached for model","type":"tokens","code":"rate_limit_exceeded"}}`, cools: true, atLeast: 20 * time.Second, atMost: 6 * time.Minute},
 		{provider: "deepseek", protocol: openaiadapter.ChatProtocol, status: 401, body: `{"error":{"message":"Authentication Fails","type":"authentication_error","code":"invalid_request_error"}}`, cools: true, atLeast: 110 * time.Second, atMost: 130 * time.Second},
 		{provider: "zed", protocol: openaiadapter.ChatProtocol, status: 403, body: `{"code":"trial_blocked","message":"trial access is blocked"}`, cools: true, atLeast: 110 * time.Second, atMost: 130 * time.Second},
+		{provider: "grok-cli", protocol: openaiadapter.ResponsesProtocol, status: 402, body: `{"code":"personal-team-blocked:spending-limit","error":"Spending limit reached"}`, cools: true, atLeast: 110 * time.Second, atMost: 130 * time.Second},
 		{provider: "deepseek", protocol: openaiadapter.ChatProtocol, status: 400, body: `{"error":{"message":"This model's maximum context length is 65536 tokens","type":"invalid_request_error","code":"invalid_request_error"}}`, cools: false},
 	} {
 		got, cooling := cooldownAfter(t, tc)
@@ -103,10 +104,12 @@ func TestOpenP08ErrorClassificationGaps(t *testing.T) {
 		// the next account is tried. Routeweft classifies 402 as a terminal client
 		// error (routing/cooldown.go ClassifyStatus default branch) unless the
 		// body type/code names a quota token, which these providers' bodies do not.
+		// Grok CLI is no longer listed: #184 closed it with its own rule
+		// (wire.grokCLIPaymentRequired), asserted in
+		// TestProviderErrorBodiesCoolTheAccountLikeThePin. DeepSeek and OpenRouter stay open.
 		for _, tc := range []errorShape{
 			{provider: "deepseek", protocol: openaiadapter.ChatProtocol, status: 402, body: `{"error":{"message":"Insufficient Balance","type":"unknown_error","param":null,"code":"invalid_request_error"}}`},
 			{provider: "openrouter", protocol: openaiadapter.ChatProtocol, status: 402, body: `{"error":{"code":402,"message":"Insufficient credits"}}`},
-			{provider: "grok-cli", protocol: openaiadapter.ResponsesProtocol, status: 402, body: `{"code":"personal-team-blocked:spending-limit","error":"Spending limit reached"}`},
 		} {
 			if got, cooling := cooldownAfter(t, tc); cooling {
 				t.Errorf("%s 402 now cools for %v: the gap is closed, update the matrix and flip this expectation", tc.provider, got)

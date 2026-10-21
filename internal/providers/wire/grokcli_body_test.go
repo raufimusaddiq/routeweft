@@ -2,8 +2,11 @@ package wire
 
 import (
 	"reflect"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
@@ -240,5 +243,123 @@ func TestGrokCLIHeadersDoNotInventWhatTheConnectionLacks(t *testing.T) {
 	}
 	if headers["x-grok-turn-idx"] != "1" || headers["x-grok-session-id"] != connectionSession(routing.ProviderRef{ProviderID: "grok-cli", ConnectionID: "acct-1"}) {
 		t.Errorf("%v", headers)
+	}
+}
+
+// The pin's machine-derived agent id (grok-cli.js:530-543) is overwritten by
+// transformRequest (:424-427) before buildHeaders reads it (:384); run offline,
+// the pin sends no x-grok-agent-id for a connection with neither field. This
+// pins that, so the derivation is not "fixed" back in without a reviewed change.
+func TestGrokCLIAgentIDIsOnlyTheConnectionsOwn(t *testing.T) {
+	for _, tc := range []struct {
+		settings routing.ProviderSettings
+		want     string
+	}{
+		{routing.ProviderSettings{}, ""},
+		{routing.ProviderSettings{DeviceID: "dev-1"}, "dev-1"},
+		{routing.ProviderSettings{AgentID: "ag-1"}, "ag-1"},
+		{routing.ProviderSettings{DeviceID: "dev-1", AgentID: "ag-1"}, "dev-1"},
+	} {
+		provider := routing.ProviderRef{ProviderID: "grok-cli", ConnectionID: "acct-1"}
+		provider.Connection.Settings = tc.settings
+		headers, err := grokCLIHeaders(provider, []byte(`{}`), "")
+		if err != nil {
+			t.Fatalf("%+v refused: %v", tc.settings, err)
+		}
+		got, present := headers["x-grok-agent-id"]
+		if got != tc.want || present != (tc.want != "") {
+			t.Errorf("%+v: x-grok-agent-id = %q (present %v), want %q", tc.settings, got, present, tc.want)
+		}
+	}
+}
+
+func turnOf(t *testing.T, session, body string) string {
+	t.Helper()
+	provider := routing.ProviderRef{ProviderID: "grok-cli", ConnectionID: "acct-1"}
+	headers, _ := grokCLIHeaders(provider, []byte(`{"prompt_cache_key":"`+session+`",`+body+`}`), "")
+	return headers["x-grok-turn-idx"]
+}
+
+func TestGrokCLITurnIndexNeverGoesBackwardsInASession(t *testing.T) {
+	grokCLITurnStore.reset()
+	t.Cleanup(grokCLITurnStore.reset)
+	user := func(n string) string { return `{"type":"message","role":"user","content":"` + n + `"}` }
+	assistant := `{"type":"message","role":"assistant","content":"a"}`
+	steps := []struct{ body, want string }{
+		{`"input":[` + user("a") + `]`, "1"},
+		{`"input":[` + user("a") + `,` + assistant + `,` + user("b") + `]`, "2"},
+		// A client that sends only its newest turn advances instead of repeating 1.
+		{`"input":[` + user("only latest") + `]`, "3"},
+		// Full history catches up to its own count when that is higher.
+		{`"input":[` + user("a") + `,` + user("b") + `,` + user("c") + `,` + user("d") + `,` + user("e") + `]`, "5"},
+		// And a shorter one after it still never goes down.
+		{`"input":[` + user("z") + `]`, "6"},
+	}
+	for i, step := range steps {
+		if got := turnOf(t, "s1", step.body); got != step.want {
+			t.Errorf("step %d: turn %s, want %s", i, got, step.want)
+		}
+	}
+	// Another session starts from its own input.
+	if got := turnOf(t, "s2", steps[0].body); got != "1" {
+		t.Errorf("a second session was sent %s", got)
+	}
+}
+
+func TestGrokCLITurnIndexOfARepeatedRequestDoesNotAdvance(t *testing.T) {
+	grokCLITurnStore.reset()
+	t.Cleanup(grokCLITurnStore.reset)
+	body := `"input":[{"type":"message","role":"user","content":"retry me"}]`
+	first := turnOf(t, "s1", body)
+	if again := turnOf(t, "s1", body); again != first {
+		t.Errorf("a retry was sent %s after %s", again, first)
+	}
+	if next := turnOf(t, "s1", `"input":[{"type":"message","role":"user","content":"next"}]`); next != "2" {
+		t.Errorf("the next request was sent %s", next)
+	}
+}
+
+func TestGrokCLITurnStateIsBoundedAndExpires(t *testing.T) {
+	grokCLITurnStore.reset()
+	clock := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	grokCLINow = func() time.Time { return clock }
+	t.Cleanup(func() { grokCLINow = time.Now; grokCLITurnStore.reset() })
+	for i := 0; i < grokCLITurnStoreMax+100; i++ {
+		grokCLITurnStore.resolve("session-"+strconv.Itoa(i), 1, []byte("x"))
+	}
+	if n := grokCLITurnStore.sessions.order.Len(); n != grokCLITurnStoreMax {
+		t.Errorf("%d sessions kept", n)
+	}
+	if n := grokCLITurnStore.requests.order.Len(); n != grokCLITurnStoreMax {
+		t.Errorf("%d requests kept", n)
+	}
+	// The oldest was evicted, so it starts over; the newest is remembered.
+	if got := grokCLITurnStore.resolve("session-0", 1, []byte("y")); got != 1 {
+		t.Errorf("an evicted session continued at %d", got)
+	}
+	last := "session-" + strconv.Itoa(grokCLITurnStoreMax+99)
+	if got := grokCLITurnStore.resolve(last, 1, []byte("y")); got != 2 {
+		t.Errorf("a kept session was sent %d", got)
+	}
+	clock = clock.Add(grokCLITurnTTL + time.Second)
+	if got := grokCLITurnStore.resolve(last, 1, []byte("z")); got != 1 {
+		t.Errorf("an expired session continued at %d", got)
+	}
+}
+
+func TestGrokCLITurnIndexIsRaceFree(t *testing.T) {
+	grokCLITurnStore.reset()
+	t.Cleanup(grokCLITurnStore.reset)
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			grokCLITurnStore.resolve("shared", 1, []byte(strconv.Itoa(i)))
+		}(i)
+	}
+	wg.Wait()
+	if got := grokCLITurnStore.resolve("shared", 1, []byte("last")); got != 51 {
+		t.Errorf("50 distinct requests then one more gave %d, want 51", got)
 	}
 }
