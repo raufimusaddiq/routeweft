@@ -1,6 +1,10 @@
 package wire
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/raufimusaddiq/routeweft/internal/routing"
+)
 
 // The pin declares forceStream on these registry entries and nowhere else
 // (registry/api-airforce.js:32, codebuddy-cn.js:23, codebuddy-intl.js:25,
@@ -19,13 +23,17 @@ var pinForcedStream = map[string]string{
 	"commandcode":    "its stream is forced and inspected by CommandCodeDo on the commandcode wire, which is unwired",
 	"openai": "the fold refuses a stream field it cannot carry (logprobs, annotations), which api.openai.com " +
 		"answers on a non-stream request; forcing it would turn a request that works into a 502",
-	"zed":         "no serving wire exists for it (thread envelope, token exchange, NDJSON frames), so there is no body to force",
-	"opencode-go": "the forced model is routed per model to its Responses endpoint, and a Routeweft route carries one wire",
+	"zed":         "",
+	"opencode-go": "",
 }
 
 func TestForcedStreamProvidersAreExactlyAccountedFor(t *testing.T) {
 	for id, reason := range pinForcedStream {
-		forced := ForcesStream(id)
+		provider := routing.ProviderRef{ProviderID: id}
+		if id == "opencode-go" {
+			provider.Protocol, provider.UpstreamModel = responses, "gpt-5.6-luna"
+		}
+		forced := ForcesStream(provider)
 		switch {
 		case reason == "" && !forced:
 			t.Errorf("%s: the pin forces its stream and nothing here does", id)
@@ -34,7 +42,7 @@ func TestForcedStreamProvidersAreExactlyAccountedFor(t *testing.T) {
 		}
 	}
 	for _, id := range Registered() {
-		if _, accounted := pinForcedStream[id]; !accounted && ForcesStream(id) && id != "cursor" {
+		if _, accounted := pinForcedStream[id]; !accounted && For(id).ForceStream && id != "cursor" {
 			// Cursor's Connect exchange is a stream by construction (wire/cursor.go).
 			t.Errorf("%s forces its stream and the pin does not", id)
 		}

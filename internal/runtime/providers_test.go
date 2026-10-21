@@ -432,3 +432,40 @@ func TestSnapshotCarriesTransportEndpointsForPathDriftProviders(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenCodeGoResponsesOnlyModelsSelectResponses(t *testing.T) {
+	m, s := providerStore(t)
+	ctx := context.Background()
+	node, err := s.PutNode(ctx, credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "opencode-go", Name: "Go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.PutConnection(ctx, credentials.Connection{ID: "go", NodeID: node.ID, Name: "Go", Identity: "go", AuthKind: credentials.AuthAPIKey, Secret: credentials.Secret{AccessToken: "synthetic"}, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ := m.Load()
+	for _, model := range []string{"gpt-5.6-luna", "grok-4.6", "muse-spark-1.2-contributor", "muse-spark-1.3-contributor"} {
+		for _, source := range []string{"openai-chat", "openai-responses", "anthropic-messages"} {
+			p, ok := snapshot.AccountProvider("opencode-go/"+model, "go", source, func(string, string) bool { return true })
+			if !ok || p.Protocol != "openai-responses" {
+				t.Fatalf("%s/%s: %+v %v", model, source, p, ok)
+			}
+		}
+	}
+	if _, ok := snapshot.AccountProvider("opencode-go/gpt-5.6-luna", "go", "openai-chat", nil); ok {
+		t.Fatal("selected untranslatable model")
+	}
+	p, ok := snapshot.AccountProvider("opencode-go/glm-5.3", "go", "openai-chat", nil)
+	if !ok || p.Protocol != "openai-chat" {
+		t.Fatalf("Chat model: %+v %v", p, ok)
+	}
+	node.Transports = []string{"openai-chat"}
+	if _, err = s.PutNode(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ = m.Load()
+	if _, ok := snapshot.AccountProvider("opencode-go/gpt-5.6-luna", "go", "openai-chat", func(string, string) bool { return true }); ok {
+		t.Fatal("used disabled Responses transport")
+	}
+}

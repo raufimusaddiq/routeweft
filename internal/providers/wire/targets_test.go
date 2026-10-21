@@ -241,7 +241,7 @@ func TestOpenCodeRefusesModelsServedOnAnotherWire(t *testing.T) {
 }
 
 func TestOpenCodeForcesStream(t *testing.T) {
-	if !ForcesStream("opencode") {
+	if !ForcesStream(routing.ProviderRef{ProviderID: "opencode"}) {
 		t.Fatal("registry/opencode.js:20 forceStream")
 	}
 	body := Body{"stream": []byte("false")}

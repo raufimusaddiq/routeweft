@@ -204,13 +204,20 @@ func (s *RuntimeSnapshot) AccountProvider(requested, account, source string, can
 	if config.node.ProviderID != model.ProviderID || !config.account.Enabled || len(config.node.Transports) == 0 || baseURL == "" {
 		return routing.ProviderRef{}, false
 	}
-	protocol := config.node.Transports[0]
+	transports := config.node.Transports
+	if model.ProviderID == "opencode-go" && wire.OpenCodeGoResponsesModel(model.ID) {
+		if !slices.Contains(transports, "openai-responses") {
+			return routing.ProviderRef{}, false
+		}
+		transports = []string{"openai-responses"}
+	}
+	protocol := transports[0]
 	if source != "" {
-		if slices.Contains(config.node.Transports, source) {
+		if slices.Contains(transports, source) {
 			protocol = source
 		} else {
 			protocol = ""
-			for _, target := range config.node.Transports {
+			for _, target := range transports {
 				if canTranslate != nil && canTranslate(source, target) {
 					protocol = target
 					break

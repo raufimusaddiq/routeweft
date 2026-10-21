@@ -220,9 +220,9 @@ served provider.
 | xiaomi-mimo | not: preview defaults (`E/xiaomi-mimo.js:54-68`) | not: SSO `clientSign` (`S/mimoAccount.js:96-174`) | not: preview only (`:41-52,71-92`) | - | not: one 401 refresh (`:83-92`) | - | does (cloud models) | not: preview route (`:30-34`) |
 | xiaomi-tokenplan | - | - | - | - | - | - | - | does (`E/xiaomi-tokenplan.js:11-20`) |
 | mimo-free (`mmf`) | not: system marker (`E/mimo-free.js:63-72`) | not: bootstrap JWT (`:79-105`) | - (a bearer JWT) | - | not: re-bootstrap on 401/403 (`:148-156`) | - | not (`:117-125`) | does: URL |
-| zed | not (`E/zed.js:246-281`) | not: LLM-token exchange (`S/zedAuth.js`) | - | not (`R/zed.js:27`) | not: NDJSON status frames (`E/zed.js:100-219`) | differs: trial_blocked cools the account; message not rewritten (`:284-305`) | not | not |
+| zed | not (`E/zed.js:246-281`) | not: LLM-token exchange (`S/zedAuth.js`) | - | does on the declared Chat seam (#185, PARITY §6.19; `R/zed.js:27`) | not: NDJSON status frames (`E/zed.js:100-219`) | differs: trial_blocked cools the account; message not rewritten (`:284-305`) | not | not |
 | opencode | not: Responses, Messages models (`E/opencode.js:471-507`) | - | - | does | - | - | not: session, request ids (`:417-426`) | differs: Chat models only |
-| opencode-go | not: Responses models (`E/opencode-go.js:173-208`) | - | - | not: model-level (`R/opencode-go.js:41`) | - | - | not (`:139-170`) | not (`:133-136`) |
+| opencode-go | not: Responses models (`E/opencode-go.js:173-208`) | - | - | does for Responses-only models (#185, PARITY §6.19; `R/opencode-go.js:41`, `E/opencode-go.js:179-200`) | - | - | not (`:139-170`) | does: Responses-only models (`:133-136`) |
 | kimchi | differs: model-name sanitation (`E/kimchi.js:4-93`) | - | - | - | - | - | - | - |
 | azure | - | - | - | - | - | - | does (`E/azure.js:26-52`) | differs: no environment or OpenAI fallback (`:8-24`) |
 | ollama-local | - | - | - | - | - | - | - | differs: unverified host precedence (`E/ollama-local.js:9-11`) |
@@ -242,8 +242,8 @@ served provider.
 | **codex** | `R/codex.js:40` | **does (second slice)** |
 | **grok-cli** | `R/grok-cli.js:46` | **does (second slice)** |
 | openai | `R/openai.js:28` | **not, by decision**: the fold refuses `logprobs` and annotations, which api.openai.com answers on a non-stream request, so forcing would turn a working request into a 502. A usage-preserving fold of those fields is the precondition, and is open. |
-| zed | `R/zed.js:27` | not: no serving wire exists to force |
-| opencode-go (model `gpt-5.6-luna`) | `R/opencode-go.js:41` | not: a Routeweft route carries one wire, and this model is routed to Responses per model |
+| zed | `R/zed.js:27` | does on the declared Chat seam (#185, PARITY §6.19); token exchange/envelope/NDJSON remain open |
+| opencode-go (model `gpt-5.6-luna`) | `R/opencode-go.js:41` | does (#185, PARITY §6.19); the executor also forces the other Responses-only models (`E/opencode-go.js:179-200`) |
 
 ## Implemented mechanism: stream-only Responses endpoints
 

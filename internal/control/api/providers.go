@@ -491,6 +491,13 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 		return result
 	}
 	result.UpstreamModelID = modelID
+	if node.ProviderID == "opencode-go" && wire.OpenCodeGoResponsesModel(modelID) {
+		if !slicesContain(node.Transports, "openai-responses") {
+			result.Error = "model requires the Responses transport"
+			return result
+		}
+		transportName = "openai-responses"
+	}
 	var endpoint string
 	var body any
 	switch transportName {

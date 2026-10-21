@@ -94,7 +94,10 @@ func TestReasoningInjectionAppliesAtFinalize(t *testing.T) {
 func TestSanitizeScopePerProvider(t *testing.T) {
 	in := `{"model":"claude-deepseek","temperature":1,"messages":[{"role":"assistant","content":"a"}]}`
 	for id := range noSanitize {
-		if got := finalize(t, id, chat, in); got != in {
+		got := finalize(t, id, chat, in)
+		if id == "zed" {
+			same(t, got, `{"model":"claude-deepseek","temperature":1,"messages":[{"role":"assistant","content":"a"}],"stream":true}`)
+		} else if got != in {
 			t.Errorf("%s sanitized: %s", id, got)
 		}
 	}
