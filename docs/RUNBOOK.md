@@ -273,6 +273,18 @@ Routeweft currently ignores forwarded-IP headers from every peer. There is no
 uses the socket remote address, so requests through a reverse proxy share its
 throttle identity. Restrict direct access to the service at the network boundary.
 
+Consequence: every client behind one reverse proxy is one socket peer and shares
+one admin-login throttle bucket (8 failures per 5 minutes). One client's failed
+logins can lock all operators out of the login route for up to 5 minutes
+(`429` with `Retry-After`); it never grants access. A forged `X-Forwarded-For`,
+`X-Real-Ip` or `Forwarded` value cannot move a request into another bucket or
+out of a full one, and no client address is persisted in usage, request details
+or any other table. Evidence: `TestForwardedHeadersNeverChangeTheThrottleBucket`
+(`internal/control/api`) and `TestForwardedHeadersAreNotRecordedAnywhere`
+(`internal/app`). Operators who need per-client buckets must terminate the
+distinction before Routeweft (separate listeners or networks); a trusted-proxy
+setting is not implemented (PARITY TRUST_PROXY).
+
 Do not expose an unprotected admin API directly to the public network.
 
 ### Ingress limits and deployment evidence (#78 C08)
@@ -946,3 +958,72 @@ reset windows. There is no writable cache or sampling toggle.
 See [the setting audit](DYNAMIC_SETTINGS.md) and PARITY section 5.5 for evidence
 and follow-up ownership. No accepted dynamic setting in these areas requires a
 process restart.
+
+## 28. Shutdown, drain and accounting evidence (C09)
+
+On SIGTERM/SIGINT `routeweft serve` runs SPEC 24 in this order: readiness goes
+false and the listener closes at once (new connections are refused); in-flight
+requests and streams get a fixed 10 second drain deadline (not configurable; the
+`drainGrace` field exists only so tests can shorten it); background schedulers and
+the telemetry batcher keep running through the drain and stop only after it, so a
+request that finishes during the drain still has its usage record written; the
+batcher then performs its final flush, and SQLite closes. Exit status is 0 on a
+clean drain.
+
+If a request outlives the 10 second deadline, its connection is cut, which
+cancels the upstream call. Handlers get up to 5 more seconds to publish their
+record, which is stored as `client_abandoned`, before the final flush. Serve then
+returns the deadline error (non-zero exit). Records published after the final
+flush are not accepted; a container stop grace period shorter than about 16
+seconds can SIGKILL the process before this finishes, so set it to at least 30
+seconds.
+
+A client that disconnects mid-request is accounted exactly once on every relay:
+native, translated (Chat, Responses, rewritten/unwrapped bodies), Messages and the
+Gemini/System One/Ollama compat paths, stream and non-stream. The record is
+`client_abandoned` and carries whatever usage the relay had measured. Its
+usage-observed flag is derived exactly as for a completed request (usage parsed or
+reported by the upstream is kept and observed; nothing measured is zero and
+unobserved), and its duration starts at the request's start like every other
+record. If no upstream response existed yet, its status is a
+synthetic `499`; otherwise it keeps the upstream's status (a translator error
+caused by the client leaving is not rewritten to 502). Only client abandonment is
+`Unanswered`: persisted to usage, but publishing neither the live
+`request.completed` event nor a usage-feed frame, because nothing completed. An
+upstream that itself answers 499 is an ordinary completed request. A translated
+non-stream body that cannot be read or translated while the client is still
+connected is also an ordinary completion: it is recorded once with status `502`
+and announced on the live event bus and usage feed, so the operator sees the
+gateway failure. A disconnect before any upstream request is issued records
+nothing because nothing was billed.
+
+Evidence (`internal/app/c09_ops_test.go`, run with `-race`):
+
+| Claim | Test |
+| --- | --- |
+| Real SIGTERM mid-request: listener closes, readiness false, request completes with its body, one usage row flushed with the ticker disabled, clean exit | `TestSIGTERMDrainsInFlightRequestAndFlushesAccounting` |
+| Drain deadline is bounded, the cut request is still recorded once as `client_abandoned` | `TestSIGTERMDrainDeadlineBoundsShutdownAndStillAccounts` |
+| Client disconnect leaves one record, cancels upstream, goroutines return to baseline, on chat (native and translated), responses, messages and Gemini/Ollama compat paths, stream and non-stream | `TestClientDisconnectKeepsExactlyOneUsageRecordWithoutLeaks` |
+
+Not covered: SIGKILL or power loss lose events still in the in-memory queue
+(bounded by `observabilityMaxRecords`, flushed at `observabilityFlushIntervalMs`).
+
+## 29. Race suite and CI budget
+
+`go test -race ./...` is the gate. Measured on a loaded 2-core host after the
+fix below, the whole suite completes in roughly 8 minutes wall clock (slowest
+packages: `internal/app` 433 s, `internal/control/api` 194 s (post-fix, inside the loaded full run; about 90 s alone), `internal/runtime`
+58 s, `internal/security` 59 s), each package inside Go's ten minute timeout. It
+is not fast: `internal/app` is the next package to approach the budget.
+`internal/control/api` previously exceeded Go's
+ten minute package timeout under `-race` because every fixture that provisioned
+an admin ran the production PBKDF2 work factor (600000 iterations, about 0.45 s
+natively and 5-7 s under the race detector) once to create the account and again
+per login. Run alone, the package finishes in about 90 s under `-race` (`-v` per-test timings; before the fix it was killed past ten minutes). Fixtures
+provision the operator with a precomputed low-iteration hash
+(inserted directly into `admin_users` by the test fixture; no production API accepts a caller-supplied hash); production paths (`Bootstrap`, `ChangePassword`,
+`HashPassword`) are unchanged and keep 600000 iterations, and no test is skipped.
+`make race` runs the full suite locally with Go's default ten minute per-package
+timeout, so a package that nears the budget fails there instead of being masked. `.github/workflows/ci.yml` still only
+races a package subset; promoting it to the full run is a workflow change tracked
+for a follow-up.

@@ -1,4 +1,4 @@
-.PHONY: test build run ui-install ui-test ui-typecheck ui-build compat-test parity-test bench-router check
+.PHONY: test build run ui-install ui-test ui-typecheck ui-build compat-test parity-test bench-router race check
 
 test:
 	go test ./...
@@ -29,6 +29,11 @@ parity-test:
 	go test -race ./internal/app -run TestPinnedSystemOneDifferential -count=1
 	go test -race ./internal/security ./internal/ingress ./internal/providers/shared
 	go test -race ./internal/parity ./internal/protocol/hub -count=1
+
+race:
+	# 10m is also go test's default per-package timeout; it is spelled out so the
+	# budget RUNBOOK 29 tracks (internal/app was 433s) is visible, not changed.
+	go test -race -timeout 10m ./...
 
 bench-router:
 	go test ./bench/router -run '^$$' -bench . -benchmem -count=5

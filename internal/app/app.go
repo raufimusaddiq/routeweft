@@ -102,6 +102,8 @@ type App struct {
 	feed         *controlevents.UsageFeed
 	logs         *controlapi.LogBuffer
 	active       atomic.Int64
+	idleMu       sync.Mutex
+	idleCond     *sync.Cond
 	ready        atomic.Bool
 	// mu serializes Initialize and restore activation. Quiescent is set while a
 	// restore reinitializes the process so new requests are refused instead of
@@ -120,7 +122,9 @@ func New(cfg Config, log *slog.Logger) *App {
 		cfg.MaxBodyBytes = ingress.DefaultMaxBodyBytes
 	}
 	logs := controlapi.NewLogBuffer(0)
-	return &App{cfg: cfg, log: slog.New(controlapi.LogHandler(log.Handler(), logs)), logs: logs, restoreCh: make(chan *backup.Candidate, 1)}
+	a := &App{cfg: cfg, log: slog.New(controlapi.LogHandler(log.Handler(), logs)), logs: logs, restoreCh: make(chan *backup.Candidate, 1)}
+	a.idleCond = sync.NewCond(&a.idleMu)
+	return a
 }
 
 // Initialize creates the data directory, migrates durable state and compiles the
@@ -219,21 +223,28 @@ func (a *App) initialize(ctx context.Context) error {
 			return binder.ClientFor(context.Background(), connectionID)
 		},
 		OnRequestComplete: func(outcome ingress.RequestOutcome) {
-			a.events.Publish("request.completed", map[string]any{
-				"requestId":    outcome.RequestID,
-				"providerId":   outcome.ProviderID,
-				"modelId":      outcome.ModelID,
-				"connectionId": outcome.ConnectionID,
-				"status":       outcome.Status,
-				"durationMs":   outcome.Duration.Milliseconds(),
-			})
-			a.feed.Publish(controlevents.UsageEvent{
-				RequestID: outcome.RequestID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
-				ConnectionID: outcome.ConnectionID, APIKeyID: outcome.APIKeyID, Status: outcome.Status,
-				DurationMS: outcome.Duration.Milliseconds(), InputTokens: outcome.InputTokens,
-				OutputTokens: outcome.OutputTokens, Termination: outcome.Termination, UsageUnobserved: outcome.UsageUnobserved,
-				CreatedAt: time.Now().UTC(),
-			})
+			// An unanswered outcome is accounting only: the client left before the
+			// response was delivered, so no request completed. It is gated on
+			// the cause, not the status number: an upstream may answer 499 itself.
+			// Neither the live event bus nor the "request.completed" usage feed
+			// carries it; usage persistence below still does.
+			if !outcome.Unanswered {
+				a.events.Publish("request.completed", map[string]any{
+					"requestId":    outcome.RequestID,
+					"providerId":   outcome.ProviderID,
+					"modelId":      outcome.ModelID,
+					"connectionId": outcome.ConnectionID,
+					"status":       outcome.Status,
+					"durationMs":   outcome.Duration.Milliseconds(),
+				})
+				a.feed.Publish(controlevents.UsageEvent{
+					RequestID: outcome.RequestID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
+					ConnectionID: outcome.ConnectionID, APIKeyID: outcome.APIKeyID, Status: outcome.Status,
+					DurationMS: outcome.Duration.Milliseconds(), InputTokens: outcome.InputTokens,
+					OutputTokens: outcome.OutputTokens, Termination: outcome.Termination, UsageUnobserved: outcome.UsageUnobserved,
+					CreatedAt: time.Now().UTC(),
+				})
+			}
 			usage.Record(telemetry.Event{
 				Class:        telemetry.Critical,
 				RequestID:    outcome.RequestID,
@@ -660,10 +671,33 @@ func (a *App) trackInference(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isInferencePath(r.URL.Path) {
 			a.active.Add(1)
-			defer a.active.Add(-1)
+			defer func() {
+				if a.active.Add(-1) == 0 {
+					a.idleMu.Lock()
+					a.idleCond.Broadcast()
+					a.idleMu.Unlock()
+				}
+			}()
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// waitInferenceIdle waits up to d for in-flight inference handlers to return.
+func (a *App) waitInferenceIdle(d time.Duration) {
+	timedOut := false
+	timer := time.AfterFunc(d, func() {
+		a.idleMu.Lock()
+		timedOut = true
+		a.idleCond.Broadcast()
+		a.idleMu.Unlock()
+	})
+	defer timer.Stop()
+	a.idleMu.Lock()
+	defer a.idleMu.Unlock()
+	for a.active.Load() > 0 && !timedOut {
+		a.idleCond.Wait()
+	}
 }
 
 func isInferencePath(path string) bool {
@@ -699,6 +733,10 @@ func (a *App) Serve(ctx context.Context) error {
 	}
 }
 
+// drainDeadline is the fixed SIGTERM drain deadline (RUNBOOK 28). Nothing in
+// production code assigns it; export_test.go lets tests shorten it.
+var drainDeadline = 10 * time.Second
+
 func (a *App) serveOnce(ctx context.Context) error {
 	srv := &http.Server{
 		Addr:              a.cfg.Listen,
@@ -707,7 +745,12 @@ func (a *App) serveOnce(ctx context.Context) error {
 		MaxHeaderBytes:    1 << 20,
 	}
 	errCh := make(chan error, 1)
-	serviceCtx, stopServices := context.WithCancel(ctx)
+	// Background services must outlive the signal context: SIGTERM cancels ctx
+	// first, and the batcher's final drain has to run after in-flight requests
+	// finish (SPEC §24 steps 3-5), or their usage records are enqueued onto a
+	// batcher that already exited and are lost. Every exit path below calls
+	// stopServices after the HTTP drain.
+	serviceCtx, stopServices := context.WithCancel(context.WithoutCancel(ctx))
 	a.serving.Store(true)
 	if a.usage != nil {
 		// SPEC §21: the batcher is the only usage writer; the request path only
@@ -768,9 +811,17 @@ func (a *App) serveOnce(ctx context.Context) error {
 		return errRestoreApplied
 	case <-ctx.Done():
 		a.ready.Store(false)
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), drainDeadline)
 		err := srv.Shutdown(shutdownCtx)
 		cancel()
+		if err != nil {
+			// The drain deadline passed: cut the connections, which cancels each
+			// request context, and give the handlers a bounded moment to publish
+			// their (client_abandoned) records before the batcher takes its final
+			// drain. Records published after that point are not accepted.
+			_ = srv.Close()
+			a.waitInferenceIdle(5 * time.Second)
+		}
 		stopServices()
 		if a.usage != nil {
 			a.usage.Close()

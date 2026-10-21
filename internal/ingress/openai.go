@@ -170,7 +170,7 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 	w.WriteHeader(response.StatusCode)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		io.Copy(w, response.Body)
-		h.emitOutcome(r, provider, response.StatusCode, stream, promptcache.Usage{}, started)
+		h.emitOutcome(r, provider, response.StatusCode, stream, promptcache.Usage{}, true, started)
 		return
 	}
 	h.relayNative(w, r, response, provider, source, stream, started)
@@ -183,10 +183,13 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 func (h *Handler) writeRewrittenResponses(w http.ResponseWriter, r *http.Request, response *http.Response, provider routing.ProviderRef, names map[string]bool, started time.Time) {
 	body, err := io.ReadAll(io.LimitReader(response.Body, openaiadapter.MaxTranslatedResponseBytes+1))
 	if r.Context().Err() != nil {
+		h.abandon(r, provider, response.StatusCode, false, promptcache.Usage{}, started, true)
 		return
 	}
 	if err != nil || len(body) > openaiadapter.MaxTranslatedResponseBytes {
+		// Billed upstream, unreadable body: record the 502 with unobserved usage.
 		h.writeError(w, 502, "upstream_response_invalid", "upstream response could not be read")
+		h.emitTranslated(r, provider, 502, false, promptcache.Usage{}, false, started)
 		return
 	}
 	rewritten, err := wire.RewriteResponsesBody(names, body)
@@ -213,18 +216,21 @@ func (h *Handler) writeRewrittenResponses(w http.ResponseWriter, r *http.Request
 func (h *Handler) writeUnwrapped(w http.ResponseWriter, r *http.Request, response *http.Response, provider routing.ProviderRef, started time.Time) {
 	body, err := io.ReadAll(io.LimitReader(response.Body, openaiadapter.MaxTranslatedResponseBytes+1))
 	if r.Context().Err() != nil {
+		h.abandon(r, provider, response.StatusCode, false, promptcache.Usage{}, started, true)
 		return
 	}
 	if err != nil || len(body) > openaiadapter.MaxTranslatedResponseBytes {
+		// Billed upstream, unreadable body: record the 502 with unobserved usage.
 		h.writeError(w, 502, "upstream_response_invalid", "upstream response could not be read")
+		h.emitTranslated(r, provider, 502, false, promptcache.Usage{}, false, started)
 		return
 	}
 	body = wire.UnwrapResponse(provider.ProviderID)(body)
 	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(body)
-	usage, _ := shared.ParseUsage(provider.Protocol, body)
-	h.emitOutcome(r, provider, response.StatusCode, false, usage, started)
+	usage, observed := shared.ParseUsage(provider.Protocol, body)
+	h.emitOutcome(r, provider, response.StatusCode, false, usage, observed, started)
 }
 
 // emitTranslated records a translated request. Counts the upstream never
@@ -234,6 +240,7 @@ func (h *Handler) writeUnwrapped(w http.ResponseWriter, r *http.Request, respons
 // 6.7 G11) and a stream that broke.
 func (h *Handler) emitTranslated(r *http.Request, provider routing.ProviderRef, status int, stream bool, usage promptcache.Usage, observed bool, started time.Time) {
 	if r != nil && r.Context().Err() != nil {
+		h.abandon(r, provider, status, stream, usage, started, !observed)
 		return
 	}
 	h.publishOutcome(r, provider, status, stream, usage, started, "", !observed)
@@ -262,21 +269,25 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 		if !observed {
 			usage = promptcache.Usage{}
 		}
-		if err != nil {
+		// A translator error after the client left is the client's cancellation,
+		// not a gateway failure: keep the upstream status so abandons do not count
+		// as upstream 5xx in the operator's error rate.
+		if err != nil && r.Context().Err() == nil {
 			status = http.StatusBadGateway
-			if r.Context().Err() == nil {
-				h.recordClassification(provider.ConnectionID, classifyResponse(status, nil), time.Now())
-			}
+			h.recordClassification(provider.ConnectionID, classifyResponse(status, nil), time.Now())
 		}
 		h.emitTranslated(r, provider, status, true, usage, observed, started)
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, openaiadapter.MaxTranslatedResponseBytes+1))
 	if r.Context().Err() != nil {
+		h.abandon(r, provider, response.StatusCode, false, promptcache.Usage{}, started, true)
 		return
 	}
 	if err != nil || len(body) > openaiadapter.MaxTranslatedResponseBytes {
+		// Billed upstream, unreadable body: record the 502 with unobserved usage.
 		h.writeError(w, 502, "upstream_response_invalid", "upstream response could not be translated")
+		h.emitTranslated(r, provider, 502, false, promptcache.Usage{}, false, started)
 		return
 	}
 	if unwrap := wire.UnwrapResponse(provider.ProviderID); unwrap != nil {
@@ -285,9 +296,13 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 	translated, err := translation.Response(body)
 	if err != nil {
 		h.writeError(w, 502, "upstream_response_invalid", "upstream response could not be translated")
+		usage, observed := shared.ParseUsage(provider.Protocol, body)
+		h.emitTranslated(r, provider, 502, false, usage, observed, started)
 		return
 	}
 	if r.Context().Err() != nil {
+		usage, observed := shared.ParseUsage(provider.Protocol, body)
+		h.abandon(r, provider, response.StatusCode, false, usage, started, !observed)
 		return
 	}
 	copyResponseHeaders(w.Header(), response.Header)

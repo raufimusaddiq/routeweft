@@ -15,9 +15,6 @@ import (
 
 func adminCookie(t *testing.T, h *Handler) *http.Cookie {
 	t.Helper()
-	if _, err := h.opts.Accounts.Bootstrap(context.Background(), "a1", "operator", "s3cret"); err != nil {
-		t.Fatal(err)
-	}
 	session, err := h.opts.Sessions.Create(adminauth.Account{ID: "a1", Username: "operator"})
 	if err != nil {
 		t.Fatal(err)

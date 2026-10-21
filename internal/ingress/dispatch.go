@@ -16,6 +16,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
+	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
 )
 
 // Bound all wire attempts, including one same-account retry for 408/409.
@@ -25,6 +26,11 @@ const maxAccountAttempts = 10
 // same-account retry, regardless of a huge upstream Retry-After. The full
 // value still drives the RuntimeState cooldown; the client is not parked.
 const retryDelayCap = 5 * time.Second
+
+// statusClientClosedRequest is the accounting status for a request the client
+// abandoned before any upstream status existed (nginx's non-standard 499). It is
+// recorded, never written: the client is already gone.
+const statusClientClosedRequest = 499
 
 type dispatchError struct {
 	status        int
@@ -81,7 +87,7 @@ func foldForcedStream(response *http.Response, provider routing.ProviderRef, str
 
 // Dispatch completes retries before exposing upstream headers. Once a stream
 // starts it is never replayed, including after a partial response or disconnect.
-func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSnapshot, model, source string, compact, stream bool, prepare func(routing.ProviderRef) (ChatTranslation, error)) (*http.Response, routing.ProviderRef, error) {
+func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSnapshot, model, source string, compact, stream bool, prepare func(routing.ProviderRef) (ChatTranslation, error)) (response *http.Response, chosen routing.ProviderRef, resultErr error) {
 	// Key policy is checked before any resolution so a restricted key cannot
 	// probe which models, aliases or Combos exist.
 	if !requestPermitted(callerKey(r, snapshot), snapshot, model) {
@@ -129,6 +135,26 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 		attemptErr, attemptResponse, attemptProvider = err, response, provider
 	}
 	used := 0
+	// The abandoned record's duration starts where every other emitter's does:
+	// the request's start, not after candidate resolution and translation.
+	requestStart := time.Now()
+	if holder := attributionFrom(r); holder != nil && !holder.begun.IsZero() {
+		requestStart = holder.begun
+	}
+	// A client that leaves after an upstream request was issued still cost the
+	// upstream work, so the request is accounted once as client_abandoned with
+	// unobserved usage (the response never arrived) rather than vanishing. The
+	// relay paths do the same for responses that did arrive (native_usage.go).
+	defer func() {
+		if response == nil && resultErr != nil && used > 0 && r.Context().Err() != nil {
+			// Candidate exhaustion returns an empty ref; attribute the record to
+			// the last attempted provider instead of an empty provider/model.
+			if chosen.ProviderID == "" && chosen.ConnectionID == "" {
+				chosen = attemptProvider
+			}
+			h.publishOutcomeFlagged(r, chosen, statusClientClosedRequest, stream, promptcache.Usage{}, requestStart, TerminationClientAbandoned, true, true)
+		}
+	}()
 	authFailureSeen := false
 	for index, provider := range candidates {
 		if used == maxAccountAttempts {
