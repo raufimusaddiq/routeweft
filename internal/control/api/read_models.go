@@ -662,6 +662,15 @@ func (h *Handler) quota(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		item := map[string]any{"connectionId": id, "providerId": provider, "name": name, "enabled": enabled != 0, "status": "unknown"}
+		if h.opts.QuotaState != nil {
+			if detail, ok := h.opts.QuotaState(id); ok {
+				item["plan"] = detail.Plan
+				item["windows"] = detail.Windows
+				if detail.AvailableReset != nil {
+					item["availableResetCredits"] = *detail.AvailableReset
+				}
+			}
+		}
 		if state != nil {
 			if observation, ok := state.Quota(id); ok {
 				if observation.Err != "" {

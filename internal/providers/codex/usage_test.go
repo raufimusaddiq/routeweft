@@ -18,7 +18,7 @@ func TestUsageNormalizesWindowsAndResetCredits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if usage.Plan != "plus" || !usage.LimitReached || usage.ReviewLimitReached || usage.SparkLimitReached || usage.AvailableReset != 2 {
+	if usage.Plan != "plus" || !usage.LimitReached || usage.ReviewLimitReached || usage.SparkLimitReached || usage.AvailableReset == nil || *usage.AvailableReset != 2 {
 		t.Fatalf("usage=%+v", usage)
 	}
 	if usage.Quotas["session"].Used != 42 || usage.Quotas["session"].Remaining != 58 || usage.Quotas["session"].ResetAt == nil {
@@ -95,5 +95,18 @@ func TestResetCreditsSurfacesStructuredError(t *testing.T) {
 	}}
 	if _, err := (UsageClient{Client: oversized}).ResetCredits(context.Background(), "token"); err == nil || !strings.Contains(err.Error(), "size limit") {
 		t.Fatalf("oversized err=%v", err)
+	}
+}
+
+func TestUsageOmittedResetCreditsAreUnknown(t *testing.T) {
+	client := UsageClient{Client: fakeClient{do: func(*http.Request) (*http.Response, error) {
+		return response(200, `{"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":1}}}`), nil
+	}}}
+	usage, err := client.Usage(context.Background(), "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.AvailableReset != nil {
+		t.Fatalf("omitted count read as %v", *usage.AvailableReset)
 	}
 }

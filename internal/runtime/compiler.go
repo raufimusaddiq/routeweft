@@ -92,6 +92,8 @@ var defaultSettings = map[string]string{
 	"stickyRoundRobinLimit":        "3",
 	"providerStrategies":           "{}",
 	"quotaVisibility":              "{}",
+	"claudeAutoPing":               `{"connections":{}}`,
+	"codexAutoPing":                `{"connections":{}}`,
 	"comboStrategy":                "fallback",
 	"comboStickyRoundRobinLimit":   "1",
 	"comboStrategies":              "{}",

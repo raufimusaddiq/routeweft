@@ -3,6 +3,7 @@ package quota
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -225,5 +226,77 @@ func TestCookieOnlyConnectionIsNotConfigured(t *testing.T) {
 	// about one connection can tell "unreadable" from "healthy".
 	if err := service.refreshConnection(context.Background(), connections.byProvider["grok-web"][0]); !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("per-connection err=%v, want ErrNotConfigured", err)
+	}
+}
+
+func TestLastStateIsolatedFromConcurrentReaders(t *testing.T) {
+	now := time.Now()
+	remaining := .5
+	credits := 2.0
+	client := &fakeClient{state: State{Windows: []Window{{Name: "session", Remaining: &remaining, ResetAt: &now}}, AvailableReset: &credits}}
+	s := NewService(fakeConnections{}, fakeCredentials{}, Observer{Clients: map[string]UsageClient{"codex": client}})
+	if _, err := s.observe(context.Background(), "codex", "a", Credential{}); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			state, ok := s.LastState("a")
+			if !ok {
+				t.Error("missing state")
+				return
+			}
+			*state.Windows[0].Remaining = 0
+			*state.Windows[0].ResetAt = time.Time{}
+			*state.AvailableReset = 0
+		}()
+	}
+	wg.Wait()
+	state, _ := s.LastState("a")
+	if *state.Windows[0].Remaining != .5 || state.Windows[0].ResetAt.IsZero() || *state.AvailableReset != 2 {
+		t.Fatal("readers mutated cached state")
+	}
+}
+
+func TestFailedReadKeepsLastGoodDetail(t *testing.T) {
+	remaining := .5
+	client := &fakeClient{state: State{Plan: "plus", Windows: []Window{{Name: "session", Remaining: &remaining}}}}
+	s := NewService(fakeConnections{}, fakeCredentials{}, Observer{Clients: map[string]UsageClient{"codex": client}})
+	if _, err := s.observe(context.Background(), "codex", "a", Credential{}); err != nil {
+		t.Fatal(err)
+	}
+	client.err = errors.New("outage")
+	if _, err := s.observe(context.Background(), "codex", "a", Credential{}); err == nil {
+		t.Fatal("expected read error")
+	}
+	state, _ := s.LastState("a")
+	if state.Plan != "plus" || len(state.Windows) != 1 {
+		t.Fatalf("outage wiped last good detail: %+v", state)
+	}
+}
+
+func TestForgetAndPruneDropCachedDetail(t *testing.T) {
+	remaining := .5
+	client := &fakeClient{state: State{Plan: "plus", Windows: []Window{{Name: "session", Remaining: &remaining}}}}
+	conns := fakeConnections{byProvider: map[string][]credentials.Connection{"codex": {{ID: "a", ProviderID: "codex", Enabled: true, AuthKind: credentials.AuthOAuth}, {ID: "b", ProviderID: "codex", Enabled: true, AuthKind: credentials.AuthOAuth}}}}
+	s := NewService(conns, fakeCredentials{values: map[string]string{"a": "x", "b": "x"}}, Observer{Clients: map[string]UsageClient{"codex": client}})
+	if err := s.RefreshProvider(context.Background(), "codex"); err != nil {
+		t.Fatal(err)
+	}
+	s.Forget("a")
+	if _, ok := s.LastState("a"); ok {
+		t.Fatal("Forget kept state")
+	}
+	conns.byProvider["codex"] = conns.byProvider["codex"][:1] // "b" removed
+	if err := s.RefreshProvider(context.Background(), "codex"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.LastState("b"); ok {
+		t.Fatal("removed connection still cached")
+	}
+	if _, ok := s.LastState("a"); !ok {
+		t.Fatal("live connection not refreshed")
 	}
 }

@@ -492,8 +492,8 @@ func (r apiKeyReader) kenari(ctx context.Context, key string) (quota.State, erro
 	}
 	var windows []quota.Window
 	for name, item := range body.Plan.Windows {
-		used, _ := number(item.Used)
-		remaining, _ := number(item.Remaining)
+		used, usedOK := number(item.Used)
+		remaining, remainingOK := number(item.Remaining)
 		label := name
 		switch name {
 		case "month":
@@ -501,7 +501,17 @@ func (r apiKeyReader) kenari(ctx context.Context, key string) (quota.State, erro
 		case "week":
 			label = "Weekly (IDR)"
 		}
-		windows = append(windows, window(label, used, used+remaining, resetAt(item.ResetsAt)))
+		if !usedOK || !remainingOK {
+			// Absent or null amounts are unknown, never exhausted: an exhausted
+			// window skips the account in routing.
+			windows = append(windows, quota.Window{Name: label, ResetAt: resetAt(item.ResetsAt)})
+			continue
+		}
+		percent := 0.0
+		if total := used + remaining; total > 0 {
+			percent = remaining / total * 100
+		}
+		windows = append(windows, percentWindow(label, percent, resetAt(item.ResetsAt)))
 	}
 	plan := body.Plan.Name
 	if plan == "" {

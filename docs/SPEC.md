@@ -1570,8 +1570,9 @@ All 81 active rows are first-class product targets. The transport class in that 
 ### 32.1 Quota readers and model seeds
 
 Quota support is the reference dispatcher's handler table, not the registry's
-`usage: true` advertisement: `iflow` has a handler without the flag and `qoder`
-advertises without a handler, so the readable set is what the dispatcher lists.
+`usage: true` advertisement: `iflow` has a message-only handler without the flag, while the current pin has
+a real `qoder` handler with PAT resolution. The readable set excludes handlers
+that make no upstream observation.
 Every reader takes the full connection credential (access token, API key, cookie
 and the provider-specific fields) because providers differ in which they need. A
 provider with no reader publishes `ErrNotConfigured`, which routing treats as
@@ -1865,3 +1866,25 @@ Before implementation, agents must treat:
 as the approved product/technical hierarchy described in `AGENTS.md`.
 
 A LiteRouter source observation that conflicts with an approved Routeweft product decision is not copied silently; it becomes a product-drift review.
+
+### P05 quota admin actions and opt-in warming
+
+PRD-QUOTA-001: GET `/admin/v1/quota` adds cached named windows, plan and optional
+Codex `availableResetCredits`. GET `/admin/v1/quota/{id}/codex-reset-credits`
+returns the existing normalized credit listing. Session-gated POST at the same
+path requires `{"confirm":true}`, spends one credit with a server UUID, returns
+409 for no credit and 502 for an unavailable/ambiguous result. It never retries
+an ambiguous spend. Both actions reject non-Codex token connections before any
+network work and refresh credentials through the shared registry.
+
+`claudeAutoPing` and `codexAutoPing` are string-valued settings containing JSON
+`{"connections":{"id":true}}`, defaulting to `{"connections":{}}`. The minute
+worker reads current settings and targets enabled matching OAuth connections.
+Claude warms at reset with a 5-second lead tolerance. Codex requires a reset
+slide of at least 30 seconds, a 10-minute minimum interval and no exhausted
+non-session windows. Failed reads/sends cool down for 15 minutes. A successful
+send is suppressed for that reset minute; history persists through the existing
+settings transaction protocol under non-writable `quotaAutoPingHistory`.
+Codex streams must finish before a ping counts as successful. A crash between
+upstream acceptance and the local commit can repeat a ping after restart.
+Per-provider evidence and retained gaps: `P05_QUOTA_AUDIT.md`.

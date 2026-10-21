@@ -21,8 +21,9 @@ type Publisher interface {
 // provider-specific field (Google project id, Kiro profile ARN, device id), so
 // the reader receives the sealed payload rather than one string.
 type Credential struct {
-	AccessToken string
-	Cookie      string
+	ConnectionID string
+	AccessToken  string
+	Cookie       string
 	// ProviderData carries the provider-specific fields a reader needs (project
 	// id, profile ARN, device id). The refresh token is deliberately absent: no
 	// reader reads one, and a live secret with no consumer is only a leak surface.
@@ -113,7 +114,13 @@ type CodexClient struct {
 func (c CodexClient) Usage(ctx context.Context, credential Credential) (State, error) {
 	accountID := c.AccountID
 	if accountID == "" {
+		accountID = credential.ProviderData["workspaceId"]
+	}
+	if accountID == "" {
 		accountID = credential.ProviderData["chatgptAccountId"]
+	}
+	if accountID == "" {
+		accountID = credential.ProviderData["accountId"]
 	}
 	usage, err := (codexprovider.UsageClient{Client: c.Client, AccountID: accountID}).Usage(ctx, credential.AccessToken)
 	if err != nil {
@@ -124,7 +131,7 @@ func (c CodexClient) Usage(ctx context.Context, credential Credential) (State, e
 		reset := window.ResetAt
 		windows = append(windows, Window{Name: normalizeName(name), Remaining: PercentFromUsed(window.Used), ResetAt: reset})
 	}
-	return State{Plan: usage.Plan, Windows: windows}, nil
+	return State{Plan: usage.Plan, Windows: windows, AvailableReset: usage.AvailableReset}, nil
 }
 
 // ResetCreditConsumer is implemented by providers that expose reset-credit

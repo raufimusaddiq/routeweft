@@ -25,6 +25,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/proxy"
+	"github.com/raufimusaddiq/routeweft/internal/quota"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/transforms/pxpipe"
 	"github.com/raufimusaddiq/routeweft/internal/transport"
@@ -59,6 +60,8 @@ type Options struct {
 	PoolBindings          PoolBindingRefresher
 	Combos                ComboManager
 	QuotaRefresher        func(context.Context) error
+	QuotaState            func(string) (quota.State, bool)
+	QuotaForget           func(string)
 	AllowPrivateUpstreams bool
 	// PXPIPE is the process-level sink compiled saver pipelines report into;
 	// it backs the PXPIPE logs and stats routes.
@@ -258,6 +261,8 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/v1/usage/hourly", h.requireSession(h.handleUsageHourly))
 	mux.HandleFunc("GET /admin/v1/usage/requests/{requestId}", h.requireSession(h.handleUsageRequest))
 	mux.HandleFunc("POST /admin/v1/quota/refresh", h.requireSession(h.handleQuotaRefresh))
+	mux.HandleFunc("GET /admin/v1/quota/{id}/codex-reset-credits", h.requireSession(h.handleCodexResetCredits))
+	mux.HandleFunc("POST /admin/v1/quota/{id}/codex-reset-credits", h.requireSession(h.handleCodexResetCredits))
 	mux.Handle("GET /admin/v1/events", h.requireSessionHandler(http.HandlerFunc(h.handleEvents)))
 	mux.Handle("GET /admin/v1/logs", h.requireSessionHandler(http.HandlerFunc(h.handleLogs)))
 	mux.Handle("DELETE /admin/v1/logs", h.requireSessionHandler(http.HandlerFunc(h.handleClearLogs)))

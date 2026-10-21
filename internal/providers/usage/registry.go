@@ -12,8 +12,8 @@ import (
 //
 // The set is the reference dispatcher's table (open-sse/services/usage.js
 // USAGE_HANDLERS), not the registry's `usage: true` advertisement: iflow has a
-// handler without the flag and qoder advertises without one, so the handler table
-// is the source of truth for what can actually be read. The parity gate compares
+// message-only handler without the flag, so only handlers that read upstream
+// define the readable set. The parity gate compares
 // this map against the oracle.
 //
 // A provider absent here has no usage endpoint; the observer reports

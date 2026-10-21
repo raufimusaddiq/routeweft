@@ -82,3 +82,16 @@ for (const [, id, endpoint] of nativeWires) {
   assert.ok(source(`open-sse/providers/registry/${id}.js`).includes(`baseUrl: "${endpoint}"`), `${id} mock wire URL differs from pin`);
 }
 console.log(`${wireRows.length} registry wire rows compared; ${nativeWires.length} native Chat mock-wire cases anchored to pin URLs.`);
+
+const quotaAudit = readFileSync('docs/P05_QUOTA_AUDIT.md', 'utf8');
+const quotaRows = [...quotaAudit.matchAll(/^\| `([a-z0-9-]+)` \| (.+) \|$/gm)];
+assert.deepEqual(quotaRows.map(row => row[1]).sort(), activeImports, 'P05 must classify every product provider');
+const usageDispatch = source('open-sse/services/usage.js').match(/const USAGE_HANDLERS = \{([\s\S]*?)\n\};/)[1];
+const readableQuota = [...usageDispatch.matchAll(/^  "?([a-z0-9-]+)"?:/gm)].map(match => match[1]).filter(id => id !== 'iflow').sort();
+assert.deepEqual(quotaRows.filter(row => row[2].includes('Observed:')).map(row => row[1]).sort(), readableQuota, 'P05 observation inventory differs from pin');
+for (const row of quotaRows) {
+  assert.match(row[2], /(?:U|R)\/[^`]+\.js:\d+/, `${row[1]} has no quota source citation`);
+  if (readableQuota.includes(row[1])) assert.match(row[2], /R11: product decision: [^|]{20,}/, `${row[1]} has no remaining-work disposition`);
+  else assert.ok(row[2].includes('No upstream surface.'), `${row[1]} has no explicit no-surface disposition`);
+}
+console.log(`${quotaRows.length} P05 quota rows: ${readableQuota.length} readable surfaces; all other product providers explicitly classified.`);
