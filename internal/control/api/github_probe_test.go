@@ -109,7 +109,7 @@ func TestGitHubOnboardingProbesAndDiscovery(t *testing.T) {
 					if r.Method != http.MethodGet {
 						t.Error("discovery method")
 					}
-					body = `{"data":[{"id":"gpt-5.2"},{"id":"claude-sonnet-4.6"}]}`
+					body = `{"data":[{"id":"gpt-5.2","capabilities":{"type":"chat"}},{"id":"claude-sonnet-4.6","capabilities":{"type":"chat"}}]}`
 				case "/v1/messages":
 					if r.Header.Get("anthropic-version") != "2023-06-01" {
 						t.Error("missing Messages version")

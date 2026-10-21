@@ -8,6 +8,7 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
@@ -47,6 +49,22 @@ type Request struct {
 	// AuthStyle selects the credential header. Empty means bearer.
 	AuthStyle  AuthStyle
 	Credential string
+
+	// Method defaults to GET. A POST listing sends Body as JSON.
+	Method string
+	Body   []byte
+	// URL replaces BaseURL and Path when the provider lists from another host.
+	URL string
+	// Query is the provider's own fixed query (a client-version gate, a server-side
+	// filter). It is never taken from a client request: the reference forwards none.
+	Query string
+	// Sign returns headers computed over the final URL and body, for providers
+	// whose listing is signed. Override then replaces or (empty value) removes
+	// headers the signer set.
+	Sign     func(rawURL string, body []byte) (map[string]string, error)
+	Override map[string]string
+	// Shape selects the provider's response reader; empty is the shared catalog.
+	Shape wire.Shape
 }
 
 // AuthStyle is a supported discovery credential style.
@@ -61,6 +79,10 @@ const (
 	AuthCookie       AuthStyle = "cookie"
 	// AuthNone sends no credential (no-auth/free providers).
 	AuthNone AuthStyle = "none"
+	// AuthAnthropicCompat sends the key as x-api-key and as a bearer, which is how
+	// the reference lists an Anthropic-compatible node (route.js:566-574): gateways
+	// of that kind differ on which one they read.
+	AuthAnthropicCompat AuthStyle = "anthropic-compat"
 )
 
 // Client fetches provider model catalogs. Results are returned as ordered,
@@ -95,30 +117,24 @@ func (c *Client) ModelEntries(ctx context.Context, request Request) ([]Model, er
 	if c.AllowPrivateUpstreams {
 		validateURL = transport.ValidateTrustedLocalURL
 	}
-	base, err := validateURL(request.BaseURL)
+	target, err := wire.ListingURL(validateURL, request.BaseURL, request.URL, request.Path, request.Query)
 	if err != nil {
 		return nil, err
 	}
-	path := strings.Trim(strings.TrimSpace(request.Path), "/")
-	if path == "" {
-		path = "models"
+	method := request.Method
+	if method == "" {
+		method = http.MethodGet
 	}
-	for _, segment := range strings.Split(path, "/") {
-		if segment == "." || segment == ".." {
-			return nil, errors.New("discovery path must not traverse paths")
-		}
+	var requestBody io.Reader
+	if request.Body != nil {
+		requestBody = bytes.NewReader(request.Body)
 	}
-	base.Path = strings.TrimRight(base.Path, "/")
-	if path != "models" || !strings.HasSuffix(base.Path, "/models") {
-		base.Path += "/" + path
-	}
-	base.RawPath = ""
-	base.RawQuery = ""
-	base.Fragment = ""
-
-	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
+	httpRequest, err := http.NewRequestWithContext(ctx, method, target, requestBody)
 	if err != nil {
 		return nil, err
+	}
+	if request.Body != nil {
+		httpRequest.Header.Set("Content-Type", "application/json")
 	}
 	httpRequest.Header.Set("Accept", "application/json")
 	httpRequest.Header.Set("User-Agent", "Routeweft")
@@ -132,6 +148,12 @@ func (c *Client) ModelEntries(ctx context.Context, request Request) ([]Model, er
 			httpRequest.Header.Set("x-api-key", request.Credential)
 			httpRequest.Header.Set("anthropic-version", "2023-06-01")
 		}
+	case AuthAnthropicCompat:
+		if request.Credential != "" {
+			httpRequest.Header.Set("x-api-key", request.Credential)
+			httpRequest.Header.Set("anthropic-version", "2023-06-01")
+			httpRequest.Header.Set("Authorization", "Bearer "+request.Credential)
+		}
 	case AuthGoogleAPIKey:
 		httpRequest.Header.Set("x-goog-api-key", request.Credential)
 	case AuthCookie:
@@ -139,6 +161,22 @@ func (c *Client) ModelEntries(ctx context.Context, request Request) ([]Model, er
 	default:
 		if request.Credential != "" {
 			httpRequest.Header.Set("Authorization", "Bearer "+request.Credential)
+		}
+	}
+	if request.Sign != nil {
+		signed, err := request.Sign(target, request.Body)
+		if err != nil {
+			return nil, err
+		}
+		for name, value := range signed {
+			httpRequest.Header.Set(name, value)
+		}
+	}
+	for name, value := range request.Override {
+		if value == "" {
+			httpRequest.Header.Del(name)
+		} else {
+			httpRequest.Header.Set(name, value)
 		}
 	}
 
@@ -168,6 +206,17 @@ func (c *Client) ModelEntries(ctx context.Context, request Request) ([]Model, er
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, &StatusError{Status: response.StatusCode}
 	}
+	if request.Shape != wire.ShapeDefault {
+		listed, err := wire.ParseListing(request.Shape, body)
+		if err != nil {
+			return nil, err
+		}
+		models := make([]Model, 0, len(listed))
+		for _, model := range listed {
+			models = append(models, Model{ID: model.ID, Name: model.Name, ContextWindow: model.ContextWindow, Capabilities: model.Capabilities})
+		}
+		return models, nil
+	}
 	return ParseModelEntries(body)
 }
 
@@ -185,69 +234,82 @@ func ParseModels(body []byte) ([]string, error) {
 	return ids, nil
 }
 
+// catalogEntry is one model of an OpenAI-, Gemini- or Ollama-style list. The
+// reference reads the id from id, name or model (route.js:26-29,
+// v1/models/route.js:261) and takes the list from a bare array or the first of
+// data, models and results (route.js:26-29).
+type catalogEntry struct {
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	Model            string          `json:"model"`
+	DisplayName      string          `json:"display_name"`
+	DisplayNameCamel string          `json:"displayName"`
+	ContextWindow    int             `json:"context_window"`
+	ContextLength    int             `json:"context_length"`
+	MaxInputTokens   int             `json:"max_input_tokens"`
+	InputTokenLimit  int             `json:"inputTokenLimit"`
+	Capabilities     json.RawMessage `json:"capabilities"`
+}
+
 func ParseModelEntries(body []byte) ([]Model, error) {
 	var envelope struct {
-		Data []struct {
-			ID             string          `json:"id"`
-			Name           string          `json:"name"`
-			DisplayName    string          `json:"display_name"`
-			ContextWindow  int             `json:"context_window"`
-			ContextLength  int             `json:"context_length"`
-			MaxInputTokens int             `json:"max_input_tokens"`
-			Capabilities   json.RawMessage `json:"capabilities"`
-		} `json:"data"`
-		Models []struct {
-			Name            string `json:"name"`
-			DisplayName     string `json:"displayName"`
-			InputTokenLimit int    `json:"inputTokenLimit"`
-		} `json:"models"`
+		Data    []catalogEntry `json:"data"`
+		Models  []catalogEntry `json:"models"`
+		Results []catalogEntry `json:"results"`
 	}
 	envelopeErr := json.Unmarshal(body, &envelope)
-	// A syntax error can still leave partially populated slices. Never trust a
-	// partial decode: a malformed catalog must not replace the durable catalog,
-	// so only a clean envelope or a clean bare-array decode is accepted.
-	if envelopeErr != nil {
+	var entries []catalogEntry
+	switch {
+	case envelopeErr == nil:
+		entries = append(append(append(entries, envelope.Data...), envelope.Models...), envelope.Results...)
+	default:
+		// A syntax error can still leave partially populated slices. Never trust a
+		// partial decode: a malformed catalog must not replace the durable catalog,
+		// so only a clean envelope or a clean bare-array decode is accepted.
 		var bare []string
-		if json.Unmarshal(body, &bare) != nil {
+		if json.Unmarshal(body, &bare) == nil {
+			for _, id := range normalizeAndSort(bare) {
+				entries = append(entries, catalogEntry{ID: id})
+			}
+			break
+		}
+		if json.Unmarshal(body, &entries) != nil {
 			return nil, errors.New("model discovery returned invalid JSON")
 		}
-		bare = normalizeAndSort(bare)
-		models := make([]Model, 0, len(bare))
-		for _, id := range bare {
-			models = append(models, Model{ID: id})
-		}
-		return models, nil
 	}
 	seen := make(map[string]bool)
-	models := make([]Model, 0, len(envelope.Data)+len(envelope.Models))
-	add := func(model Model) {
-		model.ID = strings.TrimPrefix(strings.TrimSpace(model.ID), "models/")
-		model.Name = strings.TrimSpace(model.Name)
-		if model.ID != "" && !seen[model.ID] {
-			seen[model.ID] = true
-			models = append(models, model)
+	models := make([]Model, 0, len(entries))
+	for _, entry := range entries {
+		id := entry.ID
+		name := ""
+		if strings.TrimSpace(id) != "" {
+			name = entry.Name
+		} else if id = entry.Name; strings.TrimSpace(id) == "" {
+			id = entry.Model
 		}
-	}
-	for _, entry := range envelope.Data {
-		model := Model{ID: entry.ID, Name: entry.Name, ContextWindow: entry.ContextWindow}
-		if model.Name == "" {
-			model.Name = entry.DisplayName
+		id = strings.TrimPrefix(strings.TrimSpace(id), "models/")
+		if id == "" || seen[id] {
+			continue
 		}
-		if model.ContextWindow == 0 {
-			model.ContextWindow = entry.ContextLength
+		seen[id] = true
+		if strings.TrimSpace(name) == "" {
+			name = entry.DisplayName
 		}
-		if model.ContextWindow == 0 {
-			model.ContextWindow = entry.MaxInputTokens
+		if strings.TrimSpace(name) == "" {
+			name = entry.DisplayNameCamel
+		}
+		model := Model{ID: id, Name: strings.TrimSpace(name), ContextWindow: entry.ContextWindow}
+		for _, window := range []int{entry.ContextLength, entry.MaxInputTokens, entry.InputTokenLimit} {
+			if model.ContextWindow == 0 {
+				model.ContextWindow = window
+			}
 		}
 		// Provider-specific capability objects are not the runtime's string vocabulary.
 		var capabilities []string
 		if json.Unmarshal(entry.Capabilities, &capabilities) == nil {
 			model.Capabilities = capabilities
 		}
-		add(model)
-	}
-	for _, entry := range envelope.Models {
-		add(Model{ID: entry.Name, Name: entry.DisplayName, ContextWindow: entry.InputTokenLimit})
+		models = append(models, model)
 	}
 	sort.Slice(models, func(i, j int) bool { return models[i].ID < models[j].ID })
 	return models, nil
