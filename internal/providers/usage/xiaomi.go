@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/quota"
 )
 
@@ -19,11 +21,7 @@ const mimoAPIUserAgent = "miNative PC/Normal Windows_NT/10.0.19045 SDKV/1.0.0 DE
 const mimoSessionRequired = "Weekly quota requires Xiaomi account session. API key alone is insufficient."
 
 func (r apiKeyReader) xiaomi(ctx context.Context, credential quota.Credential) (quota.State, error) {
-	if client, ok := r.HTTP.(*http.Client); ok {
-		manual := *client
-		manual.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-		r.HTTP = &manual
-	}
+	// Bound the entire SSO exchange, in addition to Client.call’s per-hop deadline.
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	endpoint := "https://aistudio.xiaomimimo.com/open-apis/v1/user/usage"
@@ -57,23 +55,28 @@ func (r apiKeyReader) xiaomi(ctx context.Context, credential quota.Credential) (
 		return failure("Usage API error (%d)", reply.status)
 	}
 	var body struct {
-		Code *int `json:"code"`
+		Code json.RawMessage `json:"code"`
 		Data struct {
-			Percent   *float64 `json:"percent"`
-			ResetDate string   `json:"resetDate"`
-			ResetAt   float64  `json:"resetAt"`
+			Percent   json.RawMessage `json:"percent"`
+			ResetDate string          `json:"resetDate"`
+			ResetAt   json.RawMessage `json:"resetAt"`
 		} `json:"data"`
 	}
-	if decode(reply.body, &body) != nil || body.Code == nil || *body.Code != 0 {
+	if decode(reply.body, &body) != nil {
 		return failure("Usage endpoint returned unexpected response.")
 	}
-	if body.Data.Percent == nil {
+	code, ok := number(body.Code)
+	if !ok || code != 0 {
+		return failure("Usage endpoint returned unexpected response.")
+	}
+	percent, ok := number(body.Data.Percent)
+	if !ok || math.IsNaN(percent) || math.IsInf(percent, 0) {
 		return failure("Usage data missing percent field.")
 	}
-	remaining := math.Max(0, math.Min(100, math.Round(*body.Data.Percent)))
+	remaining := math.Max(0, math.Min(100, math.Round(percent)))
 	reset := resetAt(body.Data.ResetDate)
-	if body.Data.ResetAt > 0 {
-		reset = resetAt(body.Data.ResetAt)
+	if seconds, ok := number(body.Data.ResetAt); ok && seconds > 0 {
+		reset = resetAt(seconds)
 	}
 	return r.state("Xiaomi MiMo Desktop", percentWindow("Weekly", remaining, reset)), nil
 }
@@ -91,10 +94,8 @@ func (r apiKeyReader) mimoSession(ctx context.Context, data map[string]string) (
 	jar := map[string]string{}
 	for name, key := range map[string]string{"passToken": "mimoPassToken", "userId": "mimoUserId", "cUserId": "mimoCUserId"} {
 		value := data[key]
-		for _, c := range value {
-			if c < 0x21 || c > 0x7e || strings.ContainsRune("\";,\\", c) {
-				return "", errors.New("invalid Xiaomi account credential")
-			}
+		if !onboarding.ValidMimoCookieValue(value) {
+			return "", errors.New("invalid Xiaomi account credential")
 		}
 		jar[name] = value
 	}
@@ -108,11 +109,16 @@ func (r apiKeyReader) mimoSession(ctx context.Context, data map[string]string) (
 		return r.call(ctx, http.MethodGet, endpoint, map[string]string{"Cookie": request.Header.Get("Cookie"), "User-Agent": ua, "Accept": "application/json"}, nil)
 	}
 	absorb := func(reply response) {
-		response := http.Response{Header: reply.headers}
-		for _, cookie := range response.Cookies() {
-			switch cookie.Name {
+		for _, header := range reply.headers.Values("Set-Cookie") {
+			pair, _, _ := strings.Cut(header, ";")
+			name, value, ok := strings.Cut(strings.TrimSpace(pair), "=")
+			value = strings.Trim(value, "\"")
+			if !ok || value == "" || !onboarding.ValidMimoCookieValue(value) {
+				continue
+			}
+			switch name {
 			case "serviceToken", "mimopc_ph", "mimopc_slh", "userId":
-				jar[cookie.Name] = cookie.Value
+				jar[name] = value
 			}
 		}
 	}
@@ -164,13 +170,26 @@ func (r apiKeyReader) mimoSession(ctx context.Context, data map[string]string) (
 	digest := sha1.Sum([]byte(input))
 	query := location.Query()
 	query.Set("clientSign", base64.StdEncoding.EncodeToString(digest[:]))
-	location.RawQuery = query.Encode()
-	account, err := call(location.String(), "MiClaw/1.0")
+	signed := wire.Target{BaseURL: location.String(), Query: query.Encode()}
+	signedURL, err := signed.URL(func(raw string) (*url.URL, error) {
+		return mimoURL(raw, "account.xiaomi.com", "")
+	})
+	if err != nil {
+		return "", err
+	}
+	account, err := call(signedURL.String(), "MiClaw/1.0")
 	if err != nil {
 		return "", err
 	}
 	absorb(account)
-	service, err := call("https://account.xiaomi.com/pass/serviceLogin?"+url.Values{"sid": {"mimopc"}, "callback": {callback}, "_json": {"true"}}.Encode(), "MiClaw/1.0")
+	serviceTarget := wire.Target{BaseURL: "https://account.xiaomi.com", Endpoint: "pass/serviceLogin", Query: url.Values{"sid": {"mimopc"}, "callback": {callback}, "_json": {"true"}}.Encode()}
+	serviceURL, err := serviceTarget.URL(func(raw string) (*url.URL, error) {
+		return mimoURL(raw, "account.xiaomi.com", "")
+	})
+	if err != nil {
+		return "", err
+	}
+	service, err := call(serviceURL.String(), "MiClaw/1.0")
 	if err != nil {
 		return "", err
 	}

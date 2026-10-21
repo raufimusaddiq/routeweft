@@ -32,6 +32,11 @@ func TestMimoAccountSessionUsage(t *testing.T) {
 		{`{"code":0,"data":{"percent":94,"resetDate":"2026-10-27"}}`, .94, time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)},
 		{`{"code":0,"data":{"percent":0,"resetDate":"2026-10-27","resetAt":1793232000}}`, 0, time.Unix(1793232000, 0).UTC()},
 		{`{"code":0,"data":{"percent":12.6}}`, .13, time.Time{}},
+		{`{"code":0,"data":{"percent":"94"}}`, .94, time.Time{}},
+		{`{"code":"0","data":{"percent":94}}`, .94, time.Time{}},
+		{`{"code":0,"data":{"percent":94,"resetAt":"1793232000"}}`, .94, time.Unix(1793232000, 0).UTC()},
+		{`{"code":"0","data":{"percent":"94","resetDate":"2026-10-27","resetAt":"1793232000"}}`, .94, time.Unix(1793232000, 0).UTC()},
+		{`{"code":0,"data":{"percent":"94","resetDate":"2026-10-27","resetAt":"unknown"}}`, .94, time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)},
 	} {
 		t.Run(tc.body, func(t *testing.T) {
 			calls := 0
@@ -72,7 +77,9 @@ func TestMimoAccountSessionUsage(t *testing.T) {
 					if req.URL.Path != "/api/sts" || !strings.Contains(req.Header.Get("Cookie"), "serviceToken=fixture-passport") {
 						t.Fatal("sts request")
 					}
-					h.Add("Set-Cookie", "serviceToken=fixture-session; Path=/")
+					h.Add("Set-Cookie", `serviceToken="fixture-session"; Path=/`)
+					h.Add("Set-Cookie", "malformed")
+					h.Add("Set-Cookie", "mimopc_slh=; Path=/")
 					h.Add("Set-Cookie", "mimopc_ph=fixture-ph; Path=/")
 				case 6:
 					if req.URL.String() != mimoAccountBase+"/api/user/usage" || req.Header.Get("User-Agent") != mimoAPIUserAgent {
@@ -203,6 +210,40 @@ func TestMimoSessionFailureStagesDoNotExposeCredentials(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), "fixture-private") {
 			t.Fatal("account credential leaked in failure")
+		}
+	}
+}
+
+func TestMimoInvalidValuesNeverInventQuota(t *testing.T) {
+	for _, body := range []string{
+		`{"code":"7","data":{"percent":"94"}}`,
+		`{"code":null,"data":{"percent":"94"}}`,
+		`{"code":"invalid","data":{"percent":"94"}}`,
+		`{"code":"0","data":{"percent":null}}`,
+		`{"code":"0","data":{"percent":"invalid"}}`,
+		`{"code":"0","data":{"percent":"NaN"}}`,
+		`{"code":"0","data":{"percent":"Inf"}}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			state, err := reader(t, "xiaomi-mimo", &stubClient{status: http.StatusOK, body: body}).Usage(context.Background(), quota.Credential{AccessToken: "sk-fixture"})
+			if err == nil || len(state.Windows) != 0 {
+				t.Fatal("invalid quota value accepted")
+			}
+		})
+	}
+}
+
+func TestMimoReadRejectsCookieInjection(t *testing.T) {
+	for _, field := range []string{"mimoPassToken", "mimoUserId", "mimoCUserId"} {
+		data := map[string]string{"mimoPassToken": "fixture-pass"}
+		data[field] = "fixture-private; other=secret"
+		readers, _ := Readers(mimoClientFunc(func(*http.Request) (*http.Response, error) {
+			t.Fatal("invalid account credential made a request")
+			return nil, nil
+		}), nil)
+		state, err := readers["xiaomi-mimo"].Usage(context.Background(), quota.Credential{ProviderData: data})
+		if err == nil || len(state.Windows) != 0 || strings.Contains(err.Error(), "fixture-private") {
+			t.Fatal("invalid account value accepted or echoed")
 		}
 	}
 }
