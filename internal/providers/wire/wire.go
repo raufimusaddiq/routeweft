@@ -90,7 +90,7 @@ var hooks = map[string]Hook{
 	"codex": {OpenAIHeaders: codexHeaders},
 	// The gateway requires SSE even for buffered clients (registry/api-airforce.js:25-32).
 	"api-airforce": {ForceStream: true, Finalize: codebuddyStream, OpenAIHeaders: func(routing.ProviderRef) map[string]string {
-		return map[string]string{"HTTP-Referer": "https://endpoint-proxy.local", "X-Title": "Endpoint Proxy", "Accept": "text/event-stream"}
+		return map[string]string{"HTTP-Referer": "https://endpoint-proxy.local", "X-Title": "Endpoint Proxy"}
 	}},
 	"claude": {
 		BearerMessages:  true,
@@ -122,6 +122,7 @@ var hooks = map[string]Hook{
 	"opencode":         {Target: opencodeTarget, ForceStream: true, Finalize: codebuddyStream},
 	"vertex-partner":   {Target: vertexPartnerTarget},
 	"cloudflare-ai":    {Target: cloudflareTarget},
+	"commandcode":      commandCodeHook,
 	"cursor":           {RequestHeaders: cursorHeaders, Target: cursorTarget, ForceStream: true, RequireCredential: true, Do: CursorDo},
 }
 
