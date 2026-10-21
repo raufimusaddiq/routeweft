@@ -1011,9 +1011,9 @@ An import's `input` is one masked field, so a flow whose import needs several
 secrets takes JSON in it rather than extra plain-text fields. Kiro: a bare string is
 an API key (proven against the Amazon Q model catalog); a JSON object with
 `refreshToken` (and `clientId`/`clientSecret`/`region` for an organization account)
-is proven by refreshing it; a JSON object with an access token or `token_endpoint`
-is a CLIProxyAPI `external_idp` export. Xiaomi MiMo: a bare `sk-` key, the JSON body
-with the account-session fields, or the contents of MiMo Code's `auth.json`.
+is proven by refreshing it; a JSON object with a `token_endpoint` or `auth_method` is a CLIProxyAPI `external_idp` export. Xiaomi MiMo: a bare `sk-` key, the JSON body
+with `apiKey`/`uid`/`baseUrl`, or the contents of MiMo Code's `auth.json`; the
+account-session `passToken` is not held while that is an open owner decision.
 Routeweft never reads the host's home directory for an import and never returns a
 stored credential; the reference's `auto-import` routes are replaced by pasting the
 same file contents (docs/P04_ONBOARDING_AUDIT.md). A refresh dispatches on the

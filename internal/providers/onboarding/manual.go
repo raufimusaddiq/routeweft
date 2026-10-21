@@ -308,11 +308,11 @@ func kiroAPIKeyImport(ctx context.Context, p Params) (Result, error) {
 // sk- key is validated against the models endpoint, and a failed validation is
 // soft so a network-restricted install can still store the key.
 //
-// The input is the bare key, or JSON carrying the rest of the pin's body
-// ({apiKey, uid, baseUrl, mimoPassToken, mimoUserId, mimoCUserId}), or the contents
+// The input is the bare key, or JSON carrying {apiKey, uid, baseUrl}, or the contents
 // of MiMo Code's auth.json (xiaomi-mimo/auto-import/route.js:15-22,85-104) pasted by
-// the operator. The account-session fields travel in the sealed credential rather
-// than in plain-text operator fields, and Routeweft never reads the file itself.
+// the operator. Routeweft never reads the file itself. The pin's account-session
+// fields (mimoPassToken and friends) are deliberately not accepted: whether Routeweft
+// may hold that credential is an open owner decision (docs/P04_ONBOARDING_AUDIT.md §5).
 func xiaomiAPIKeyFlow() Flow {
 	return Flow{
 		Provider:   "xiaomi-mimo",
@@ -347,17 +347,6 @@ func xiaomiAPIKeyFlow() Flow {
 				identity = account.uid + "@xiaomi"
 				providerData["uid"] = account.uid
 			}
-			// Per-account session credential: what lets several Xiaomi accounts
-			// rotate independently (:73-76,110-113).
-			for key, value := range map[string]string{
-				"mimoPassToken": account.passToken,
-				"mimoUserId":    account.userID,
-				"mimoCUserId":   account.cUserID,
-			} {
-				if value != "" {
-					providerData[key] = value
-				}
-			}
 			return Result{
 				AuthKind: credentials.AuthAPIKey,
 				Identity: identity,
@@ -372,8 +361,7 @@ func xiaomiAPIKeyFlow() Flow {
 
 // xiaomiAccount is one parsed Xiaomi MiMo import.
 type xiaomiAccount struct {
-	key, uid, baseURL          string
-	passToken, userID, cUserID string
+	key, uid, baseURL string
 }
 
 // parseXiaomiInput accepts the three input shapes and returns the account. The key
@@ -383,13 +371,10 @@ func parseXiaomiInput(p Params) (xiaomiAccount, error) {
 	account := xiaomiAccount{key: input, uid: strings.TrimSpace(p.Meta["uid"]), baseURL: strings.TrimSpace(p.Meta["baseUrl"])}
 	if strings.HasPrefix(input, "{") {
 		var document struct {
-			APIKey    string `json:"apiKey"`
-			UID       string `json:"uid"`
-			Endpoint  string `json:"baseUrl"`
-			PassToken string `json:"mimoPassToken"`
-			UserID    string `json:"mimoUserId"`
-			CUserID   string `json:"mimoCUserId"`
-			Xiaomi    struct {
+			APIKey   string `json:"apiKey"`
+			UID      string `json:"uid"`
+			Endpoint string `json:"baseUrl"`
+			Xiaomi   struct {
 				Key      string `json:"key"`
 				Metadata struct {
 					UID      string `json:"uid"`
@@ -401,12 +386,9 @@ func parseXiaomiInput(p Params) (xiaomiAccount, error) {
 			return xiaomiAccount{}, fmt.Errorf("xiaomi-mimo import expects a key or a JSON object")
 		}
 		account = xiaomiAccount{
-			key:       strings.TrimSpace(firstNonEmpty(document.APIKey, document.Xiaomi.Key)),
-			uid:       firstNonEmpty(document.UID, document.Xiaomi.Metadata.UID, account.uid),
-			baseURL:   firstNonEmpty(document.Endpoint, document.Xiaomi.Metadata.Endpoint, account.baseURL),
-			passToken: strings.TrimSpace(document.PassToken),
-			userID:    strings.TrimSpace(document.UserID),
-			cUserID:   strings.TrimSpace(document.CUserID),
+			key:     strings.TrimSpace(firstNonEmpty(document.APIKey, document.Xiaomi.Key)),
+			uid:     firstNonEmpty(document.UID, document.Xiaomi.Metadata.UID, account.uid),
+			baseURL: firstNonEmpty(document.Endpoint, document.Xiaomi.Metadata.Endpoint, account.baseURL),
 		}
 	}
 	if !strings.HasPrefix(account.key, "sk-") {

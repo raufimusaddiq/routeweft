@@ -41,7 +41,7 @@ Routeweft stores the same fields in the sealed secret payload.
 | kiro social | `R/kiro/social-authorize/route.js:10-43`, `R/kiro/social-exchange/route.js:10-67` | PKCE, `kiro://` redirect, code exchange at `prod.us-east-1.auth.desktop.kiro.dev/oauth/token` | `authMethod: google`/`github` | **refresh implemented here; sign-in not wired** (§3) |
 | kiro auto-import | `R/kiro/auto-import/route.js:12-132` | scans `~/.aws/sso/cache` for `aorAAAAAG…` | returns token + client secret to the browser | **deliberately absent** (§4) |
 | kiro device | `L/providers/kiro.js:6` | AWS SSO OIDC registration + device authorization | client registration kept for refresh | already implemented (`custom.go:kiroFlow`) |
-| xiaomi-mimo key | `R/xiaomi-mimo/api-key/route.js:11-136` | `sk-` prefix; `GET {base}/models` is *soft* (`:49-56`) | key, `uid`, `baseUrl`, `modelCount`, `mimoPassToken`/`UserId`/`CUserId` | **partly implemented; session fields were dropped, stored here** |
+| xiaomi-mimo key | `R/xiaomi-mimo/api-key/route.js:11-136` | `sk-` prefix; `GET {base}/models` is *soft* (`:49-56`) | key, `uid`, `baseUrl`, `modelCount`, `mimoPassToken`/`UserId`/`CUserId` | **key import implemented; the session fields are deliberately not held** (§5) |
 | xiaomi-mimo auto-import | `R/xiaomi-mimo/auto-import/route.js:52-140` | reads `~/.local/share/mimocode/auth.json` and Desktop's cookie store | returns key + `passToken` to the browser | **deliberately absent** (§4); the file's *contents* are now accepted pasted |
 | refresh (all) | `open-sse/services/tokenRefresh.js:131-160`, `…/providers.js:326-455` | per-provider grant | rotated pair written back | table already mirrored; **kiro now covers its three shapes** |
 
@@ -66,9 +66,9 @@ Routeweft stores the same fields in the sealed secret payload.
    unknown (zero), which the registry reads as "no proactive refresh" — the rule #173
    left behind. `expiresAt` is honored, the exported `idToken` and
    `providerSpecificData` are kept, and the JWT only backfills what is missing.
-6. **Xiaomi key import** accepts the key, the pin's JSON body, or the contents of
-   MiMo Code's `auth.json`, and stores the account-session fields in the sealed
-   secret. An unread model catalog records no `modelCount` rather than `0`.
+6. **Xiaomi key import** accepts the key, a JSON body with `apiKey`/`uid`/`baseUrl`, or
+   the contents of MiMo Code's `auth.json`. The pin's account-session fields are
+   **not** accepted or stored (§5). An unread model catalog records no `modelCount` rather than `0`.
 7. **iFlow** keeps the key's `expireTime`.
 
 ## 3. Open, per provider
@@ -85,8 +85,10 @@ Routeweft stores the same fields in the sealed secret payload.
 
 Routeweft does not read the host's home directory for any import, and no route
 returns a stored credential. The three pin `auto-import` routes are replaced by a
-paste of the *same file contents*: Kiro's `kiro-auth-token.json` fields plus the
-client registration's `clientId`/`clientSecret` go in the token-import JSON, and MiMo
+paste of the *same file contents*: Kiro's `kiro-auth-token.json` as written (its
+`accessToken` is ignored; the refresh token is proven by refreshing) plus the client
+registration's `clientId`/`clientSecret` (or `client_id`/`client_secret`) go in the
+token-import JSON, and MiMo
 Code's `auth.json` goes in the Xiaomi import as-is. Both pass through the
 admin-session-gated, size-bounded `/import` endpoint, are sealed at rest, and are
 never echoed.
@@ -95,15 +97,15 @@ What is **not** on this host, and left named rather than invented:
 
 - **MiMo Desktop's account-session `passToken`.** It lives in Desktop's Chromium cookie
   database (`open-sse/shared/mimoAccount.js`), which only exists on the machine where
-  Desktop runs. The import now *stores* `mimoPassToken`/`mimoUserId`/`mimoCUserId` when
-  the operator supplies them; nothing reads them yet.
+  Desktop runs. The import does not accept or store `mimoPassToken`/`mimoUserId`/
+  `mimoCUserId`; see §5.
 - Cursor's `state.vscdb` (token and machine id) and Kiro's `~/.aws/sso/cache`, for the
   same reason.
 
 ## 5. Xiaomi and #115's last row
 
-The **import path is now real**: key, `uid`, `baseUrl` and the three session fields
-are validated, sealed and refreshable-by-reimport. That is not what blocks the
+The **key import path is real**: key, `uid` and `baseUrl` are validated and sealed.
+The session fields are not stored. That is not what blocks the
 `xiaomi-mimo` Preview models. Serving them needs a five-step SSO exchange from a
 `passToken` to an account-session `Cookie` against
 `mimo-server-cn.xiaomimimo.com/api/route/chat/completions` (see
@@ -113,9 +115,9 @@ executor work, not onboarding.
 The decision needed from the owner: **may Routeweft hold a Xiaomi account-session
 `passToken` and exchange it for a session cookie at request time?** It is a
 long-lived account credential, broader than the `sk-` key. If yes, #115 can build the
-exchange on the stored fields. If no, Preview models stay unsupported and the three
-session fields should be removed from the import so Routeweft does not hold a
-credential nothing uses.
+exchange and add the three fields back to the import with it. If no, Preview models
+stay unsupported. Until the owner answers, Routeweft holds no such credential and
+nothing consumes one.
 
 ## 6. Durable rotation
 

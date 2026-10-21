@@ -161,6 +161,9 @@ func refreshKiroExternalIdp(ctx context.Context, client HTTPClient, now func() t
 	if tokens.RefreshToken != "" {
 		next.RefreshToken = tokens.RefreshToken
 	}
+	// Without expires_in the old expiry would survive and the registry would
+	// refresh on every request; the other branches default to one hour as well.
+	next.Expiry = now().Add(kiroDefaultExpiry)
 	if expiry := tokens.expiry(now()); !expiry.IsZero() {
 		next.Expiry = expiry
 	}
@@ -229,7 +232,10 @@ func kiroImport(ctx context.Context, p Params) (Result, error) {
 	if err := json.Unmarshal([]byte(input), &document); err != nil {
 		return Result{}, errors.New("kiro import expects a JSON object")
 	}
-	for _, key := range []string{"access_token", "accessToken", "token_endpoint", "tokenEndpoint", "auth_method"} {
+	// Only the endpoint or the auth method marks a CLIProxyAPI export. An access
+	// token does not: kiro-auth-token.json carries one beside its refresh token, and
+	// that file belongs on the token path, which refreshes and so replaces it.
+	for _, key := range []string{"token_endpoint", "tokenEndpoint", "auth_method"} {
 		if _, ok := document[key]; ok {
 			return kiroCLIProxyImport(p, document)
 		}
@@ -260,7 +266,7 @@ func kiroTokenImport(ctx context.Context, p Params, document map[string]json.Raw
 	if refresh == "" {
 		return Result{}, errors.New("kiro refresh token is required")
 	}
-	clientID, clientSecret := jsonString(document, "clientId"), jsonString(document, "clientSecret")
+	clientID, clientSecret := jsonString(document, "clientId", "client_id"), jsonString(document, "clientSecret", "client_secret")
 	idc := clientID != "" && clientSecret != ""
 	region := jsonString(document, "region")
 	data := map[string]string{}

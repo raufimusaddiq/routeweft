@@ -392,10 +392,9 @@ func TestCodexBulkExportedAccountDataWinsOverTheJWT(t *testing.T) {
 	}
 }
 
-// TestXiaomiImportStoresTheAccountSession covers the three input shapes of
-// xiaomi-mimo/api-key and auto-import, with the session fields the Preview route
-// needs (shared/mimoAccount.js).
-func TestXiaomiImportStoresTheAccountSession(t *testing.T) {
+// TestXiaomiImportDoesNotHoldTheAccountSession: the account-session credential is an
+// open owner decision, so a body that carries it stores the key and nothing else.
+func TestXiaomiImportDoesNotHoldTheAccountSession(t *testing.T) {
 	flow := ManualFlows()["xiaomi-mimo"]
 	models := &stubClient{handler: func(*http.Request) (int, string) { return http.StatusOK, `{"data":[{"id":"a"},{"id":"b"}]}` }}
 
@@ -407,15 +406,18 @@ func TestXiaomiImportStoresTheAccountSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := result.Secret.ProviderData
-	if result.Secret.AccessToken != "sk-fixture" || result.Identity != "1234@xiaomi" || data["baseUrl"] != "https://mimo.example.test/v1" ||
-		data["mimoPassToken"] != "fixture-pass" || data["mimoUserId"] != "fixture-user" || data["mimoCUserId"] != "fixture-cuser" || data["modelCount"] != "2" {
+	if result.Secret.AccessToken != "sk-fixture" || result.Identity != "1234@xiaomi" || data["baseUrl"] != "https://mimo.example.test/v1" || data["modelCount"] != "2" {
 		t.Fatalf("result=%+v", result)
+	}
+	for key, value := range data {
+		if strings.Contains(strings.ToLower(key), "mimo") || strings.HasPrefix(value, "fixture-") {
+			t.Fatalf("session credential stored as %s: %+v", key, data)
+		}
 	}
 	if got := models.last().Header.Get("X-Mimo-Source"); got != "mimocode-cli" || models.last().URL.String() != "https://mimo.example.test/v1/models" {
 		t.Fatalf("validation request %s source=%q", models.last().URL, got)
 	}
 
-	// MiMo Code's auth.json, pasted as the file holds it (auto-import/route.js:15-22).
 	authFile := &stubClient{handler: func(*http.Request) (int, string) { return http.StatusOK, `{"data":[]}` }}
 	result, err = flow.Import(context.Background(), Params{
 		Input:  `{"xiaomi":{"type":"api","key":"sk-from-file","metadata":{"uid":"99","base_url":"https://api.xiaomimimo.com/v1"}}}`,
@@ -424,12 +426,7 @@ func TestXiaomiImportStoresTheAccountSession(t *testing.T) {
 	if err != nil || result.Secret.AccessToken != "sk-from-file" || result.Identity != "99@xiaomi" {
 		t.Fatalf("auth.json import: %+v err=%v", result, err)
 	}
-	if _, has := result.Secret.ProviderData["mimoPassToken"]; has {
-		t.Fatal("a session token appeared that the file did not carry")
-	}
 
-	// A bare key keeps working, and a failed validation is soft: the key is stored,
-	// and the unread catalog is not recorded as a count of zero.
 	down := &stubClient{handler: func(*http.Request) (int, string) { return http.StatusServiceUnavailable, `{}` }}
 	result, err = flow.Import(context.Background(), Params{Input: "sk-bare", Meta: map[string]string{"uid": "7"}, Client: down})
 	if err != nil || result.Secret.AccessToken != "sk-bare" || result.Identity != "7@xiaomi" {
@@ -443,6 +440,65 @@ func TestXiaomiImportStoresTheAccountSession(t *testing.T) {
 		if _, err := flow.Import(context.Background(), Params{Input: input, Client: models}); err == nil {
 			t.Errorf("%q was accepted", input)
 		}
+	}
+}
+
+// TestKiroImportAcceptsTheFilesTheAuditNames feeds the real file shapes: Kiro's
+// kiro-auth-token.json (which carries an accessToken beside its refresh token) and a
+// snake_case IDC payload. Both once misrouted: the first to the CLI-proxy parser, the
+// second to the social refresh, which dropped both client secrets.
+func TestKiroImportAcceptsTheFilesTheAuditNames(t *testing.T) {
+	flow := kiroImportFlow(t)
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	refreshed := func() *stubClient {
+		return &stubClient{handler: func(*http.Request) (int, string) {
+			return http.StatusOK, `{"accessToken":"fixture-access","refreshToken":"fixture-rotated","expiresIn":900}`
+		}}
+	}
+
+	// kiro-auth-token.json as the IDE writes it.
+	file := refreshed()
+	result, err := flow.Import(context.Background(), Params{
+		Input:  `{"accessToken":"fixture-stale-access","refreshToken":"fixture-pasted","expiresAt":"2026-10-21T11:00:00.000Z","region":"us-east-1","profileArn":"` + fixtureProfileARN + `","authMethod":"social","provider":"Google"}`,
+		Client: file, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("kiro-auth-token.json was refused: %v", err)
+	}
+	if !strings.HasSuffix(file.last().URL.Path, "/refreshToken") || result.Secret.AccessToken != "fixture-access" || result.Secret.ProviderData["profileArn"] != fixtureProfileARN {
+		t.Fatalf("file import: %+v url=%s", result.Secret, file.last().URL)
+	}
+
+	// The same file plus the client registration (IDC), in snake_case.
+	idc := refreshed()
+	result, err = flow.Import(context.Background(), Params{
+		Input:  `{"refresh_token":"fixture-pasted","client_id":"fixture-client","client_secret":"fixture-secret","region":"eu-west-1"}`,
+		Client: idc, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idc.last().URL.Host != "oidc.eu-west-1.amazonaws.com" {
+		t.Fatalf("snake_case idc refreshed at %s, not the regional endpoint", idc.last().URL.Host)
+	}
+	data := result.Secret.ProviderData
+	if data["authMethod"] != "idc" || data["clientId"] != "fixture-client" || data["clientSecret"] != "fixture-secret" || data["region"] != "eu-west-1" {
+		t.Fatalf("idc secrets dropped: %+v", data)
+	}
+}
+
+// TestKiroExternalIdpRefreshWithoutExpiresInDoesNotKeepALapsedExpiry.
+func TestKiroExternalIdpRefreshWithoutExpiresInDoesNotKeepALapsedExpiry(t *testing.T) {
+	stub := &stubClient{handler: func(*http.Request) (int, string) {
+		return http.StatusOK, `{"access_token":"fixture-new","refresh_token":"fixture-new-refresh"}`
+	}}
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	secret := credentials.Secret{RefreshToken: "fixture-refresh", Expiry: now.Add(-time.Hour), ProviderData: map[string]string{
+		"authMethod": "external_idp", "clientId": "c", "scope": "s", "tokenEndpoint": "https://login.microsoftonline.com/t/oauth2/v2.0/token",
+	}}
+	next, err := refreshKiro(context.Background(), stub, func() time.Time { return now }, secret, secret.ProviderData)
+	if err != nil || !next.Expiry.Equal(now.Add(time.Hour)) {
+		t.Fatalf("expiry=%v err=%v", next.Expiry, err)
 	}
 }
 
