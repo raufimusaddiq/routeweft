@@ -640,7 +640,7 @@ func (d discoveryRoundTripper) RoundTrip(request *http.Request) (*http.Response,
 }
 
 func (h *Handler) handleDiscoverModels(w http.ResponseWriter, r *http.Request) {
-	models, err := h.fetchModels(r.Context(), r.PathValue("id"))
+	entries, err := h.fetchModelEntries(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "model_discovery_failed", err.Error())
 		return
@@ -649,10 +649,18 @@ func (h *Handler) handleDiscoverModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime model catalog is not configured")
 		return
 	}
-	items := make([]runtime.Model, 0, len(models))
+	items := make([]runtime.Model, 0, len(entries))
+	models := make([]string, 0, len(entries))
 	providerID := h.connectionProvider(r.Context(), r.PathValue("id"))
-	for _, id := range models {
-		items = append(items, runtime.Model{ProviderID: providerID, ID: id, Name: id, Source: "discovered"})
+	for _, entry := range entries {
+		// The listing's own names, windows and capabilities are kept: Kiro's
+		// variants and Codex's review twins are named by the listing, not the id.
+		name := entry.Name
+		if name == "" {
+			name = entry.ID
+		}
+		items = append(items, runtime.Model{ProviderID: providerID, ID: entry.ID, Name: name, ContextWindow: entry.ContextWindow, Capabilities: entry.Capabilities, Source: "discovered"})
+		models = append(models, entry.ID)
 	}
 	if err := h.opts.ProviderCatalog.ReplaceDiscoveredModels(r.Context(), providerID, items); err != nil {
 		writeError(w, http.StatusInternalServerError, "model_discovery_save_failed", "discovered models could not be saved")
@@ -661,7 +669,7 @@ func (h *Handler) handleDiscoverModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"providerId": providerID, "models": models, "count": len(models), "activeConfigRevision": h.activeRevision()})
 }
 
-func (h *Handler) fetchModels(ctx context.Context, connectionID string) ([]string, error) {
+func (h *Handler) fetchModelEntries(ctx context.Context, connectionID string) ([]discovery.Model, error) {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	if h.opts.Credentials == nil {
@@ -678,7 +686,7 @@ func (h *Handler) fetchModels(ctx context.Context, connectionID string) ([]strin
 	if err != nil {
 		return nil, errors.New("provider node was not found")
 	}
-	return h.fetchConnectionModels(ctx, connection, node)
+	return h.fetchConnectionModelEntries(ctx, connection, node)
 }
 
 func (h *Handler) fetchConnectionModels(ctx context.Context, connection credentials.Connection, node credentials.Node) ([]string, error) {
@@ -725,6 +733,12 @@ func (h *Handler) fetchConnectionModelEntries(ctx context.Context, connection cr
 		style = discovery.AuthGoogleAPIKey
 	} else if slicesContain(node.Transports, string(registry.TransportAnthropic)) && !wire.For(modelWireProviderID(node)).BearerMessages {
 		style = discovery.AuthXApiKey
+		if node.Kind != credentials.NodeBuiltin {
+			// An Anthropic-compatible node is listed from its base without a trailing
+			// /messages, with the key as x-api-key and as a bearer (route.js:554-574).
+			style = discovery.AuthAnthropicCompat
+			listBase = strings.TrimSuffix(strings.TrimRight(listBase, "/"), "/messages")
+		}
 	}
 	client := discovery.Client{AllowPrivateUpstreams: h.opts.AllowPrivateUpstreams}
 	if h.opts.DiscoveryClient != nil {
@@ -744,7 +758,40 @@ func (h *Handler) fetchConnectionModelEntries(ctx context.Context, connection cr
 	for name, values := range modelWireHeaders(route) {
 		headers[name] = values[0]
 	}
-	return client.ModelEntries(ctx, discovery.Request{ProviderID: node.ProviderID, BaseURL: listBase, Path: path, Credential: credential, AuthStyle: style, Headers: headers})
+	// Where the provider lists differently from a bearer GET {base}/models (a
+	// POST, another host, a gate query, a signature, a filtered shape) the listing
+	// is the provider's own. Its query and body are its constants and the
+	// connection's settings, never the admin request's.
+	listingRoute := route
+	listingRoute.APIToken = credential
+	listing, own, err := wire.ListingFor(listingRoute)
+	if err != nil {
+		return nil, err
+	}
+	if own && listing.Path != "" {
+		path = listing.Path
+	}
+	request := discovery.Request{ProviderID: node.ProviderID, BaseURL: listBase, Path: path, Credential: credential, AuthStyle: style, Headers: headers}
+	if own {
+		request.Method, request.URL, request.Query, request.Body = listing.Method, listing.URL, listing.Query, listing.Body
+		request.Override, request.Shape = listing.Override, listing.Shape
+		for name, value := range listing.Headers {
+			request.Headers[name] = value
+		}
+		if listing.OwnAuth {
+			request.AuthStyle = discovery.AuthNone
+		}
+		if listing.Signed {
+			sign := wire.For(node.ProviderID).RequestHeaders
+			if sign == nil {
+				return nil, errors.New("provider listing is signed but its wire has no signer")
+			}
+			request.Sign = func(rawURL string, body []byte) (map[string]string, error) {
+				return sign(listingRoute, body, rawURL)
+			}
+		}
+	}
+	return client.ModelEntries(ctx, request)
 }
 
 func modelWireProviderID(node credentials.Node) string {

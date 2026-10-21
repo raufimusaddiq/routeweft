@@ -416,7 +416,7 @@ The effective guard is `src/dashboardGuard.js`, not just each route body.
 | 44 | `/api/provider-nodes` | GET, POST | D | GET {nodes}; POST {name,prefix,apiType,baseUrl,type} => node (201) | PRESENT | GET/POST /admin/v1/provider-nodes; A/providers.go | R04/R06: Generic C/R/M and custom typed System One nodes; D07 unified node representation. |
 | 45 | `/api/provider-nodes/routes` | GET | D | ?id => {id,routes} | PRESENT | GET /admin/v1/provider-nodes/{id}/routes; A/workflows.go | R06: resolved node transport templates; A/workflows_test.go. |
 | 46 | `/api/provider-nodes/validate` | POST | D | {baseUrl,apiKey,type,modelId} => {valid,error?,method?} | PRESENT | POST /admin/v1/provider-nodes/validate; A/workflows.go | R06: native inference fallback with manual model after failed/absent discovery; shared SSRF policy; A/workflows_test.go. |
-| 47 | `/api/providers/[id]/models` | GET | D | id => provider-specific authenticated model list | PARTIAL | POST /admin/v1/connections/{id}/discover; A/providers.go | P03: shared discovery does not implement every provider listing/token exchange. R11: product decision: undefined Follow-up remains in the cited area tracker; no retained requirement is waived. |
+| 47 | `/api/providers/[id]/models` | GET | D | id => provider-specific authenticated model list | PARTIAL | POST /admin/v1/connections/{id}/discover; A/providers.go | P03 (#76): the listing is per provider (section 6.15): twelve provider families no longer use the shared bearer GET {base}/models. Zed, the Qoder PAT exchange, refresh-and-retry on 401 and the other rows marked PARTIAL/MISSING in 6.15 stay open. R11: product decision: the open 6.15 listing rows remain #76 work; no retained requirement is waived and no provider is hidden for lacking a listing. |
 | 48 | `/api/providers/[id]` | GET, PUT, DELETE | D | GET connection; PUT name/priority/auth/proxy/providerSpecificData; DELETE success | PARTIAL | GET /connections list, PATCH/DELETE /connections/{id}; A/providers.go | C06,P04: opaque provider-specific fields/import state not retained fully. R11: product decision: undefined Follow-up remains in the cited area tracker; no retained requirement is waived. |
 | 49 | `/api/providers/[id]/test-models` | POST | D | id => {provider,connectionId,results} for configured models | PARTIAL | POST /admin/v1/connections/{id}/test-models; A/providers.go | R07 native probes preserve completed results and distinguish parent/own timeout; UI consumes interrupted bodies and permits abort. Specialized codecs remain P02. R11: product decision: R07 native probes preserve completed results and distinguish parent/own timeout; UI consumes interrupted bodies and permits abort. Specialized codecs remain P02. Follow-up remains in the cited area tracker; no retained requirement is waived. |
 | 50 | `/api/providers/[id]/test` | POST | D | id => validation/latency/error/status result | PARTIAL | POST /admin/v1/connections/{id}/test; A/providers.go | R06/R07 native inference validation with manual fallback and first-token cancellation is implemented; provider-specific auth exchange remains P02/P04. R11: product decision: R06/R07 native inference validation with manual fallback and first-token cancellation is implemented; provider-specific auth exchange remains P02/P04. Follow-up remains in the cited area tracker; no retained requirement is waived. |
@@ -2174,3 +2174,107 @@ pre-existing failures were not changed.
 The native Chat benchmark measured 580.9 microseconds/op, 65263 B/op and 222
 allocations/op on this host. This is an observation, not a controlled before/after
 comparison. No storage, credential handling or SSRF policy changed.
+
+## 6.15 Provider model listing (#76 P03)
+
+The pinned listing route is `src/app/api/providers/[id]/models/route.js`
+(`PROVIDER_MODELS_CONFIG`, route.js:131-507, and the handler, route.js:512-668),
+with the per-provider services under `open-sse/services/`. A shared
+`GET {base}/models` with a bearer token is correct only for the providers that
+the pin lists that way (`createOpenAIModelsConfig`, route.js:75-82). Routeweft
+had that one request for every provider; the table below is the providers whose
+listing is authenticated, addressed, filtered or shaped differently, with the
+pinned lines each row reproduces. The request is `wire.ListingFor`
+(`internal/providers/wire/listing.go`), the response is `wire.ParseListing`
+(`listing_parse.go`), and `fetchConnectionModelEntries`
+(`internal/control/api/providers.go`) is the one caller. The URL is assembled by
+`wire.ListingURL`, so the base and absolute-URL policy stay in the seam.
+
+Every other URL was compared mechanically: the listing URL Routeweft builds for
+each of the 81 catalog entries against every pinned plain-URL entry (the
+`createOpenAIModelsConfig` calls and the literal `url:` entries). Perplexity was
+the only plain-bearer mismatch (`/models` against `/v1/models`); the rest agree.
+
+| Provider | Pin | What differs from the shared request | Status |
+|---|---|---|---|
+| `perplexity` | route.js:247 | listed at `/v1/models`; serving base has no `/v1` (`perplexity-agent` already does) | TESTED `TestPerplexityListsUnderV1` |
+| `codex` | route.js:19-24,54-73,149-164 | `?client_version=` gate (an old one returns 200 with newer models missing), `slug`-keyed `models[]`, a `-review` twin per chat model. Routeweft sends its own `codexprovider.CLIVersion` (0.154.0), not the pin's 0.144.6; the gate only widens | TESTED `TestCodexListingSendsTheGateAndReadsSlugs`, `TestCodexListingVersionIsNotOlderThanThePins` |
+| `gemini-cli` | route.js:17,31-52,440-460 | POST `v1internal:fetchAvailableModels` with `{project}`, Google client headers, `models` as array or id-keyed object without `isInternal` | TESTED `TestGoogleInternalListingsArePosts` |
+| `antigravity` | route.js:165-173 | POST `{}` to the sandbox host `v1internal:models`. The pin returns `data.models` untouched, so its shape is not proven by the pin; both the array and the id-keyed forms are read | TESTED `TestGoogleInternalListingsArePosts` (fixture shape, not a live response) |
+| `github` | route.js:174-200; copilotModels.js:17,71 | only `capabilities.type == chat` and not `policy.state == disabled`; embeddings were being stored as models | TESTED `TestGitHubListingDropsEmbeddingsAndDisabledModels` |
+| `kimchi` | kimchiModels.js:22-24,49-90,106-135 | `https://llm.kimchi.dev/v1/models/metadata?include_in_cli=true` (a server-side filter), `models[]` with `slug`, limits, modalities | TESTED `TestKimchiListingUsesTheMetadataCatalogWithItsFilter` |
+| `kiro` | kiroModels.js:44-60,67-90,106-157,159-199,289-310 | `GET q.{region}.amazonaws.com/ListAvailableModels?origin=AI_EDITOR&profileArn=`; region from the ARN, refused unless it is an AWS region name; each model becomes `-thinking`, `-agentic`, `-thinking-agentic` ids (none agentic for `auto`) | TESTED `TestKiroListingIsListAvailableModels`, `TestKiroListingRefusesAHostInTheRegion` |
+| `cline`, `clinepass` | clinepassModels.js:11-20,25-94; clineAuth.js:5-20 | OAuth access tokens carry `workos:` (the shared bearer sent the JWT bare, which Cline rejects); ClinePass keeps only `cline-pass/` ids | TESTED `TestClineListingCarriesTheWorkOSToken` |
+| `grok-cli` | grokCliModels.js:11-70; config/grokCli.js:1-9 | `/v1/models` (serving base has none), `grok-shell` identity headers (older get HTTP 426), email/user id headers, array/keyed-object/bare-string shapes with seven id spellings | TESTED `TestGrokCLIListingUsesTheGrokShellIdentity` |
+| `qoder` | qoderModels.js:195-262 | COSY-signed GET; `jt-` tokens from api2; `chat[]` keyed by `key`, `enable:false` entries not offered. Ids are bare keys (what the seeds and `/v1/models` use); the pin's dashboard route prefixes `qoder/` (route.js:421) | TESTED `TestQoderListingIsSignedAndReadsTheChatCatalog` (non-PAT) |
+| `cursor` | cursorModels.js:15-33,68-91,144-169; registry/cursor.js:47-49 | POST an empty proto body to `agent.api5.cursor.sh/agent.v1.AgentService/GetUsableModels` as a unary call (no Connect framing), signed like a Run; response is protobuf, not JSON | TESTED `TestCursorListingIsAUnaryProtoPost` (synthetic proto, no live account) |
+| Anthropic-compatible nodes | route.js:554-593; v1/models/route.js:229-237 | base without a trailing `/messages`; key sent as `x-api-key` and as a bearer | TESTED `TestAnthropicCompatibleNodeListing` |
+
+The shared parse now reads what the pin reads (route.js:26-29,
+v1/models/route.js:261): a bare array of objects, and `data`, `models` or
+`results`, with the id from `id`, `name` or `model`. It rejected a bare array of
+objects and ignored `results` before. The admin discover action
+(`POST /admin/v1/connections/{id}/discover`) also stored only ids; it now stores
+the listing's name, context window and capabilities.
+
+### Passthrough: what the pin does, and what Routeweft does
+
+The pinned route takes the connection id and nothing else: it does not read the
+request's query (route.js:512-519), and the only query the upstream sees is a
+provider constant (`client_version`, `include_in_cli`, the Kiro parameters, the
+Gemini `key`). The response is filtered only by the provider's own parser
+(`github`, `zed`, `cline`/`clinepass`, the Gemini CLI `isInternal` rule). The
+client-facing `/v1/models` reads one query value, `kind`
+(v1/models/route.js:674-678), and forwards nothing upstream.
+
+Routeweft matches that: a client's query on the discover action is not forwarded
+(`Request.Query` is the provider's constant, a query in a base URL is rejected by
+the outbound policy and one in an absolute listing URL is dropped), and a
+shared-shape catalog is stored whole (`TestAdminDiscoveryForwardsNoClientQueryAndFiltersNothingExtra`
+sends `include_in_cli=false&client_version=0.0.1&limit=1&foo=bar` and asserts the
+upstream saw only `include_in_cli=true`, and that a catalog with embeddings and
+moderation models is stored with all three). There is no client query to
+preserve for this route, and forwarding one would let a request choose the
+upstream's server-side filter or smuggle a parameter to a credentialed host.
+
+### Open (tracked, not hidden)
+
+Nothing is excluded from a provider list because its listing is unimplemented; a
+provider without its own listing is still requested the shared way, and a failed
+listing leaves the durable catalog as it was (an empty or all-blank result never
+deletes it, `ReplaceDiscoveredModels`).
+
+| Item | Pin | State | Status |
+|---|---|---|---|
+| `zed` listing | route.js:293-326; zedAuth.js:258-302,362-404 | the pin fetches an LLM token (`fetchZedLlmToken`, a `/client/llm_tokens` exchange) and lists `/models` with it; Routeweft sends the shared bearer with the account token to `cloud.zed.dev/models` | MISSING R11: product decision: the Zed LLM-token exchange is not implemented; it is tracked under #76 and the provider stays selectable with its manual and seeded models. |
+| `qoder` personal access token | qoderModels.js:130-145,147-166 | a `pt-` key needs the job-token exchange; the listing says so and sends nothing rather than send a token the gateway does not accept | PARTIAL R11: product decision: the PAT-to-job-token exchange is not implemented and is tracked under #76; device tokens (`dt-`) and job tokens (`jt-`) list. |
+| refresh and retry on 401/403 | route.js:93-128; kiroModels.js:250-285; grokCliModels.js:94-110; copilotModels.js:117-141 | the pin refreshes the token and retries the listing once; Routeweft lists with the credential the registry returns and reports a 401 as a failed discovery | PARTIAL R11: product decision: in-listing refresh-and-retry is not implemented; a connection whose token expired between refreshes reports model_discovery_failed until the next refresh. |
+| `gemini` API key and paging | route.js:142-148,625-627 | the pin sends the key as `?key=`; Routeweft sends `x-goog-api-key` (same effect, the key stays out of URLs and logs). Neither follows `nextPageToken`, so only the first page is listed | PARTIAL R11: product decision: Gemini paging is not followed, as in the pin; following it would list more than the pin and is left to a decision. |
+| `kimchi` endpoint setting | kimchiModels.js:17-24,144 | the pin honours `providerSpecificData.kimchiEndpoint`; `ProviderSettings` has no such field, so the default host is listed | PARTIAL R11: product decision: the kimchiEndpoint connection setting is not modelled; the default llm.kimchi.dev host is listed. |
+| providers with no pinned listing | route.js:595-601 | the pin answers 400 "does not support models listing" for providers outside `PROVIDER_MODELS_CONFIG` (for example glm, minimax, kenari); Routeweft requests the shared `GET {base}/models` and keeps the durable catalog on failure. The shared request is unverified for them | PARTIAL R11: product decision: the shared listing for providers the pin does not list is unverified against those hosts; seeds and manual models remain the catalog. |
+| live catalog on `/v1/models` | v1/models/route.js:60-171 | the pin overlays Kiro, Qoder, Kimchi, GitHub, Cline, ClinePass, Grok CLI, Cursor and Zed live catalogs on each `/v1/models` request. Routeweft serves the persisted catalog; discovery runs from the admin action and workflows only, because a steady-state request must not call an upstream (AGENTS 3). No periodic refresh is scheduled | PARTIAL R11: product decision: scheduled discovery refresh is not implemented; operators refresh with the discover action and the persisted catalog serves /v1/models. |
+| provider alias prefixes | registry `alias`/`aliases` (kimi.js, grok-cli.js, baidu.js and the other entries that declare `aliases`); capabilities.js:686-691 | the pin resolves `kmc/`, `ag/`, `kimi-coding/` and the other registry aliases as model prefixes. `RuntimeSnapshot.ServingModel` accepts the catalog provider id only. The generated alias table exists (capabilities) but is used for capability lookup, not routing; a routing change would also have to canonicalise key grants (`ingress/policy.go` `modelProviderID`) and per-provider strategy overrides | MISSING R11: product decision: resolving registry alias prefixes in routing, key grants and strategies is a routing change that belongs in its own reviewed PR, not in listing. |
+
+### Kimi native Responses, seeds, capabilities
+
+- Kimi native Responses: reviewed against registry/kimi.js:55-59. The built-in
+  row serves `openai-responses` at `{base}/responses`, the device headers apply to
+  Chat and Responses, and the `?beta=true` query is Messages-only; no gap found
+  (`TestKimiChatAndResponsesCarryDeviceHeadersWithoutTheQuery`, registry and
+  route-listing tests). Kimi has no pinned model listing, so it lists the shared
+  way.
+- Seeds and capabilities: `compat/parity/generate-seeds.mjs` and
+  `generate-capabilities.mjs` were re-run against the pin (74 providers with
+  models, 740 capability entries) and produced no change to `seeds_gen.go` or the
+  capability tables, so there is no model-seed or capability drift to fix.
+
+### Verification and impact
+
+`go build ./...`, `go vet ./...`, `go test` on the touched packages and
+`node compat/parity/inventory.mjs` pass. No live provider was called and no real
+credential or production prompt is in a fixture. Hot path: none; listing is an
+admin action. Storage: none (the discover action stores richer rows in the
+existing catalog). Security: the Kiro region is validated before it becomes a host
+name, every listing URL goes through the outbound policy, and a client query is
+never forwarded.
+
