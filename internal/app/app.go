@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"testing"
 	"time"
 
 	"github.com/google/uuid"
@@ -113,9 +112,6 @@ type App struct {
 	quiescent atomic.Bool
 	serving   atomic.Bool
 	restoreCh chan *backup.Candidate
-	// drainGrace overrides the SIGTERM drain deadline; tests only. Production
-	// always uses the documented 10 s default (RUNBOOK 28).
-	drainGrace time.Duration
 }
 
 func New(cfg Config, log *slog.Logger) *App {
@@ -737,6 +733,10 @@ func (a *App) Serve(ctx context.Context) error {
 	}
 }
 
+// drainDeadline is the fixed SIGTERM drain deadline (RUNBOOK 28). Nothing in
+// production code assigns it; export_test.go lets tests shorten it.
+var drainDeadline = 10 * time.Second
+
 func (a *App) serveOnce(ctx context.Context) error {
 	srv := &http.Server{
 		Addr:              a.cfg.Listen,
@@ -811,13 +811,7 @@ func (a *App) serveOnce(ctx context.Context) error {
 		return errRestoreApplied
 	case <-ctx.Done():
 		a.ready.Store(false)
-		grace := 10 * time.Second
-		// The override is honoured only inside a test binary, so a production
-		// build can never shorten the documented fixed 10 s deadline.
-		if a.drainGrace > 0 && testing.Testing() {
-			grace = a.drainGrace
-		}
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), grace)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), drainDeadline)
 		err := srv.Shutdown(shutdownCtx)
 		cancel()
 		if err != nil {

@@ -252,8 +252,8 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if h.opts.OnRequestComplete != nil {
-			usage := h.copyOllamaNativeStream(w, r, response, provider)
-			h.emitOutcome(r, provider, response.StatusCode, true, usage, true, started)
+			usage, observed := h.copyOllamaNativeStream(w, r, response, provider)
+			h.emitOutcome(r, provider, response.StatusCode, true, usage, observed, started)
 			return
 		}
 		h.copyNativeSSE(w, r, response)
@@ -277,21 +277,23 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 // copyOllamaNativeStream relays a native Ollama ndjson stream byte-for-byte
 // while extracting usage from each line. Ollama reports prompt_eval_count and
 // eval_count on the final {"done":true} object (PRD §13), so the last complete
-// object wins and a cancelled stream reports nothing. It returns the usage it
-// observed so the caller can publish one accounting record.
-func (h *Handler) copyOllamaNativeStream(w http.ResponseWriter, r *http.Request, response *http.Response, provider routing.ProviderRef) promptcache.Usage {
+// object wins. It returns whatever usage it parsed and whether any was found
+// (also on cancellation or a failed client write: the upstream was billed for
+// what it already reported), so the caller publishes one accurate record.
+func (h *Handler) copyOllamaNativeStream(w http.ResponseWriter, r *http.Request, response *http.Response, provider routing.ProviderRef) (promptcache.Usage, bool) {
 	flusher, canFlush := w.(http.Flusher)
 	reader := bufio.NewReaderSize(response.Body, 32*1024)
 	var pending []byte
 	usage := promptcache.Usage{}
+	observed := false
 	for {
 		if r.Context().Err() != nil {
-			return promptcache.Usage{}
+			return usage, observed
 		}
 		line, err := reader.ReadBytes('\n')
 		if len(line) > 0 {
 			if _, writeErr := w.Write(line); writeErr != nil {
-				return promptcache.Usage{}
+				return usage, observed
 			}
 			if canFlush {
 				flusher.Flush()
@@ -303,7 +305,7 @@ func (h *Handler) copyOllamaNativeStream(w http.ResponseWriter, r *http.Request,
 					break
 				}
 				if parsed, ok := shared.ParseUsage(provider.Protocol, bytes.TrimSpace(pending[:index])); ok {
-					usage = parsed
+					usage, observed = parsed, true
 				}
 				pending = pending[index+1:]
 			}
@@ -311,10 +313,10 @@ func (h *Handler) copyOllamaNativeStream(w http.ResponseWriter, r *http.Request,
 		if err != nil {
 			if len(pending) > 0 {
 				if parsed, ok := shared.ParseUsage(provider.Protocol, bytes.TrimSpace(pending)); ok {
-					usage = parsed
+					usage, observed = parsed, true
 				}
 			}
-			return usage
+			return usage, observed
 		}
 	}
 }

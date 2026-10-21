@@ -376,7 +376,7 @@ func TestSIGTERMDrainDeadlineBoundsShutdownAndStillAccounts(t *testing.T) {
 	c09Observability(t, a)
 	address := c09FreeAddress(t)
 	a.cfg.Listen = address
-	a.drainGrace = 300 * time.Millisecond
+	shortenDrainDeadline(t, 300*time.Millisecond)
 
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
@@ -660,5 +660,76 @@ func TestAbandonedCompatNonStreamKeepsMeasuredUsage(t *testing.T) {
 	}
 	if input != 7 || output != 3 || observed != 1 || termination != "client_abandoned" {
 		t.Fatalf("input=%d output=%d observed=%d termination=%q want 7/3/1/client_abandoned", input, output, observed, termination)
+	}
+}
+
+// TestAbandonedOllamaNativeStreamKeepsMeasuredUsage cancels a native Ollama
+// stream after the usage-bearing final object was relayed. The tokens already
+// parsed must survive as an observed row; a stream cancelled before any usage
+// arrived must be unobserved, never "measured zero".
+func TestAbandonedOllamaNativeStreamKeepsMeasuredUsage(t *testing.T) {
+	for _, withUsage := range []bool{true, false} {
+		t.Run(fmt.Sprintf("usage=%v", withUsage), func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				w.Header().Set("Content-Type", "application/x-ndjson")
+				if withUsage {
+					fmt.Fprint(w, `{"model":"m","done":true,"prompt_eval_count":5,"eval_count":2}`+"\n")
+				} else {
+					fmt.Fprint(w, `{"model":"m","message":{"role":"assistant","content":"x"},"done":false}`+"\n")
+				}
+				w.(http.Flusher).Flush()
+				<-r.Context().Done()
+			}))
+			defer upstream.Close()
+			a, key := servingApp(t, upstream.URL, 1)
+			setServingProtocol(t, a, "ollama")
+			c09Observability(t, a)
+			ctx, stop := context.WithCancel(context.Background())
+			runDone := make(chan struct{})
+			go func() { defer close(runDone); a.usage.Run(ctx) }()
+			defer func() { stop(); <-runDone }()
+			server := httptest.NewServer(a.Handler())
+			defer server.Close()
+
+			requestCtx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			request, _ := http.NewRequestWithContext(requestCtx, http.MethodPost, server.URL+"/v1/api/chat", strings.NewReader(`{"model":"fast","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+			request.Header.Set("Authorization", "Bearer "+key)
+			request.Header.Set("X-Request-Id", "c09-ollama")
+			response, err := server.Client().Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			buffer := make([]byte, 1)
+			if _, err := response.Body.Read(buffer); err != nil {
+				t.Fatal(err)
+			}
+			cancel()
+			var input, output, observed int
+			var termination string
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				if err := a.usage.FlushNow(ctx); err != nil {
+					t.Fatal(err)
+				}
+				err := a.store.DB().QueryRow("SELECT input_tokens, output_tokens, usage_observed, termination FROM usage_events WHERE request_id='c09-ollama'").Scan(&input, &output, &observed, &termination)
+				if err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("no usage row: %v", err)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			wantIn, wantOut, wantObserved := 0, 0, 0
+			if withUsage {
+				wantIn, wantOut, wantObserved = 5, 2, 1
+			}
+			if input != wantIn || output != wantOut || observed != wantObserved || termination != "client_abandoned" {
+				t.Fatalf("input=%d output=%d observed=%d termination=%q want %d/%d/%d/client_abandoned", input, output, observed, termination, wantIn, wantOut, wantObserved)
+			}
+		})
 	}
 }
