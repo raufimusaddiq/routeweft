@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
@@ -478,29 +477,7 @@ func (r *eventRewriter) next() ([]byte, error) {
 	}
 }
 
-var sequenceKey = []byte(`"sequence_number":`)
-
-// noteSequence remembers the last sequence_number an event carried.
-func (r *eventRewriter) noteSequence(event []byte) {
-	i := bytes.Index(event, sequenceKey)
-	if i < 0 {
-		return
-	}
-	rest := event[i+len(sequenceKey):]
-	end := 0
-	for end < len(rest) && (rest[end] == ' ' || rest[end] >= '0' && rest[end] <= '9') {
-		end++
-	}
-	if n, err := strconv.ParseInt(string(bytes.TrimSpace(rest[:end])), 10, 64); err == nil {
-		r.sequence = n
-	}
-}
-
 func (r *eventRewriter) rewrite(event []byte) ([]byte, error) {
-	r.noteSequence(event)
-	if len(r.held) == 0 && !bytes.Contains(event, []byte("function_call")) {
-		return event, nil
-	}
 	var name string
 	var data [][]byte
 	for _, line := range bytes.Split(event, []byte("\n")) {
@@ -518,6 +495,13 @@ func (r *eventRewriter) rewrite(event []byte) ([]byte, error) {
 	}
 	var payload map[string]json.RawMessage
 	if len(data) == 0 || json.Unmarshal(bytes.Join(data, []byte("\n")), &payload) != nil || payload == nil {
+		return event, nil
+	}
+	var sequence *int64
+	if json.Unmarshal(payload["sequence_number"], &sequence) == nil && sequence != nil {
+		r.sequence = *sequence
+	}
+	if len(r.held) == 0 && !bytes.Contains(event, []byte("function_call")) {
 		return event, nil
 	}
 	var kind string

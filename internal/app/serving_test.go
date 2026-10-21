@@ -170,25 +170,6 @@ func TestConfiguredServingControlMutations(t *testing.T) {
 	assertResponse(503, "no_eligible_accounts")
 }
 
-func TestConfiguredServingBuiltinEndpoints(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, r.URL.Path) }))
-	defer upstream.Close()
-	a, key := servingApp(t, upstream.URL, 1)
-	ctx := context.Background()
-	if _, err := a.creds.PutNode(ctx, credentials.Node{ID: "node", Kind: credentials.NodeBuiltin, ProviderID: "kenari", Name: "kenari", BaseURL: upstream.URL}); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.runtime.PutModel(ctx, runtime.Model{ProviderID: "kenari", ID: "model"}); err != nil {
-		t.Fatal(err)
-	}
-	for _, path := range []string{"/v1/chat/completions", "/v1/responses", "/v1/messages"} {
-		w := serveRequest(a.Handler(), key, path, `{"model":"kenari/model","input":"hi","messages":[{"role":"user","content":"hi"}],"max_tokens":1}`)
-		if w.Code != 200 || w.Body.String() != path {
-			t.Fatalf("%s status=%d body=%s", path, w.Code, w.Body)
-		}
-	}
-}
-
 func TestConfiguredServingStrategiesAndEligibility(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, r.Header.Get("Authorization")) }))
 	defer upstream.Close()

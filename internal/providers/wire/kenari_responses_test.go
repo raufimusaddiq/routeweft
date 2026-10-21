@@ -215,6 +215,26 @@ func TestResponsesStreamRefusalContinuesTheSequence(t *testing.T) {
 	}
 }
 
+func TestResponsesStreamSequenceUsesTopLevelSSEData(t *testing.T) {
+	for name, prefix := range map[string]string{
+		"nested":    "data: {\"metadata\":{\"sequence_number\":99},\"sequence_number\":7}\n\n",
+		"spaced":    "data: {\"sequence_number\" : 7}\n\n",
+		"string":    "data: {\"sequence_number\":7,\"text\":\"\\\"sequence_number\\\":99\"}\n\n",
+		"comment":   ": \"sequence_number\":99\ndata: {\"sequence_number\":7}\n\n",
+		"multiline": "data: {\"sequence_number\"\r\ndata: : 7}\r\n\r\n",
+		"null":      "data: {\"sequence_number\":7}\n\ndata: {\"sequence_number\":null}\n\n",
+		"absent":    "data: {\"sequence_number\":7}\n\ndata: {\"metadata\":{\"sequence_number\":99}}\n\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := "data: {\"type\":\"response.function_call_arguments.done\",\"name\":\"exec\",\"arguments\":\"invalid\"}\n\n"
+			got := relay(t, prefix+invalid)
+			if !strings.HasPrefix(got, prefix) || !strings.Contains(got, `"sequence_number":8`) {
+				t.Fatalf("sequence did not follow top-level data: %s", got)
+			}
+		})
+	}
+}
+
 func TestResponsesStreamRewritesTruncatedTerminalEvents(t *testing.T) {
 	for _, kind := range []string{"response.incomplete", "response.done"} {
 		in := "event: " + kind + "\ndata: {\"type\":\"" + kind + "\",\"response\":{\"status\":\"incomplete\",\"output\":[{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"c\",\"name\":\"exec\",\"arguments\":\"{\\\"input\\\":\\\"ls\\\"}\"}]}}\n\n"

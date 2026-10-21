@@ -1014,7 +1014,7 @@ Divergences, each so a credential or an instruction is not sent or dropped witho
 
 | #73 incident | Pinned source / Routeweft evidence | Status / decision |
 | --- | --- | --- |
-| Kenari model probe first-token/timeout | v1 `src/app/api/models/test/ping.js`, `tests/unit/model-test-first-token-probe.test.js`, runtimeConfig MODEL_TEST_TIMEOUT_MS=200000; RW `A/providers.go:testProviderModel` | PARTIAL; R07 supplies native first-token probes and timeout attribution; specialized Kenari parity remains P06. R11: product decision: #76/P06 must qualify Kenari wire behavior before advertising it ready; generic probe fixtures are not provider certification. |
+| Kenari model probe first-token/timeout | v1 `src/app/api/models/test/ping.js:99-136,148-164,256-280`, `tests/unit/model-test-first-token-probe.test.js`, runtimeConfig MODEL_TEST_TIMEOUT_MS=200000; RW `A/providers.go:testProviderModel` | PRESENT in mock-wire qualification: P06 `TestKenariNativeModelProbesStopAtFirstOutput` exercises the admin model-test route, native endpoint/auth and first-output cancellation for Chat/Responses/Messages. R07 tests retain timeout/empty/error/cancel verdicts. No live or per-model thinking certification; see §6.17. |
 | Dashboard model-test logged different model | v1 `tests/unit/model-test-results.test.js`; RW modelTestResult.ModelID set from loop input | PRESENT; R07 reports testedModel/upstreamModel/servedModel; A/probes_test.go covers alias/outbound/response attribution and interrupted results. |
 | Model-mismatch log correctness | RW completion callback records selected outcome.ModelID, but there is no differential regression fixture | PARTIAL; R07 model-test attribution is implemented, but inference usage requested/selected/upstream correlation is not complete. R11: product decision: #75/R10 and #78/C07 must complete the PRD-OBS-001 attribution contract before certifying diagnostics parity. |
 | Auth-adjacent rate limit + Retry-After | R11: login/password throttle computes Retry-After from the remaining fixed window; A/api_test.go covers expiry and rounding. C08: RUNBOOK §7 documents eight failures/five minutes, socket-IP keying, shared proxy buckets and 429 semantics. | PRESENT in source; no token-sync implementation found in oracle `1c3b9f47`. Separately deployed service existence remains #74 evidence work. |
@@ -2065,7 +2065,7 @@ A generic protocol test alone is not used to mark an untested provider done.
 | `groq.js` | `R/groq.js:17` Chat; "https://api.groq.com/openai/v1/chat/completions" | `internal/providers/registry/builtins.go:29`; `internal/ingress/dispatch.go:236`; `internal/ingress/registry_wire_test.go:36` TestRegistryChatWires/groq | TESTED | Native text Chat JSON/SSE proven. Advanced model/thinking behavior remains #119; full qualification remains P08. |
 | `hyperbolic.js` | `R/hyperbolic.js:21` Chat; "https://api.hyperbolic.xyz/v1/chat/completions" | `internal/providers/registry/builtins.go:30`; `internal/ingress/dispatch.go:236`; `internal/ingress/registry_wire_test.go:37` TestRegistryChatWires/hyperbolic | TESTED | Native text Chat JSON/SSE proven. Advanced model/thinking behavior remains #119; full qualification remains P08. |
 | `iflow.js` | `R/iflow.js:16` Chat; "https://apis.iflow.cn/v1/chat/completions"; `E/iflow.js:43`; dashboard-hidden (`R/iflow.js:3`), actively routable | `internal/providers/wire/wire.go:114`; `internal/providers/wire/iflow_test.go:59` TestIflowHeadersSignWhatTheySend | PARTIAL | R11: product decision: #115/#119 retains iflow: Per-request HMAC/session/timestamp tested at hook and dispatch boundary. Cookie onboarding and live qualification are outside this wire slice. |
-| `kenari.js` | `R/kenari.js:21` Chat; "https://kenari.id/v1/chat/completions"; native transport alternatives | `internal/providers/wire/wire.go:107`; `internal/ingress/quirks_test.go:172` TestKenariCustomToolResponseRewrite | PARTIAL | R11: product decision: #115/#119 retains kenari: Native Responses custom-tool/system-role rewrite tested; full three-protocol provider qualification and per-model thinking remain open. |
+| `kenari.js` | `R/kenari.js:21,39-54` Chat; "https://kenari.id/v1/chat/completions"; native transport alternatives | `internal/app/kenari_test.go:17`; `internal/control/api/kenari_probe_test.go:17`; `internal/ingress/quirks_test.go:172` TestKenariCustomToolResponseRewrite | PARTIAL | R11: product decision: P06 qualifies native Chat/Responses/Messages headers/endpoints and first-output cancellation with mock HTTP; per-model thinking, live gateway qualification, IDR presentation and connection listing remain open (§6.17). |
 | `kilo-gateway.js` | `R/kilo-gateway.js:22` Chat; "https://api.kilo.ai/api/gateway/chat/completions" | `internal/providers/registry/builtins.go:31`; `internal/ingress/dispatch.go:236`; `internal/ingress/registry_wire_test.go:38` TestRegistryChatWires/kilo-gateway | TESTED | Native text Chat JSON/SSE proven. Advanced model/thinking behavior remains #119; full qualification remains P08. |
 | `kilocode.js` | `R/kilocode.js:17` Chat; "https://api.kilo.ai/api/openrouter/chat/completions" | `internal/providers/wire/wire.go:112`; `internal/ingress/target_quirks_test.go:163` TestKilocodeOrganizationHeader | PARTIAL | R11: product decision: #115/#119 retains kilocode: Organization header and OpenRouter endpoint tested; complete provider SSE/model-specific fixture remains open. |
 | `kimchi.js` | `R/kimchi.js:19` openai; "https://llm.kimchi.dev/openai/v1/chat/completions"; `E/kimchi.js:100` | `internal/providers/wire/wire.go:117`; `internal/ingress/target_quirks_test.go:175` TestChatBodyQuirksReachTheUpstream | PARTIAL | R11: product decision: #115/#119 retains kimchi: Claude-shaped assistant/tool/thinking repair tested; full executor reasoning/block-shape cross-product remains unqualified. |
@@ -2301,3 +2301,33 @@ registrations before P05. Registration alone is not fixture qualification.
 
 The audit's per-provider rows are the quota-specific dispositions for all other
 readers and no-surface providers. No provider readiness grade changes here.
+
+## 6.17 P06 Kenari native wire and first-output probes (#76)
+
+[P06_KENARI_AUDIT.md](P06_KENARI_AUDIT.md) compares each named area with the
+pin, including the work already merged in #154/#162/#172/#173. Oracle reads use
+`/home/ubuntu/9router` at `1c3b9f47` via `git show`; `/opt/9router` is absent.
+
+| Area | Pin evidence | Routeweft evidence / remaining work | Status |
+| --- | --- | --- | --- |
+| Native protocols | `open-sse/providers/registry/kenari.js:39-54`; `open-sse/executors/default.js:132-136,177-183` | `TestConfiguredKenariNativeWire`: six actual-app HTTP cases verify Chat/Responses bearer, Messages x-api-key, native paths, streaming/non-streaming, system/tools and unknown fields. | PRESENT in mock-wire tests; no live gateway claim. |
+| Responses quirks | `open-sse/translator/concerns/responsesFunctionTools.js:25-122,140-261`; `open-sse/executors/default.js:21-42` | Existing custom-tool/history rewrite, system fold, text.format removal and usage-observed handling retained. The raw sequence scan is replaced by top-level JSON decoding; regression cases cover nested/string/comment fields, whitespace, multiline SSE and absent/null values. | PRESENT with the existing safety divergences documented in the registry-quirk ledger. |
+| Model test first output | `src/app/api/models/test/ping.js:99-136,148-164,256-280` | `TestKenariNativeModelProbesStopAtFirstOutput`: actual admin model-test route exercises reasoning/tool/text events across three native transports and cancels an unfinished upstream. R07 budget/error/timeout tests still apply. | PRESENT in mock-wire tests. |
+| Account quota | `open-sse/services/usage/kenari.js:15-51` | Existing P05 reader and zero/unknown amount fixtures reused; ratios/reset dates available, absolute IDR amounts absent. | PARTIAL R11: product decision: #77/U06 retains absolute IDR presentation; P06 adds no second quota mechanism. |
+| Live suggestions / connection listing | `open-sse/providers/registry/kenari.js:128-132`; `src/app/api/providers/suggested-models/filters.js:8-12`; `src/app/api/providers/[id]/models/route.js:595-601` | Filtered suggestions already exist. The pin does not support Kenari's saved-connection listing; Routeweft's shared P03 fallback has no Kenari path/auth qualification. | PARTIAL R11: product decision: the saved-connection fallback remains unverified; use seeds/manual models and existing suggestions. No listing hook or endpoint is invented in P06. |
+| Per-model qualification | Registry model IDs are seeds, not evidence of each model's thinking behavior | Synthetic protocol fixtures qualify the adapter, not every model or the live gateway. | PARTIAL R11: product decision: #76 retains per-model thinking and live gateway qualification; the provider readiness state is unchanged. |
+
+Verification: `go build ./...`, `go vet ./...`, full tests for
+`internal/control/api`, `internal/providers/wire`, `internal/providers/usage`,
+and targeted app Kenari tests pass. `ORACLE_DIR=/home/ubuntu/9router node
+compat/parity/inventory.mjs` passes. The specified `/tmp/s115j-goroot` is absent;
+Go uses `/home/ubuntu/go-toolchain/go` with task-local GOPATH/GOCACHE under `/tmp`.
+No full race sweep or live provider calls were run.
+
+Hot-path measurement: `BenchmarkResponsesStream`, three runs per version,
+base source supplied through a Go overlay. Median 111,098 → 121,894 ns/op;
+354 → 420 allocs/op and approximately 54.2 → 56.5 kB/op for the 1,706-byte
+custom-tool stream fixture. Shared-host timing is noisy; the allocation increase
+comes from decoding previously bypassed SSE data objects for correct numbering.
+Requests without custom tools still bypass this wrapper. No storage/migration
+change; no new network destination or credential behavior.
