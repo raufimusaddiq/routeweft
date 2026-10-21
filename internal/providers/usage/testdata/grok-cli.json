@@ -1,0 +1,1 @@
+{"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","start":"2026-07-08T00:00:00+00:00","end":"2026-07-15T00:00:00+00:00"},"onDemandCap":{"val":100},"onDemandUsed":{"val":35},"isUnifiedBillingUser":true,"prepaidBalance":{"val":12.5},"billingPeriodStart":"2026-07-08T00:00:00+00:00","billingPeriodEnd":"2026-07-15T00:00:00+00:00"}}

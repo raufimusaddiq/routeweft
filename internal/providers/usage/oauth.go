@@ -390,9 +390,7 @@ func (r apiKeyReader) zed(ctx context.Context, credential quota.Credential) (quo
 // read; a stub that reports a healthy plan would make routing trust a number
 // nobody measured. The provider is therefore absent from the reader set and the
 // observer reports ErrNotConfigured, which routing treats as unknown.
-// grokCLIReader mirrors getGrokCliUsage in open-sse/services/usage/grok-cli.js:
-// a REST billing read, falling back to the gRPC-web credits config when the REST
-// response carries no numeric allotment.
+// REST credit envelopes are readable; the optional gRPC weekly fallback remains separate.
 type grokCLIReader struct{ Client }
 
 func (r grokCLIReader) Usage(ctx context.Context, credential quota.Credential) (quota.State, error) {
@@ -400,17 +398,21 @@ func (r grokCLIReader) Usage(ctx context.Context, credential quota.Credential) (
 		return failure("grok-cli access token is required")
 	}
 	headers := map[string]string{
-		"Authorization":    "Bearer " + credential.AccessToken,
-		"Accept":           "application/json",
-		"x-xai-token-auth": "xai-grok-cli",
+		"Authorization": "Bearer " + credential.AccessToken, "Accept": "application/json",
+		"x-xai-token-auth": "xai-grok-cli", "User-Agent": "grok-shell/1.0.44 (linux; x86_64)",
+		"x-grok-client-identifier": "grok-shell", "x-grok-client-version": "1.0.44", "x-grok-client-mode": "headless",
 	}
 	if email := credential.ProviderData["email"]; email != "" {
 		headers["x-email"] = email
 	}
-	if userID := credential.ProviderData["userId"]; userID != "" {
+	userID := credential.ProviderData["userId"]
+	if userID == "" {
+		userID = credential.ProviderData["principalId"]
+	}
+	if userID != "" {
 		headers["x-userid"] = userID
 	}
-	reply, err := r.call(ctx, http.MethodGet, "https://cli-chat-proxy.grok.com/v1/billing", headers, nil)
+	reply, err := r.call(ctx, http.MethodGet, "https://cli-chat-proxy.grok.com/v1/billing?format=credits", headers, nil)
 	if err != nil {
 		return failure("grok-cli billing request failed: %v", err)
 	}
@@ -420,19 +422,95 @@ func (r grokCLIReader) Usage(ctx context.Context, credential quota.Credential) (
 	if reply.status < 200 || reply.status >= 300 {
 		return failure("grok-cli billing returned HTTP %d", reply.status)
 	}
-	var billing struct {
-		Cap       json.RawMessage `json:"cap"`
-		Used      json.RawMessage `json:"used"`
-		PeriodEnd any             `json:"period_end"`
-	}
+	var billing map[string]json.RawMessage
 	if err := decode(reply.body, &billing); err != nil {
 		return failure("grok-cli billing response: %v", err)
 	}
-	cap, _ := number(billing.Cap)
-	used, _ := number(billing.Used)
-	if cap <= 0 {
-		return failure("grok-cli exposes no numeric credit allotment")
+	var config map[string]json.RawMessage
+	_ = json.Unmarshal(billing["config"], &config)
+	for key, value := range config {
+		billing[key] = value
 	}
-	windows := []quota.Window{window("Weekly SuperGrok", used, cap, resetAt(billing.PeriodEnd))}
-	return quota.State{Plan: "Grok Build", Windows: windows, ObservedAt: r.now()}, nil
+	value := func(names ...string) json.RawMessage {
+		for _, name := range names {
+			if raw := billing[name]; len(raw) > 0 && string(raw) != "null" {
+				return raw
+			}
+		}
+		return nil
+	}
+	var reset *time.Time
+	for _, name := range []string{"billingPeriodEnd", "billing_period_end", "resetAt", "resetsAt", "periodEnd"} {
+		var raw any
+		_ = json.Unmarshal(billing[name], &raw)
+		if reset = resetAt(raw); reset != nil {
+			break
+		}
+	}
+	if reset == nil {
+		var period struct {
+			End any `json:"end"`
+		}
+		_ = json.Unmarshal(billing["currentPeriod"], &period)
+		reset = resetAt(period.End)
+	}
+	profile, profileErr := r.call(ctx, http.MethodGet, "https://cli-chat-proxy.grok.com/v1/user?include=subscription", headers, nil)
+	var user struct {
+		Tier         string `json:"subscriptionTier"`
+		TierSnake    string `json:"subscription_tier"`
+		Subscription struct {
+			Tier string `json:"tier"`
+		} `json:"subscription"`
+	}
+	profileKnown := profileErr == nil && profile.status >= 200 && profile.status < 300 && decode(profile.body, &user) == nil
+	tier := user.Tier
+	if tier == "" {
+		tier = user.TierSnake
+	}
+	if tier == "" {
+		tier = user.Subscription.Tier
+	}
+	if tier == "" {
+		_ = json.Unmarshal(value("subscriptionTier", "subscription_tier"), &tier)
+	}
+	paid := tier != "" && !strings.EqualFold(tier, "free") && !strings.EqualFold(tier, "none") && !strings.EqualFold(tier, "null")
+	var windows []quota.Window
+	if limit, ok := grokNumber(value("monthlyLimit", "monthly_limit")); ok && limit > 0 {
+		used, ok := grokNumber(value("includedUsed", "included_used"))
+		if !ok {
+			used, _ = grokNumber(value("totalUsed", "total_used"))
+		}
+		windows = append(windows, window("Monthly included", used, limit, reset))
+	}
+	cap, hasCap := grokNumber(value("onDemandCap"))
+	used, hasUsed := grokNumber(value("onDemandUsed"))
+	if hasCap && cap > 0 {
+		windows = append(windows, window("On-demand", used, cap, reset))
+	} else if profileKnown && !paid && hasCap && cap == 0 && hasUsed {
+		windows = append(windows, percentWindow("On-demand", 0, reset))
+	}
+	if prepaid, ok := grokNumber(value("prepaidBalance")); ok && prepaid > 0 {
+		windows = append(windows, percentWindow("Prepaid", 100, nil))
+	}
+	if percent, ok := grokNumber(value("creditUsagePercent", "credit_usage_percent")); ok && percent >= 0 {
+		windows = append(windows, window("Weekly SuperGrok", percent, 100, reset))
+	}
+	if len(windows) == 0 {
+		return failure("grok-cli exposes no supported REST credit allotment")
+	}
+	plan := "Grok Build"
+	if tier != "" {
+		plan = tier
+	}
+	return r.state(plan, windows...), nil
+}
+
+func grokNumber(raw json.RawMessage) (float64, bool) {
+	var wrapped struct {
+		Value json.RawMessage `json:"val"`
+	}
+	if json.Unmarshal(raw, &wrapped) == nil && len(wrapped.Value) > 0 {
+		return number(wrapped.Value)
+	}
+	return number(raw)
 }

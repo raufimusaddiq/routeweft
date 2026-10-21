@@ -29,6 +29,8 @@ var writableSettings = map[string]struct{}{
 	"capacityAdapterAudioInput":    {},
 	"capacityAdapterVideoInput":    {},
 	"quotaVisibility":              {},
+	"claudeAutoPing":               {},
+	"codexAutoPing":                {},
 	"enableObservability":          {},
 	"observabilityMaxRecords":      {},
 	"observabilityBatchSize":       {},
@@ -173,6 +175,20 @@ func validateSettingValue(key, value string) error {
 	case "capacityAdapterVision", "capacityAdapterPDF", "capacityAdapterAudioInput", "capacityAdapterVideoInput":
 		if _, err := parseCapacityAdapter(value); err != nil {
 			return invalid()
+		}
+	case "claudeAutoPing", "codexAutoPing":
+		var config map[string]json.RawMessage
+		if json.Unmarshal([]byte(value), &config) != nil || config == nil || len(config) != 1 {
+			return invalid()
+		}
+		var connections map[string]json.RawMessage
+		if json.Unmarshal(config["connections"], &connections) != nil || connections == nil {
+			return invalid()
+		}
+		for id, enabled := range connections {
+			if strings.TrimSpace(id) == "" || string(enabled) != "true" && string(enabled) != "false" {
+				return invalid()
+			}
 		}
 	case "quotaVisibility", "providerCompatibility":
 		var entries map[string]json.RawMessage

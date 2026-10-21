@@ -3,6 +3,7 @@ package quota
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -225,5 +226,36 @@ func TestCookieOnlyConnectionIsNotConfigured(t *testing.T) {
 	// about one connection can tell "unreadable" from "healthy".
 	if err := service.refreshConnection(context.Background(), connections.byProvider["grok-web"][0]); !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("per-connection err=%v, want ErrNotConfigured", err)
+	}
+}
+
+func TestLastStateIsolatedFromConcurrentReaders(t *testing.T) {
+	now := time.Now()
+	remaining := .5
+	credits := 2.0
+	client := &fakeClient{state: State{Windows: []Window{{Name: "session", Remaining: &remaining, ResetAt: &now}}, AvailableReset: &credits}}
+	s := NewService(fakeConnections{}, fakeCredentials{}, Observer{Clients: map[string]UsageClient{"codex": client}})
+	if _, err := s.observe(context.Background(), "codex", "a", Credential{}); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			state, ok := s.LastState("a")
+			if !ok {
+				t.Error("missing state")
+				return
+			}
+			*state.Windows[0].Remaining = 0
+			*state.Windows[0].ResetAt = time.Time{}
+			*state.AvailableReset = 0
+		}()
+	}
+	wg.Wait()
+	state, _ := s.LastState("a")
+	if *state.Windows[0].Remaining != .5 || state.Windows[0].ResetAt.IsZero() || *state.AvailableReset != 2 {
+		t.Fatal("readers mutated cached state")
 	}
 }

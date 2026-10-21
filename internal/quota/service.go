@@ -46,11 +46,12 @@ type Service struct {
 	mu       sync.Mutex
 	lastErr  map[string]error
 	lastDone time.Time
+	states   map[string]State
 }
 
 // NewService builds a quota refresh service.
 func NewService(connections ConnectionSource, credentials CredentialSource, observer Observer) *Service {
-	return &Service{Connections: connections, Credentials: credentials, Observer: observer, lastErr: make(map[string]error)}
+	return &Service{Connections: connections, Credentials: credentials, Observer: observer, lastErr: make(map[string]error), states: make(map[string]State)}
 }
 
 // WithSeeder attaches the connection seeder and returns the service.
@@ -168,9 +169,39 @@ func (s *Service) refreshConnection(ctx context.Context, connection credentials.
 	if strings.TrimSpace(credential.AccessToken) == "" {
 		return ErrNotConfigured
 	}
-	_, err = s.Observer.Observe(ctx, connection.ProviderID, connection.ID, credential)
-	s.record(connection.ID, err)
+	_, err = s.observe(ctx, connection.ProviderID, connection.ID, credential)
 	return err
+}
+
+func (s *Service) observe(ctx context.Context, providerID, connectionID string, credential Credential) (State, error) {
+	state, err := s.Observer.Observe(ctx, providerID, connectionID, credential)
+	s.mu.Lock()
+	s.states[connectionID] = state
+	s.mu.Unlock()
+	s.record(connectionID, err)
+	return state, err
+}
+
+func (s *Service) LastState(connectionID string) (State, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, ok := s.states[connectionID]
+	state.Windows = append([]Window(nil), state.Windows...)
+	for i := range state.Windows {
+		if value := state.Windows[i].Remaining; value != nil {
+			copy := *value
+			state.Windows[i].Remaining = &copy
+		}
+		if value := state.Windows[i].ResetAt; value != nil {
+			copy := *value
+			state.Windows[i].ResetAt = &copy
+		}
+	}
+	if state.AvailableReset != nil {
+		copy := *state.AvailableReset
+		state.AvailableReset = &copy
+	}
+	return state, ok
 }
 
 func (s *Service) record(connectionID string, err error) {

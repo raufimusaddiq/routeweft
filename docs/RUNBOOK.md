@@ -953,8 +953,8 @@ one immutable snapshot. No separate reload command is needed.
 `pxpipeAutoInstall` are explicitly storage-only. No restart activates them.
 Named-window visibility, a compatibility flag dispatcher, DNS tools, and managed
 helper installation respectively are not implemented. `claudeAutoPing` and
-`codexAutoPing` are absent and rejected; periodic quota refresh does not warm
-reset windows. There is no writable cache or sampling toggle.
+`codexAutoPing` now have opt-in backend scheduling (see §30); periodic quota
+refresh alone does not warm reset windows. There is no writable cache or sampling toggle.
 See [the setting audit](DYNAMIC_SETTINGS.md) and PARITY section 5.5 for evidence
 and follow-up ownership. No accepted dynamic setting in these areas requires a
 process restart.
@@ -1027,3 +1027,25 @@ provision the operator with a precomputed low-iteration hash
 timeout, so a package that nears the budget fails there instead of being masked. `.github/workflows/ci.yml` still only
 races a package subset; promoting it to the full run is a workflow change tracked
 for a follow-up.
+
+## 30. Quota credits and opt-in warming
+
+Use session-gated GET `/admin/v1/quota/{connection-id}/codex-reset-credits` to
+inspect credits. POST at the same path with `{"confirm":true}` spends one credit.
+A 409 means no credit. After a 502, read the balance before issuing another
+POST: an ambiguous action is not retried automatically.
+
+Quota warming is off by default. Set `claudeAutoPing` or `codexAutoPing` through
+PATCH `/admin/v1/settings` with a JSON string value, for example:
+
+```json
+{"set":{"codexAutoPing":"{\"connections\":{\"connection-id\":true}}"}}
+```
+
+Only enabled OAuth accounts for that provider run. The next minute tick sees
+changes. Set an empty connections object or remove the setting to disable it.
+Warming sends a tiny generation request and can consume provider quota. Reset
+suppression persists in the existing settings table and survives restarts.
+A crash between accepted generation and local persistence can repeat a ping.
+The UI controls and provider-specific remaining gaps are listed in
+`P05_QUOTA_AUDIT.md`; background quota polling alone does not enable warming.

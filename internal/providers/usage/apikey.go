@@ -501,7 +501,11 @@ func (r apiKeyReader) kenari(ctx context.Context, key string) (quota.State, erro
 		case "week":
 			label = "Weekly (IDR)"
 		}
-		windows = append(windows, window(label, used, used+remaining, resetAt(item.ResetsAt)))
+		percent := 0.0
+		if total := used + remaining; total > 0 {
+			percent = remaining / total * 100
+		}
+		windows = append(windows, percentWindow(label, percent, resetAt(item.ResetsAt)))
 	}
 	plan := body.Plan.Name
 	if plan == "" {

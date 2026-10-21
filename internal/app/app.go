@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -91,6 +92,7 @@ type App struct {
 	pxpipe       *pxpipe.Service
 	ingress      *ingress.Handler
 	quota        *quota.Service
+	autoPing     *quota.AutoPinger
 	usage        *telemetry.Service
 	usageStarted bool
 	details      *telemetry.SQLiteDetailStore
@@ -306,6 +308,7 @@ func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager 
 		PoolBindings:          manager,
 		Combos:                manager,
 		QuotaRefresher:        a.RefreshQuota,
+		QuotaState:            a.quotaState,
 		AllowPrivateUpstreams: a.cfg.AllowPrivateUpstreams,
 		PublicOrigin:          a.cfg.PublicOrigin,
 		PXPIPE:                a.pxpipe,
@@ -401,13 +404,30 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 	if err != nil {
 		return fmt.Errorf("install quota readers: %w", err)
 	}
-	clients["codex"] = quota.CodexClient{}
-	clients["claude"] = quota.ClaudeClient{Client: &claudeprovider.UsageClient{}}
+	clients["codex"] = quota.CodexClient{Client: usageClient}
+	clients["claude"] = quota.ClaudeClient{Client: &claudeprovider.UsageClient{Client: usageClient}}
 	observer := quota.Observer{
 		Clients:   clients,
 		Publisher: manager.State(),
 	}
 	a.quota = quota.NewService(credentialStore, credentialRegistry, observer).WithSeeder(credentialRegistry)
+	a.autoPing = &quota.AutoPinger{
+		Service: a.quota, Settings: manager.Settings,
+		Send: func(ctx context.Context, provider string, credential quota.Credential) error {
+			return quota.SendPing(ctx, usageClient, provider, credential)
+		},
+		Save: func(ctx context.Context, history map[string]quota.PingRecord) error {
+			payload, err := json.Marshal(history)
+			if err != nil {
+				return err
+			}
+			_, err = manager.Update(ctx, func(candidate *runtime.Candidate) error {
+				candidate.Set(quota.PingHistorySetting, string(payload))
+				return nil
+			})
+			return err
+		},
+	}
 	return nil
 }
 
@@ -764,6 +784,9 @@ func (a *App) serveOnce(ctx context.Context) error {
 		// PRD-QUOTA-001: provider quota refresh runs in the background and must not
 		// block normal inference. A refresh error is recorded, never fatal.
 		go a.quota.Run(serviceCtx, a.cfg.QuotaRefreshInterval)
+		if a.autoPing != nil {
+			go a.autoPing.Run(serviceCtx)
+		}
 	}
 	go func() {
 		a.log.Info("listening", "addr", a.cfg.Listen)
@@ -857,4 +880,11 @@ func reservedPath(p string) bool {
 		}
 	}
 	return false
+}
+
+func (a *App) quotaState(id string) (quota.State, bool) {
+	if a.quota == nil {
+		return quota.State{}, false
+	}
+	return a.quota.LastState(id)
 }

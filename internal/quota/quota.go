@@ -26,19 +26,20 @@ const (
 // available in [0,1]; it is nil when the provider did not report a bound (for
 // example an unlimited plan), which is Unknown rather than exhausted.
 type Window struct {
-	Name      string
-	Remaining *float64
-	ResetAt   *time.Time
-	Unlimited bool
+	Name      string     `json:"name"`
+	Remaining *float64   `json:"remaining,omitempty"`
+	ResetAt   *time.Time `json:"resetAt,omitempty"`
+	Unlimited bool       `json:"unlimited"`
 }
 
 // State is one account's normalized quota snapshot.
 type State struct {
-	Status     Status
-	Plan       string
-	Windows    []Window
-	ObservedAt time.Time
-	Err        string
+	Status         Status    `json:"status"`
+	Plan           string    `json:"plan"`
+	Windows        []Window  `json:"windows"`
+	ObservedAt     time.Time `json:"observedAt"`
+	Err            string    `json:"-"`
+	AvailableReset *float64  `json:"availableResetCredits,omitempty"`
 }
 
 // PercentFromUsed converts a 0-100 used percentage into a nil-safe remaining
