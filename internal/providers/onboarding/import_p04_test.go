@@ -392,9 +392,7 @@ func TestCodexBulkExportedAccountDataWinsOverTheJWT(t *testing.T) {
 	}
 }
 
-// TestXiaomiImportDoesNotHoldTheAccountSession: the account-session credential is an
-// open owner decision, so a body that carries it stores the key and nothing else.
-func TestXiaomiImportDoesNotHoldTheAccountSession(t *testing.T) {
+func TestXiaomiImportHoldsSealedAccountFields(t *testing.T) {
 	flow := ManualFlows()["xiaomi-mimo"]
 	models := &stubClient{handler: func(*http.Request) (int, string) { return http.StatusOK, `{"data":[{"id":"a"},{"id":"b"}]}` }}
 
@@ -409,9 +407,9 @@ func TestXiaomiImportDoesNotHoldTheAccountSession(t *testing.T) {
 	if result.Secret.AccessToken != "sk-fixture" || result.Identity != "1234@xiaomi" || data["baseUrl"] != "https://mimo.example.test/v1" || data["modelCount"] != "2" {
 		t.Fatalf("result=%+v", result)
 	}
-	for key, value := range data {
-		if strings.Contains(strings.ToLower(key), "mimo") || strings.HasPrefix(value, "fixture-") {
-			t.Fatalf("session credential stored as %s: %+v", key, data)
+	for key, want := range map[string]string{"mimoPassToken": "fixture-pass", "mimoUserId": "fixture-user", "mimoCUserId": "fixture-cuser"} {
+		if data[key] != want {
+			t.Fatalf("account field %s not retained", key)
 		}
 	}
 	if got := models.last().Header.Get("X-Mimo-Source"); got != "mimocode-cli" || models.last().URL.String() != "https://mimo.example.test/v1/models" {
@@ -516,5 +514,15 @@ func TestIflowCookieImportKeepsTheKeyExpiry(t *testing.T) {
 	}
 	if result.Secret.Cookie != "BXAuth=fixture;" || result.Secret.ProviderData["expireTime"] != "2026-12-01 00:00:00" || result.Identity != "fixture-key-name" {
 		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestXiaomiImportRejectsCookieInjectionWithoutEcho(t *testing.T) {
+	for _, field := range []string{"mimoPassToken", "mimoUserId", "mimoCUserId"} {
+		input := `{"apiKey":"sk-fixture","` + field + `":"fixture-private; other=secret"}`
+		_, err := ManualFlows()["xiaomi-mimo"].Import(context.Background(), Params{Input: input})
+		if err == nil || strings.Contains(err.Error(), "fixture-private") || strings.Contains(err.Error(), "other=secret") {
+			t.Fatal("invalid account value accepted or echoed")
+		}
 	}
 }
