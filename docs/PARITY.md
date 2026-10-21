@@ -2332,6 +2332,40 @@ comes from decoding previously bypassed SSE data objects for correct numbering.
 Requests without custom tools still bypass this wrapper. No storage/migration
 change; no new network destination or credential behavior.
 
+## 6.19 P08 per-provider test matrix (#76)
+
+[P08_TEST_MATRIX.md](P08_TEST_MATRIX.md) has one row for each of the 81 active
+providers and one cell for each of eight behaviours (authenticated listing,
+quota read, applicable unavailability, import/refresh, streaming, non-streaming,
+error shapes, cached-versus-ordinary tokens). It is generated from
+`internal/parity/p08_matrix_test.go`, which fails if a cell names a test that does
+not exist, a not-applicable cell cites no pin file, or the document is stale.
+Oracle reads use `/home/ubuntu/9router` at `1c3b9f47` via `git show`;
+`/opt/9router` is absent. The earlier per-provider rows above that say "full
+qualification remains P08" are superseded by the matrix cells; their text is not
+edited.
+
+Honest totals (of 81 providers; 648 cells): 45 have at least one provider-specific
+test, but only 26 have one on the serving path (streaming, non-streaming, error
+shapes or tokens). 33 are shared-path only. 3 (`vertex`, `grok-web`,
+`perplexity-web`) have no test of any kind because the build refuses them. 148
+cells are not applicable, each with a pin citation. 26 cells are gaps.
+
+| Area | Evidence added | Remaining / found | Status |
+| --- | --- | --- | --- |
+| The matrix | `docs/P08_TEST_MATRIX.md`; `TestP08MatrixCoversEveryActiveProviderWithRealEvidence`, `TestP08MatrixDocIsCurrent` | Table rows (`T`) and shared-path cells (`S`) are labelled as such; they are not provider-specific evidence. | PRESENT |
+| Quota fixtures | `internal/providers/usage/p08_test.go`: OpenCode Go, Ollama, Xiaomi MiMo, Zed, Command Code, MiniMax/-CN, Qoder, GLM CN and CodeBuddy International regional hosts | Groq's reader discards the `x-ratelimit-*` headers the pin reads (`usage/groq.js:44-129`) and always errors; a zero DeepSeek balance reads as unlimited; Zed's `{limited:N}` limit form, Qoder's absent pool and Command Code's empty window differ from the pin. | PARTIAL R11: product decision: the quota readers' remaining pin differences stay with #76/P05 and #77/U06; P08 adds fixtures only and changes no reader. |
+| Cached versus ordinary tokens | `internal/ingress/p08_tokens_test.go`: Anthropic and MiniMax Messages cache read/creation, DeepSeek `prompt_cache_hit_tokens`, Kimi top-level `cached_tokens`, Mistral details, Responses details for Codex, Grok CLI, Muse and xAI, stream and non-stream through real dispatch | The remaining Chat providers are `S`: the shared parser, with no per-provider shape named. | PRESENT for the providers named; the rest are shared-path only. |
+| Streaming / non-streaming | `internal/ingress/p08_wires_test.go`: every native transport of every served provider not already walked by `TestRegistryChatWires`, Azure and Token Plan targets, OpenCode forced stream | Codex, Grok CLI, Zed, MiMo Free and its alias mmf are declared ready but their pin executors are not replicated (`executors/codex.js:415-515`, `grok-cli.js:362-470`, `zed.js:60-283`, `mimo-free.js:24-160`); the table row proves URL and credential only, so those cells are gaps. OpenCode Go, Xiaomi MiMo Preview models and GitHub Claude/Responses routing are noted open. | PARTIAL R11: product decision: whether those providers stay ready is a readiness decision (#176) and executor work for #76/P02; P08 changes neither. |
+| Applicable unavailability | `internal/ingress/p08_errors_test.go`: provider-keyed error bodies cool the account like the pin; bodies reach the client byte for byte; `TestOpenP08ErrorClassificationGaps` | 402 Payment Required is a terminal client error in Routeweft but a two-minute cooldown with fallback in the pin (`errorConfig.js:77`, `accountFallback.js:35-46`); Codex `usage_limit_reached` was a second divergence and P02 (#177) has since closed it. | PARTIAL R11: product decision: changing the 402 classification alters fallback behaviour for every provider and belongs to its own PR; the 402 divergence is pinned by a test so closing one is visible. |
+| Authenticated listing URLs | `internal/parity/listing_urls_test.go` (oracle-gated): the shared listing URL of the 23 providers the pin lists with a plain bearer GET equals the pinned URL | Listing gaps in section 6.15 (Zed token exchange, Qoder PAT, in-listing refresh) are unchanged; Claude and `ollama-local` have no listing test. | PARTIAL R11: product decision: the open 6.15 rows remain #76 work and P08 does not change them. |
+
+Verification: `go build ./...`, `go vet ./...`, `go test` of
+`internal/parity`, `internal/providers/usage`, `internal/ingress`; `ORACLE_DIR=/home/ubuntu/9router`
+for the oracle-gated parity tests and `node compat/parity/inventory.mjs`. No
+live provider call, no credential, no sleep-based assertion. No production code,
+storage, migration, network destination or credential behaviour changed.
+
 ## 6.18 Specialized executor inventory and body reset hints (#76 P02)
 
 [The pinned executor audit](P02_EXECUTOR_AUDIT.md) cites each remaining
