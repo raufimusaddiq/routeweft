@@ -183,6 +183,7 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 func (h *Handler) writeRewrittenResponses(w http.ResponseWriter, r *http.Request, response *http.Response, provider routing.ProviderRef, names map[string]bool, started time.Time) {
 	body, err := io.ReadAll(io.LimitReader(response.Body, openaiadapter.MaxTranslatedResponseBytes+1))
 	if r.Context().Err() != nil {
+		h.abandon(r, provider, response.StatusCode, false, promptcache.Usage{}, started, true)
 		return
 	}
 	if err != nil || len(body) > openaiadapter.MaxTranslatedResponseBytes {
@@ -213,6 +214,7 @@ func (h *Handler) writeRewrittenResponses(w http.ResponseWriter, r *http.Request
 func (h *Handler) writeUnwrapped(w http.ResponseWriter, r *http.Request, response *http.Response, provider routing.ProviderRef, started time.Time) {
 	body, err := io.ReadAll(io.LimitReader(response.Body, openaiadapter.MaxTranslatedResponseBytes+1))
 	if r.Context().Err() != nil {
+		h.abandon(r, provider, response.StatusCode, false, promptcache.Usage{}, started, true)
 		return
 	}
 	if err != nil || len(body) > openaiadapter.MaxTranslatedResponseBytes {
@@ -234,6 +236,7 @@ func (h *Handler) writeUnwrapped(w http.ResponseWriter, r *http.Request, respons
 // 6.7 G11) and a stream that broke.
 func (h *Handler) emitTranslated(r *http.Request, provider routing.ProviderRef, status int, stream bool, usage promptcache.Usage, observed bool, started time.Time) {
 	if r != nil && r.Context().Err() != nil {
+		h.abandon(r, provider, status, stream, usage, started, !observed)
 		return
 	}
 	h.publishOutcome(r, provider, status, stream, usage, started, "", !observed)
@@ -273,6 +276,7 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, openaiadapter.MaxTranslatedResponseBytes+1))
 	if r.Context().Err() != nil {
+		h.abandon(r, provider, response.StatusCode, false, promptcache.Usage{}, started, true)
 		return
 	}
 	if err != nil || len(body) > openaiadapter.MaxTranslatedResponseBytes {
@@ -288,6 +292,8 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if r.Context().Err() != nil {
+		usage, observed := shared.ParseUsage(provider.Protocol, body)
+		h.abandon(r, provider, response.StatusCode, false, usage, started, !observed)
 		return
 	}
 	copyResponseHeaders(w.Header(), response.Header)

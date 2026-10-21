@@ -98,9 +98,9 @@ type RequestOutcome struct {
 	// "measured zero". It is false on every path that predates this field.
 	UsageUnobserved bool
 	// Unanswered is true when the client left after an upstream request was
-	// issued but before any upstream response existed. No request completed:
-	// the outcome is accounting only, and the status is a synthetic 499, not
-	// something an upstream said. Consumers gate live "completed" signals on
+	// issued but before the response was delivered, so no request completed:
+	// the outcome is accounting only. The status is a synthetic 499 when no
+	// upstream response existed, otherwise the upstream's own status. Consumers gate live "completed" signals on
 	// this flag, never on the status number.
 	Unanswered bool
 }
@@ -188,6 +188,7 @@ func (h *Handler) clientFor(provider routing.ProviderRef) *http.Client {
 // middleware assigned and echoed on the request.
 func (h *Handler) emitOutcome(r *http.Request, provider routing.ProviderRef, status int, stream bool, usage promptcache.Usage, started time.Time) {
 	if r != nil && r.Context().Err() != nil {
+		h.abandon(r, provider, status, stream, usage, started, usage == (promptcache.Usage{}))
 		return
 	}
 	h.publishOutcome(r, provider, status, stream, usage, started, "", false)
@@ -197,6 +198,14 @@ func (h *Handler) emitOutcome(r *http.Request, provider routing.ProviderRef, sta
 // guard, so a request the client abandoned can still be accounted for.
 func (h *Handler) publishOutcome(r *http.Request, provider routing.ProviderRef, status int, stream bool, usage promptcache.Usage, started time.Time, termination string, unobserved bool) {
 	h.publishOutcomeFlagged(r, provider, status, stream, usage, started, termination, unobserved, false)
+}
+
+// abandon accounts a request whose client left before the response was
+// delivered. The upstream was billed, so the record is kept (client_abandoned,
+// with whatever usage had arrived) but marked Unanswered: it is not a completion
+// and must not drive live "completed" signals.
+func (h *Handler) abandon(r *http.Request, provider routing.ProviderRef, status int, stream bool, usage promptcache.Usage, started time.Time, unobserved bool) {
+	h.publishOutcomeFlagged(r, provider, status, stream, usage, started, TerminationClientAbandoned, unobserved, true)
 }
 
 // publishOutcomeFlagged is publishOutcome plus the Unanswered marker for the one

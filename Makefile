@@ -1,4 +1,4 @@
-.PHONY: test build run ui-install ui-test ui-typecheck ui-build compat-test parity-test bench-router check
+.PHONY: test build run ui-install ui-test ui-typecheck ui-build compat-test parity-test bench-router race check
 
 test:
 	go test ./...

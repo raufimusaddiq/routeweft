@@ -173,107 +173,152 @@ func TestSIGTERMDrainsInFlightRequestAndFlushesAccounting(t *testing.T) {
 	}
 }
 
+// c09DisconnectCase is one inference route whose abandoned requests must leave a
+// record: the relay it exercises is named by transport (the node's only wire).
+type c09DisconnectCase struct {
+	name, path, body, transport string
+	systemOne                   bool
+	modes                       []string
+}
+
+var c09DisconnectCases = []c09DisconnectCase{
+	{name: "chat-native", path: "/v1/chat/completions", transport: "openai-chat", body: `{"model":"fast","messages":[{"role":"user","content":"hi"}]%s}`, modes: []string{"silent", "partial", "stream"}},
+	{name: "responses-native", path: "/v1/responses", transport: "openai-responses", body: `{"model":"fast","input":"hi"%s}`, modes: []string{"silent", "partial", "stream"}},
+	{name: "responses-translated", path: "/v1/responses", transport: "openai-chat", body: `{"model":"fast","input":"hi"%s}`, modes: []string{"partial", "stream"}},
+	{name: "messages-native", path: "/v1/messages", transport: "anthropic-messages", body: `{"model":"fast","max_tokens":1,"messages":[{"role":"user","content":"hi"}]%s}`, modes: []string{"partial", "stream"}},
+	{name: "messages-translated", path: "/v1/messages", transport: "openai-chat", body: `{"model":"fast","max_tokens":1,"messages":[{"role":"user","content":"hi"}]%s}`, modes: []string{"partial", "stream"}},
+	{name: "gemini-native", path: "/v1beta/models/fast:generateContent", transport: "gemini", body: `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]%s}`, modes: []string{"partial"}},
+	{name: "ollama-native", path: "/v1/api/chat", transport: "ollama", body: `{"model":"fast","messages":[{"role":"user","content":"hi"}]%s}`, modes: []string{"partial"}},
+	{name: "systemone", path: "/v1/systemone", systemOne: true, modes: []string{"partial"}},
+}
+
 // TestClientDisconnectKeepsExactlyOneUsageRecordWithoutLeaks cancels the client
-// mid-request through the real HTTP stack (stream and non-stream) and asserts
-// the abandoned request is accounted exactly once and no goroutine outlives it.
+// mid-request through the real HTTP stack on every relay (native and translated
+// Chat/Responses/Messages, Gemini, System One) and asserts the abandoned request
+// is accounted exactly once, with the upstream call cancelled and no goroutine
+// outliving it. "silent" cancels before any upstream response, "partial" after
+// headers and part of a non-stream body, "stream" after the first stream event.
 func TestClientDisconnectKeepsExactlyOneUsageRecordWithoutLeaks(t *testing.T) {
-	for _, stream := range []bool{false, true} {
-		t.Run(fmt.Sprintf("stream=%v", stream), func(t *testing.T) {
-			upstreamDone := make(chan struct{}, 1)
-			started := make(chan struct{}, 1)
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				// Read the body so net/http's background read can see the disconnect.
-				_, _ = io.Copy(io.Discard, r.Body)
-				if stream {
-					w.Header().Set("Content-Type", "text/event-stream")
-					fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"first\"}}]}\n\n")
-					w.(http.Flusher).Flush()
+	for _, tc := range c09DisconnectCases {
+		for _, mode := range tc.modes {
+			tc, mode := tc, mode
+			t.Run(tc.name+"/"+mode, func(t *testing.T) {
+				upstreamDone := make(chan struct{}, 1)
+				started := make(chan struct{}, 1)
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					// Read the body so net/http's background read can see the disconnect.
+					_, _ = io.Copy(io.Discard, r.Body)
+					switch mode {
+					case "stream":
+						w.Header().Set("Content-Type", "text/event-stream")
+						fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"first\"}}]}\n\n")
+						w.(http.Flusher).Flush()
+					case "partial":
+						w.Header().Set("Content-Type", "application/json")
+						w.Header().Set("Content-Length", "100000")
+						fmt.Fprint(w, `{"id":"x"`)
+						w.(http.Flusher).Flush()
+					}
+					started <- struct{}{}
+					<-r.Context().Done()
+					upstreamDone <- struct{}{}
+				}))
+				var a *App
+				var key, model string
+				if tc.systemOne {
+					a, key, model = systemOneApp(t, "typesafe", upstream.URL, 1)
+				} else {
+					a, key = servingApp(t, upstream.URL, 1)
+					setServingProtocol(t, a, tc.transport)
+					if _, err := a.runtime.RefreshPoolBindings(context.Background()); err != nil {
+						t.Fatal(err)
+					}
 				}
-				started <- struct{}{}
-				<-r.Context().Done()
-				upstreamDone <- struct{}{}
-			}))
-			a, key := servingApp(t, upstream.URL, 1)
-			c09Observability(t, a)
-			ctx, cancelService := context.WithCancel(context.Background())
-			var running sync.WaitGroup
-			running.Add(1)
-			go func() { defer running.Done(); a.usage.Run(ctx) }()
-			server := httptest.NewServer(a.Handler())
-			client := &http.Client{Transport: &http.Transport{}}
+				c09Observability(t, a)
+				ctx, cancelService := context.WithCancel(context.Background())
+				var running sync.WaitGroup
+				running.Add(1)
+				go func() { defer running.Done(); a.usage.Run(ctx) }()
+				server := httptest.NewServer(a.Handler())
+				client := &http.Client{Transport: &http.Transport{}}
 
-			baseline := runtime.NumGoroutine()
-			requestCtx, cancel := context.WithCancel(context.Background())
-			body := `{"model":"fast","messages":[{"role":"user","content":"hi"}]`
-			if stream {
-				body += `,"stream":true`
-			}
-			request, _ := http.NewRequestWithContext(requestCtx, http.MethodPost, server.URL+"/v1/chat/completions", strings.NewReader(body+"}"))
-			request.Header.Set("Authorization", "Bearer "+key)
-			request.Header.Set("X-Request-Id", "c09-cancel")
-			clientDone := make(chan error, 1)
-			go func() {
-				response, err := client.Do(request)
-				if err == nil {
-					_, err = io.Copy(io.Discard, response.Body)
-					response.Body.Close()
+				baseline := runtime.NumGoroutine()
+				requestCtx, cancel := context.WithCancel(context.Background())
+				extra := ""
+				if mode == "stream" {
+					extra = `,"stream":true`
 				}
-				clientDone <- err
-			}()
-			select {
-			case <-started:
-			case <-time.After(5 * time.Second):
-				t.Fatal("request never reached upstream")
-			}
-			cancel()
-			<-clientDone
-			select {
-			case <-upstreamDone:
-			case <-time.After(5 * time.Second):
-				t.Fatal("client disconnect did not cancel the upstream request")
-			}
+				body := fmt.Sprintf(tc.body, extra)
+				if tc.systemOne {
+					body = fmt.Sprintf(`{"model":%q,"state":null,"questions":{"ok":null}}`, model)
+				}
+				request, _ := http.NewRequestWithContext(requestCtx, http.MethodPost, server.URL+tc.path, strings.NewReader(body))
+				request.Header.Set("Authorization", "Bearer "+key)
+				request.Header.Set("X-Request-Id", "c09-cancel")
+				clientDone := make(chan error, 1)
+				go func() {
+					response, err := client.Do(request)
+					if err == nil {
+						_, err = io.Copy(io.Discard, response.Body)
+						response.Body.Close()
+					}
+					clientDone <- err
+				}()
+				select {
+				case <-started:
+				case <-time.After(5 * time.Second):
+					t.Fatal("request never reached upstream")
+				}
+				cancel()
+				<-clientDone
+				select {
+				case <-upstreamDone:
+				case <-time.After(5 * time.Second):
+					t.Fatal("client disconnect did not cancel the upstream request")
+				}
 
-			// The record is enqueued as the handler unwinds; wait for it, then
-			// flush and require exactly one row.
-			deadline := time.Now().Add(5 * time.Second)
-			var rows []c09Usage
-			for {
+				// The record is enqueued as the handler unwinds; wait for it, then
+				// flush and require exactly one row.
+				deadline := time.Now().Add(5 * time.Second)
+				var rows []c09Usage
+				for {
+					if err := a.usage.FlushNow(context.Background()); err != nil {
+						t.Fatal(err)
+					}
+					rows = c09UsageRows(t, a)
+					if len(rows) > 0 || time.Now().After(deadline) {
+						break
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				// Give any duplicate emission a chance to show up.
+				time.Sleep(100 * time.Millisecond)
 				if err := a.usage.FlushNow(context.Background()); err != nil {
 					t.Fatal(err)
 				}
 				rows = c09UsageRows(t, a)
-				if len(rows) > 0 || time.Now().After(deadline) {
-					break
+				if len(rows) != 1 || rows[0].requestID != "c09-cancel" || rows[0].termination != "client_abandoned" {
+					t.Fatalf("enabled=%v written=%d lost=%d usage=%+v want exactly one client_abandoned record for c09-cancel", a.usage.Enabled(), a.usage.Written(), a.usage.Lost(), rows)
 				}
-				time.Sleep(10 * time.Millisecond)
-			}
-			// Give any duplicate emission a chance to show up.
-			time.Sleep(100 * time.Millisecond)
-			if err := a.usage.FlushNow(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			rows = c09UsageRows(t, a)
-			if len(rows) != 1 || rows[0].requestID != "c09-cancel" || rows[0].termination != "client_abandoned" {
-				t.Fatalf("enabled=%v written=%d lost=%d usage=%+v want exactly one client_abandoned record for c09-cancel", a.usage.Enabled(), a.usage.Written(), a.usage.Lost(), rows)
-			}
-			if a.usage.Lost() != 0 {
-				t.Fatalf("lost=%d", a.usage.Lost())
-			}
+				if a.usage.Lost() != 0 {
+					t.Fatalf("lost=%d", a.usage.Lost())
+				}
 
-			server.Close()
-			upstream.Close()
-			client.CloseIdleConnections()
-			cancelService()
-			running.Wait()
-			deadline = time.Now().Add(5 * time.Second)
-			for runtime.NumGoroutine() > baseline {
-				if time.Now().After(deadline) {
-					buf := make([]byte, 1<<16)
-					t.Fatalf("goroutines did not return to baseline: baseline=%d now=%d\n%s", baseline, runtime.NumGoroutine(), buf[:runtime.Stack(buf, true)])
+				server.Close()
+				upstream.Close()
+				client.CloseIdleConnections()
+				cancelService()
+				running.Wait()
+				deadline = time.Now().Add(5 * time.Second)
+				for runtime.NumGoroutine() > baseline {
+					if time.Now().After(deadline) {
+						buf := make([]byte, 1<<16)
+						t.Fatalf("goroutines did not return to baseline: baseline=%d now=%d\n%s", baseline, runtime.NumGoroutine(), buf[:runtime.Stack(buf, true)])
+					}
+					time.Sleep(20 * time.Millisecond)
 				}
-				time.Sleep(20 * time.Millisecond)
-			}
-		})
+			})
+		}
 	}
 }
 

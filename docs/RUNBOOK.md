@@ -977,15 +977,16 @@ flush are not accepted; a container stop grace period shorter than about 16
 seconds can SIGKILL the process before this finishes, so set it to at least 30
 seconds.
 
-A client that disconnects mid-request is accounted exactly once. If the upstream
-response had started, usage is whatever had arrived. If the upstream request had
-been issued but no response existed yet, the record has status `499`,
-termination `client_abandoned` and unobserved usage (it is never written to the
-client). It is marked `Unanswered`: it is persisted to usage but publishes neither
-the live `request.completed` event nor a usage-feed frame, because nothing
-completed; an upstream that itself answers 499 is an ordinary completed request.
-A disconnect before any upstream request is issued records nothing
-because nothing was billed.
+A client that disconnects mid-request is accounted exactly once on every relay:
+native, translated (Chat, Responses, rewritten/unwrapped bodies), Messages and the
+Gemini/System One/Ollama compat paths, stream and non-stream. The record is
+`client_abandoned` with whatever usage had arrived (unobserved when none had).
+If no upstream response existed yet, its status is a synthetic `499`; otherwise
+it keeps the upstream's status. It is marked `Unanswered`: persisted to usage, but
+it publishes neither the live `request.completed` event nor a usage-feed frame,
+because nothing completed; an upstream that itself answers 499 is an ordinary
+completed request. A disconnect before any upstream request is issued records
+nothing because nothing was billed.
 
 Evidence (`internal/app/c09_ops_test.go`, run with `-race`):
 
@@ -993,7 +994,7 @@ Evidence (`internal/app/c09_ops_test.go`, run with `-race`):
 | --- | --- |
 | Real SIGTERM mid-request: listener closes, readiness false, request completes with its body, one usage row flushed with the ticker disabled, clean exit | `TestSIGTERMDrainsInFlightRequestAndFlushesAccounting` |
 | Drain deadline is bounded, the cut request is still recorded once as `client_abandoned` | `TestSIGTERMDrainDeadlineBoundsShutdownAndStillAccounts` |
-| Client disconnect (stream and non-stream) leaves one record, cancels upstream, goroutines return to baseline | `TestClientDisconnectKeepsExactlyOneUsageRecordWithoutLeaks` |
+| Client disconnect leaves one record, cancels upstream, goroutines return to baseline, on chat (native and translated), responses, messages and Gemini/Ollama compat paths, stream and non-stream | `TestClientDisconnectKeepsExactlyOneUsageRecordWithoutLeaks` |
 
 Not covered: SIGKILL or power loss lose events still in the in-memory queue
 (bounded by `observabilityMaxRecords`, flushed at `observabilityFlushIntervalMs`).
@@ -1002,14 +1003,14 @@ Not covered: SIGKILL or power loss lose events still in the in-memory queue
 
 `go test -race ./...` is the gate. Measured on a loaded 2-core host after the
 fix below, the whole suite completes in roughly 8 minutes wall clock (slowest
-packages: `internal/app` 433 s, `internal/control/api` 194 s, `internal/runtime`
+packages: `internal/app` 433 s, `internal/control/api` 194 s (post-fix, inside the loaded full run; about 90 s alone), `internal/runtime`
 58 s, `internal/security` 59 s), each package inside Go's ten minute timeout. It
 is not fast: `internal/app` is the next package to approach the budget.
 `internal/control/api` previously exceeded Go's
 ten minute package timeout under `-race` because every fixture that provisioned
 an admin ran the production PBKDF2 work factor (600000 iterations, about 0.45 s
 natively and 5-7 s under the race detector) once to create the account and again
-per login. The package now finishes in about 90 s under `-race` (`-v` per-test timings; before the fix it was killed past ten minutes). Fixtures
+per login. Run alone, the package finishes in about 90 s under `-race` (`-v` per-test timings; before the fix it was killed past ten minutes). Fixtures
 provision the operator with a precomputed low-iteration hash
 (inserted directly into `admin_users` by the test fixture; no production API accepts a caller-supplied hash); production paths (`Bootstrap`, `ChangePassword`,
 `HashPassword`) are unchanged and keep 600000 iterations, and no test is skipped.

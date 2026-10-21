@@ -221,8 +221,8 @@ func (a *App) initialize(ctx context.Context) error {
 			return binder.ClientFor(context.Background(), connectionID)
 		},
 		OnRequestComplete: func(outcome ingress.RequestOutcome) {
-			// An unanswered outcome is accounting only: the client left before any
-			// upstream response existed, so no request completed. It is gated on
+			// An unanswered outcome is accounting only: the client left before the
+			// response was delivered, so no request completed. It is gated on
 			// the cause, not the status number: an upstream may answer 499 itself.
 			// Neither the live event bus nor the "request.completed" usage feed
 			// carries it; usage persistence below still does.
@@ -235,8 +235,6 @@ func (a *App) initialize(ctx context.Context) error {
 					"status":       outcome.Status,
 					"durationMs":   outcome.Duration.Milliseconds(),
 				})
-			}
-			if !outcome.Unanswered {
 				a.feed.Publish(controlevents.UsageEvent{
 					RequestID: outcome.RequestID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
 					ConnectionID: outcome.ConnectionID, APIKeyID: outcome.APIKeyID, Status: outcome.Status,
