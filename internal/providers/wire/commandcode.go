@@ -56,6 +56,8 @@ var commandCodeHook = Hook{
 	Target:        func(routing.ProviderRef) (Target, error) { return Target{Endpoint: commandCodeEndpoint}, nil },
 	Finalize:      commandCodeStream,
 	Do:            CommandCodeDo,
+	// Every request needs the bearer; an empty one is an account problem, not an upstream 401.
+	RequireCredential: true,
 }
 
 // commandCodeHeaders is buildHeaders (:28-40). The credential is the bearer the
@@ -236,6 +238,8 @@ func CommandCodeDo(client *http.Client, request *http.Request) (*http.Response, 
 		if !retryable || attempt >= commandCodeRetries {
 			return commandCodeFailure(response, *failure), nil
 		}
+		// The attempt is over: release its connection before waiting for the next.
+		response.Body.Close()
 		if err := commandCodeSleep(request.Context(), time.Second*time.Duration(attempt+1)); err != nil {
 			return nil, err
 		}
@@ -249,9 +253,9 @@ func CommandCodeDo(client *http.Client, request *http.Request) (*http.Response, 
 // on the relayed body instead.
 func inspectCommandCode(response *http.Response) (*http.Response, *CommandCodeError) {
 	var consumed bytes.Buffer
-	reader := bufio.NewReader(io.TeeReader(response.Body, &consumed))
+	reader := bufio.NewReader(io.TeeReader(io.LimitReader(response.Body, commandCodeInspectLimit), &consumed))
 	var failure *CommandCodeError
-	for consumed.Len() <= commandCodeInspectLimit {
+	for {
 		line, err := reader.ReadBytes('\n')
 		complete := err == nil
 		// A final line with no newline is judged only for an error, as the pin judges its leftover buffer.
@@ -306,13 +310,23 @@ func commandCodeFailure(original *http.Response, failure CommandCodeError) *http
 		"type":    failure.Type,
 		"code":    failure.Status,
 	}})
+	// Retry-After, request ids and the rest stay; the body is ours, so its
+	// framing and type headers are not the upstream's.
+	header := original.Header.Clone()
+	if header == nil {
+		header = http.Header{}
+	}
+	for _, name := range []string{"Content-Length", "Content-Encoding", "Transfer-Encoding", "Content-Type"} {
+		header.Del(name)
+	}
+	header.Set("Content-Type", "application/json")
 	return &http.Response{
 		Status:        fmt.Sprintf("%d %s", failure.Status, http.StatusText(failure.Status)),
 		StatusCode:    failure.Status,
 		Proto:         original.Proto,
 		ProtoMajor:    original.ProtoMajor,
 		ProtoMinor:    original.ProtoMinor,
-		Header:        http.Header{"Content-Type": []string{"application/json"}},
+		Header:        header,
 		Body:          io.NopCloser(bytes.NewReader(body)),
 		ContentLength: int64(len(body)),
 		Request:       original.Request,

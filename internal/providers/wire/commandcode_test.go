@@ -287,3 +287,113 @@ func TestCommandCodeHookIsRegisteredWithoutForcedFold(t *testing.T) {
 		t.Fatal("ForceStream would route NDJSON through the Chat SSE fold")
 	}
 }
+
+type countingBody struct {
+	io.Reader
+	read   int
+	closed bool
+}
+
+func (b *countingBody) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	b.read += n
+	return n, err
+}
+
+func (b *countingBody) Close() error { b.closed = true; return nil }
+
+type bodyTransport struct {
+	bodies []*countingBody
+	make   func(attempt int) (http.Header, io.Reader)
+}
+
+func (t *bodyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	header, reader := t.make(len(t.bodies))
+	body := &countingBody{Reader: reader}
+	t.bodies = append(t.bodies, body)
+	return &http.Response{StatusCode: 200, Header: header, Body: body, Request: r}, nil
+}
+
+func transportRequest(t *testing.T) *http.Request {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodPost, "https://api.commandcode.ai/alpha/generate", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return request
+}
+
+func TestCommandCodeDoClosesEveryAttemptBody(t *testing.T) {
+	// A retried attempt, and a retry cut short by the client leaving.
+	for _, cancelled := range []bool{false, true} {
+		ctx, cancel := context.WithCancel(context.Background())
+		previous := commandCodeSleep
+		commandCodeSleep = func(c context.Context, _ time.Duration) error {
+			if cancelled {
+				cancel()
+				return c.Err()
+			}
+			return nil
+		}
+		transport := &bodyTransport{make: func(int) (http.Header, io.Reader) {
+			return http.Header{}, strings.NewReader(ccUnavailable)
+		}}
+		request := transportRequest(t).WithContext(ctx)
+		response, err := CommandCodeDo(&http.Client{Transport: transport}, request)
+		commandCodeSleep = previous
+		cancel()
+		if cancelled != (err != nil) || (!cancelled && response.StatusCode != 503) {
+			t.Fatalf("cancelled=%v: %v %v", cancelled, response, err)
+		}
+		for i, body := range transport.bodies {
+			if !body.closed {
+				t.Fatalf("cancelled=%v: attempt %d body leaked", cancelled, i)
+			}
+		}
+		if want := map[bool]int{false: 3, true: 1}[cancelled]; len(transport.bodies) != want {
+			t.Fatalf("cancelled=%v: %d attempts", cancelled, len(transport.bodies))
+		}
+	}
+}
+
+func TestCommandCodeInspectionIsBoundedByAnUnterminatedLine(t *testing.T) {
+	total := 4 * commandCodeInspectLimit
+	payload := strings.Repeat("x", total)
+	transport := &bodyTransport{make: func(int) (http.Header, io.Reader) {
+		return http.Header{}, strings.NewReader(payload)
+	}}
+	response, err := CommandCodeDo(&http.Client{Transport: transport}, transportRequest(t))
+	if err != nil || response.StatusCode != 200 {
+		t.Fatalf("%v %v", response, err)
+	}
+	// Before the caller reads anything, no more than the bound was pulled in.
+	if read := transport.bodies[0].read; read > commandCodeInspectLimit {
+		t.Fatalf("inspection read %d bytes, bound %d", read, commandCodeInspectLimit)
+	}
+	relayed, _ := io.ReadAll(response.Body)
+	if string(relayed) != payload {
+		t.Fatalf("relayed %d bytes, want %d", len(relayed), total)
+	}
+}
+
+func TestCommandCodeFailureKeepsUpstreamHeaders(t *testing.T) {
+	noSleep(t)
+	transport := &bodyTransport{make: func(int) (http.Header, io.Reader) {
+		return http.Header{"Retry-After": {"7"}, "X-Request-Id": {"req-1"}, "Content-Type": {"text/event-stream"}, "Content-Length": {"99"}},
+			strings.NewReader(ccUnavailable)
+	}}
+	response, err := CommandCodeDo(&http.Client{Transport: transport}, transportRequest(t))
+	if err != nil || response.StatusCode != 503 {
+		t.Fatalf("%v %v", response, err)
+	}
+	if response.Header.Get("Retry-After") != "7" || response.Header.Get("X-Request-Id") != "req-1" ||
+		response.Header.Get("Content-Type") != "application/json" || response.Header.Get("Content-Length") != "" {
+		t.Fatalf("headers %v", response.Header)
+	}
+}
+
+func TestCommandCodeRequiresACredential(t *testing.T) {
+	if !RequiresCredential("commandcode") {
+		t.Fatal("an unsigned CommandCode request would be sent and its 401 blamed on the account")
+	}
+}
