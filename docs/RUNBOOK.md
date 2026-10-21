@@ -275,6 +275,86 @@ throttle identity. Restrict direct access to the service at the network boundary
 
 Do not expose an unprotected admin API directly to the public network.
 
+### Ingress limits and deployment evidence (#78 C08)
+
+Routeweft has no general inference request-rate limiter. Its admin login and
+password-change handlers share a process-local failed-attempt throttle:
+
+- Key: socket remote IP with the ephemeral port removed; no username, API key,
+  `Forwarded` or `X-Forwarded-For` component (`internal/control/api/api.go:382`).
+- Policy: eight failed credential checks in a fixed five-minute window starting
+  at the first failure. The eighth failure still returns 401; subsequent checks
+  return 429 with JSON `error.code=too_many_attempts` and `Retry-After` equal to
+  remaining seconds rounded up. A successful check clears the bucket; expiry
+  or process restart also clears it (`internal/control/api/throttle.go:11-67`,
+  `api.go:337-359`, `password.go:32-52`). This is a failure throttle, not a
+  requests-per-second or concurrent-password-check budget.
+- Behind Caddy, users reaching Routeweft from the same proxy IP share that
+  bucket. Forwarding a different client-IP header does not separate them.
+  Provider quota/cooldown handling and upstream 429 responses are separate from
+  client admission limits (`internal/routing/cooldown.go:38`).
+
+The pinned oracle `1c3b9f47` has an application login limiter
+(`src/app/api/auth/login/route.js:14-20,72-82`). It contains no Caddyfile or
+Caddy rate-limit policy. Its `scripts/edge-swap-rehearsal.sh:9,17-19` references
+an external Caddyfile; that reference proves neither its contents nor a deployed
+limit. No production config was inspected for C08.
+
+The [#74 deployment report](https://github.com/raufimusaddiq/routeweft/issues/74#issuecomment-6259837234)
+records a Caddy vhost, credential-safe logging, and a synthetic Authorization
+redaction check on 2026-10-19. It does not record a Caddy rate limiter or an
+`X-Sync-Secret` redaction test. Its recorded image
+`sha-10ce86680675a309a2452188d2bc62ff80430935` already includes the eight-failure,
+five-minute login throttle (`internal/control/api/throttle.go:11-14` and
+`api.go:303-324` at that commit), so #74's "no rate limit" gap note is incorrect
+and superseded. Caddy rate limiting remains unverified.
+
+Deployment ownership stays with #74: establish the Caddy build/modules and
+effective vhost policy, then choose and test edge rate/burst/concurrency budgets
+for admin authentication and inference separately. Key edge limits on the
+verified client address at that boundary, accepting forwarded identities only
+from explicitly trusted peers. Preserve streaming connections and health checks;
+verify both allowed traffic and 429/Retry-After behavior with synthetic requests.
+These budgets depend on deployment capacity, client population and proxy trust,
+so this repository ships no guessed Caddy directive or application limiter.
+The #74 owner decision to omit Caddy basic auth remains in effect; see its
+[scope amendment](https://github.com/raufimusaddiq/routeweft/issues/74#issuecomment-6259751314).
+
+### Client token-list ownership (#78 C08)
+
+No token-sync route, handler, upstream call or `X-Sync-Secret` implementation was
+found in oracle `1c3b9f47`. Reproduce the absence check against tracked source:
+
+```bash
+git -C /opt/9router grep -n -i -E 'token.?sync|sync.?token|X-Sync-Secret' 1c3b9f47 -- .
+git -C /opt/9router ls-tree -r --name-only 1c3b9f47
+```
+
+The grep returns no matches; the tree contains no token-sync route or Caddyfile.
+The oracle does have local API-key listing/creation
+(`src/app/api/keys/route.js:7-11,18-37`) and provider OAuth refresh
+(`open-sse/services/tokenRefresh.js:3-21`), which are different operations.
+
+Routeweft has no service that pushes a token list into inference clients. Clients
+keep the Routeweft key supplied by their operator; no list synchronization is
+needed for the standalone gateway. Endpoint & Key reads key metadata from
+`GET /admin/v1/keys` on mount/page changes, reloads after creation and updates
+local state after edits/deletion (reloading if deletion changes the page;
+`ui/src/EndpointAndKey.tsx:45-74,119-212`).
+Another open dashboard does not receive automatic key-list updates; reload it
+to see changes made elsewhere. Full key secrets are returned only at creation.
+Key mutations compile, commit and atomically publish the serving snapshot
+(`internal/runtime/catalog_update.go:20-107`, `manager.go:57-125`); inference
+checks that snapshot (`internal/ingress/ingress.go:843-862`). No external sync
+is required for new requests to observe revocation when API-key enforcement is
+enabled. Provider credential refresh is separate from client API-key management
+(PRD §8).
+
+If a separately deployed token-sync service exists, #74 owns its inventory,
+source/config pin, callers, authentication, rate limits and log-redaction
+evidence. C08 establishes an application-source absence, not verified deployment
+parity or permission to create another endpoint.
+
 ## 8. Smoke checks
 
 After start/upgrade:
@@ -477,6 +557,55 @@ For an immutable image upgrade:
 10. monitor error/fallback/cache/telemetry signals.
 
 Do not combine an upgrade with unrelated database surgery.
+
+### Deploy-time image retention (#78 C08)
+
+For each Routeweft-owned service, retain the running immutable release and one
+distinct, recorded rollback release, locally and in the registry. Routeweft's
+binary and static UI are one image: `ghcr.io/raufimusaddiq/routeweft:sha-<full-commit>`.
+Record the full tag and resolved digest for both releases in deployment records.
+External helpers need their own service-specific pair; do not treat unrelated
+services or LiteRouter images as Routeweft cleanup candidates.
+
+Before dispatching an upgrade or rollback, verify the target tag and the recorded
+rollback tag exist in the registry. Example read-only checks on the operator
+host, with both variables set to full immutable image references:
+
+```bash
+docker manifest inspect "${ROUTEWEFT_TARGET_IMAGE:?set full target image reference}" >/dev/null
+docker manifest inspect "${ROUTEWEFT_ROLLBACK_IMAGE:?set full rollback image reference}" >/dev/null
+docker manifest inspect --verbose "$ROUTEWEFT_TARGET_IMAGE"
+docker manifest inspect --verbose "$ROUTEWEFT_ROLLBACK_IMAGE"
+docker image inspect "$ROUTEWEFT_ROLLBACK_IMAGE" --format '{{.Id}} {{json .RepoDigests}}'
+```
+
+Compare resolved digests with the release record; a missing tag, registry error,
+digest mismatch or missing local rollback image blocks dispatch. Prepare the
+local rollback image before proceeding, and recheck it. A first deployment has
+no previous release: record that limitation and skip cleanup until a distinct
+rollback release exists. Two tags for the same image do not provide a rollback.
+
+Only after readiness and smoke checks pass may the successful deployment update
+the retained pair and consider cleanup. Cleanup belongs to that deployment,
+never a timer or broad prune. Enumerate only the exact Routeweft-owned image
+repository and remove only individually reviewed obsolete release references
+outside the retained pair. Check all containers, including stopped ones, before
+removal; never force-remove an image or remove one still referenced by a
+container. If ownership or the retained pair is uncertain, skip cleanup.
+
+Never run `docker system prune`, `docker image prune`, `docker volume prune`,
+`docker compose down -v`, or registry-wide retention rules as release cleanup.
+Never prune production volumes, Routeweft's data directory, SQLite/WAL/SHM,
+credential state, backups, or another service's images/data. Image rollback
+does not reverse a database migration; §14 still governs schema compatibility.
+
+Richmod's
+[`infra/deploy/post-deploy.sh:12-35`](https://github.com/raufimusaddiq/richmod/blob/acb8d1de5f348739a697712449bd60a5c22a821c/infra/deploy/post-deploy.sh#L12-L35)
+is a shape reference: health gates, keep current/previous tags, and scoped image
+removal. Its four repositories and cleanup loop are not Routeweft deployment
+code and do not supply the registry/digest preflight above. #74 owns wiring and
+rehearsing these gates in the actual deployment and registry policy. C08 adds
+the operating contract only; it performs no deploy, reload or cleanup.
 
 ## 14. Rollback
 
