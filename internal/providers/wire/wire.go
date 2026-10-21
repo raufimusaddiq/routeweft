@@ -87,7 +87,8 @@ type Hook struct {
 }
 
 var hooks = map[string]Hook{
-	"codex": {OpenAIHeaders: codexHeaders},
+	"codex":      {OpenAIHeaders: codexHeaders, ClassifyError: codexReset},
+	"gemini-cli": {ClassifyError: geminiCLIRetryInfo},
 	// The gateway requires SSE even for buffered clients (registry/api-airforce.js:25-32).
 	"api-airforce": {ForceStream: true, Finalize: codebuddyStream, OpenAIHeaders: func(routing.ProviderRef) map[string]string {
 		return map[string]string{"HTTP-Referer": "https://endpoint-proxy.local", "X-Title": "Endpoint Proxy"}
