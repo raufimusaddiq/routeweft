@@ -331,56 +331,6 @@ func refreshCline(ctx context.Context, client HTTPClient, now func() time.Time, 
 	return next, nil
 }
 
-// refreshKiro mirrors refreshKiroToken: AWS SSO OIDC needs the registered client
-// credentials, and an IDC session uses the region-specific endpoint.
-func refreshKiro(ctx context.Context, client HTTPClient, now func() time.Time, current credentials.Secret, data map[string]string) (credentials.Secret, error) {
-	clientID, clientSecret := data["clientId"], data["clientSecret"]
-	if clientID == "" || clientSecret == "" {
-		return credentials.Secret{}, fmt.Errorf("kiro refresh needs the registered client credentials")
-	}
-	region := data["region"]
-	if region == "" {
-		region = "us-east-1"
-	}
-	if !awsRegionPattern.MatchString(region) {
-		return credentials.Secret{}, fmt.Errorf("kiro region is invalid")
-	}
-	endpoint := "https://oidc.us-east-1.amazonaws.com/token"
-	if data["authMethod"] == "idc" {
-		endpoint = "https://oidc." + region + ".amazonaws.com/token"
-	}
-	body, err := json.Marshal(map[string]string{
-		"clientId":     clientID,
-		"clientSecret": clientSecret,
-		"refreshToken": current.RefreshToken,
-		"grantType":    "refresh_token",
-	})
-	if err != nil {
-		return credentials.Secret{}, err
-	}
-	var document struct {
-		AccessToken  string `json:"accessToken"`
-		RefreshToken string `json:"refreshToken"`
-		ExpiresIn    int    `json:"expiresIn"`
-	}
-	status, err := postJSONTargetWithHeaders(ctx, client, endpoint, nil, string(body), &document)
-	if err != nil || status < 200 || status >= 300 {
-		return credentials.Secret{}, fmt.Errorf("kiro refresh failed")
-	}
-	if document.AccessToken == "" {
-		return credentials.Secret{}, fmt.Errorf("kiro refresh returned no token")
-	}
-	next := current
-	next.AccessToken = document.AccessToken
-	if document.RefreshToken != "" {
-		next.RefreshToken = document.RefreshToken
-	}
-	if document.ExpiresIn > 0 {
-		next.Expiry = now().Add(time.Duration(document.ExpiresIn) * time.Second)
-	}
-	return next, nil
-}
-
 // refreshCodeBuddy mirrors refreshCodebuddyToken: the refresh token travels in a
 // header and the body is an empty object.
 func refreshCodeBuddy(ctx context.Context, client HTTPClient, now func() time.Time, current credentials.Secret, provider string) (credentials.Secret, error) {

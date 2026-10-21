@@ -111,10 +111,13 @@ type kiroImportClient struct {
 
 func (c *kiroImportClient) Do(r *http.Request) (*http.Response, error) {
 	c.calls++
-	if r.URL.String() != "https://q.us-east-1.amazonaws.com/listAvailableModels" || r.Header.Get("Authorization") != "Bearer fixture-api-key" {
-		c.t.Fatalf("unexpected onboarding request: %s", r.URL)
+	// The pin proves a key with GET ListAvailableModels and the API_KEY token type
+	// (services/kiro.js:299-325) and refuses a key whose catalog is empty.
+	if r.Method != http.MethodGet || r.URL.String() != "https://q.us-east-1.amazonaws.com/ListAvailableModels?origin=AI_EDITOR" ||
+		r.Header.Get("Authorization") != "Bearer fixture-api-key" || r.Header.Get("TokenType") != "API_KEY" {
+		c.t.Fatalf("unexpected onboarding request: %s %s", r.Method, r.URL)
 	}
-	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"models":[{"modelId":"fixture-model"}]}`))}, nil
 }
 
 func TestKiroAPIKeyOnboardingResultConstructsRequestWithoutProfile(t *testing.T) {

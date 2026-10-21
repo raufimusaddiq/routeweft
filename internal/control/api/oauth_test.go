@@ -619,11 +619,11 @@ func TestImportStoresAVerifiedCredential(t *testing.T) {
 // TestImportCursorStoresAConnection proves the import-only provider works with the
 // body a real client sends. It previously required meta fields the UI never posts.
 func TestImportCursorStoresAConnection(t *testing.T) {
-	exchange := &routeExchange{routes: map[string]string{
-		"GetUsableModels": `{"models":[]}`,
-	}}
+	// The pin makes no provider call for a Cursor import, so nothing is scripted
+	// and any request would fail the assertion below.
+	exchange := &routeExchange{routes: map[string]string{}}
 	_, mux, creds, cookie := newOnboardingAPI(t, exchange)
-	body := `{"name":"Work","identity":"work@example.test","input":"fixture-cursor-token","meta":{"machineId":"fixture-machine"}}`
+	body := `{"name":"Work","identity":"work@example.test","input":"` + fixtureCursorToken + `","meta":{"machineId":"` + fixtureCursorMachineID + `"}}`
 	recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/cursor/import", body)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("cursor import status=%d body=%s", recorder.Code, recorder.Body.String())
@@ -632,8 +632,14 @@ func TestImportCursorStoresAConnection(t *testing.T) {
 	if err != nil || len(connections) != 1 {
 		t.Fatalf("connections=%+v err=%v", connections, err)
 	}
-	if connections[0].Secret.AccessToken != "fixture-cursor-token" {
+	if connections[0].Secret.AccessToken != fixtureCursorToken {
 		t.Fatalf("stored=%+v", connections[0].Secret)
+	}
+	if connections[0].Secret.ProviderData["machineId"] != fixtureCursorMachineID || connections[0].Secret.Expiry.IsZero() {
+		t.Fatalf("machine id or expiry not stored: %+v", connections[0].Secret)
+	}
+	if len(exchange.seenURLs) != 0 {
+		t.Fatalf("cursor import made provider calls %v; the pin validates shape only", exchange.seenURLs)
 	}
 }
 
