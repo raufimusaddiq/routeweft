@@ -868,16 +868,16 @@ Not covered: SIGKILL or power loss lose events still in the in-memory queue
 
 ## 29. Race suite and CI budget
 
-`go test -race ./...` is the intended gate, but it has **not been shown green**
-in the C09 validation: the full run did not complete in the available budget
-(only `cmd/routeweft`'s known `TestRunbookHealthAndAdminGate` failure had
-reported). Treat the full-repository race suite as not completing inside a ten
-minute package budget until a complete run proves otherwise.
+`go test -race ./...` is the gate. Measured on a loaded 2-core host after the
+fix below, the whole suite completes in roughly 8 minutes wall clock (slowest
+packages: `internal/app` 433 s, `internal/control/api` 194 s, `internal/runtime`
+58 s, `internal/security` 59 s), each package inside Go's ten minute timeout. It
+is not fast: `internal/app` is the next package to approach the budget.
 `internal/control/api` previously exceeded Go's
 ten minute package timeout under `-race` because every fixture that provisioned
 an admin ran the production PBKDF2 work factor (600000 iterations, about 0.45 s
 natively and 5-7 s under the race detector) once to create the account and again
-per login. The package now finishes in about 90 s under `-race` (measured alone, `-v` per-test timings; it was killed past ten minutes before). Fixtures
+per login. The package now finishes in about 90 s under `-race` (`-v` per-test timings; before the fix it was killed past ten minutes). Fixtures
 provision the operator with a precomputed low-iteration hash
 (`adminauth.BootstrapWithHash`); production paths (`Bootstrap`, `ChangePassword`,
 `HashPassword`) are unchanged and keep 600000 iterations, and no test is skipped.
