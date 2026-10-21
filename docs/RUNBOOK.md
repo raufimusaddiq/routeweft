@@ -981,9 +981,11 @@ seconds.
 A client that disconnects mid-request is accounted exactly once on every relay:
 native, translated (Chat, Responses, rewritten/unwrapped bodies), Messages and the
 Gemini/System One/Ollama compat paths, stream and non-stream. The record is
-`client_abandoned` and carries whatever usage had arrived; it is flagged usage
-unobserved unless the relay saw the upstream report usage, because the response
-was never completed. If no upstream response existed yet, its status is a
+`client_abandoned` and carries whatever usage the relay had measured. Its
+usage-observed flag is derived exactly as for a completed request (usage parsed or
+reported by the upstream is kept and observed; nothing measured is zero and
+unobserved), and its duration starts at the request's start like every other
+record. If no upstream response existed yet, its status is a
 synthetic `499`; otherwise it keeps the upstream's status (a translator error
 caused by the client leaving is not rewritten to 502). Only client abandonment is
 `Unanswered`: persisted to usage, but publishing neither the live

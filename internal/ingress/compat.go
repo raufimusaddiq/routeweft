@@ -65,7 +65,7 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, source, model
 	w.WriteHeader(response.StatusCode)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		_, _ = io.Copy(w, response.Body)
-		h.emitOutcome(r, provider, response.StatusCode, stream, promptcache.Usage{}, started)
+		h.emitOutcome(r, provider, response.StatusCode, stream, promptcache.Usage{}, true, started)
 		return
 	}
 	if stream {
@@ -77,10 +77,11 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, source, model
 			}{Reader: io.TeeReader(response.Body, scanner), Closer: response.Body}
 			relayErr := h.copyNativeSSE(w, r, response)
 			usage, _ := scanner.usage()
-			if !scanner.reportsUsage(relayErr == nil && r.Context().Err() == nil) {
+			observed := scanner.reportsUsage(relayErr == nil && r.Context().Err() == nil)
+			if !observed {
 				usage = promptcache.Usage{}
 			}
-			h.emitOutcome(r, provider, response.StatusCode, true, usage, started)
+			h.emitOutcome(r, provider, response.StatusCode, true, usage, observed, started)
 			return
 		}
 		h.copyNativeSSE(w, r, response)
@@ -88,14 +89,14 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, source, model
 	}
 	if h.opts.OnRequestComplete != nil {
 		responseBody, readErr := io.ReadAll(response.Body)
-		usage := promptcache.Usage{}
+		usage, observed := promptcache.Usage{}, false
 		if readErr == nil {
 			if parsed, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
-				usage = parsed
+				usage, observed = parsed, true
 			}
 		}
 		_, _ = w.Write(responseBody)
-		h.emitOutcome(r, provider, response.StatusCode, false, usage, started)
+		h.emitOutcome(r, provider, response.StatusCode, false, usage, observed, started)
 		return
 	}
 	_, _ = io.Copy(w, response.Body)
@@ -241,18 +242,18 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(response.StatusCode)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		_, _ = io.Copy(w, response.Body)
-		h.emitOutcome(r, provider, response.StatusCode, request.Stream, promptcache.Usage{}, started)
+		h.emitOutcome(r, provider, response.StatusCode, request.Stream, promptcache.Usage{}, true, started)
 		return
 	}
 	if request.Stream {
 		if provider.Protocol != ollamaadapter.Protocol {
 			h.copyOllamaStream(w, r, response, request.Model)
-			h.emitOutcome(r, provider, response.StatusCode, true, promptcache.Usage{}, started)
+			h.emitOutcome(r, provider, response.StatusCode, true, promptcache.Usage{}, false, started)
 			return
 		}
 		if h.opts.OnRequestComplete != nil {
 			usage := h.copyOllamaNativeStream(w, r, response, provider)
-			h.emitOutcome(r, provider, response.StatusCode, true, usage, started)
+			h.emitOutcome(r, provider, response.StatusCode, true, usage, true, started)
 			return
 		}
 		h.copyNativeSSE(w, r, response)
@@ -260,14 +261,14 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.opts.OnRequestComplete != nil {
 		responseBody, readErr := io.ReadAll(response.Body)
-		usage := promptcache.Usage{}
+		usage, observed := promptcache.Usage{}, false
 		if readErr == nil {
 			if parsed, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
-				usage = parsed
+				usage, observed = parsed, true
 			}
 		}
 		_, _ = w.Write(responseBody)
-		h.emitOutcome(r, provider, response.StatusCode, false, usage, started)
+		h.emitOutcome(r, provider, response.StatusCode, false, usage, observed, started)
 		return
 	}
 	_, _ = io.Copy(w, response.Body)

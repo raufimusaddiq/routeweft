@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/google/uuid"
@@ -811,7 +812,9 @@ func (a *App) serveOnce(ctx context.Context) error {
 	case <-ctx.Done():
 		a.ready.Store(false)
 		grace := 10 * time.Second
-		if a.drainGrace > 0 {
+		// The override is honoured only inside a test binary, so a production
+		// build can never shorten the documented fixed 10 s deadline.
+		if a.drainGrace > 0 && testing.Testing() {
 			grace = a.drainGrace
 		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), grace)

@@ -611,3 +611,54 @@ func TestTranslatedUnreadableBodyIsRecordedOnce(t *testing.T) {
 		t.Fatal("502 was not announced on the usage feed")
 	}
 }
+
+// c09CancelOnWrite cancels the request the moment the relay writes the body, so
+// the cancellation is observed after usage was fully measured.
+type c09CancelOnWrite struct {
+	*httptest.ResponseRecorder
+	cancel context.CancelFunc
+}
+
+func (w *c09CancelOnWrite) Write(p []byte) (int, error) {
+	n, err := w.ResponseRecorder.Write(p)
+	w.cancel()
+	return n, err
+}
+
+// TestAbandonedCompatNonStreamKeepsMeasuredUsage pins that a cancelled request
+// whose non-stream body was fully read and parsed keeps its measured usage and
+// is not flagged unobserved: the abandon path derives the same fields from the
+// same inputs as a completed request (only termination and live signals differ).
+func TestAbandonedCompatNonStreamKeepsMeasuredUsage(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"candidates":[{"content":{"parts":[{"text":"ok"}]}}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":3,"totalTokenCount":10}}`)
+	}))
+	defer upstream.Close()
+	a, key := servingApp(t, upstream.URL, 1)
+	setServingProtocol(t, a, "gemini")
+	c09Observability(t, a)
+	ctx, stop := context.WithCancel(context.Background())
+	runDone := make(chan struct{})
+	go func() { defer close(runDone); a.usage.Run(ctx) }()
+	defer func() { stop(); <-runDone }()
+
+	requestCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request := httptest.NewRequest(http.MethodPost, "/v1beta/models/fast:generateContent", strings.NewReader(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`)).WithContext(requestCtx)
+	request.Header.Set("Authorization", "Bearer "+key)
+	request.Header.Set("X-Request-Id", "c09-measured")
+	a.Handler().ServeHTTP(&c09CancelOnWrite{ResponseRecorder: httptest.NewRecorder(), cancel: cancel}, request)
+	if err := a.usage.FlushNow(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var input, output, observed int
+	var termination string
+	if err := a.store.DB().QueryRow("SELECT input_tokens, output_tokens, usage_observed, termination FROM usage_events WHERE request_id='c09-measured'").Scan(&input, &output, &observed, &termination); err != nil {
+		t.Fatal(err)
+	}
+	if input != 7 || output != 3 || observed != 1 || termination != "client_abandoned" {
+		t.Fatalf("input=%d output=%d observed=%d termination=%q want 7/3/1/client_abandoned", input, output, observed, termination)
+	}
+}

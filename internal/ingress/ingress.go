@@ -113,7 +113,13 @@ const (
 // attribution carries the authenticated key id from authorize to the completion
 // record without re-running key lookup, so a key revoked mid-request is still
 // attributed correctly.
-type attribution struct{ keyID atomic.Pointer[string] }
+// attribution is per-request state shared with the accounting emitters. begun
+// is the request's start (set where the request enters the handler chain), so
+// emitters that have no handler-local started use the same origin.
+type attribution struct {
+	keyID atomic.Pointer[string]
+	begun time.Time
+}
 
 type attributionKey struct{}
 
@@ -183,17 +189,19 @@ func (h *Handler) clientFor(provider routing.ProviderRef) *http.Client {
 	return h.client
 }
 
-// emitOutcome publishes one accounting record when the telemetry hook is wired
-// and the client did not cancel. requestID is the correlation id the app
-// middleware assigned and echoed on the request.
-func (h *Handler) emitOutcome(r *http.Request, provider routing.ProviderRef, status int, stream bool, usage promptcache.Usage, started time.Time) {
+// emitOutcome publishes one accounting record when the telemetry hook is wired.
+// A client that already left is recorded as client_abandoned rather than
+// dropped. observed says whether the caller actually measured usage (a parsed
+// body, a stream that reported it, or an error response with nothing to
+// report); it decides usage_observed identically for completed and abandoned
+// requests, exactly as emitTranslated does. requestID is the correlation id the
+// app middleware assigned and echoed on the request.
+func (h *Handler) emitOutcome(r *http.Request, provider routing.ProviderRef, status int, stream bool, usage promptcache.Usage, observed bool, started time.Time) {
 	if r != nil && r.Context().Err() != nil {
-		// The response was never completed, so usage is not confirmed complete:
-		// flag it unobserved explicitly rather than inferring it from a zero value.
-		h.abandon(r, provider, status, stream, usage, started, true)
+		h.abandon(r, provider, status, stream, usage, started, !observed)
 		return
 	}
-	h.publishOutcome(r, provider, status, stream, usage, started, "", false)
+	h.publishOutcome(r, provider, status, stream, usage, started, "", !observed)
 }
 
 // publishOutcome builds and publishes one record without the cancellation
@@ -377,7 +385,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(response.StatusCode)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		_, _ = io.Copy(w, response.Body)
-		h.emitOutcome(r, provider, response.StatusCode, request.Stream, promptcache.Usage{}, started)
+		h.emitOutcome(r, provider, response.StatusCode, request.Stream, promptcache.Usage{}, true, started)
 		return
 	}
 	if request.Stream {
@@ -389,10 +397,11 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 			}{Reader: io.TeeReader(response.Body, scanner), Closer: response.Body}
 			h.copyMessagesStream(w, r, response)
 			usage, _ := scanner.usage()
-			if !scanner.reportsUsage(r.Context().Err() == nil) {
+			observed := scanner.reportsUsage(r.Context().Err() == nil)
+			if !observed {
 				usage = promptcache.Usage{}
 			}
-			h.emitOutcome(r, provider, response.StatusCode, true, usage, started)
+			h.emitOutcome(r, provider, response.StatusCode, true, usage, observed, started)
 			return
 		}
 		h.copyMessagesStream(w, r, response)
@@ -400,14 +409,14 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.opts.OnRequestComplete != nil {
 		responseBody, readErr := io.ReadAll(response.Body)
-		usage := promptcache.Usage{}
+		usage, observed := promptcache.Usage{}, false
 		if readErr == nil {
 			if parsed, ok := shared.ParseUsage(shared.FamilyAnthropic, responseBody); ok {
-				usage = parsed
+				usage, observed = parsed, true
 			}
 		}
 		_, _ = w.Write(responseBody)
-		h.emitOutcome(r, provider, response.StatusCode, false, usage, started)
+		h.emitOutcome(r, provider, response.StatusCode, false, usage, observed, started)
 		return
 	}
 	_, _ = io.Copy(w, response.Body)
@@ -925,7 +934,7 @@ func clientKey(r *http.Request) (string, bool) {
 
 func (h *Handler) withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		r = r.WithContext(context.WithValue(r.Context(), attributionKey{}, &attribution{}))
+		r = r.WithContext(context.WithValue(r.Context(), attributionKey{}, &attribution{begun: time.Now()}))
 		if origin := h.allowedOrigin(r); origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			if origin != "*" {

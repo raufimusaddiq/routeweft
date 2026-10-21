@@ -170,7 +170,7 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 	w.WriteHeader(response.StatusCode)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		io.Copy(w, response.Body)
-		h.emitOutcome(r, provider, response.StatusCode, stream, promptcache.Usage{}, started)
+		h.emitOutcome(r, provider, response.StatusCode, stream, promptcache.Usage{}, true, started)
 		return
 	}
 	h.relayNative(w, r, response, provider, source, stream, started)
@@ -229,8 +229,8 @@ func (h *Handler) writeUnwrapped(w http.ResponseWriter, r *http.Request, respons
 	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(body)
-	usage, _ := shared.ParseUsage(provider.Protocol, body)
-	h.emitOutcome(r, provider, response.StatusCode, false, usage, started)
+	usage, observed := shared.ParseUsage(provider.Protocol, body)
+	h.emitOutcome(r, provider, response.StatusCode, false, usage, observed, started)
 }
 
 // emitTranslated records a translated request. Counts the upstream never

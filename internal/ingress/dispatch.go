@@ -135,7 +135,12 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 		attemptErr, attemptResponse, attemptProvider = err, response, provider
 	}
 	used := 0
-	dispatchedAt := time.Now()
+	// The abandoned record's duration starts where every other emitter's does:
+	// the request's start, not after candidate resolution and translation.
+	requestStart := time.Now()
+	if holder := attributionFrom(r); holder != nil && !holder.begun.IsZero() {
+		requestStart = holder.begun
+	}
 	// A client that leaves after an upstream request was issued still cost the
 	// upstream work, so the request is accounted once as client_abandoned with
 	// unobserved usage (the response never arrived) rather than vanishing. The
@@ -147,7 +152,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			if chosen.ProviderID == "" && chosen.ConnectionID == "" {
 				chosen = attemptProvider
 			}
-			h.publishOutcomeFlagged(r, chosen, statusClientClosedRequest, stream, promptcache.Usage{}, dispatchedAt, TerminationClientAbandoned, true, true)
+			h.publishOutcomeFlagged(r, chosen, statusClientClosedRequest, stream, promptcache.Usage{}, requestStart, TerminationClientAbandoned, true, true)
 		}
 	}()
 	authFailureSeen := false
