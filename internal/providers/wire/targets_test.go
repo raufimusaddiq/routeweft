@@ -311,7 +311,7 @@ func TestRequestHeaderHooksAreExactlyTheDeclaredProviders(t *testing.T) {
 // OpenCode Zen has no account: every request carries the public key the pin
 // sends (executors/opencode.js:492); a token the connection holds is kept.
 func TestOpenCodeSendsThePublicKey(t *testing.T) {
-	for token, want := range map[string]string{"": "Bearer public", "held-key": "Bearer held-key"} {
+	for token, want := range map[string]string{"": "Bearer public", "  ": "Bearer public", "held-key": "Bearer held-key"} {
 		provider := ref("opencode", chat, "https://opencode.ai", routing.ProviderSettings{})
 		provider.APIToken = token
 		if got := OpenAIHeaders(provider).Get("Authorization"); got != want {

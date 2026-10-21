@@ -93,7 +93,7 @@ var tokens = []string{
 // commandcode carries the pin's version, environment and session headers
 // (commandcode_test.go pins them).
 // API.airforce adds its registry referer/title pair (airforce_wire_test.go).
-var headersChanged = map[string]bool{"azure": true, "api-airforce": true, "kimi": true, "kilocode": true, "iflow": true, "kiro": true, "commandcode": true}
+var headersChanged = map[string]bool{"azure": true, "api-airforce": true, "kimi": true, "kilocode": true, "iflow": true, "kiro": true, "commandcode": true, "opencode": true}
 
 func TestOpenAIHeadersMatchLegacyForEveryProvider(t *testing.T) {
 	for _, id := range providerIDs() {
@@ -101,10 +101,6 @@ func TestOpenAIHeadersMatchLegacyForEveryProvider(t *testing.T) {
 			continue
 		}
 		for _, token := range tokens {
-			// opencode sends the public key when it holds none (TestOpenCodeSendsThePublicKey).
-			if id == "opencode" && token == "" {
-				continue
-			}
 			ref := routing.ProviderRef{ProviderID: id, APIToken: token}
 			if got, want := OpenAIHeaders(ref), legacyOpenAIProviderHeaders(ref); !reflect.DeepEqual(got, want) {
 				t.Errorf("%s token %q: openai headers\n got %v\nwant %v", id, token, got, want)
