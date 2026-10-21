@@ -135,8 +135,8 @@ func TestEveryUpstreamBaseComesFromTheWireSeam(t *testing.T) {
 // they never name a base URL field themselves, so they are pinned by name too.
 var mustCallWire = map[string][]string{
 	"ingress/dispatch.go:dispatchAttempts":                 {"ResolveTarget"},
-	"ingress/ingress.go:newUpstreamRequest":                {"ResolveTarget", "FinalizeBody"},
-	"control/api/providers.go:testProviderModel":           {"ResolveTarget", "FinalizeBody"},
+	"ingress/ingress.go:newUpstreamRequest":                {"ResolveTarget", "FinalizeBodyAt"},
+	"control/api/providers.go:testProviderModel":           {"ResolveTarget", "FinalizeBodyAt"},
 	"control/api/providers.go:fetchConnectionModelEntries": {"DiscoveryBase"},
 	"control/api/workflows.go:handleNodeRoutes":            {"ResolveTarget", "NodeBase"},
 	"runtime/providers.go:AccountProvider":                 {"NodeBase"},
@@ -221,7 +221,7 @@ func TestEveryInferenceBodyPostGoesThroughFinalizeBody(t *testing.T) {
 									}
 								}
 							}
-							if id, ok := sel.X.(*ast.Ident); ok && id.Name == "wire" && sel.Sel.Name == "FinalizeBody" {
+							if id, ok := sel.X.(*ast.Ident); ok && id.Name == "wire" && (sel.Sel.Name == "FinalizeBody" || sel.Sel.Name == "FinalizeBodyAt") {
 								finalizes = true
 							}
 						}
