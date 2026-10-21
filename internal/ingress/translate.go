@@ -23,8 +23,9 @@ import (
 // unwired are provider wires whose conversion legs exist (internal/protocol/hub)
 // but whose transport does not: nothing here can send to them yet, so a request
 // must not be routed to one. Cursor needs a Connect-RPC protobuf transport over
-// HTTP/2 (executors/cursor.js); CommandCode needs its headers, forced stream and
-// pre-stream error handling in internal/providers/wire (executors/commandcode.js).
+// HTTP/2 (executors/cursor.js); CommandCode's headers, forced stream and
+// pre-stream error handling are bound in internal/providers/wire (#76 P02, PARITY
+// 6.13), but TranslateChat and its siblings have no CommandCode arm yet.
 // Vertex needs the project-scoped URL and the service-account or key
 // authentication that #115 PR-C's target hook supplies (executors/vertex.js:66-123);
 // until it does, a request routed there would fail at the last hop.
