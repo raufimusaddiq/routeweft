@@ -267,52 +267,6 @@ func (r apiKeyReader) qoder(ctx context.Context, credential quota.Credential) (q
 	return quota.State{Plan: "Qoder", Windows: windows, ObservedAt: r.now()}, nil
 }
 
-// xiaomi mirrors open-sse/services/usage/xiaomi-mimo.js. The weekly quota lives
-// behind the account session, which an sk- key cannot reach, so a key-only
-// connection reports that rather than a fabricated number.
-func (r apiKeyReader) xiaomi(ctx context.Context, credential quota.Credential) (quota.State, error) {
-	key := credential.AccessToken
-	if key == "" {
-		key = credential.ProviderData["apiKey"]
-	}
-	if key == "" {
-		return failure("xiaomi-mimo credential is required")
-	}
-	reply, err := r.call(ctx, http.MethodGet, "https://aistudio.xiaomimimo.com/open-apis/v1/user/usage", map[string]string{
-		"Authorization": "Bearer " + key,
-		"X-Mimo-Source": "mimocode-cli",
-		"Accept":        "application/json",
-	}, nil)
-	if err != nil {
-		return failure("xiaomi usage request failed: %v", err)
-	}
-	if reply.status == http.StatusUnauthorized {
-		return failure("xiaomi weekly quota requires an account session; an API key alone is insufficient")
-	}
-	if reply.status < 200 || reply.status >= 300 {
-		return failure("xiaomi usage returned HTTP %d", reply.status)
-	}
-	var body struct {
-		Code int `json:"code"`
-		Data struct {
-			Percent   json.RawMessage `json:"percent"`
-			ResetDate string          `json:"resetDate"`
-		} `json:"data"`
-	}
-	if err := decode(reply.body, &body); err != nil {
-		return failure("xiaomi usage response: %v", err)
-	}
-	if body.Code != 0 {
-		return failure("xiaomi usage returned code %d", body.Code)
-	}
-	remaining, ok := number(body.Data.Percent)
-	if !ok {
-		return failure("xiaomi usage response had no percent")
-	}
-	windows := []quota.Window{percentWindow("Weekly", remaining, resetAt(body.Data.ResetDate))}
-	return quota.State{Plan: "Xiaomi MiMo", Windows: windows, ObservedAt: r.now()}, nil
-}
-
 // zed mirrors getZedUsage in open-sse/services/usage/zed.js: plan limits from the
 // authenticated user record.
 func (r apiKeyReader) zed(ctx context.Context, credential quota.Credential) (quota.State, error) {
