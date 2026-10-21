@@ -1,40 +1,49 @@
-# LiteRouter v1 → Routeweft: one-time migration policy (#78 C01)
+# LiteRouter v1 → Routeweft: gradual manual migration (#78 C01, #179)
 
-Oracle: `/opt/9router` @ `1c3b9f47`. Implementation: `PlanV1Migration` and
+Routeweft and LiteRouter v1 are different applications. Run them side by side with
+independent state, and manually recreate configuration and move clients at your own pace.
+The operator chooses which workloads to move and when, after validating their behavior
+in Routeweft (RUNBOOK §25).
+
+The absence of a migration command is a product decision. There is no
+`routeweft v1-plan` command, apply step, admin migration route or migration runner.
+`PlanV1Migration` stays a tested library, with no operator-facing entry point.
+
+Oracle: `/opt/9router` @ `1c3b9f47`. Library reference: `PlanV1Migration` and
 `V1Plan.ApplyCatalog` in `internal/runtime/v1_migration.go`; tests in
 `v1_migration_test.go` run on a synthetic export with fake sentinel secrets.
 
 Routeweft never opens, mounts or restores a v1 database (AGENTS §2, BDR-001/017).
-The only input is the **JSON export** that v1 produces at `GET /api/settings/database`
+The library accepts only the **JSON export** that v1 produces at `GET /api/settings/database`
 (`src/app/api/settings/database/route.js:14-25`, built by `exportDb`,
 `src/lib/db/index.js:74-95`). `routeweft restore` refuses a v1 `data.sqlite` by
 name and points here (`internal/backup`, `TestStageRestoreNamesLiteRouterV1Database`).
 `PlanV1Migration` refuses a non-JSON or non-object input the same way.
 
-The plan is a **plan, not a commit**: nothing is stored until the operator commits
-`Settings` through `SetSettings` and the catalog through `ApplyCatalog`, so every value
-still passes the normal validate → compile → commit → publish protocol. Nothing is
-stored-and-ignored: every v1 value is carried, or named in the plan's `Refused`,
+The following tables document the library's mappings as a reference for manual
+recreation; a mapped value does not imply an automatic product migration. The library
+builds a plan without storing it. Library callers persist its `Settings` output through
+`SetSettings` and catalog entries through `ApplyCatalog`, using Routeweft's normal
+validate → compile → commit → publish protocol.
+Every v1 value is mapped, or named in the plan's `Refused`,
 `Recreate`, `KeyReissue` or `Reauth` list. No list holds a secret: refusals and notes name a path and describe a value's JSON type, never its content (`TestV1PlanNoRefusalOrNoteEchoesInputValues`). Only identifiers are echoed: setting keys, field names, and combo, alias and node names (`TestV1PlanNoRefusalOrNoteEchoesStringValues` feeds a string sentinel to every accepted field). A combo with no models is refused by name, since it would route nowhere. A fusion combo with no `judgeModel` is carried with a note. A malformed value, including a malformed `capacityAdapter`, refuses only itself.
 
-Not yet provided: an operator-facing command or admin route that calls the plan.
-Today it is a tested library; see "Open questions".
-
-## 1. Mapping
+## 1. Mapping reference for manual recreation
 
 | v1 export member | Result | Where |
 |---|---|---|
-| `settings`: `stickyRoundRobinLimit`, `comboStickyRoundRobinLimit`, `capacityAdapter`, `outboundNoProxy`, `observabilityMaxJsonSize`, `dnsToolEnabled`, `fallbackStrategy`, `comboStrategy`, `providerStrategies`, `comboStrategies`, `ccFilterNaming`, `headroomCodeAware`, `headroomKompress` | **Migrated** by the existing `ImportPinSettings` (not re-implemented); its notes are carried into the plan | `settings_pin.go` |
-| `settings`: `rtkEnabled`, `headroom{Enabled,Url,CompressUserMessages,TimeoutMs}`, `caveman{Enabled,Level}`, `ponytail{Enabled,Level}`, `pxpipe{Enabled,AutoInstall,MinChars,TimeoutMs}`, `enableObservability`, `observability{MaxRecords,BatchSize,FlushIntervalMs}`, `outboundProxy{Enabled,Url}`, `requireApiKey`, `quotaVisibility` | **Migrated** under the same key after `validateSettingValue` | `v1PassthroughSettings` |
-| `combos` | **Migrated** as Routeweft Combos, member order kept. `comboStrategies[name]` with `fallbackStrategy: "fusion"` sets `FusionEnabled`, `judgeModel`, `fusionTuning` on the Combo | `ApplyCatalog` |
-| `modelAliases` | **Migrated** when the target is `provider/model` | `ApplyCatalog` |
+| `settings`: `stickyRoundRobinLimit`, `comboStickyRoundRobinLimit`, `capacityAdapter`, `outboundNoProxy`, `observabilityMaxJsonSize`, `dnsToolEnabled`, `fallbackStrategy`, `comboStrategy`, `providerStrategies`, `comboStrategies`, `ccFilterNaming`, `headroomCodeAware`, `headroomKompress` | **Mapped by the library** using the existing `ImportPinSettings`; its notes are carried into the plan | `settings_pin.go` |
+| `settings`: `rtkEnabled`, `headroom{Enabled,Url,CompressUserMessages,TimeoutMs}`, `caveman{Enabled,Level}`, `ponytail{Enabled,Level}`, `pxpipe{Enabled,AutoInstall,MinChars,TimeoutMs}`, `enableObservability`, `observability{MaxRecords,BatchSize,FlushIntervalMs}`, `outboundProxy{Enabled,Url}`, `requireApiKey`, `quotaVisibility` | **Mapped by the library** under the same key after `validateSettingValue` | `v1PassthroughSettings` |
+| `combos` | **Mapped by the library** as Routeweft Combos, member order kept. `comboStrategies[name]` with `fallbackStrategy: "fusion"` sets `FusionEnabled`, `judgeModel`, `fusionTuning` on the Combo | `ApplyCatalog` |
+| `modelAliases` | **Mapped by the library** when the target is `provider/model` | `ApplyCatalog` |
 | `providerConnections`, `apiKeys` | **Not carried**; listed (§4, §5) | |
 | `providerNodes`, `proxyPools`, `customModels`, `pricing` | **Recreate by hand**; listed | `Recreate` |
 
 Combos and aliases need their providers and models to exist: Routeweft rejects an unknown
 member (`compileCombos`). `ApplyCatalog` therefore commits entry by entry, returns each
-failure by name, and is idempotent (Combo IDs are `v1-<name>`). The operator order is:
-recreate providers → authorize connections → `ApplyCatalog` → reissue keys. A `provider/`
+failure by name, and is idempotent (Combo IDs are `v1-<name>`). For manual recreation,
+create providers and models → authorize connections → recreate Combos and aliases →
+reissue keys and update each client when ready. A `provider/`
 prefix that is a v1 provider *alias* (for example `cc/…`) is kept verbatim and fails
 until the operator fixes it; Routeweft does not guess.
 
@@ -99,24 +108,31 @@ read), `customModels` (v1 keys them by provider alias, not a Routeweft provider 
 
 ## 7. History
 
-**Decision: v1 usage and request history is not imported. The v1 file is archived in place by the operator.**
+**Decision: v1 usage and request history stays in v1 forever. Routeweft does not import it.**
+
+This includes aggregate `usageDaily` totals: there is no labelled, read-only imported
+series. v1 and Routeweft use two accounting bases, so retaining history in its original
+application keeps their usage and cost totals separate.
 
 - The JSON export contains no history: `exportDb` selects neither `usageHistory`, `usageDaily` nor `requestDetails`
   (`index.js:78-88`). History exists only in `data.sqlite`, which Routeweft never opens.
 - v1 itself excludes `requestDetails` from its safety backups (`backup.js:16-17`).
 - Routeweft usage rows are keyed to Routeweft key IDs and connection IDs and costed with Routeweft pricing;
-  v1 rows reference v1 `apiKey` and `connectionId` values that no longer exist, and a v1 `cost` was computed with
+  v1 rows reference v1 `apiKey` and `connectionId` values that do not exist in Routeweft, and a v1 `cost` was computed with
   v1 prices. Merging them would silently mix two accounting bases in one total (RUNBOOK §25.3: "do not combine").
 - A history field in an export is refused by name: `usageHistory`, `usageDaily`, `requestDetails`.
 
-Operator action: keep the v1 `data.sqlite` read-only, off any Routeweft volume, for as long as old usage is needed, and
-read it with v1 or `sqlite3`. Nothing is deleted by Routeweft.
+Operator action: keep history in the independent v1 instance and off any Routeweft
+volume. When archiving v1, preserve its `data.sqlite` read-only and read it with v1 or
+`sqlite3`. Routeweft never deletes it.
 
-## Open questions for the owner
+## 8. Operator decisions
 
-1. **History retention.** The decision above leaves history in v1 indefinitely. Recommendation: keep it; do not build
-   an importer. If aggregate continuity is wanted later, import `usageDaily` totals as a labelled, read-only
-   "imported from v1" series that never feeds Routeweft cost totals. Needs an owner decision, not built here.
-2. **Operator entry point.** `PlanV1Migration` has no CLI or admin route yet. Recommendation: a read-only
-   `routeweft v1-plan --input export.json` that prints the plan (no write), followed by an explicit apply step, in a
-   separate PR so the control-API surface is reviewed on its own.
+Choose which providers, settings, models, Combos and clients to recreate, and when to
+move each workload. Resolve provider aliases and unsupported values using the mappings
+above. Decide which inactive accounts and client keys you still need, restore account
+priority as needed, and arrange provider identities or token-rotation ownership (§5).
+
+Keep v1 available for its history and any clients you have not moved. Recreate and
+validate each workload independently; there is no shared database, credential state or
+accounting history between the applications.

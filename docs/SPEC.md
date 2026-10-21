@@ -643,9 +643,10 @@ that can lock operators out for the window but never grants access.
 `requireLogin` is in the defaults and in `GET /admin/v1/settings` as `true` for
 shape compatibility only. It is not in the writable allowlist, nothing reads it
 to authorize a request, and the compiler pins the compiled value to `true`, so a
-stored or restored `false` (hand-edited database, backup, a v1 value that
-slipped through migration) is neither honored nor displayed as honored. The v1
-importer refuses a `requireLogin=false` source (`docs/V1_MIGRATION.md`).
+stored or restored `false` (hand-edited database or backup) is neither honored
+nor displayed as honored. The tested `PlanV1Migration` library refuses a
+`requireLogin=false` source. Migration from v1 is manual and gradual, with no
+migration command or admin route; history stays in v1 (`docs/V1_MIGRATION.md`).
 
 Why not preserve the v1 behavior:
 

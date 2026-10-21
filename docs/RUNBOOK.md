@@ -809,8 +809,8 @@ API-key usage attribution and console clear are implemented.
 Do not select a workload requiring the unresolved rows: actual Combo/Fusion/
 capacity serving, Messages/other protocol translators, specialized OAuth/wire/
 quota modules, native Headroom/PXPIPE compatibility, complete cost/TTFT/details/
-live UI, or v1 migration/history continuity. Provider readiness is not fully
-advertised by the current registry/UI; manually restrict evaluation to the
+live UI. Migration is manual and gradual; v1 history stays in v1 permanently.
+Provider readiness is not fully advertised by the current registry/UI; manually restrict evaluation to the
 specific provider/account/protocol combinations the operator has validated.
 An enabled provider or a successful model listing is not inference validation.
 
@@ -834,8 +834,8 @@ arbitrary remote command endpoint.
 3. Recreate provider nodes, independently provisioned accounts, manual models,
    aliases and settings through Routeweft's own UI/API. Reissue client API keys;
    do not import v1 plaintext keys or assume digest/schema compatibility. Leave
-   v1 history in v1; do not combine accounting histories during evaluation.
-   The full one-time policy (mapping, units, refusals, key reissue,
+   v1 history in v1 permanently; never combine the two accounting bases.
+   The gradual manual migration reference (mapping, units, refusals, key reissue,
    reauthorization, history) is `docs/V1_MIGRATION.md`.
    Snapshot publication and an independent restart must preserve the new config.
 4. Prefer separate provider identities/keys. If identities must be shared,
