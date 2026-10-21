@@ -19,12 +19,13 @@ import (
 // (executors/grok-cli.js:349-526) supplies both.
 //
 // What this does not do, by decision:
-//   - the per-session turn index never goes backwards within a process
-//     (grok-cli.js:63-112), which is memory the gateway keeps for a client that
-//     sends only the newest turn. The index here is the number of user turns in
-//     the input, which is the pin's own first term (:105);
-//   - a connection with no agent id gets none: the pin derives one from the host's
-//     machine id (:528-550), which is a fact about the host, not the account.
+//   - a connection with no deviceId or agentId gets no x-grok-agent-id. The pin's
+//     derivation from the host's machine id (:528-550) is unreachable:
+//     execute() sets _agentId, then super.execute calls transformRequest, which
+//     resets it to deviceId || agentId || null (:424-427) before buildHeaders reads
+//     it (:384). Run offline, the pin sends no such header for such a connection
+//     (TestGrokCLIAgentIDIsOnlyTheConnectionsOwn). The turn index is
+//     grokcli_turns.go, the retry and the 402 grokcli_retry.go.
 
 // grokCLIAllowlist is RESPONSES_API_ALLOWLIST (grok-cli.js:35-52): Codex's list
 // plus the sampling fields this endpoint takes.
@@ -59,6 +60,8 @@ var grokCLIHook = Hook{
 	ForceStream:    true,
 	Finalize:       grokCLIBody,
 	RequestHeaders: grokCLIHeaders,
+	Do:             GrokCLIDo,
+	ClassifyError:  grokCLIPaymentRequired,
 }
 
 // grokCLIBody is transformRequest (grok-cli.js:419-525).
@@ -414,7 +417,7 @@ func grokCLIHeaders(provider routing.ProviderRef, raw []byte, _ string) (map[str
 		"x-grok-session-id":        session,
 		"x-grok-conv-id":           session,
 		"x-grok-req-id":            uuid.NewString(),
-		"x-grok-turn-idx":          strconv.Itoa(grokCLITurns(body)),
+		"x-grok-turn-idx":          strconv.Itoa(grokCLITurnStore.resolve(session, grokCLITurns(body), raw)),
 	}
 	settings := provider.Connection.Settings
 	if agent := firstNonEmpty(settings.DeviceID, settings.AgentID); agent != "" {
