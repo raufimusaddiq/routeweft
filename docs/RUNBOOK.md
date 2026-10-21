@@ -287,7 +287,7 @@ password-change handlers share a process-local failed-attempt throttle:
   return 429 with JSON `error.code=too_many_attempts` and `Retry-After` equal to
   remaining seconds rounded up. A successful check clears the bucket; expiry
   or process restart also clears it (`internal/control/api/throttle.go:11-67`,
-  `api.go:337-358`, `password.go:32-52`). This is a failure throttle, not a
+  `api.go:337-359`, `password.go:32-52`). This is a failure throttle, not a
   requests-per-second or concurrent-password-check budget.
 - Behind Caddy, users reaching Routeweft from the same proxy IP share that
   bucket. Forwarding a different client-IP header does not separate them.
@@ -303,9 +303,11 @@ limit. No production config was inspected for C08.
 The [#74 deployment report](https://github.com/raufimusaddiq/routeweft/issues/74#issuecomment-6259837234)
 records a Caddy vhost, credential-safe logging, and a synthetic Authorization
 redaction check on 2026-10-19. It does not record a Caddy rate limiter or an
-`X-Sync-Secret` redaction test. Its statement that login has no throttle describes
-the deployed release at that time; the source behavior above does not prove that
-release has since been upgraded. Caddy rate limiting remains unverified.
+`X-Sync-Secret` redaction test. Its recorded image
+`sha-10ce86680675a309a2452188d2bc62ff80430935` already includes the eight-failure,
+five-minute login throttle (`internal/control/api/throttle.go:11-14` and
+`api.go:303-324` at that commit), so #74's "no rate limit" gap note is incorrect
+and superseded. Caddy rate limiting remains unverified.
 
 Deployment ownership stays with #74: establish the Caddy build/modules and
 effective vhost policy, then choose and test edge rate/burst/concurrency budgets
