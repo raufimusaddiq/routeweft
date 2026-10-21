@@ -38,6 +38,8 @@ var nativeWireSkips = map[string]string{
 	"cline":            "response envelope (TestClineEnvelopeFixtureIsUnwrappedAndAccounted)",
 	"clinepass":        "response envelope (TestClineEnvelopeFixtureIsUnwrappedAndAccounted)",
 	"kenari":           "Responses function-tool rewrite on all three wires (internal/app TestConfiguredKenariNativeWire)",
+	"codex":            "forced stream, store=false and the field allowlist rewrite the body (responses_forced_stream_test.go)",
+	"grok-cli":         "forced stream, store=false and the field allowlist rewrite the body (responses_forced_stream_test.go)",
 }
 
 type nativeWire struct {

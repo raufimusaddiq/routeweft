@@ -474,7 +474,7 @@ func (h *Handler) newUpstreamRequest(r *http.Request, snapshot *runtime.RuntimeS
 	// Registry quirks are provider normalization, step 8 of AGENTS §6: they run on
 	// what the savers and prompt-cache anchoring (steps 2-7) left, so nothing after
 	// them can put back a field a quirk removed.
-	body = wire.FinalizeBody(provider, body)
+	body = wire.FinalizeBodyAt(provider, target.Endpoint, body)
 	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, base.String(), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -488,6 +488,11 @@ func (h *Handler) newUpstreamRequest(r *http.Request, snapshot *runtime.RuntimeS
 		request.Header.Del(name)
 		for _, value := range values {
 			request.Header.Add(name, value)
+		}
+	}
+	for _, name := range wire.For(provider.ProviderID).ClientHeaders {
+		if value := r.Header.Get(name); value != "" {
+			request.Header.Set(name, value)
 		}
 	}
 	if provider.ProviderID == "api-airforce" && provider.Protocol == openaiadapter.ChatProtocol {

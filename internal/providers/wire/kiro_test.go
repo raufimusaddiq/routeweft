@@ -144,7 +144,7 @@ func TestKiroHeadersDoNotReachOtherProviders(t *testing.T) {
 				}
 			}
 		}
-		if For(id).FinalizeAccount != nil {
+		if For(id).FinalizeAccount != nil && id != "codex" {
 			t.Errorf("%s has an unexpected account finalizer", id)
 		}
 	}

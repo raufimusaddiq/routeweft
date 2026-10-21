@@ -18,7 +18,7 @@ func TestCodexBodyResetReachesDispatchCooldown(t *testing.T) {
 	body := fmt.Sprintf(`{"error":{"type":"usage_limit_reached","resets_at":%d,"resets_in_seconds":10}}`, reset.Unix())
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
-		if r.URL.Path != "/responses" || r.Header.Get("Authorization") != "Bearer synthetic" || !strings.Contains(string(raw), `"input":"ping"`) {
+		if r.URL.Path != "/responses" || r.Header.Get("Authorization") != "Bearer synthetic" || !strings.Contains(string(raw), `"text":"ping"`) {
 			t.Errorf("request: %s %v %s", r.URL, r.Header, raw)
 		}
 		w.Header().Set("Retry-After", "5")

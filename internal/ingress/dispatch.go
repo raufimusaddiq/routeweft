@@ -56,7 +56,8 @@ func (h *Handler) dispatchError(w http.ResponseWriter, r *http.Request, err erro
 // dispatchAttempts (native relay, usage capture, response translation) sees an
 // ordinary non-stream response. A response that is not an event stream (the
 // gateway answered JSON, or the client is streaming) is left alone. The fold
-// fails rather than drop a field that could carry text (FoldChatStream).
+// fails rather than drop a field that could carry text (FoldChatStream); a
+// Responses endpoint folds to its terminal response (FoldResponsesStream).
 func foldForcedStream(response *http.Response, provider routing.ProviderRef, stream bool) error {
 	if stream || !wire.ForcesStream(provider.ProviderID) {
 		return nil
@@ -65,7 +66,13 @@ func foldForcedStream(response *http.Response, provider routing.ProviderRef, str
 	if mediaType != "text/event-stream" {
 		return nil
 	}
-	folded, err := openaiadapter.FoldChatStream(response.Body, provider.UpstreamModel, time.Now)
+	var folded openaiadapter.Folded
+	var err error
+	if provider.Protocol == openaiadapter.ResponsesProtocol {
+		folded, err = openaiadapter.FoldResponsesStream(response.Body)
+	} else {
+		folded, err = openaiadapter.FoldChatStream(response.Body, provider.UpstreamModel, time.Now)
+	}
 	if err != nil {
 		var inband *openaiadapter.StreamError
 		if errors.As(err, &inband) {
