@@ -303,8 +303,9 @@ Divergences from the pin, each deliberate and tested:
    the client-header and assistant-text sources of the pin's session id are not ported.
 5. Grok CLI's turn index is the number of user turns in the input, the pin's first term,
    not a per-process monotonic counter; no agent id is derived from the host's machine id.
-6. `include` is replaced by `["reasoning.encrypted_content"]` for Codex when reasoning is on,
-   as the pin does (`:486-489`); Grok CLI merges (`grok-cli.js:496-502`).
+6. `include` gets `reasoning.encrypted_content` merged in for Codex when reasoning is on; the pin
+   replaces the client's list (`:486-489`), which silently drops entries such as
+   `file_search_call.results`. Grok CLI merges as the pin does (`grok-cli.js:496-502`).
 7. OpenAI is not forced (table above).
 
 Not changed, and why: `ingress.unwired` and `registry.notReady` are untouched because no

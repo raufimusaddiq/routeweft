@@ -144,8 +144,10 @@ func TestKiroHeadersDoNotReachOtherProviders(t *testing.T) {
 				}
 			}
 		}
-		if For(id).FinalizeAccount != nil && id != "codex" {
-			t.Errorf("%s has an unexpected account finalizer", id)
+		// Codex derives its prompt cache key from the connection; no other provider
+		// besides Kiro's own may finalize an account body.
+		if want := id == "codex"; (For(id).FinalizeAccount != nil) != want {
+			t.Errorf("%s: account finalizer present=%v, want %v", id, For(id).FinalizeAccount != nil, want)
 		}
 	}
 }

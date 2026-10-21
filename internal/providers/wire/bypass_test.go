@@ -136,7 +136,7 @@ func TestEveryUpstreamBaseComesFromTheWireSeam(t *testing.T) {
 var mustCallWire = map[string][]string{
 	"ingress/dispatch.go:dispatchAttempts":                 {"ResolveTarget"},
 	"ingress/ingress.go:newUpstreamRequest":                {"ResolveTarget", "FinalizeBodyAt"},
-	"control/api/providers.go:testProviderModel":           {"ResolveTarget", "FinalizeBody"},
+	"control/api/providers.go:testProviderModel":           {"ResolveTarget", "FinalizeBodyAt"},
 	"control/api/providers.go:fetchConnectionModelEntries": {"DiscoveryBase"},
 	"control/api/workflows.go:handleNodeRoutes":            {"ResolveTarget", "NodeBase"},
 	"runtime/providers.go:AccountProvider":                 {"NodeBase"},

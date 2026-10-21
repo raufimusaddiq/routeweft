@@ -146,3 +146,23 @@ func TestFoldResponsesStreamBoundsWhatItReads(t *testing.T) {
 		t.Fatal("an oversized stream was folded")
 	}
 }
+
+func TestFoldResponsesStreamWithNoOutputIsAValidResponseWithAnEmptyOutput(t *testing.T) {
+	for name, terminal := range map[string]string{
+		"omitted": `{"type":"response.completed","response":{"id":"r1","status":"completed"}}`,
+		"empty":   `{"type":"response.completed","response":{"id":"r1","status":"completed","output":[]}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			document, err := foldResponses(t, event("response.completed", terminal))
+			output, present := document["output"].([]any)
+			if err != nil || !present || len(output) != 0 || document["id"] != "r1" {
+				t.Fatalf("%v %v", document, err)
+			}
+			// A translated client turns it into an empty assistant message, not a 502.
+			folded, _ := FoldResponsesStream(strings.NewReader(event("response.completed", terminal)))
+			if _, err := ResponsesResponseToChat(folded.Body); err != nil {
+				t.Fatalf("the translator refused it: %v", err)
+			}
+		})
+	}
+}

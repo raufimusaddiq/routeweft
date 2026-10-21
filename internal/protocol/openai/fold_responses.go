@@ -116,6 +116,11 @@ func FoldResponsesStream(source io.Reader) (Folded, error) {
 	if terminal == nil {
 		return Folded{}, errors.New("stream ended before a terminal response event")
 	}
+	if !outputPresent(terminal["output"]) && len(items) == 0 {
+		// The terminal event's own answer is no output: say so, as a Responses
+		// object must, instead of leaving the key out.
+		terminal["output"] = json.RawMessage("[]")
+	}
 	if !outputPresent(terminal["output"]) && len(items) > 0 {
 		indexes := make([]int, 0, len(items))
 		for index := range items {

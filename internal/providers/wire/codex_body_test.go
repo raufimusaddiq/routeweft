@@ -429,3 +429,16 @@ func BenchmarkGrokCLIFinalizeBody(b *testing.B) {
 		FinalizeBody(provider, body)
 	}
 }
+
+func TestCodexIncludeKeepsTheClientsEntries(t *testing.T) {
+	for body, want := range map[string][]any{
+		`{"model":"gpt-5.3-codex","input":"x","include":["file_search_call.results"]}`:                               {"file_search_call.results", "reasoning.encrypted_content"},
+		`{"model":"gpt-5.3-codex","input":"x","include":["file_search_call.results","reasoning.encrypted_content"]}`: {"file_search_call.results", "reasoning.encrypted_content"},
+		`{"model":"gpt-5.3-codex","input":"x","include":[]}`:                                                         {"reasoning.encrypted_content"},
+		`{"model":"gpt-5.3-codex","input":"x"}`:                                                                      {"reasoning.encrypted_content"},
+	} {
+		if got := codexOut(t, body)["include"]; !reflect.DeepEqual(got, any(want)) {
+			t.Errorf("%s -> %v, want %v", body, got, want)
+		}
+	}
+}

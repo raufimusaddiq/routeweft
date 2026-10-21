@@ -345,7 +345,19 @@ func codexReasoning(body Body, suffix string) bool {
 		changed = true
 	}
 	if effort, ok := reasoning["effort"].(string); hasObject && ok && effort != "" && effort != "none" {
-		if body.set("include", []any{"reasoning.encrypted_content"}) {
+		// Merged, as Grok CLI's is: a client's own include entries stay.
+		include, _ := body.array("include")
+		if include == nil {
+			include = []any{}
+		}
+		present := false
+		for _, entry := range include {
+			present = present || entry == "reasoning.encrypted_content"
+		}
+		if !present {
+			include = append(include, "reasoning.encrypted_content")
+		}
+		if body.set("include", include) {
 			changed = true
 		}
 	}
