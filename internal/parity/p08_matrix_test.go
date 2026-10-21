@@ -270,6 +270,7 @@ func unavailableCell(spec registry.Spec) cell {
 		"minimax":           {kindP, ref("providers/usage:TestMiniMaxUsageEndpointsRegionsAndCountSemantics"), "a base_resp error is an error, not an empty quota"},
 		"minimax-cn":        {kindP, ref("providers/usage:TestMiniMaxUsageEndpointsRegionsAndCountSemantics"), "a base_resp error is an error, not an empty quota"},
 		"codex":             {kindP, ref("ingress:TestCodexBodyResetReachesDispatchCooldown", "providers/wire:TestPinnedErrorBodyResets", "providers/codex:TestUsageFailureIsUnavailableNotExhausted"), "usage_limit_reached cools until resets_at / resets_in_seconds (executors/codex.js:388-410), landed in P02"},
+		"grok-cli":          {kindP, ref("ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin", "providers/wire:TestGrokCLISpendingLimitFallsBackAndCoolsTheAccountForTwoMinutes"), "402 spending-limit cools the account for two minutes and falls back (executors/grok-cli.js:400-416, errorConfig.js:77), landed in #184"},
 		"cursor":            {kindC, ref("providers/wire:TestCursorDoReportsAFailureInBandNotAsSuccess", "providers/wire:TestCursorDoPassesUpstreamRejectionsThrough"), "the resource_exhausted in-band failure (cursor.js:365-374); provider unavailable for serving"},
 	}
 	if c, ok := quotaP[id]; ok {
@@ -278,7 +279,6 @@ func unavailableCell(spec registry.Spec) cell {
 	gaps := map[string]string{
 		"deepseek":   "pin: 402 Insufficient Balance cools the account for two minutes and falls back (errorConfig.js:77, accountFallback.js:35-46), and the balance endpoint reports is_available:false. Routeweft treats 402 as a terminal client error (no cooldown, no fallback) and reads a zero balance as unlimited",
 		"openrouter": "pin: 402 cools the account for two minutes and falls back (errorConfig.js:77). Routeweft treats 402 as a terminal client error",
-		"grok-cli":   "pin: 402 personal-team-blocked:spending-limit is surfaced for fallback (executors/grok-cli.js:400-416, errorConfig.js:77). Routeweft treats 402 as a terminal client error",
 		"groq":       "the quota reader returns an error for every key (see the quota column), so no exhausted-key state is ever observed",
 	}
 	if note, ok := gaps[id]; ok {
@@ -917,7 +917,7 @@ New deterministic tests (no network, sanitized synthetic bodies shaped like the 
 
 These are findings, not new work in this PR. Each is recorded in PARITY and stays open.
 
-1. **402 Payment Required is not an unavailability signal.** The pin cools the account for two minutes and falls back (` + "`errorConfig.js:77`" + `, ` + "`accountFallback.js:35-46`" + `). Routeweft classifies 402 as a terminal client error: no cooldown and no fallback, so an out-of-credit DeepSeek, OpenRouter or Grok CLI account keeps being tried and keeps failing. ` + "`TestOpenP08ErrorClassificationGaps`" + `.
+1. **402 Payment Required is not an unavailability signal.** The pin cools the account for two minutes and falls back (` + "`errorConfig.js:77`" + `, ` + "`accountFallback.js:35-46`" + `). Routeweft classifies 402 as a terminal client error: no cooldown and no fallback, so an out-of-credit DeepSeek or OpenRouter account keeps (Grok CLI closed it in #184) being tried and keeps failing. ` + "`TestOpenP08ErrorClassificationGaps`" + `.
 2. **Codex ` + "`usage_limit_reached`" + ` ignored ` + "`resets_at`" + ` when this audit began.** P02 (#177) closed it (` + "`wire/error_reset.go`" + `); the gap guard for it was removed and the Codex cell is now P.
 3. **Groq has no quota reader in effect.** The reader discards the ` + "`x-ratelimit-*`" + ` headers the pin reads (` + "`usage/groq.js:44-129`" + `) and always returns an error.
 4. **A zero DeepSeek balance reads as unlimited** (the reader's ` + "`window()`" + ` treats a total of 0 as unlimited), so the account is never seen as out of credit. P05 listed this as open; no test exists for it because the expected behaviour would fail.
