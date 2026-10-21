@@ -1866,6 +1866,14 @@ Broad-provider GA requires every active baseline provider to be `ready`.
 
 This metadata is a Routeweft release/build capability, not a mutable per-user setting.
 
+Implemented as `registry.Spec.Readiness` (status plus a reason for any non-ready
+value) and exposed as `readiness{status,served,reason}` on `GET /admin/v1/providers`.
+It is distinct from two other facts: `enabled` is an operator preference per
+connection, and a stored credential is account state. Readiness depends on neither:
+an unavailable provider can be enabled and credentialed, and requests to it fail
+honestly rather than being refused at enable time; a ready provider is ready with
+no account. A spec with no declared readiness reads `unknown`, never `ready`.
+
 ## 37. Requirements source-of-truth rule
 
 Before implementation, agents must treat:

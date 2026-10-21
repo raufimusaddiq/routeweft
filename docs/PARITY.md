@@ -841,7 +841,7 @@ The checklists in #75-#78 are normative follow-up scope for this inventory. Ever
 | P04 | Callable OAuth/device/exchange/import/auto-import/PAT/cookie, validated distinct identity, durable singleflight refresh with real callbacks | PRD 8; SPEC 19/35; Sprint 5.5 | #76 |
 | P05 | All v1-advertised limits/quota/reset clients; Codex credits and opt-in Claude/Codex auto-ping | PRD 8/13; SPEC 14/19 | #76 |
 | P06 | Kenari production fixes: endpoint/header/tool/system-role/live-list/quota contracts | PRD 6/21; #73 | #76 |
-| P07 | Immutable ready/experimental/unavailable metadata separate from enabled | PRD-PROV-004; SPEC 36; Sprint 5.4 | #76 |
+| P07 | Immutable ready/experimental/unavailable metadata separate from enabled. Resolved: `registry.Spec.Readiness` (`readiness.go`), surfaced as `readiness{status,served,reason}` on `/admin/v1/providers` and as its own tag in the Providers UI; 10 unavailable (the ingress unreachable set, tied by `internal/ingress/readiness_test.go`), 6 experimental, 65 ready. Open: `ready` means the build serves the provider, not that P02-P08 evidence exists (that stays PARTIAL per row); experimental/unavailable assignments are hand-declared in `notReady` and must move with each wire PR; no per-model or per-transport readiness. | PRD-PROV-004; SPEC 36; Sprint 5.4 | #76 |
 | P08 | Per-provider listing/auth/quota/S/N/error/token fixtures + actual app evidence; no catalog-only proof | PRD 6/20; SPEC 28/32; #73 | #76 |
 | U01 | Static Go asset delivery and Docker packaging resolved; internal/app/static_test.go. | PRD 14/19; SPEC 23/30; BDR-003 | #77 |
 | U02 | Restricted/unrestricted model/alias/Combo key editor resolved; serving adapter-pool enforcement remains R01/C02. | #73 endpoint-key scope; PRD 14/17 | #77 |

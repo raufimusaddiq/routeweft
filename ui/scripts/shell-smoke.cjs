@@ -220,7 +220,7 @@ const { join } = require('node:path');
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: createdKeyID, revoked: true, configRevision: 10 }) });
   }
   if (url.pathname === '/admin/v1/providers' && method === 'GET') {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'openai', transports: ['openai-chat','openai-responses'], auth: 'api-key', authModes: ['api-key'], defaultBaseURL: 'https://api.openai.com/v1', modelCatalog: 'static', passthroughModels: false, reportsUsage: false, configuredNodes: 1, enabledAccounts: 1 }, { id: 'openrouter', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, configuredNodes: 0, enabledAccounts: 0 }], page: 1, pageSize: 100, total: 2 }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'openai', transports: ['openai-chat','openai-responses'], auth: 'api-key', authModes: ['api-key'], defaultBaseURL: 'https://api.openai.com/v1', modelCatalog: 'static', passthroughModels: false, reportsUsage: false, configuredNodes: 1, enabledAccounts: 1, readiness: { status: 'ready', served: true } }, { id: 'openrouter', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'unavailable', served: false, reason: 'smoke fixture: wire not bound' } }], page: 1, pageSize: 100, total: 2 }) });
   }
   if (url.pathname === '/admin/v1/provider-nodes' && method === 'GET') {
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'node-openai', kind: 'builtin', providerId: 'openai', name: 'openai', baseUrl: 'https://api.openai.com/v1', transports: ['openai-chat','openai-responses'] }, { id: 'node-jev', kind: 'builtin', providerId: 'typesafe', name: 'typesafe', baseUrl: 'https://api.typesafe.ai/v1/systemone', transports: ['systemone'] }], page: 1, pageSize: 100, total: 2 }) });
@@ -477,6 +477,11 @@ const { join } = require('node:path');
   await page.locator('.provider-option', { hasText: 'openai' }).first().click();
   await page.waitForSelector('.connection-row');
   report.connectionRows = await page.locator('.connection-row').count();
+  // Readiness renders as its own tag, apart from the per-account Enabled/Disabled tag.
+  assert.equal((await page.locator('.provider-summary .readiness-tag').textContent()).trim(), 'Ready');
+  assert.equal(await page.locator('.provider-summary .readiness-note').count(), 0);
+  assert.match(await page.locator('.connection-row .state-tag').first().textContent(), /^(Enabled|Disabled)$/);
+  assert.equal(await page.locator('.connection-row .readiness-tag').count(), 0);
   report.providerDetail = await page.locator('.provider-summary h2').textContent();
   report.modelRows = await page.locator('.model-row').count();
   report.modelProbeGuidance = await page.locator('.model-test-form .count-label').textContent();
@@ -507,6 +512,7 @@ const { join } = require('node:path');
   assert.match(report.modelProbeGuidance, /10-minute batch limit/);
   await page.fill('#provider-filter', 'openrouter');
   report.filteredCards = await page.locator('.provider-option').count();
+  assert.match(await page.locator('.provider-option', { hasText: 'openrouter' }).first().textContent(), /unavailable/);
   report.providerPageSummaryFiltered = await page.locator('.providers-content').innerText().then(text => text.split('\n').filter(line => /providers carry traffic|carry \d+% of the month/.test(line)));
   await page.fill('#provider-filter', '');
   await page.click('.providers-content .provider-details .connection-row .button-secondary');
