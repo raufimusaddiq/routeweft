@@ -101,6 +101,10 @@ func TestOpenAIHeadersMatchLegacyForEveryProvider(t *testing.T) {
 			continue
 		}
 		for _, token := range tokens {
+			// opencode sends the public key when it holds none (TestOpenCodeSendsThePublicKey).
+			if id == "opencode" && token == "" {
+				continue
+			}
 			ref := routing.ProviderRef{ProviderID: id, APIToken: token}
 			if got, want := OpenAIHeaders(ref), legacyOpenAIProviderHeaders(ref); !reflect.DeepEqual(got, want) {
 				t.Errorf("%s token %q: openai headers\n got %v\nwant %v", id, token, got, want)

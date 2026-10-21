@@ -129,7 +129,7 @@ var hooks = map[string]Hook{
 	"clinepass":        clineHook,
 	"codebuddy-cn":     codebuddyCN,
 	"codebuddy-intl":   codebuddyIntl,
-	"opencode":         {Target: opencodeTarget, ForceStream: true, Finalize: codebuddyStream},
+	"opencode":         {Target: opencodeTarget, OpenAIHeaders: opencodeHeaders, ForceStream: true, Finalize: codebuddyStream},
 	"vertex-partner":   {Target: vertexPartnerTarget},
 	"cloudflare-ai":    {Target: cloudflareTarget},
 	"commandcode":      commandCodeHook,

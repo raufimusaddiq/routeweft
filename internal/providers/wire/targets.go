@@ -285,6 +285,23 @@ func opencodeTarget(provider routing.ProviderRef) (Target, error) {
 	return Target{Endpoint: "zen/v1/chat/completions"}, nil
 }
 
+// opencodeHeaders is the credential of OpenCode Zen. The provider has no
+// account: the pin sends the literal public key on every request
+// (executors/opencode.js:492) and on its own model listing and validation
+// (src/app/api/providers/[id]/test/testUtils.js:767), and its no-auth connection
+// carries accessToken "public" (src/sse/services/auth.js:94). Without it a
+// request to the gateway has no Authorization header at all. A connection that
+// does hold a token keeps it: the pin has no such connection, so there is
+// nothing to match, and replacing a credential the operator set would be a guess. The session, request and project headers
+// (:417-426) and the free-tier fingerprint tools (:455-464) are not carried
+// (PARITY 6.19).
+func opencodeHeaders(provider routing.ProviderRef) map[string]string {
+	if provider.APIToken != "" {
+		return nil
+	}
+	return map[string]string{"Authorization": "Bearer public"}
+}
+
 // vertexProject is a GCP project id as it appears in a path: a letter-led id, or
 // a domain-scoped one ("example.com:project"). It is a path segment, so it is
 // matched rather than spliced in raw.
