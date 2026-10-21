@@ -1,6 +1,8 @@
 package wire
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/url"
 	"reflect"
@@ -237,6 +239,9 @@ func TestParseCodexListing(t *testing.T) {
 func TestParseGoogleModelsListing(t *testing.T) {
 	checkListed(t, ShapeGoogleModels, `{"models":[{"id":"gemini-3-pro","displayName":"Gemini 3 Pro"},{"model":"m2"},{"name":"n3"},{}]}`,
 		[]listedWant{{"gemini-3-pro", "Gemini 3 Pro", 0, nil}, {"m2", "m2", 0, nil}, {"n3", "n3", 0, nil}})
+	// isInternal drops an entry in the array form of the payload as well.
+	checkListed(t, ShapeGoogleModels, `{"models":[{"name":"models/gemini-3-pro","isInternal":true},{"name":"public"}]}`,
+		[]listedWant{{"public", "public", 0, nil}})
 	checkListed(t, ShapeGoogleModels, `{"models":{"claude-opus-4-6":{"displayName":"Claude Opus"},"internal-x":{"isInternal":true},"plain":{}}}`,
 		[]listedWant{{"claude-opus-4-6", "Claude Opus", 0, nil}, {"plain", "plain", 0, nil}})
 	checkListed(t, ShapeGoogleModels, `{}`, []listedWant{})
@@ -271,12 +276,12 @@ func TestParseKiroListing(t *testing.T) {
 		{"modelId":"already-thinking-agentic"}
 	]}`, []listedWant{
 		// An upstream id that already looks synthetic is reduced to its base (kiroModels.js:44-53).
-		{"already", "Kiro already-thinking-agentic", 200000, nil},
-		{"already-agentic", "Kiro already-thinking-agentic (Agentic)", 200000, nil},
-		{"already-thinking", "Kiro already-thinking-agentic (Thinking)", 200000, []string{"reasoning"}},
-		{"already-thinking-agentic", "Kiro already-thinking-agentic (Thinking + Agentic)", 200000, []string{"reasoning"}},
-		{"auto", "Kiro Auto", 200000, nil},
-		{"auto-thinking", "Kiro Auto (Thinking)", 200000, []string{"reasoning"}},
+		{"already", "Kiro already-thinking-agentic", 0, nil},
+		{"already-agentic", "Kiro already-thinking-agentic (Agentic)", 0, nil},
+		{"already-thinking", "Kiro already-thinking-agentic (Thinking)", 0, []string{"reasoning"}},
+		{"already-thinking-agentic", "Kiro already-thinking-agentic (Thinking + Agentic)", 0, []string{"reasoning"}},
+		{"auto", "Kiro Auto", 0, nil},
+		{"auto-thinking", "Kiro Auto (Thinking)", 0, []string{"reasoning"}},
 		{"claude-sonnet-4.5", "Kiro Claude Sonnet 4.5 (1.3x credit)", 200000, nil},
 		{"claude-sonnet-4.5-agentic", "Kiro Claude Sonnet 4.5 (1.3x credit) (Agentic)", 200000, nil},
 		{"claude-sonnet-4.5-thinking", "Kiro Claude Sonnet 4.5 (1.3x credit) (Thinking)", 200000, []string{"reasoning"}},
@@ -302,7 +307,7 @@ func TestParseGrokCLIListing(t *testing.T) {
 		{"slug":"grok-slug"},
 		{"modelId":"grok-camel","displayName":"Camel"}
 	]}`, []listedWant{
-		{"grok-4.5", "grok-4.5", 256000, nil}, {"grok-build", "Grok Build", 500000, nil}, {"grok-camel", "Camel", 0, nil},
+		{"grok-4.5", "grok-4.5", 256000, nil}, {"grok-build", "Grok Build", 0, nil}, {"grok-camel", "Camel", 0, nil},
 		{"grok-plain", "grok-plain", 0, nil}, {"grok-slug", "grok-slug", 0, nil},
 	})
 	checkListed(t, ShapeGrokCLI, `{"models":{"keyed-model":{"name":"Keyed"},"other":{"id":"explicit-id"}}}`,
@@ -318,7 +323,7 @@ func TestParseQoderListing(t *testing.T) {
 		{"key":"vision","display_name":"Vision","is_vl":true}
 	]}`, []listedWant{
 		{"ultimate", "Ultimate", 200000, []string{"reasoning"}},
-		{"vision", "Vision", 131072, []string{"vision"}},
+		{"vision", "Vision", 0, []string{"vision"}},
 	})
 	if _, err := ParseListing(ShapeQoder, []byte(`{"models":[]}`)); err == nil {
 		t.Error("a qoder body with no chat catalog was accepted")
@@ -358,4 +363,24 @@ func TestParseListingRejectsMalformedBodiesAndShapes(t *testing.T) {
 	if _, err := ParseListing("nope", []byte(`{}`)); err == nil {
 		t.Error("unknown shape accepted")
 	}
+}
+
+// The header is a stable uuid per account, not a fresh one per call.
+func TestKiroListingInvocationIDIsDeterministic(t *testing.T) {
+	a := mustListing(t, listingRef("kiro", "tok", routing.ProviderSettings{}))
+	b := mustListing(t, listingRef("kiro", "tok", routing.ProviderSettings{}))
+	other := mustListing(t, listingRef("kiro", "tok2", routing.ProviderSettings{}))
+	sum := sha256.Sum256([]byte("tok"))
+	want := kiroInvocationID(hex.EncodeToString(sum[:]))
+	if a.Headers["amz-sdk-invocation-id"] != want || b.Headers["amz-sdk-invocation-id"] != want || other.Headers["amz-sdk-invocation-id"] == want {
+		t.Fatalf("invocation ids %q %q %q want %q", a.Headers["amz-sdk-invocation-id"], b.Headers["amz-sdk-invocation-id"], other.Headers["amz-sdk-invocation-id"], want)
+	}
+}
+
+// An unknown window is 0 (as in the seeds); a guess would drive combo budgets.
+func TestUnknownContextWindowsAreNotInvented(t *testing.T) {
+	checkListed(t, ShapeKiro, `{"models":[{"modelId":"m"}]}`, []listedWant{
+		{"m", "Kiro m", 0, nil}, {"m-agentic", "Kiro m (Agentic)", 0, nil},
+		{"m-thinking", "Kiro m (Thinking)", 0, []string{"reasoning"}}, {"m-thinking-agentic", "Kiro m (Thinking + Agentic)", 0, []string{"reasoning"}},
+	})
 }

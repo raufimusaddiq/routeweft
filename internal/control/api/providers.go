@@ -642,6 +642,11 @@ func (d discoveryRoundTripper) RoundTrip(request *http.Request) (*http.Response,
 func (h *Handler) handleDiscoverModels(w http.ResponseWriter, r *http.Request) {
 	entries, err := h.fetchModelEntries(r.Context(), r.PathValue("id"))
 	if err != nil {
+		var tracked *wire.ListingError
+		if errors.As(err, &tracked) && tracked.Unsupported {
+			writeError(w, http.StatusNotImplemented, "model_discovery_unsupported", err.Error())
+			return
+		}
 		writeError(w, http.StatusBadGateway, "model_discovery_failed", err.Error())
 		return
 	}

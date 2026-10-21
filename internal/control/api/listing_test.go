@@ -338,3 +338,50 @@ func TestAdminDiscoveryForwardsNoClientQueryAndFiltersNothingExtra(t *testing.T)
 		t.Fatalf("upstream saw %v, want exactly %v", seen, want)
 	}
 }
+
+// listing.go mirrors the credential kind by hand (an import cycle); a drift would
+// silently send Cline API keys through the OAuth workos: path.
+func TestListingAPIKeyKindMatchesCredentials(t *testing.T) {
+	ref := routing.ProviderRef{ProviderID: "clinepass", APIToken: "eyJa.eyJb.sig", Connection: routing.ConnectionMetadata{AuthKind: string(credentials.AuthAPIKey)}}
+	listing, _, err := wire.ListingFor(ref)
+	if err != nil || listing.Headers["Authorization"] != "Bearer eyJa.eyJb.sig" {
+		t.Fatalf("api-key connection took the OAuth path: %v %v", listing.Headers, err)
+	}
+}
+
+// A tracked, known-unsupported listing is not reported as a transient upstream failure.
+func TestTrackedListingGapIsDistinguishableFromUpstreamFailure(t *testing.T) {
+	var upstream int
+	client := &discovery.Client{HTTP: probeHTTPFunc(func(*http.Request) (*http.Response, error) {
+		upstream++
+		return &http.Response{StatusCode: 500, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	})}
+	h, mux, store, creds, cookie := newProvidersAPI(t, false, client)
+	defer store.Close()
+	h.opts.Providers = registry.Builtins()
+	for provider, want := range map[string]struct {
+		code int
+		err  string
+	}{"qoder": {501, "model_discovery_unsupported"}, "openai": {502, "model_discovery_failed"}} {
+		node, _ := builtinConnection(provider, routing.ProviderSettings{UserID: "u", MachineID: "m"}, credentials.AuthAPIKey)
+		stored, err := creds.PutNode(context.Background(), credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: provider, Name: provider, Transports: node.Transports})
+		if err != nil {
+			t.Fatal(err)
+		}
+		token := "tok"
+		if provider == "qoder" {
+			token = "pt-secret"
+		}
+		connection, err := creds.PutConnection(context.Background(), credentials.Connection{NodeID: stored.ID, Name: provider, Identity: provider, AuthKind: credentials.AuthAPIKey, Enabled: true, Secret: credentials.Secret{AccessToken: token}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := doJSON(t, mux, cookie, "POST", "/admin/v1/connections/"+connection.ID+"/discover", "")
+		if w.Code != want.code || !strings.Contains(w.Body.String(), want.err) || strings.Contains(w.Body.String(), "pt-secret") {
+			t.Fatalf("%s: %d %s", provider, w.Code, w.Body)
+		}
+	}
+	if upstream != 1 {
+		t.Fatalf("upstream calls %d: the tracked gap must send nothing", upstream)
+	}
+}

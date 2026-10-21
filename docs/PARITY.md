@@ -2199,7 +2199,7 @@ the only plain-bearer mismatch (`/models` against `/v1/models`); the rest agree.
 |---|---|---|---|
 | `perplexity` | route.js:247 | listed at `/v1/models`; serving base has no `/v1` (`perplexity-agent` already does) | TESTED `TestPerplexityListsUnderV1` |
 | `codex` | route.js:19-24,54-73,149-164 | `?client_version=` gate (an old one returns 200 with newer models missing), `slug`-keyed `models[]`, a `-review` twin per chat model. Routeweft sends its own `codexprovider.CLIVersion` (0.154.0), not the pin's 0.144.6; the gate only widens | TESTED `TestCodexListingSendsTheGateAndReadsSlugs`, `TestCodexListingVersionIsNotOlderThanThePins` |
-| `gemini-cli` | route.js:17,31-52,440-460 | POST `v1internal:fetchAvailableModels` with `{project}`, Google client headers, `models` as array or id-keyed object without `isInternal` | TESTED `TestGoogleInternalListingsArePosts` |
+| `gemini-cli` | route.js:17,31-52,440-460 | POST `v1internal:fetchAvailableModels` with `{project}`, Google client headers, `models` as array or id-keyed object; `isInternal` entries dropped in both forms (the pin filters only the keyed form, route.js:42-49) | TESTED `TestGoogleInternalListingsArePosts` |
 | `antigravity` | route.js:165-173 | POST `{}` to the sandbox host `v1internal:models`. The pin returns `data.models` untouched, so its shape is not proven by the pin; both the array and the id-keyed forms are read | TESTED `TestGoogleInternalListingsArePosts` (fixture shape, not a live response) |
 | `github` | route.js:174-200; copilotModels.js:17,71 | only `capabilities.type == chat` and not `policy.state == disabled`; embeddings were being stored as models | TESTED `TestGitHubListingDropsEmbeddingsAndDisabledModels` |
 | `kimchi` | kimchiModels.js:22-24,49-90,106-135 | `https://llm.kimchi.dev/v1/models/metadata?include_in_cli=true` (a server-side filter), `models[]` with `slug`, limits, modalities | TESTED `TestKimchiListingUsesTheMetadataCatalogWithItsFilter` |
@@ -2237,6 +2237,11 @@ moderation models is stored with all three). There is no client query to
 preserve for this route, and forwarding one would let a request choose the
 upstream's server-side filter or smuggle a parameter to a credentialed host.
 
+Unknown context windows stay 0, as in the seeds. The pin supplies 200000 (Kiro),
+131072 (Qoder) and 500000 (`grok-build`) defaults (kiroModels.js:295,
+qoderModels.js:~258, grokCliModels.js:~43); Routeweft does not, because the stored
+window drives combo context budgets and a guess inflates one.
+
 ### Open (tracked, not hidden)
 
 Nothing is excluded from a provider list because its listing is unimplemented; a
@@ -2247,7 +2252,7 @@ deletes it, `ReplaceDiscoveredModels`).
 | Item | Pin | State | Status |
 |---|---|---|---|
 | `zed` listing | route.js:293-326; zedAuth.js:258-302,362-404 | the pin fetches an LLM token (`fetchZedLlmToken`, a `/client/llm_tokens` exchange) and lists `/models` with it; Routeweft sends the shared bearer with the account token to `cloud.zed.dev/models` | MISSING R11: product decision: the Zed LLM-token exchange is not implemented; it is tracked under #76 and the provider stays selectable with its manual and seeded models. |
-| `qoder` personal access token | qoderModels.js:130-145,147-166 | a `pt-` key needs the job-token exchange; the listing says so and sends nothing rather than send a token the gateway does not accept | PARTIAL R11: product decision: the PAT-to-job-token exchange is not implemented and is tracked under #76; device tokens (`dt-`) and job tokens (`jt-`) list. |
+| `qoder` personal access token | qoderModels.js:130-145,147-166 | a `pt-` key needs the job-token exchange; the listing says so (discover answers 501 `model_discovery_unsupported`, not 502) and sends nothing rather than send a token the gateway does not accept | PARTIAL R11: product decision: the PAT-to-job-token exchange is not implemented and is tracked under #76; device tokens (`dt-`) and job tokens (`jt-`) list. |
 | refresh and retry on 401/403 | route.js:93-128; kiroModels.js:250-285; grokCliModels.js:94-110; copilotModels.js:117-141 | the pin refreshes the token and retries the listing once; Routeweft lists with the credential the registry returns and reports a 401 as a failed discovery | PARTIAL R11: product decision: in-listing refresh-and-retry is not implemented; a connection whose token expired between refreshes reports model_discovery_failed until the next refresh. |
 | `gemini` API key and paging | route.js:142-148,625-627 | the pin sends the key as `?key=`; Routeweft sends `x-goog-api-key` (same effect, the key stays out of URLs and logs). Neither follows `nextPageToken`, so only the first page is listed | PARTIAL R11: product decision: Gemini paging is not followed, as in the pin; following it would list more than the pin and is left to a decision. |
 | `kimchi` endpoint setting | kimchiModels.js:17-24,144 | the pin honours `providerSpecificData.kimchiEndpoint`; `ProviderSettings` has no such field, so the default host is listed | PARTIAL R11: product decision: the kimchiEndpoint connection setting is not modelled; the default llm.kimchi.dev host is listed. |

@@ -199,6 +199,11 @@ func parseGoogleModels(body []byte) ([]ListedModel, error) {
 	switch typed := root["models"].(type) {
 	case []any:
 		for _, entry := range objects(typed) {
+			// The pin filters isInternal only on the keyed form (route.js:42-49); an
+			// entry flagged internal is not offered in either form of one payload.
+			if internal, _ := entry["isInternal"].(bool); internal {
+				continue
+			}
 			id := text(entry, "id", "model", "name")
 			if id == "" {
 				continue
@@ -308,10 +313,9 @@ func parseKiro(body []byte) ([]ListedModel, error) {
 		if upstream == "" {
 			continue
 		}
+		// An unknown window stays 0, as in the seeds: a guessed one would drive
+		// combo context budgets.
 		window := number(child(entry, "tokenLimits"), "maxInputTokens")
-		if window == 0 {
-			window = 200_000
-		}
 		base := strings.TrimSuffix(strings.TrimSuffix(upstream, "-agentic"), "-thinking")
 		display := kiroDisplayName(text(entry, "modelName"), upstream, entry["rateMultiplier"])
 		models = append(models,
@@ -428,9 +432,6 @@ func parseGrokCLI(body []byte) ([]ListedModel, error) {
 			id = text(item, "name")
 		}
 		window := number(item, "context_length", "contextLength", "context_window", "contextWindow")
-		if id == "grok-build" && window == 0 {
-			window = 500_000
-		}
 		models = append(models, ListedModel{ID: id, Name: text(item, "display_name", "displayName", "name"), ContextWindow: window})
 	}
 	return models, nil
@@ -458,11 +459,7 @@ func parseQoder(body []byte) ([]ListedModel, error) {
 		if key == "" {
 			continue
 		}
-		window := number(entry, "max_input_tokens")
-		if window == 0 {
-			window = 131_072
-		}
-		model := ListedModel{ID: key, Name: text(entry, "display_name"), ContextWindow: window}
+		model := ListedModel{ID: key, Name: text(entry, "display_name"), ContextWindow: number(entry, "max_input_tokens")}
 		if vision, _ := entry["is_vl"].(bool); vision {
 			model.Capabilities = append(model.Capabilities, "vision")
 		}

@@ -55,7 +55,11 @@ type Listing struct {
 
 // ListingError is a provider listing Routeweft refuses to make, with the reason.
 // It is a tracked gap or a bad setting, never a hidden provider.
-type ListingError struct{ Err error }
+type ListingError struct {
+	Err error
+	// Unsupported marks a tracked gap (not a bad setting or an upstream failure).
+	Unsupported bool
+}
 
 func (e *ListingError) Error() string { return e.Err.Error() }
 func (e *ListingError) Unwrap() error { return e.Err }
@@ -180,7 +184,7 @@ func kiroListing(provider routing.ProviderRef) (Listing, error) {
 			"x-amzn-kiro-agent-mode":      "vibe",
 			"x-amzn-codewhisperer-optout": "true",
 			"amz-sdk-request":             "attempt=1; max=1",
-			"amz-sdk-invocation-id":       uuid.NewString(),
+			"amz-sdk-invocation-id":       kiroInvocationID(machine),
 		},
 		Shape: ShapeKiro,
 	}, nil
@@ -246,7 +250,7 @@ const (
 func qoderListing(provider routing.ProviderRef) (Listing, error) {
 	token := strings.TrimSpace(provider.APIToken)
 	if strings.HasPrefix(token, "pt-") {
-		return Listing{}, listingError("qoder personal access tokens need the job-token exchange before listing, which is not implemented")
+		return Listing{}, &ListingError{Err: errors.New("qoder personal access tokens need the job-token exchange before listing, which is not implemented"), Unsupported: true}
 	}
 	listing := Listing{URL: qoderModelListURL, OwnAuth: true, Signed: true, Shape: ShapeQoder,
 		Headers: map[string]string{"Accept": "application/json", "Accept-Encoding": "identity"}}
@@ -306,4 +310,10 @@ func ListingURL(validate func(string) (*url.URL, error), base, absolute, path, q
 	}
 	target.RawPath, target.RawQuery, target.Fragment = "", query, ""
 	return target.String(), nil
+}
+
+// kiroInvocationID is a stable id per account (the reference uses a fresh uuid per
+// call; the header only has to be a uuid), so a listing is reproducible.
+func kiroInvocationID(machine string) string {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("kiro-listing:"+machine)).String()
 }
