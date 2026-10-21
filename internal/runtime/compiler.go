@@ -179,19 +179,21 @@ func (c Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, erro
 		return nil, err
 	}
 	snapshot := &RuntimeSnapshot{
-		savers:         transformbody.Compile(settings, c.PXPIPEObserver),
-		providerConfig: config.Providers.Clone(),
-		providers:      providers,
-		version:        version,
-		configRevision: config.Revision,
-		settings:       settings,
-		keys:           auth.NewKeyIndex(config.APIKeys),
-		models:         models,
-		aliases:        aliases,
-		disabledModels: disabled,
-		combos:         combos,
-		poolBindings:   cloneStringMap(config.PoolBindings),
-		poolPools:      compileProxyPools(config.ProxyPools),
+		savers:           transformbody.Compile(settings, c.PXPIPEObserver),
+		telemetryOptions: telemetryOptions(settings),
+		detailSizeLimit:  observabilityMaxJSONSize(settings),
+		providerConfig:   config.Providers.Clone(),
+		providers:        providers,
+		version:          version,
+		configRevision:   config.Revision,
+		settings:         settings,
+		keys:             auth.NewKeyIndex(config.APIKeys),
+		models:           models,
+		aliases:          aliases,
+		disabledModels:   disabled,
+		combos:           combos,
+		poolBindings:     cloneStringMap(config.PoolBindings),
+		poolPools:        compileProxyPools(config.ProxyPools),
 	}
 	snapshot.proxyEnabled, _ = strconv.ParseBool(strings.TrimSpace(settings["outboundProxyEnabled"]))
 	snapshot.proxyURL = strings.TrimSpace(settings["outboundProxyUrl"])

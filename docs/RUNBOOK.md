@@ -766,3 +766,41 @@ to it or replace the settings with defaults.
 Do not clear `secret_blob`, disable authentication checks, or hand-edit encrypted
 payloads to force startup. A successful startup must compile the configured
 provider settings, including endpoint and account identity fields.
+
+## 27. Applying settings while serving
+
+Successful settings mutations validate and compile before commit, then publish
+one immutable snapshot. No separate reload command is needed.
+
+- Token savers use the snapshot captured by each new request. Requests already
+  running keep their transform settings through retries. Prompt-cache anchoring
+  remains enabled for Messages even when the client bypasses token savers.
+- Global outbound proxy enable/URL/no-proxy changes apply at the next inference
+  client selection. Disabling the global proxy preserves the saved URL but stops using it. Explicitly bound pools remain independent. Existing upstream requests keep their transport. Helper,
+  quota and OAuth clients do not inherit these settings.
+- Observability enable/disable applies when a record is accepted. Disabling
+  stops new Usage/detail records; it does not erase stored records or discard
+  already queued events. The background worker stays available for re-enabling.
+  Live completion metadata and console logs continue independently of this
+  persistence setting.
+- `observabilityMaxRecords` bounds new queue admission, not durable row count.
+  Shrinking preserves accepted events; admission resumes when the queue drains
+  below the new bound. Details retain the fixed seven-day pruning policy.
+- Batch size applies on the next worker wake. Full batches flush immediately;
+  partial batches wait for the interval. A changed flush interval resets the
+  timer on the next accepted event; queued events without another event can
+  still wait for the previous interval. Shutdown drains accepted events.
+- `observabilityMaxJsonSize` is bytes for the entire detail document and applies
+  on the next detail write, including queued details. Oversized documents keep
+  attribution with an omission marker. Normal inference diagnostic capture is
+  still incomplete (R10); changing the cap cannot create missing diagnostics.
+
+`quotaVisibility`, `providerCompatibility`, `dnsToolEnabled`, and
+`pxpipeAutoInstall` are explicitly storage-only. No restart activates them.
+Named-window visibility, a compatibility flag dispatcher, DNS tools, and managed
+helper installation respectively are not implemented. `claudeAutoPing` and
+`codexAutoPing` are absent and rejected; periodic quota refresh does not warm
+reset windows. There is no writable cache or sampling toggle.
+See [the setting audit](DYNAMIC_SETTINGS.md) and PARITY section 5.5 for evidence
+and follow-up ownership. No accepted dynamic setting in these areas requires a
+process restart.

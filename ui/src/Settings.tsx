@@ -232,13 +232,13 @@ export function Settings({ onUnauthorized }: Props) {
       </section>
 
       <section className="detail-panel" aria-labelledby="settings-observability-title">
-        <div className="section-heading"><div><h2 id="settings-observability-title">Observability</h2><p>Bounded request accounting and detail retention limits.</p></div></div>
-        <Toggle setting="enableObservability" label="Enable observability" description="Store request Usage and bounded request details." />
-        <NumberField setting="observabilityMaxRecords" label="Maximum retained records" fallback="1000" />
+        <div className="section-heading"><div><h2 id="settings-observability-title">Observability</h2><p>Bounded request accounting and diagnostic size limits.</p></div></div>
+        <Toggle setting="enableObservability" label="Enable observability" description="Record request Usage and available diagnostics." />
+        <NumberField setting="observabilityMaxRecords" label="Maximum queued records" fallback="1000" />
         <NumberField setting="observabilityBatchSize" label="Write batch size" fallback="20" />
         <NumberField setting="observabilityFlushIntervalMs" label="Flush interval (ms)" fallback="5000" />
         <NumberField setting="observabilityMaxJsonSize" label="Maximum detail JSON bytes" fallback="5242880" />
-        <p className="count-label settings-note">The telemetry worker and detail-store limits are initialized at startup; restart Routeweft after changing these values.</p>
+        <p className="count-label settings-note">Changes apply while serving. Queue and recording limits apply to new records; the flush timer updates on the next accepted record. Stored details retain a seven-day limit.</p>
       </section>
 
       <section className="detail-panel" aria-labelledby="settings-proxy-title">

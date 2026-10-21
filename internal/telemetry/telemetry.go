@@ -92,6 +92,8 @@ type Service struct {
 	sink     Sink
 	details  DetailSink
 	opts     Options
+	// OptionsSource reads immutable compiled options; set it before Run or Record.
+	OptionsSource func() Options
 
 	lost     atomic.Uint64
 	written  atomic.Uint64
@@ -133,8 +135,11 @@ func (s *Service) WithDetails(details DetailSink) *Service {
 // RecordDetail enqueues one redacted request detail as a diagnostic event. It is
 // shed first under pressure like any other diagnostic (SPEC §21).
 func (s *Service) RecordDetail(detail Detail) {
-	if !s.opts.Enabled || s.closed.Load() || s.details == nil {
+	if !s.Enabled() || s.closed.Load() || s.details == nil {
 		return
+	}
+	if detail.CreatedAt.IsZero() {
+		detail.CreatedAt = time.Now().UTC()
 	}
 	s.Record(Event{Class: Diagnostic, RequestID: detail.RequestID, CreatedAt: detail.CreatedAt, detail: &detail})
 }
@@ -145,8 +150,11 @@ func (s *Service) RecordDetail(detail Detail) {
 // lost (and the loss is visible via Lost). Diagnostic events shed first and are
 // never counted as lost accounting.
 func (s *Service) Record(event Event) {
-	if !s.opts.Enabled || s.closed.Load() {
+	if !s.Enabled() || s.closed.Load() {
 		return
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
 	}
 	if s.enqueue(event) {
 		return
@@ -155,7 +163,7 @@ func (s *Service) Record(event Event) {
 		return
 	}
 	// Critical backpressure: wait briefly for the batcher to free room.
-	timer := time.NewTimer(s.opts.EnqueueTimeout)
+	timer := time.NewTimer(s.options().EnqueueTimeout)
 	defer timer.Stop()
 	select {
 	case <-timer.C:
@@ -178,7 +186,7 @@ func (s *Service) Record(event Event) {
 func (s *Service) enqueue(event Event) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed.Load() || len(s.queue) >= cap(s.queue) {
+	if s.closed.Load() || len(s.queue) >= s.options().MaxRecords {
 		return false
 	}
 	s.queue = append(s.queue, event)
@@ -233,18 +241,19 @@ func (s *Service) depth() int {
 // It flushes every remaining event before returning, and signals done so the
 // caller can join it before closing the store (SPEC §21, BND-013 shutdown).
 func (s *Service) Run(ctx context.Context) {
-	if !s.opts.Enabled {
+	if s.OptionsSource == nil && !s.Enabled() {
 		close(s.closedCh)
 		return
 	}
 	defer close(s.closedCh)
-	ticker := time.NewTicker(s.opts.FlushInterval)
+	interval := s.options().FlushInterval
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	// drainAll flushes every queued event in BatchSize chunks; used on explicit
 	// flush requests and on shutdown so nothing observed is left unwritten.
 	drainAll := func() {
 		for {
-			batch := s.takeBatch(s.opts.BatchSize)
+			batch := s.takeBatch(s.options().BatchSize)
 			if len(batch) == 0 {
 				return
 			}
@@ -260,13 +269,19 @@ func (s *Service) Run(ctx context.Context) {
 			drainAll()
 			close(done)
 		case <-s.signal:
-			batch := s.takeBatch(s.opts.BatchSize)
-			s.flush(batch)
-			if s.depth() > 0 {
-				s.notify()
+			opts := s.options()
+			if opts.FlushInterval != interval {
+				interval = opts.FlushInterval
+				ticker.Reset(interval)
+			}
+			if s.depth() >= opts.BatchSize {
+				s.flush(s.takeBatch(opts.BatchSize))
+				if s.depth() >= opts.BatchSize {
+					s.notify()
+				}
 			}
 		case <-ticker.C:
-			s.flush(s.takeBatch(s.opts.BatchSize))
+			s.flush(s.takeBatch(s.options().BatchSize))
 		}
 	}
 }
@@ -317,7 +332,7 @@ func (s *Service) flush(events []Event) {
 // batcher has written them or ctx expires. It is used for emergency/direct flush
 // and by tests.
 func (s *Service) FlushNow(ctx context.Context) error {
-	if !s.opts.Enabled || s.closed.Load() {
+	if (s.OptionsSource == nil && !s.Enabled()) || s.closed.Load() {
 		return nil
 	}
 	done := make(chan struct{})
@@ -349,7 +364,7 @@ func (s *Service) Close() {
 // Wait blocks until Run has returned (including its final flush). It returns
 // immediately if the service is disabled or Run was never started.
 func (s *Service) Wait() {
-	if !s.opts.Enabled {
+	if s.OptionsSource == nil && !s.Enabled() {
 		return
 	}
 	<-s.closedCh
@@ -358,7 +373,7 @@ func (s *Service) Wait() {
 // Health reports nil while healthy, or ErrDegraded after a persistent storage
 // failure (SPEC §21 point 4).
 func (s *Service) Health() error {
-	if !s.opts.Enabled {
+	if !s.Enabled() {
 		return nil
 	}
 	if s.degraded.Load() {
@@ -380,4 +395,11 @@ func (s *Service) Written() uint64 { return s.written.Load() }
 func (s *Service) LostDiagnostics() uint64 { return s.lostDiagnostics.Load() }
 
 // Enabled reports whether the service performs any work.
-func (s *Service) Enabled() bool { return s.opts.Enabled }
+func (s *Service) Enabled() bool { return s.options().Enabled }
+
+func (s *Service) options() Options {
+	if s.OptionsSource != nil {
+		return s.OptionsSource()
+	}
+	return s.opts
+}

@@ -93,3 +93,31 @@ func TestCompiledNoProxy(t *testing.T) {
 		}
 	}
 }
+
+func TestBinderUsesChangedProxySettings(t *testing.T) {
+	snapshot := testSnapshot(t, nil, nil, nil)
+	binder := NewBinder(func() *runtime.RuntimeSnapshot { return snapshot })
+	binder.AllowLocal = true
+	ctx := context.Background()
+	if binder.ClientFor(ctx, "") != nil {
+		t.Fatal("proxy enabled without setting")
+	}
+	snapshot = testSnapshot(t, map[string]string{"outboundProxyEnabled": "true", "outboundProxyUrl": "http://127.0.0.1:3128"}, nil, nil)
+	first := binder.ClientFor(ctx, "")
+	if first == nil {
+		t.Fatal("live enable ignored")
+	}
+	snapshot = testSnapshot(t, map[string]string{"outboundProxyEnabled": "true", "outboundProxyUrl": "http://127.0.0.1:3128", "noProxy": `["example.com"]`}, nil, nil)
+	second := binder.ClientFor(ctx, "")
+	if second == nil || second == first {
+		t.Fatal("live no-proxy change ignored")
+	}
+	snapshot = testSnapshot(t, map[string]string{"outboundProxyEnabled": "true", "outboundProxyUrl": "http://127.0.0.1:3129", "noProxy": `["example.com"]`}, nil, nil)
+	if third := binder.ClientFor(ctx, ""); third == nil || third == second {
+		t.Fatal("live URL change ignored")
+	}
+	snapshot = testSnapshot(t, map[string]string{"outboundProxyEnabled": "false", "outboundProxyUrl": "http://127.0.0.1:3129"}, nil, nil)
+	if binder.ClientFor(ctx, "") != nil {
+		t.Fatal("live disable ignored")
+	}
+}

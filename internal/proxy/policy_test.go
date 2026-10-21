@@ -83,3 +83,15 @@ func TestSelectMemberStrategies(t *testing.T) {
 		t.Fatal("disabled-only pool selected a member")
 	}
 }
+
+func TestDisabledGlobalURLDoesNotEnableProxy(t *testing.T) {
+	resolver := Resolver{Global: GlobalConfig{Enabled: false, ProxyURL: "http://saved.example:3128"}}
+	selected, err := resolver.Policy(Binding{}).ProxyForHost("api.example")
+	if err != nil || selected != nil {
+		t.Fatalf("disabled global proxy selected=%v err=%v", selected, err)
+	}
+	selected, err = resolver.Policy(Binding{MemberURL: "http://bound.example:3128"}).ProxyForHost("api.example")
+	if err != nil || selected == nil || selected.Host != "bound.example:3128" {
+		t.Fatalf("independent bound pool selected=%v err=%v", selected, err)
+	}
+}
