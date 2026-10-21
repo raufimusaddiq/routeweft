@@ -816,8 +816,8 @@ func TestResolvesIdentityFlowsReturnOne(t *testing.T) {
 	cases := map[string]Params{
 		"iflow": {Input: "BXAuth=fixture"},
 		"cursor": {
-			Input: fixtureJWT(t, `{"email":"resolved@example.invalid"}`),
-			Meta:  map[string]string{"machineId": "fixture-machine"},
+			Input: fixtureJWT(t, `{"email":"resolved@example.invalid","sub":"user-1","pad":"0123456789012345678901234567890123456789"}`),
+			Meta:  map[string]string{"machineId": "0123abcd-0123-4abc-8def-0123456789ab"},
 		},
 		"gitlab": {Input: "fixture-pat", Meta: map[string]string{"baseUrl": "https://gitlab.example.invalid"}},
 	}

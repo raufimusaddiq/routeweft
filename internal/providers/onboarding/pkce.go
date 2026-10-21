@@ -279,17 +279,26 @@ func codexBulkAccount(item map[string]any) (BulkAccount, error) {
 	if given := bulkString(item, "email"); given != "" {
 		identity = given
 	}
+	// An exported providerSpecificData wins; the JWT only backfills what is missing
+	// (bulk-import/route.js:77-95).
 	providerData := map[string]string{}
 	for key, value := range claims {
 		providerData[key] = value
 	}
-	expiry := time.Now().Add(time.Duration(bulkInt(item, "expiresIn", "expires_in")) * time.Second)
+	if given, ok := item["providerSpecificData"].(map[string]any); ok {
+		for key, value := range given {
+			if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
+				providerData[key] = strings.TrimSpace(text)
+			}
+		}
+	}
 	return BulkAccount{
 		Name:     bulkString(item, "displayName", "name"),
 		Identity: identity,
 		AuthKind: credentials.AuthOAuth,
 		Secret: credentials.Secret{
-			AccessToken: access, RefreshToken: refresh, Expiry: expiry, ProviderData: providerData,
+			AccessToken: access, RefreshToken: refresh, IDToken: idToken,
+			Expiry: bulkExpiry(item, time.Now()), ProviderData: providerData,
 		},
 	}, nil
 }
@@ -318,15 +327,39 @@ func grokBulkAccount(item map[string]any) (BulkAccount, error) {
 	if identity != "" {
 		providerData["email"] = identity
 	}
-	expiry := time.Now().Add(time.Duration(bulkInt(item, "expiresIn", "expires_in")) * time.Second)
+	if given, ok := item["providerSpecificData"].(map[string]any); ok {
+		for key, value := range given {
+			if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
+				providerData[key] = strings.TrimSpace(text)
+			}
+		}
+	}
 	return BulkAccount{
 		Name:     bulkString(item, "displayName", "name"),
 		Identity: identity,
 		AuthKind: credentials.AuthOAuth,
 		Secret: credentials.Secret{
-			AccessToken: access, RefreshToken: refresh, Expiry: expiry, ProviderData: providerData,
+			AccessToken: access, RefreshToken: refresh, IDToken: idToken,
+			Expiry: bulkExpiry(item, time.Now()), ProviderData: providerData,
 		},
 	}, nil
+}
+
+// bulkExpiry reads an exported credential's expiry: an absolute timestamp, then a
+// lifetime in seconds. An export that carries neither has an unknown expiry, left
+// zero, which the registry reads as "no proactive refresh". The old code computed
+// now+0 for it, marking a freshly imported token as already expired and sending a
+// refresh-token-less account straight to a refresh that could not succeed.
+func bulkExpiry(item map[string]any, now time.Time) time.Time {
+	if at := bulkString(item, "expiresAt", "expires_at"); at != "" {
+		if parsed, err := time.Parse(time.RFC3339, at); err == nil {
+			return parsed
+		}
+	}
+	if seconds := bulkInt(item, "expiresIn", "expires_in"); seconds > 0 {
+		return now.Add(time.Duration(seconds) * time.Second)
+	}
+	return time.Time{}
 }
 
 // bulkString reads the first non-empty string among the accepted key spellings.

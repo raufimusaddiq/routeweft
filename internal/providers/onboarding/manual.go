@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -227,24 +228,29 @@ func iflowCookieFlow() Flow {
 			if identity == "" {
 				identity = listing.Data.Name
 			}
+			providerData := map[string]string{"apiKey": refreshed.Data.APIKey}
+			// The pin keeps the key's expireTime beside the cookie (:115-118), so
+			// the operator can see when the key it minted lapses.
+			if expire := strings.Trim(strings.TrimSpace(string(refreshed.Data.ExpireTime)), `"`); expire != "" && expire != "null" {
+				providerData["expireTime"] = expire
+			}
 			return Result{
 				AuthKind: credentials.AuthCookie,
 				Identity: identity,
 				Secret: credentials.Secret{
-					AccessToken: refreshed.Data.APIKey,
-					Cookie:      authCookie,
-					ProviderData: map[string]string{
-						"apiKey": refreshed.Data.APIKey,
-					},
+					AccessToken:  refreshed.Data.APIKey,
+					Cookie:       authCookie,
+					ProviderData: providerData,
 				},
 			}, nil
 		},
 	}
 }
 
-// kiroAPIKeyFlow mirrors src/app/api/oauth/kiro/api-key/route.js: a long-lived
-// bearer key, validated against the Amazon Q surface and stored with authMethod
-// api_key so the quota reader sends the API-key header.
+// kiroAPIKeyFlow is Kiro's manual-credential flow. It covers the reference's three
+// import routes (kiro/api-key, kiro/import, kiro/import-cli-proxy); kiroImport
+// chooses among them from the pasted input. A bare string is an API key, stored
+// with authMethod api_key so the quota reader sends the API-key header.
 func kiroAPIKeyFlow() Flow {
 	return Flow{
 		Provider:   "kiro",
@@ -252,48 +258,61 @@ func kiroAPIKeyFlow() Flow {
 		MetaKeys:   []string{"region"},
 		Type:       FlowManualToken,
 		Completion: CompletionToken,
-		Import: func(ctx context.Context, p Params) (Result, error) {
-			apiKey := strings.TrimSpace(p.Input)
-			if apiKey == "" {
-				return Result{}, fmt.Errorf("kiro API key is required")
-			}
-			region := metaOr(p, "region", "us-east-1")
-			if !awsRegionPattern.MatchString(region) {
-				return Result{}, fmt.Errorf("kiro region is invalid")
-			}
-			var catalog json.RawMessage
-			if err := postJSONTargetWithHeadersAuth(ctx, p.Client,
-				fmt.Sprintf("https://q.%s.amazonaws.com/listAvailableModels", region),
-				apiKey, `{"origin":"AI_EDITOR"}`, &catalog); err != nil {
-				return Result{}, fmt.Errorf("kiro API key validation failed")
-			}
-			identity := ""
-			if claims := jwtClaims(apiKey); claims != nil {
-				if value, ok := claims["email"].(string); ok {
-					identity = value
-				}
-			}
-			return Result{
-				AuthKind: credentials.AuthAPIKey,
-				Identity: identity,
-				Secret: credentials.Secret{
-					AccessToken: apiKey,
-					// An API key never refreshes on a schedule; a long horizon keeps
-					// the proactive refresh path from attempting one.
-					Expiry: p.now().Add(365 * 24 * time.Hour),
-					ProviderData: map[string]string{
-						"region":     region,
-						"authMethod": "api_key",
-					},
-				},
-			}, nil
-		},
+		Import:     kiroImport,
 	}
+}
+
+// kiroAPIKeyImport mirrors src/app/api/oauth/kiro/api-key/route.js and
+// KiroService.validateApiKey (services/kiro.js:299-350): the key is proven against
+// the Amazon Q model catalog, because a bearer-only profile call answers 200 with an
+// empty list for an arbitrary key and so proves nothing about inference.
+func kiroAPIKeyImport(ctx context.Context, p Params) (Result, error) {
+	apiKey := strings.TrimSpace(p.Input)
+	if apiKey == "" {
+		return Result{}, fmt.Errorf("kiro API key is required")
+	}
+	region := metaOr(p, "region", "us-east-1")
+	if !awsRegionPattern.MatchString(region) {
+		return Result{}, fmt.Errorf("kiro region is invalid")
+	}
+	var catalog struct {
+		Models []json.RawMessage `json:"models"`
+	}
+	if err := getJSON(ctx, p.Client,
+		fmt.Sprintf("https://q.%s.amazonaws.com/ListAvailableModels?origin=AI_EDITOR", region),
+		map[string]string{
+			"Authorization":    "Bearer " + apiKey,
+			"TokenType":        "API_KEY",
+			"User-Agent":       "AWS-SDK-JS/3.0.0 kiro-ide/1.0.0",
+			"X-Amz-User-Agent": "aws-sdk-js/3.0.0 kiro-ide/1.0.0",
+		}, &catalog); err != nil || len(catalog.Models) == 0 {
+		return Result{}, fmt.Errorf("kiro API key validation failed")
+	}
+	return Result{
+		AuthKind: credentials.AuthAPIKey,
+		Identity: kiroEmail(apiKey),
+		Secret: credentials.Secret{
+			AccessToken: apiKey,
+			// An API key never refreshes on a schedule; a long horizon keeps
+			// the proactive refresh path from attempting one.
+			Expiry: p.now().Add(365 * 24 * time.Hour),
+			ProviderData: map[string]string{
+				"region":     region,
+				"authMethod": "api_key",
+			},
+		},
+	}, nil
 }
 
 // xiaomiAPIKeyFlow mirrors src/app/api/oauth/xiaomi-mimo/api-key/route.js: an
 // sk- key is validated against the models endpoint, and a failed validation is
 // soft so a network-restricted install can still store the key.
+//
+// The input is the bare key, or JSON carrying {apiKey, uid, baseUrl}, or the contents
+// of MiMo Code's auth.json (xiaomi-mimo/auto-import/route.js:15-22,85-104) pasted by
+// the operator. Routeweft never reads the file itself. The pin's account-session
+// fields (mimoPassToken and friends) are deliberately not accepted: whether Routeweft
+// may hold that credential is an open owner decision (docs/P04_ONBOARDING_AUDIT.md §5).
 func xiaomiAPIKeyFlow() Flow {
 	return Flow{
 		Provider:   "xiaomi-mimo",
@@ -302,38 +321,80 @@ func xiaomiAPIKeyFlow() Flow {
 		Type:       FlowManualToken,
 		Completion: CompletionToken,
 		Import: func(ctx context.Context, p Params) (Result, error) {
-			key := strings.TrimSpace(p.Input)
-			if !strings.HasPrefix(key, "sk-") {
-				return Result{}, fmt.Errorf("xiaomi-mimo key must start with sk-")
+			account, err := parseXiaomiInput(p)
+			if err != nil {
+				return Result{}, err
 			}
-			baseURL := strings.TrimSuffix(metaOr(p, "baseUrl", "https://api.xiaomimimo.com/v1"), "/")
-			var models json.RawMessage
-			_ = getJSON(ctx, p.Client, baseURL+"/models", map[string]string{
-				"Authorization": "Bearer " + key,
-				"X-Mimo-Source": "mimocode-cli",
-			}, &models)
-			identity := ""
-			if uid := p.Meta["uid"]; uid != "" {
-				identity = uid + "@xiaomi"
-			}
+			baseURL := strings.TrimSuffix(firstNonEmpty(account.baseURL, "https://api.xiaomimimo.com/v1"), "/")
 			providerData := map[string]string{
-				"apiKey":     key,
+				"apiKey":     account.key,
 				"baseUrl":    baseURL,
 				"authMethod": "api_key",
 			}
-			if uid := p.Meta["uid"]; uid != "" {
-				providerData["uid"] = uid
+			// The pin counts the catalog it just read (:36-47). A failed read is
+			// unknown, not zero, so no count is recorded for it.
+			var models struct {
+				Data []json.RawMessage `json:"data"`
+			}
+			if err := getJSON(ctx, p.Client, baseURL+"/models", map[string]string{
+				"Authorization": "Bearer " + account.key,
+				"X-Mimo-Source": "mimocode-cli",
+			}, &models); err == nil {
+				providerData["modelCount"] = strconv.Itoa(len(models.Data))
+			}
+			identity := ""
+			if account.uid != "" {
+				identity = account.uid + "@xiaomi"
+				providerData["uid"] = account.uid
 			}
 			return Result{
 				AuthKind: credentials.AuthAPIKey,
 				Identity: identity,
 				Secret: credentials.Secret{
-					AccessToken:  key,
+					AccessToken:  account.key,
 					ProviderData: providerData,
 				},
 			}, nil
 		},
 	}
+}
+
+// xiaomiAccount is one parsed Xiaomi MiMo import.
+type xiaomiAccount struct {
+	key, uid, baseURL string
+}
+
+// parseXiaomiInput accepts the three input shapes and returns the account. The key
+// format check is the pin's (:22-28, auto-import :93-100).
+func parseXiaomiInput(p Params) (xiaomiAccount, error) {
+	input := strings.TrimSpace(p.Input)
+	account := xiaomiAccount{key: input, uid: strings.TrimSpace(p.Meta["uid"]), baseURL: strings.TrimSpace(p.Meta["baseUrl"])}
+	if strings.HasPrefix(input, "{") {
+		var document struct {
+			APIKey   string `json:"apiKey"`
+			UID      string `json:"uid"`
+			Endpoint string `json:"baseUrl"`
+			Xiaomi   struct {
+				Key      string `json:"key"`
+				Metadata struct {
+					UID      string `json:"uid"`
+					Endpoint string `json:"base_url"`
+				} `json:"metadata"`
+			} `json:"xiaomi"`
+		}
+		if err := json.Unmarshal([]byte(input), &document); err != nil {
+			return xiaomiAccount{}, fmt.Errorf("xiaomi-mimo import expects a key or a JSON object")
+		}
+		account = xiaomiAccount{
+			key:     strings.TrimSpace(firstNonEmpty(document.APIKey, document.Xiaomi.Key)),
+			uid:     firstNonEmpty(document.UID, document.Xiaomi.Metadata.UID, account.uid),
+			baseURL: firstNonEmpty(document.Endpoint, document.Xiaomi.Metadata.Endpoint, account.baseURL),
+		}
+	}
+	if !strings.HasPrefix(account.key, "sk-") {
+		return xiaomiAccount{}, fmt.Errorf("xiaomi-mimo key must start with sk-")
+	}
+	return account, nil
 }
 
 // bxAuthPattern extracts the auth cookie value.

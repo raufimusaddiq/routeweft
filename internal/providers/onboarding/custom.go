@@ -185,13 +185,23 @@ func kiroFlow() Flow {
 // requires on every request and which cannot be read from an IDE on the server.
 var ErrCursorMachineIDRequired = errors.New("cursor import requires the machine id from Cursor's local database (meta.machineId)")
 
-// cursorFlow mirrors src/lib/oauth/providers/cursor.js: there is no OAuth flow.
-// The credential is the token from Cursor's local database, pasted by the
-// operator, which is why the import reads Input like every other import mode.
+// cursorMachineID is the pin's machine id shape (services/cursor.js:110-114): 32 or
+// more hex digits once the dashes are removed.
+var cursorMachineID = regexp.MustCompile(`^[a-fA-F0-9]{32,}$`)
+
+// cursorFlow mirrors src/app/api/oauth/cursor/import/route.js and
+// CursorService.validateImportToken: there is no OAuth flow. The credential is the
+// token from Cursor's local database, pasted by the operator, which is why the
+// import reads Input like every other import mode.
 //
-// The machine id is a second required value the reference reads from the same
-// local database (open-sse/executors/cursor.js buildHeaders rejects a credential
-// without one). Routeweft cannot read an IDE's SQLite file, so it is supplied as
+// The pin validates the pair's shape and makes no provider call ("we don't validate
+// against API because Cursor uses complex protobuf", services/cursor.js:116-117). An
+// earlier version posted JSON to the Connect-protocol model endpoint, which can only
+// fail for a genuine token; the token is proven by its first request instead.
+//
+// The machine id is a second required value the reference reads from the same local
+// database (open-sse/executors/cursor.js buildHeaders rejects a credential without
+// one). Routeweft cannot read an IDE's SQLite file, so it is supplied as
 // meta.machineId and stored with the connection; the import fails with a named
 // error rather than storing a credential inference would reject.
 func cursorFlow() Flow {
@@ -204,7 +214,7 @@ func cursorFlow() Flow {
 		Type:             FlowImportToken,
 		Completion:       CompletionToken,
 		ResolvesIdentity: true,
-		Import: func(ctx context.Context, p Params) (Result, error) {
+		Import: func(_ context.Context, p Params) (Result, error) {
 			token := strings.TrimSpace(p.Input)
 			if token == "" {
 				token = strings.TrimSpace(p.Meta["accessToken"])
@@ -216,29 +226,41 @@ func cursorFlow() Flow {
 			if machineID == "" {
 				return Result{}, ErrCursorMachineIDRequired
 			}
-			// Validate against the models endpoint the IDE uses; an unvalidated
-			// import would fail at the first request instead of here.
-			var models json.RawMessage
-			if err := postJSONTargetWithHeadersAuth(ctx, p.Client,
-				"https://api2.cursor.sh/agent.v1.AgentService/GetUsableModels", token, "{}", &models); err != nil {
-				return Result{}, fmt.Errorf("cursor token validation failed")
+			if len(token) < 50 {
+				return Result{}, fmt.Errorf("cursor token appears too short")
 			}
-			identity := ""
+			if !cursorMachineID.MatchString(strings.ReplaceAll(machineID, "-", "")) {
+				return Result{}, fmt.Errorf("cursor machine id must be a UUID")
+			}
+			// email, then subject (extractUserInfo, services/cursor.js:131-153).
+			identity, userID := "", ""
 			if claims := jwtClaims(token); claims != nil {
-				if value, ok := claims["email"].(string); ok {
-					identity = value
+				sub, _ := claims["sub"].(string)
+				userID = sub
+				if value, ok := claims["user_id"].(string); ok && userID == "" {
+					userID = value
 				}
+				identity, _ = claims["email"].(string)
+				if identity == "" {
+					identity = sub
+				}
+			}
+			providerData := map[string]string{
+				"machineId":  machineID,
+				"authMethod": "imported",
+			}
+			if userID != "" {
+				providerData["userId"] = userID
 			}
 			return Result{
 				AuthKind: credentials.AuthOAuth,
 				Identity: identity,
 				Secret: credentials.Secret{
 					AccessToken: token,
-					Expiry:      p.now().Add(24 * time.Hour),
-					ProviderData: map[string]string{
-						"machineId":  machineID,
-						"authMethod": "imported",
-					},
+					// Cursor tokens last about a day and have no public refresh
+					// endpoint (services/cursor.js:122).
+					Expiry:       p.now().Add(24 * time.Hour),
+					ProviderData: providerData,
 				},
 			}, nil
 		},

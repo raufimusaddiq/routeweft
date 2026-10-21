@@ -62,6 +62,8 @@ func (f *flowUpstream) Do(request *http.Request) (*http.Response, error) {
 		body = `{"success":true,"data":{"apiKey":"fixture-api-key","email":"fixture@example.invalid","name":"Fixture"}}`
 	case strings.Contains(url, "userinfo"), strings.Contains(url, "user"):
 		body = `{"email":"fixture@example.invalid","login":"fixture","id":1}`
+	case strings.Contains(url, "ListAvailableModels"):
+		body = `{"models":[{"modelId":"fixture-model"}]}`
 	case strings.Contains(url, "models"), strings.Contains(url, "GetUsableModels"):
 		body = `{"data":[{"id":"fixture-model"}]}`
 	}
@@ -192,6 +194,14 @@ func startCase(provider string) flowCase {
 	return flowCase{}
 }
 
+// The pin accepts a Cursor token of 50 or more characters and a UUID-shaped
+// machine id (services/cursor.js:105-114); fixtures meet the same bar a real
+// import must.
+const (
+	fixtureCursorToken     = "fixture-cursor-token-0123456789-0123456789-0123456789"
+	fixtureCursorMachineID = "0123abcd-0123-4abc-8def-0123456789ab"
+)
+
 // importCase is the credential an import flow validates.
 func importCase(provider string) flowCase {
 	switch provider {
@@ -206,7 +216,7 @@ func importCase(provider string) flowCase {
 	case "xiaomi-mimo":
 		return flowCase{input: "sk-fixture"}
 	case "cursor":
-		return flowCase{input: "fixture-cursor-token", meta: map[string]string{"accessToken": "fixture-cursor-token", "machineId": "fixture-machine"}}
+		return flowCase{input: fixtureCursorToken, meta: map[string]string{"accessToken": fixtureCursorToken, "machineId": fixtureCursorMachineID}}
 	}
 	return flowCase{input: "fixture-credential"}
 }

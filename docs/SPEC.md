@@ -1007,6 +1007,19 @@ reports its index, status and saved connection id, and no credential is echoed.
 A provider may offer a browser or device flow *and* an import mode (codex, grok-cli, iflow, kiro, xiaomi-mimo, cursor); the
 import endpoint resolves the import flow independently of the browser one.
 
+An import's `input` is one masked field, so a flow whose import needs several
+secrets takes JSON in it rather than extra plain-text fields. Kiro: a bare string is
+an API key (proven against the Amazon Q model catalog); a JSON object with
+`refreshToken` (and `clientId`/`clientSecret`/`region` for an organization account)
+is proven by refreshing it; a JSON object with a `token_endpoint` or `auth_method` is a CLIProxyAPI `external_idp` export. Xiaomi MiMo: a bare `sk-` key, the JSON body
+with `apiKey`/`uid`/`baseUrl`, or the contents of MiMo Code's `auth.json`; the
+account-session `passToken` is not held while that is an open owner decision.
+Routeweft never reads the host's home directory for an import and never returns a
+stored credential; the reference's `auto-import` routes are replaced by pasting the
+same file contents (docs/P04_ONBOARDING_AUDIT.md). A refresh dispatches on the
+stored credential shape, and a rotation is committed before it is published
+(SPEC 19); an export that carries no lifetime has an unknown expiry, never `now`.
+
 The provider read model reports `flowType` and `signInModes` (`browser`,
 `device`, `import`) from the same flow tables the endpoints use, so the dashboard
 offers exactly the affordances that exist rather than guessing from the auth
