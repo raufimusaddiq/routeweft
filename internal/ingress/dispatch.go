@@ -59,7 +59,7 @@ func (h *Handler) dispatchError(w http.ResponseWriter, r *http.Request, err erro
 // fails rather than drop a field that could carry text (FoldChatStream); a
 // Responses endpoint folds to its terminal response (FoldResponsesStream).
 func foldForcedStream(response *http.Response, provider routing.ProviderRef, stream bool) error {
-	if stream || !wire.ForcesStream(provider.ProviderID) {
+	if stream || !wire.ForcesStream(provider) {
 		return nil
 	}
 	mediaType := strings.ToLower(strings.TrimSpace(strings.SplitN(response.Header.Get("Content-Type"), ";", 2)[0]))

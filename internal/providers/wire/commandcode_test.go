@@ -283,7 +283,7 @@ func TestCommandCodeHookIsRegisteredWithoutForcedFold(t *testing.T) {
 		t.Fatalf("incomplete hook %+v", hook)
 	}
 	// The wire is NDJSON, not Chat SSE: the Chat stream fold must not see it.
-	if ForcesStream("commandcode") {
+	if ForcesStream(routing.ProviderRef{ProviderID: "commandcode"}) {
 		t.Fatal("ForceStream would route NDJSON through the Chat SSE fold")
 	}
 }

@@ -265,3 +265,34 @@ func TestQoderProbeIsUnavailableUntilConversionLegExists(t *testing.T) {
 		t.Fatalf("qoder probe unexpectedly reached dispatch: %+v, calls %v", result, calls())
 	}
 }
+
+func TestForcedStreamProbesUseTheServingShape(t *testing.T) {
+	catalog, _ := registry.NewBuiltinCatalog()
+	for _, tc := range []struct{ provider, model, protocol, path string }{
+		{"zed", "claude-sonnet-4.5", "openai-chat", "/chat/completions"},
+		{"opencode-go", "gpt-5.6-luna", "openai-chat", "/responses"},
+		{"opencode-go", "grok-4.6", "anthropic-messages", "/responses"},
+		{"opencode-go", "muse-spark-1.2-contributor", "openai-responses", "/responses"},
+		{"opencode-go", "muse-spark-1.3-contributor", "openai-chat", "/responses"},
+	} {
+		h, calls := recordingHandler(t)
+		spec, _ := catalog.Lookup(tc.provider)
+		node, connection := builtinConnection(tc.provider, routing.ProviderSettings{}, credentials.AuthAPIKey)
+		h.testProviderModel(context.Background(), connection, node, spec, tc.protocol, tc.model, time.Second)
+		got := calls()
+		if len(got) != 1 || !strings.HasSuffix(got[0].URL, tc.path) || !strings.Contains(got[0].Body, `"stream":true`) {
+			t.Fatalf("%s/%s: %+v", tc.provider, tc.model, got)
+		}
+		if tc.path == "/responses" && (!strings.Contains(got[0].Body, `"input"`) || strings.Contains(got[0].Body, `"messages"`)) {
+			t.Fatalf("wrong protocol: %s", got[0].Body)
+		}
+	}
+	h, calls := recordingHandler(t)
+	spec, _ := catalog.Lookup("opencode-go")
+	node, connection := builtinConnection("opencode-go", routing.ProviderSettings{}, credentials.AuthAPIKey)
+	node.Transports = []string{"openai-chat"}
+	result := h.testProviderModel(context.Background(), connection, node, spec, "openai-chat", "gpt-5.6-luna", time.Second)
+	if result.OK || len(calls()) != 0 || result.UpstreamModelID != "" || result.Error != "model requires the Responses transport" {
+		t.Fatalf("%+v %+v", result, calls())
+	}
+}

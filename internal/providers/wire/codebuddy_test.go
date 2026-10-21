@@ -21,7 +21,7 @@ func eachCodeBuddy(t *testing.T, run func(t *testing.T, id string)) {
 
 func TestCodeBuddyHooksForceStreamAndSendNoIdentity(t *testing.T) {
 	eachCodeBuddy(t, func(t *testing.T, id string) {
-		if !ForcesStream(id) {
+		if !ForcesStream(routing.ProviderRef{ProviderID: id}) {
 			t.Fatal("not a stream-only provider")
 		}
 		headers := OpenAIHeaders(routing.ProviderRef{ProviderID: id, APIToken: "tok"})
@@ -37,7 +37,7 @@ func TestCodeBuddyHooksForceStreamAndSendNoIdentity(t *testing.T) {
 	// The pin forces openai too (registry/openai.js:28), and Routeweft does not:
 	// the fold refuses a stream field it cannot carry (logprobs, annotations), and
 	// those are fields api.openai.com answers on a non-stream request.
-	if ForcesStream("openai") {
+	if ForcesStream(routing.ProviderRef{ProviderID: "openai"}) {
 		t.Fatal("forced stream leaked to another provider")
 	}
 }

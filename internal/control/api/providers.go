@@ -490,6 +490,13 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 		result.Error = "model ID is invalid"
 		return result
 	}
+	if forced := wire.ForcedTransport(node.ProviderID, modelID); forced != "" {
+		if !slicesContain(node.Transports, forced) {
+			result.Error = "model requires the Responses transport"
+			return result
+		}
+		transportName = forced
+	}
 	result.UpstreamModelID = modelID
 	var endpoint string
 	var body any
