@@ -19,6 +19,9 @@ func telemetryOptions(settings map[string]string) telemetry.Options {
 	if value, err := strconv.Atoi(settings["observabilityBatchSize"]); err == nil && value > 0 {
 		opts.BatchSize = value
 	}
+	if opts.BatchSize > opts.MaxRecords {
+		opts.BatchSize = opts.MaxRecords
+	}
 	if value, err := strconv.Atoi(settings["observabilityFlushIntervalMs"]); err == nil && value > 0 && uint64(value) <= uint64((1<<63-1)/time.Millisecond) {
 		opts.FlushInterval = time.Duration(value) * time.Millisecond
 	}

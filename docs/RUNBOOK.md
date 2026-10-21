@@ -785,8 +785,10 @@ one immutable snapshot. No separate reload command is needed.
   running keep their transform settings through retries. Prompt-cache anchoring
   remains enabled for Messages even when the client bypasses token savers.
 - Global outbound proxy enable/URL/no-proxy changes apply at the next inference
-  client selection. Disabling the global proxy preserves the saved URL but stops using it. Explicitly bound pools remain independent. Existing upstream requests keep their transport. Helper,
-  quota and OAuth clients do not inherit these settings.
+  client selection. Disabling the global proxy preserves the saved URL but stops
+  using it. Explicitly bound pools remain independent. Existing upstream requests
+  keep their transport. Helper, quota and OAuth clients do not inherit these
+  settings.
 - Observability enable/disable applies when a record is accepted. Disabling
   stops new Usage/detail records; it does not erase stored records or discard
   already queued events. The background worker stays available for re-enabling.
@@ -795,7 +797,9 @@ one immutable snapshot. No separate reload command is needed.
 - `observabilityMaxRecords` bounds new queue admission, not durable row count.
   Shrinking preserves accepted events; admission resumes when the queue drains
   below the new bound. Details retain the fixed seven-day pruning policy.
-- Batch size applies on the next worker wake. Full batches flush immediately;
+- Batch size applies on the next worker wake. Its effective value is capped at
+  the queue admission limit when settings compile, so a full queue can flush
+  even if the saved batch size is larger. Full batches flush immediately;
   partial batches wait for the interval. A changed flush interval resets the
   timer on the next accepted event; queued events without another event can
   still wait for the previous interval. Shutdown drains accepted events.

@@ -162,14 +162,8 @@ func (s *Service) Record(event Event) {
 	if event.Class == Diagnostic {
 		return
 	}
-	// Critical backpressure: wait briefly for the batcher to free room.
-	timer := time.NewTimer(s.options().EnqueueTimeout)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-	case <-s.signal:
-		// A slot may have opened; retry below regardless.
-	}
+	// Let the batcher consume its flush signal while critical backpressure waits.
+	time.Sleep(s.options().EnqueueTimeout)
 	if s.enqueue(event) {
 		return
 	}
