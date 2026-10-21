@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -375,8 +376,13 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // clientKey identifies the throttle bucket for a request. Forwarded-IP headers
-// are not trusted (PRD-SEC-002), so the socket address is used.
+// are not trusted (PRD-SEC-002), so the socket's host is used. The port is
+// dropped: it is ephemeral, and keying on it would give every new connection its
+// own attempt window.
 func clientKey(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
 	return r.RemoteAddr
 }
 

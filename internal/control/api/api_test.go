@@ -306,7 +306,8 @@ func TestLoginThrottleBlocksBruteForce(t *testing.T) {
 	blocked := false
 	for i := 0; i < loginMaxFailures+2; i++ {
 		request := httptest.NewRequest(http.MethodPost, "/admin/v1/auth/login", strings.NewReader(`{"username":"operator","password":"wrong"}`))
-		request.RemoteAddr = "203.0.113.7:1234"
+		// A new source port per attempt, as a real client opening connections.
+		request.RemoteAddr = fmt.Sprintf("203.0.113.7:%d", 40000+i)
 		recorder := httptest.NewRecorder()
 		mux.ServeHTTP(recorder, request)
 		if recorder.Code == http.StatusTooManyRequests {
@@ -319,7 +320,7 @@ func TestLoginThrottleBlocksBruteForce(t *testing.T) {
 	if !blocked {
 		t.Fatal("repeated failed logins were never throttled")
 	}
-	// A different client address is unaffected.
+	// A different client host is unaffected.
 	other := httptest.NewRequest(http.MethodPost, "/admin/v1/auth/login", strings.NewReader(`{"username":"operator","password":"s3cret"}`))
 	other.RemoteAddr = "198.51.100.9:5555"
 	recorder := httptest.NewRecorder()
