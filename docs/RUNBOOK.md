@@ -810,8 +810,9 @@ Do not select a workload requiring the unresolved rows: actual Combo/Fusion/
 capacity serving, Messages/other protocol translators, specialized OAuth/wire/
 quota modules, native Headroom/PXPIPE compatibility, complete cost/TTFT/details/
 live UI. Migration is manual and gradual; v1 history stays in v1 permanently.
-Provider readiness is not fully advertised by the current registry/UI; manually restrict evaluation to the
-specific provider/account/protocol combinations the operator has validated.
+Provider readiness is not fully advertised by the current registry/UI; manually
+restrict evaluation to the specific provider/account/protocol combinations the
+operator has validated.
 An enabled provider or a successful model listing is not inference validation.
 
 Standalone media, hidden providers, cloud/tunnel lifecycle, Redis and

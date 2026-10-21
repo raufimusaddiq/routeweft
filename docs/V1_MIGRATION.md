@@ -53,12 +53,12 @@ Only one stored unit differs; the rest were verified identical against the pin.
 
 | Value | v1 | Routeweft | Handling |
 |---|---|---|---|
-| `observabilityMaxJsonSize` | KiB (`requestDetailsRepo.js:27,44` ×1024) | bytes | ×1024 (existing importer; fixed in #158) |
+| `observabilityMaxJsonSize` | KiB (`requestDetailsRepo.js:27,44` ×1024) | bytes | ×1024 (library mapping; fixed in #158) |
 | `observabilityMaxRecords`, `observabilityBatchSize`, `observabilityFlushIntervalMs` | count / count / ms; `0` → default (`requestDetailsRepo.js:24-26`) | same | carried; `0` kept as the Routeweft default with a note |
 | `headroomTimeoutMs`, `pxpipeTimeoutMs`, `pxpipeMinChars` | ms / ms / chars | same | carried; Routeweft rejects ≤ 0, which is then refused by name (v1's UI clamp is not applied) |
 | `fusionTuning.stragglerGraceMs`, `panelHardTimeoutMs` | ms | ms | carried; grace > 10 min or hard timeout ≤ 0 / > 10 min refused by name (`routing.FusionTuning.Validate`) |
 | `fusionTuning.minPanel` | count; < 2 behaves as 2 (`combo.js:562`) | count | stored as `max(v, 2)` |
-| `stickyRoundRobinLimit`, `comboStickyRoundRobinLimit` | count; `0` → default | same | existing importer |
+| `stickyRoundRobinLimit`, `comboStickyRoundRobinLimit` | count; `0` → default | same | library mapping |
 | `pricing[…]` | $ / 1M tokens | $ / 1M tokens | no conversion, but fields rename: `cached`→cache read, `cache_creation`→cache write, `reasoning` has no Routeweft rate |
 
 There is no percent-valued setting in the v1 export.
@@ -75,7 +75,7 @@ Each appears in `Refused` as `settings.<key>` with a reason, never with its valu
 - Wrong-typed or Routeweft-invalid values (`"yes"` for a boolean, `cavemanLevel: "max"`).
 - Any other key (for example `claudeAutoPing`) — "no Routeweft equivalent, not stored".
 - Top-level export members that are not v1 tables are refused by name.
-- The C04 importer's own refusals (unknown capability, `*.host` no-proxy entry, unsupported strategy fields, `ccFilterNaming`, `headroomCodeAware`, `headroomKompress`) arrive as plan notes unchanged. Its fusion notes for a Combo that the plan carries are dropped, since the value was carried.
+- The C04 mapping's own refusals (unknown capability, `*.host` no-proxy entry, unsupported strategy fields, `ccFilterNaming`, `headroomCodeAware`, `headroomKompress`) arrive as plan notes unchanged. Its fusion notes for a Combo that the plan carries are dropped, since the value was carried.
 
 ## 4. Key reissue
 
@@ -119,7 +119,7 @@ application keeps their usage and cost totals separate.
 - v1 itself excludes `requestDetails` from its safety backups (`backup.js:16-17`).
 - Routeweft usage rows are keyed to Routeweft key IDs and connection IDs and costed with Routeweft pricing;
   v1 rows reference v1 `apiKey` and `connectionId` values that do not exist in Routeweft, and a v1 `cost` was computed with
-  v1 prices. Merging them would silently mix two accounting bases in one total (RUNBOOK §25.3: "do not combine").
+  v1 prices. Merging them would silently mix two accounting bases in one total (RUNBOOK §25, Prepare independent state).
 - A history field in an export is refused by name: `usageHistory`, `usageDaily`, `requestDetails`.
 
 Operator action: keep history in the independent v1 instance and off any Routeweft

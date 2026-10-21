@@ -709,7 +709,7 @@ v1 PATCH accepts arbitrary non-password settings, so defaults alone are not the 
 
 ### 5.3 Tables, files and migration boundary
 
-Never point Routeweft at the oracle's live database. BDR-001 intentionally gives Routeweft a new schema; #73 additionally requires an explicit tested migration path or reviewed divergence. Those are different assertions: direct compatibility is excluded, but a safe migration/recreation policy is still missing C01.
+Never point Routeweft at the oracle's live database. BDR-001 intentionally gives Routeweft a new schema; #73 additionally requires an explicit tested migration path or reviewed divergence. C01 records the owner's decision (#179): gradual manual recreation with independent state, no migration command, and history retained in v1 permanently. `docs/V1_MIGRATION.md` documents the mapping reference and tested library; direct database compatibility remains excluded.
 
 | v1 schema v3 table / file | Routeweft schema v4 equivalent | Status | Shortfall / disposition |
 | --- | --- | --- | --- |
@@ -733,7 +733,7 @@ Evidence: pinned `src/lib/db/{schema,paths,backup,migrate}.js` and repositories;
 
 ### 5.3a Settings representation (#78/C04)
 
-Oracle `1c3b9f47`. Mapping code: `internal/runtime/settings_pin.go:ImportPinSettings` (the one entry point the #78/C01 importer calls; it only returns values that pass `SetSettings` validation, plus a note for everything it cannot carry). Runtime: `settings_shapes.go`, `settings_strategy.go`, `transport/pool.go:noProxyMatches`, `ingress/policy.go:StickyLimitFor`, `internal/control/api/capability_adapters.go`.
+Oracle `1c3b9f47`. Mapping code: `internal/runtime/settings_pin.go:ImportPinSettings` (the library's mapping entry point; it only returns values that pass `SetSettings` validation, plus a note for everything it cannot carry). Runtime: `settings_shapes.go`, `settings_strategy.go`, `transport/pool.go:noProxyMatches`, `ingress/policy.go:StickyLimitFor`, `internal/control/api/capability_adapters.go`.
 
 | # | Item | Pin stores / means | Routeweft stores / means | Disposition |
 | --- | --- | --- | --- | --- |
@@ -797,7 +797,7 @@ consumer. Restart does not change that status.
 
 ## 6. Behavioral and operational divergence ledger
 
-Only rows marked **approved intentional** are justified by existing requirements. A **gap** or **decision required** is not an accepted exception, even when a stronger behavior may be desirable. #73 requires review/sign-off of this ledger before any future cutover; R11 proposes parallel evaluation only and does not sign off unresolved product decisions.
+Only rows marked **approved intentional** are justified by existing requirements. A **gap** or **decision required** is not an accepted exception, even when a stronger behavior may be desirable. #73 requires review/sign-off of this ledger before moving production workloads; R11 proposes parallel evaluation only and does not sign off unresolved product decisions.
 
 ### 6.1 Approved intentional differences
 
@@ -810,7 +810,7 @@ Only rows marked **approved intentional** are justified by existing requirements
 | D05 | No standalone image/video/TTS/STT/embedding/media-provider product APIs/catalogs | PRD 4.2/11/12; BDR-016. | Multimodal content in retained LLM requests and vision/audio capacity routing remain required. Single kind route's non-media semantics require R05 decision. |
 | D06 | trae, devin-cli, windsurf absent | PRD-PROV-003; SPEC 32; PROVIDER_BASELINE hidden rows; v1 index comments. | muse is active, not hidden, and is P01 drift. |
 | D07 | One Generic Provider can advertise C/R/M instead of separate compatible node products | PRD 7; SPEC 33; BDR-023. | Native route choice/manual-model fallback/multiple accounts/SSRF and typed SO workflows not waived. |
-| D08 | Independent normalized SQLite schema/files/backup artifacts, no direct LiteRouter DB compatibility | PRD 1/4.2/18; SPEC 4/25; BDR-001/004/017; RUNBOOK 2/11/12. | Explicit tested migration/recreation policy C01 still required to reconcile #73; never share live DB. |
+| D08 | Independent normalized SQLite schema/files/backup artifacts, no direct LiteRouter DB compatibility | PRD 1/4.2/18; SPEC 4/25; BDR-001/004/017; RUNBOOK 2/11/12. | C01 records gradual manual recreation and tested library mappings (#179; `docs/V1_MIGRATION.md`); no migration command or history import by decision. Never share a live DB. |
 | D09 | One SSE event channel, targeted invalidation, refresh fallback | PRD-OBS-003; SPEC 22/23. | #106 adds a second, usage-only channel (`/admin/v1/usage/stream`) at the ticket's request; needs owner sign-off against this decision. The Requests tab subscribes; console/activity content still missing U08/R10. |
 | D10 | Typed/validated string settings and normalized adapters/models; final-body cache order; PRD's 5 MB detail target | PRD 9/11/12/15; SPEC 7/17/18; BDR-007/011/012. | Changed v1 strategy/map/size/no-proxy semantics need explicit conversion C04; cache transforms cannot remain unwired R03. |
 | D11 | Explicit CORS allowlist, strict SSRF/private-network policy, trusted local opt-in, no forwarded-header blind trust | PRD-API-005 / PRD-SEC-002/003/004; SPEC 20/27/34. | Do not weaken network policy for parity; callable local-provider/redirect tests and h2c client coverage remain required. |
