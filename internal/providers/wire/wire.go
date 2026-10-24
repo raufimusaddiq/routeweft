@@ -74,6 +74,16 @@ type Hook struct {
 	ForceStreamFor func(routing.ProviderRef) bool
 	// ForcedTransport restricts a model to one wire; empty keeps normal selection.
 	ForcedTransport func(model string) string
+	// Escalate names the one other wire (and its endpoint) a request is replayed
+	// on when the provider's first answer refuses the wire it was sent on. It
+	// returns empty strings to surface the answer. internal/ingress replays at
+	// most once per attempt, so Escalate never has to count.
+	Escalate func(provider routing.ProviderRef, status int, body []byte) (protocol, endpoint string)
+	// Replay names the wire a provider's request goes to straight away once
+	// Escalate has fired for its model, or empty strings when the model is not
+	// eligible. internal/ingress remembers the escalation per provider and model
+	// for the life of the process (RuntimeState.PreferWire).
+	Replay func(provider routing.ProviderRef) (protocol, endpoint string)
 	// StripEmptyToolCalls removes an empty tool_calls array from the deltas of a
 	// Chat stream relayed to the client (ResponseStream).
 	StripEmptyToolCalls bool
@@ -149,7 +159,18 @@ var hooks = map[string]Hook{
 
 var minimaxHook = Hook{Finalize: chain(dropOutputConfig, requireClaudeToolType), Target: betaQuery}
 
-var githubHook = Hook{BearerMessages: true, Finalize: githubChatBody}
+var githubHook = Hook{
+	BearerMessages:  true,
+	Finalize:        githubChatBody,
+	OpenAIHeaders:   githubRequestID,
+	MessagesHeaders: githubRequestID,
+	ForcedTransport: githubTransport,
+	ForceStream:     true,
+	ForceStreamFor:  githubForcesStream,
+	FinalizeAccount: func(provider routing.ProviderRef, body Body) bool { return githubStream(provider, body) },
+	Escalate:        githubEscalate,
+	Replay:          githubReplayWire,
+}
 
 var clineHook = Hook{
 	OpenAIOverride: func(provider routing.ProviderRef) map[string]string { return clineprovider.Headers(provider.APIToken) },
@@ -269,4 +290,22 @@ func ClassifyError(providerID string, status int, body []byte, now time.Time) (r
 		return classify(status, body, now)
 	}
 	return routing.Classification{}, false
+}
+
+// Escalation reports the wire a provider's refused request is replayed on, or
+// empty strings when the answer stands.
+func Escalation(provider routing.ProviderRef, status int, body []byte) (protocol, endpoint string) {
+	if escalate := For(provider.ProviderID).Escalate; escalate != nil {
+		return escalate(provider, status, body)
+	}
+	return "", ""
+}
+
+// ReplayWire reports the wire a remembered escalation sends the provider's model
+// to, or empty strings when it has none.
+func ReplayWire(provider routing.ProviderRef) (protocol, endpoint string) {
+	if replay := For(provider.ProviderID).Replay; replay != nil {
+		return replay(provider)
+	}
+	return "", ""
 }

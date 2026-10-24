@@ -12,6 +12,7 @@ type RuntimeState struct {
 	cursors   map[string]uint64
 	cooldowns map[string]time.Time
 	quotas    map[string]QuotaObservation
+	wires     map[string]string
 }
 
 // QuotaObservation is a memory-first provider/account quota observation.
@@ -23,7 +24,7 @@ type QuotaObservation struct {
 }
 
 func NewState() *RuntimeState {
-	return &RuntimeState{cursors: make(map[string]uint64), cooldowns: make(map[string]time.Time), quotas: make(map[string]QuotaObservation)}
+	return &RuntimeState{cursors: make(map[string]uint64), cooldowns: make(map[string]time.Time), quotas: make(map[string]QuotaObservation), wires: make(map[string]string)}
 }
 
 // NextCursor atomically returns a provider-local monotonically increasing RR
@@ -107,4 +108,23 @@ func (s *RuntimeState) Quota(account string) (QuotaObservation, bool) {
 	defer s.mu.Unlock()
 	value, ok := s.quotas[account]
 	return value, ok
+}
+
+// PreferWire records that a provider's model is served on protocol after its
+// first-choice wire refused it. The record lives as long as the process: it is
+// never expired or cleared, and it is shared by every connection of the provider
+// (the pin's GithubExecutor.knownCodexModels, executors/github.js:19,159, on an
+// executor instance cached once per process, executors/index.js:78-86).
+func (s *RuntimeState) PreferWire(provider, model, protocol string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.wires[provider+"|"+model] = protocol
+}
+
+// PreferredWire returns the wire PreferWire recorded for the provider's model,
+// or empty.
+func (s *RuntimeState) PreferredWire(provider, model string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.wires[provider+"|"+model]
 }

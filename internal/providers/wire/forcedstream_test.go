@@ -25,6 +25,8 @@ var pinForcedStream = map[string]string{
 		"answers on a non-stream request; forcing it would turn a request that works into a 502",
 	"zed":         "",
 	"opencode-go": "",
+	"github": "not a registry forceStream: the executor forces it for Claude models on the Messages wire only " +
+		"(executors/github.js:259-263); TestGitHubForcesStreamForClaudeMessagesOnly pins the scope",
 }
 
 func TestForcedStreamProvidersAreExactlyAccountedFor(t *testing.T) {
