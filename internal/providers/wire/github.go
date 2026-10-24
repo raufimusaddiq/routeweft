@@ -64,25 +64,38 @@ var githubChatRefusals = []string{
 // per attempt, and a provider already on Responses never matches here, so a 400
 // that survives the replay is the answer.
 //
-// Divergence: the pin remembers the model in knownCodexModels and sends its later
-// requests straight to /responses (github.js:19,137-140). Routeweft keeps no such
-// cache; every request tries Chat first, so a model that needs /responses costs
-// one extra round trip per request instead of one per process.
+// The pin remembers the model in knownCodexModels and sends its later requests
+// straight to /responses (github.js:19,137-140); internal/ingress keeps that
+// record in RuntimeState (PreferWire) and asks Replay before sending.
 func githubEscalate(provider routing.ProviderRef, status int, body []byte) (protocol, endpoint string) {
-	if status != 400 || provider.Protocol != openaiadapter.ChatProtocol {
+	if status != 400 {
+		return "", ""
+	}
+	protocol, endpoint = githubReplayWire(provider)
+	if protocol == "" {
+		return "", ""
+	}
+	text := string(body)
+	for _, refusal := range githubChatRefusals {
+		if strings.Contains(text, refusal) {
+			return protocol, endpoint
+		}
+	}
+	return "", ""
+}
+
+// githubReplayWire is the wire a Chat request of an eligible model is replayed
+// on: any model but a Gemini or Claude id (github.js:118-121). Both the first
+// escalation and a remembered one (github.js:137) ask it.
+func githubReplayWire(provider routing.ProviderRef) (protocol, endpoint string) {
+	if provider.Protocol != openaiadapter.ChatProtocol {
 		return "", ""
 	}
 	model := strings.ToLower(provider.UpstreamModel)
 	if strings.Contains(model, "gemini") || strings.Contains(model, "claude") {
 		return "", ""
 	}
-	text := string(body)
-	for _, refusal := range githubChatRefusals {
-		if strings.Contains(text, refusal) {
-			return openaiadapter.ResponsesProtocol, githubResponsesEndpoint
-		}
-	}
-	return "", ""
+	return openaiadapter.ResponsesProtocol, githubResponsesEndpoint
 }
 
 // githubResponsesEndpoint is registry github's TransportEndpoints[responses]

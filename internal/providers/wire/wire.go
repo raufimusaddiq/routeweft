@@ -79,6 +79,11 @@ type Hook struct {
 	// returns empty strings to surface the answer. internal/ingress replays at
 	// most once per attempt, so Escalate never has to count.
 	Escalate func(provider routing.ProviderRef, status int, body []byte) (protocol, endpoint string)
+	// Replay names the wire a provider's request goes to straight away once
+	// Escalate has fired for its model, or empty strings when the model is not
+	// eligible. internal/ingress remembers the escalation per provider and model
+	// for the life of the process (RuntimeState.PreferWire).
+	Replay func(provider routing.ProviderRef) (protocol, endpoint string)
 	// StripEmptyToolCalls removes an empty tool_calls array from the deltas of a
 	// Chat stream relayed to the client (ResponseStream).
 	StripEmptyToolCalls bool
@@ -164,6 +169,7 @@ var githubHook = Hook{
 	ForceStreamFor:  githubForcesStream,
 	FinalizeAccount: func(provider routing.ProviderRef, body Body) bool { return githubStream(provider, body) },
 	Escalate:        githubEscalate,
+	Replay:          githubReplayWire,
 }
 
 var clineHook = Hook{
@@ -291,6 +297,15 @@ func ClassifyError(providerID string, status int, body []byte, now time.Time) (r
 func Escalation(provider routing.ProviderRef, status int, body []byte) (protocol, endpoint string) {
 	if escalate := For(provider.ProviderID).Escalate; escalate != nil {
 		return escalate(provider, status, body)
+	}
+	return "", ""
+}
+
+// ReplayWire reports the wire a remembered escalation sends the provider's model
+// to, or empty strings when it has none.
+func ReplayWire(provider routing.ProviderRef) (protocol, endpoint string) {
+	if replay := For(provider.ProviderID).Replay; replay != nil {
+		return replay(provider)
 	}
 	return "", ""
 }

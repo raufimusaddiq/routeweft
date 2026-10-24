@@ -382,3 +382,107 @@ func TestGitHubEscalationEndpointIsTheRegistrys(t *testing.T) {
 		t.Fatalf("%q %q vs registry %v", protocol, endpoint, spec.TransportEndpoints)
 	}
 }
+
+// knownCodexModels (github.js:19,137-140,159): the first eligible refusal
+// escalates once; later requests for that model go straight to /responses.
+func TestGitHubRemembersAnEscalatedModelForLaterRequests(t *testing.T) {
+	rig := newGitHubRig(t, "github", "gpt-5.4", chatThenResponses(copilotChatRefusal))
+	chatBody := `{"model":"x","messages":[{"role":"user","content":"ping"}]}`
+	for i := 0; i < 3; i++ {
+		if out := rig.post("/v1/chat/completions", chatBody); out.Code != 200 || !strings.Contains(out.Body.String(), "pong") {
+			t.Fatalf("request %d: %d %s", i, out.Code, out.Body)
+		}
+	}
+	want := []string{"/chat/completions", "/responses", "/responses", "/responses"}
+	if got := rig.paths(); !slices.Equal(got, want) {
+		t.Fatalf("calls %v, want %v", got, want)
+	}
+	if rig.state.PreferredWire("github", "gpt-5.4") != "openai-responses" {
+		t.Fatal("the escalation was not remembered")
+	}
+}
+
+// The pin records the model before it tries the replay, so a replay that fails
+// still sends the next request straight to /responses.
+func TestGitHubRemembersAModelWhoseReplayFailed(t *testing.T) {
+	rig := newGitHubRig(t, "github", "gpt-5.4", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		io.WriteString(w, copilotChatRefusal)
+	})
+	chatBody := `{"model":"x","messages":[{"role":"user","content":"ping"}]}`
+	rig.post("/v1/chat/completions", chatBody)
+	if out := rig.post("/v1/chat/completions", chatBody); out.Code != 400 {
+		t.Fatalf("%d %s", out.Code, out.Body)
+	}
+	// Remembered path: one call, and its refusal is the answer (no second replay).
+	if got := rig.paths(); !slices.Equal(got, []string{"/chat/completions", "/responses", "/responses"}) {
+		t.Fatalf("calls %v", got)
+	}
+}
+
+// The record is per provider and per model, not per connection.
+func TestGitHubRememberedEscalationIsScopedToProviderAndModel(t *testing.T) {
+	rig := newGitHubRig(t, "github", "gpt-5.4", chatThenResponses(copilotChatRefusal))
+	chatBody := `{"model":"x","messages":[{"role":"user","content":"ping"}]}`
+	rig.post("/v1/chat/completions", chatBody)
+
+	// Same model id, another provider, sharing the state: tries Chat first and is
+	// never sent to /responses.
+	other := newGitHubRig(t, "openrouter", "gpt-5.4", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"id":"c","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"pong"},"finish_reason":"stop"}]}`)
+	})
+	other.state.PreferWire("github", "gpt-5.4", "openai-responses")
+	if out := other.post("/v1/chat/completions", chatBody); out.Code != 200 {
+		t.Fatalf("%d %s", out.Code, out.Body)
+	}
+	if got := other.paths(); !slices.Equal(got, []string{"/chat/completions"}) {
+		t.Fatalf("another provider followed github's record: %v", got)
+	}
+
+	// Same provider, another model: still Chat first.
+	sibling := newGitHubRig(t, "github", "gpt-5.2", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"id":"c","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"pong"},"finish_reason":"stop"}]}`)
+	})
+	sibling.state.PreferWire("github", "gpt-5.4", "openai-responses")
+	sibling.post("/v1/chat/completions", chatBody)
+	if got := sibling.paths(); !slices.Equal(got, []string{"/chat/completions"}) {
+		t.Fatalf("another model followed the record: %v", got)
+	}
+}
+
+// Gemini and Claude ids are never remembered nor sent to /responses (github.js:137).
+func TestGitHubNeverRemembersOrReplaysGeminiOrClaude(t *testing.T) {
+	rig := newGitHubRig(t, "github", "gemini-2.5-pro", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		io.WriteString(w, copilotChatRefusal)
+	})
+	rig.state.PreferWire("github", "gemini-2.5-pro", "openai-responses")
+	rig.post("/v1/chat/completions", `{"model":"x","messages":[{"role":"user","content":"ping"}]}`)
+	if got := rig.paths(); !slices.Equal(got, []string{"/chat/completions"}) {
+		t.Fatalf("calls %v", got)
+	}
+	fresh := newGitHubRig(t, "github", "gemini-2.5-pro", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		io.WriteString(w, copilotChatRefusal)
+	})
+	fresh.post("/v1/chat/completions", `{"model":"x","messages":[{"role":"user","content":"ping"}]}`)
+	if fresh.state.PreferredWire("github", "gemini-2.5-pro") != "" {
+		t.Fatal("an ineligible model was remembered")
+	}
+}
+
+// An unrelated 400 does not remember anything, so the next request tries Chat.
+func TestGitHubUnrelatedRefusalIsNotRemembered(t *testing.T) {
+	rig := newGitHubRig(t, "github", "gpt-5.4", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		io.WriteString(w, `{"error":"bad"}`)
+	})
+	chatBody := `{"model":"x","messages":[{"role":"user","content":"ping"}]}`
+	rig.post("/v1/chat/completions", chatBody)
+	rig.post("/v1/chat/completions", chatBody)
+	if got := rig.paths(); !slices.Equal(got, []string{"/chat/completions", "/chat/completions"}) {
+		t.Fatalf("calls %v", got)
+	}
+}

@@ -205,6 +205,16 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			preAttemptErr = &dispatchError{503, "credentials_unavailable", "provider credentials are unavailable"}
 			continue
 		}
+		// A model that was escalated before goes straight to the wire that served
+		// it (github.js:137-140). That is the one attempt: a refusal there is the
+		// answer, as in the pin, so the replay below stays off.
+		escalated := false
+		if h.opts.State != nil {
+			if protocol, endpoint := wire.ReplayWire(provider); protocol != "" && h.opts.State.PreferredWire(provider.ProviderID, provider.UpstreamModel) == protocol {
+				provider.Protocol, provider.Endpoint = protocol, endpoint
+				escalated = true
+			}
+		}
 		outbound, err := prepare(provider)
 		if err != nil {
 			// The request cannot be expressed for this candidate's wire, which says
@@ -217,7 +227,6 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 		}
 		// A refused wire is replayed on the other one at most once per candidate
 		// (wire.Hook.Escalate); the replay's own answer, whatever it is, stands.
-		escalated := false
 		for retry, endpointAttempt := 0, 0; retry < 2 && used < maxAccountAttempts; {
 			if err := r.Context().Err(); err != nil {
 				return nil, provider, err
@@ -300,6 +309,11 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				if protocol, endpoint := wire.Escalation(provider, response.StatusCode, prefix); protocol != "" {
 					next := provider
 					next.Protocol, next.Endpoint = protocol, endpoint
+					// Remembered before the replay is tried, as the pin does
+					// (github.js:159): a replay that fails still counts.
+					if h.opts.State != nil {
+						h.opts.State.PreferWire(provider.ProviderID, provider.UpstreamModel, protocol)
+					}
 					if replay, err := prepare(next); err == nil {
 						slog.Warn("provider refused the wire; replaying once on another", "provider", provider.ProviderID, "model", provider.UpstreamModel, "from", provider.Protocol, "to", protocol)
 						response.Body.Close()

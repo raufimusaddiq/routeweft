@@ -25,3 +25,19 @@ func TestStateCursorCooldownAndQuotaAreSeparateFromSnapshot(t *testing.T) {
 		t.Fatalf("quota %+v", observation)
 	}
 }
+
+func TestPreferredWireIsPerProviderAndModelAndPermanent(t *testing.T) {
+	state := NewState()
+	if state.PreferredWire("github", "gpt-5.4") != "" {
+		t.Fatal("a wire is preferred before any was recorded")
+	}
+	state.PreferWire("github", "gpt-5.4", "openai-responses")
+	for provider, model := range map[string]string{"github": "gpt-5.2", "openai": "gpt-5.4"} {
+		if got := state.PreferredWire(provider, model); got != "" {
+			t.Errorf("%s/%s: %q", provider, model, got)
+		}
+	}
+	if state.PreferredWire("github", "gpt-5.4") != "openai-responses" {
+		t.Fatal("the record was lost")
+	}
+}
