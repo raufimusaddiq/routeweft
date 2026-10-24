@@ -122,3 +122,15 @@ func (c *Catalog) Resolve(provider, model string) Capabilities {
 var builtins = New()
 
 func Resolve(provider, model string) Capabilities { return builtins.Resolve(provider, model) }
+
+// OutputCeiling is the catalogued output ceiling for a model. ok is false when
+// the model resolved to nothing but the catalog-wide floor or carries no
+// positive ceiling: that floor is a placeholder, not knowledge of the model, so
+// a caller must not treat it as a limit (absent means unknown, never zero).
+func OutputCeiling(provider, model string) (ceiling int64, ok bool) {
+	caps := builtins.Resolve(provider, model)
+	if caps == defaults || caps.MaxOutput <= 0 {
+		return 0, false
+	}
+	return caps.MaxOutput, true
+}
