@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
+	"github.com/raufimusaddiq/routeweft/internal/providers/capabilities"
 )
 
 // Body sanitation: the pin's DefaultExecutor.transformRequest runs
@@ -73,6 +74,9 @@ type stripRule struct {
 	flattenContent bool
 	// maxOutputCap clamps the output budget fields (:87-102).
 	maxOutputCap float64
+	// clampToModelMaxOutput also clamps to the capability catalog's ceiling for
+	// the model (:87-92). A model the catalog does not resolve adds no ceiling.
+	clampToModelMaxOutput bool
 }
 
 func modelMatches(pattern string) func(string) bool {
@@ -93,10 +97,7 @@ var stripRules = []stripRule{
 	{provider: "github", match: func(m string) bool { return githubClaudeModel.MatchString(m) && !githubClaude46.MatchString(m) }, drop: []string{"thinking", "reasoning_effort"}},
 	{provider: "cloudflare-ai", flattenContent: true},
 	{provider: "xiaomi-mimo", match: modelMatches(`(?i)preview`), flattenContent: true},
-	// Not carried: the pin's {provider: "volcengine-ark", match: /glm-5/i,
-	// clampToModelMaxOutput: true} (paramSupport.js:20) clamps to the model's
-	// catalogued maxOutput, and Routeweft has no capability catalog to read it
-	// from. Without the ceiling the rule has nothing to clamp to.
+	{provider: "volcengine-ark", match: modelMatches(`(?i)glm-5`), clampToModelMaxOutput: true},
 	{provider: "volcengine-ark", match: modelMatches(`(?i)kimi`), maxOutputCap: 32768},
 	{provider: "groq", dropMessageFields: reasoningFields},
 	{provider: "mistral", dropMessageFields: reasoningFields},
@@ -147,9 +148,15 @@ func stripUnsupportedParams(providerID, protocol string, body Body) bool {
 				changed = true
 			}
 		}
-		if rule.maxOutputCap > 0 {
+		ceiling := rule.maxOutputCap
+		if rule.clampToModelMaxOutput {
+			if modelCeiling, ok := capabilities.OutputCeiling(providerID, model); ok && (ceiling == 0 || float64(modelCeiling) < ceiling) {
+				ceiling = float64(modelCeiling)
+			}
+		}
+		if ceiling > 0 {
 			for _, key := range []string{"max_tokens", "max_completion_tokens", "max_output_tokens"} {
-				if clampNumber(body, key, rule.maxOutputCap) {
+				if clampNumber(body, key, ceiling) {
 					changed = true
 				}
 			}
