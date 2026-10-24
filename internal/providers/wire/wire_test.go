@@ -93,7 +93,8 @@ var tokens = []string{
 // commandcode carries the pin's version, environment and session headers
 // (commandcode_test.go pins them).
 // API.airforce adds its registry referer/title pair (airforce_wire_test.go).
-var headersChanged = map[string]bool{"azure": true, "api-airforce": true, "kimi": true, "kilocode": true, "iflow": true, "kiro": true, "commandcode": true, "opencode": true}
+// github adds the pin's per-request x-request-id (github_test.go).
+var headersChanged = map[string]bool{"azure": true, "api-airforce": true, "kimi": true, "kilocode": true, "iflow": true, "kiro": true, "commandcode": true, "opencode": true, "github": true}
 
 func TestOpenAIHeadersMatchLegacyForEveryProvider(t *testing.T) {
 	for _, id := range providerIDs() {

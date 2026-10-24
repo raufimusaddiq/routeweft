@@ -144,8 +144,8 @@ func TestKiroHeadersDoNotReachOtherProviders(t *testing.T) {
 				}
 			}
 		}
-		// Codex derives its cache key; OpenCode Go chooses streaming per model.
-		if want := id == "codex" || id == "opencode-go"; (For(id).FinalizeAccount != nil) != want {
+		// Codex derives its cache key; OpenCode Go and GitHub choose streaming per model.
+		if want := id == "codex" || id == "opencode-go" || id == "github"; (For(id).FinalizeAccount != nil) != want {
 			t.Errorf("%s: account finalizer present=%v, want %v", id, For(id).FinalizeAccount != nil, want)
 		}
 	}

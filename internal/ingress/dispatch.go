@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
@@ -58,7 +60,7 @@ func (h *Handler) dispatchError(w http.ResponseWriter, r *http.Request, err erro
 // gateway answered JSON, or the client is streaming) is left alone. The fold
 // fails rather than drop a field that could carry text (FoldChatStream); a
 // Responses endpoint folds to its terminal response (FoldResponsesStream).
-func foldForcedStream(response *http.Response, provider routing.ProviderRef, stream bool) error {
+func foldForcedStream(ctx context.Context, response *http.Response, provider routing.ProviderRef, stream bool) error {
 	if stream || !wire.ForcesStream(provider) {
 		return nil
 	}
@@ -68,15 +70,22 @@ func foldForcedStream(response *http.Response, provider routing.ProviderRef, str
 	}
 	var folded openaiadapter.Folded
 	var err error
-	if provider.Protocol == openaiadapter.ResponsesProtocol {
+	switch provider.Protocol {
+	case openaiadapter.ResponsesProtocol:
 		folded, err = openaiadapter.FoldResponsesStream(response.Body)
-	} else {
+	case anthropicadapter.MessagesProtocol:
+		folded.Body, err = anthropicadapter.FoldMessagesStream(ctx, response.Body)
+	default:
 		folded, err = openaiadapter.FoldChatStream(response.Body, provider.UpstreamModel, time.Now)
 	}
 	if err != nil {
 		var inband *openaiadapter.StreamError
-		if errors.As(err, &inband) {
+		var messagesInband *anthropicadapter.StreamError
+		switch {
+		case errors.As(err, &inband):
 			return &dispatchError{http.StatusBadGateway, "upstream_stream_error", inband.Message()}
+		case errors.As(err, &messagesInband):
+			return &dispatchError{http.StatusBadGateway, "upstream_stream_error", messagesInband.Message()}
 		}
 		return &dispatchError{http.StatusBadGateway, "upstream_response_invalid", "upstream stream could not be returned as one response: " + err.Error()}
 	}
@@ -206,6 +215,9 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			}
 			continue
 		}
+		// A refused wire is replayed on the other one at most once per candidate
+		// (wire.Hook.Escalate); the replay's own answer, whatever it is, stands.
+		escalated := false
 		for retry, endpointAttempt := 0, 0; retry < 2 && used < maxAccountAttempts; {
 			if err := r.Context().Err(); err != nil {
 				return nil, provider, err
@@ -250,7 +262,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				break
 			}
 			if response.StatusCode >= 200 && response.StatusCode < 300 {
-				if err := foldForcedStream(response, provider, stream); err != nil {
+				if err := foldForcedStream(r.Context(), response, provider, stream); err != nil {
 					response.Body.Close()
 					if r.Context().Err() != nil {
 						return nil, provider, r.Context().Err()
@@ -283,6 +295,21 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			if r.Context().Err() != nil {
 				response.Body.Close()
 				return nil, provider, r.Context().Err()
+			}
+			if !escalated && readErr == nil && used < maxAccountAttempts {
+				if protocol, endpoint := wire.Escalation(provider, response.StatusCode, prefix); protocol != "" {
+					next := provider
+					next.Protocol, next.Endpoint = protocol, endpoint
+					if replay, err := prepare(next); err == nil {
+						slog.Warn("provider refused the wire; replaying once on another", "provider", provider.ProviderID, "model", provider.UpstreamModel, "from", provider.Protocol, "to", protocol)
+						response.Body.Close()
+						escalated, provider, outbound = true, next, replay
+						continue
+					}
+					// prepare owns the caller's translation state; put the refused
+					// wire's back so the answer surfaced below is read on its own wire.
+					_, _ = prepare(provider)
+				}
 			}
 			classification := classifyResponse(response.StatusCode, response.Header)
 			info := shared.ParseError(provider.Protocol, response.StatusCode, prefix)

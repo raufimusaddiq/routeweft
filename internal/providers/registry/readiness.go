@@ -88,7 +88,7 @@ var notReady = map[string]Readiness{
 	"azure":          experimental("deployment, API-version and endpoint provider data and specialized URL rules are open (PARITY P02/C06)"),
 	"vertex-partner": experimental("project-id probe, service-account/ADC minting and raw-key auth are not built; unverified against a real gateway (PARITY #115 PR-E2)"),
 	"cloudflare-ai":  experimental("account-scoped URLs are implemented from the pin and unverified against a live Workers AI gateway (PARITY #115 PR-H)"),
-	"github":         experimental("Copilot token exchange, model-name native Messages routing and live models/limits are open (PARITY P02-P05)"),
+	"github":         experimental("Copilot token exchange and live models/limits are open; the Claude Messages path and Chat-to-Responses escalation are unverified against a live gateway (PARITY P02-P05)"),
 	"ollama-local":   experimental("local model discovery, private-URL policy and native codecs need contracts (PARITY P02/P03)"),
 	"opencode-go":    experimental("multi-protocol model dispatch and envelopes are open (PARITY P02/P03)"),
 }
