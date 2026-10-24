@@ -355,3 +355,60 @@ func TestZedProbeTakesTheExchangeAndTheEnvelope(t *testing.T) {
 		t.Errorf("%+v after %d calls", result, len(calls))
 	}
 }
+
+// Only a credential exchange changes how a probe is sent. The providers whose Do
+// reshapes sending (Cursor, Codex, CommandCode, Grok CLI) are probed as before: one
+// plain request, with no retry and no synthesized answer in between.
+func TestProbesOfProvidersWithAReshapingDoStayPlain(t *testing.T) {
+	catalog, _ := registry.NewBuiltinCatalog()
+	for _, id := range []string{"cursor", "codex", "commandcode", "grok-cli"} {
+		spec, _ := catalog.Lookup(id)
+		for _, transport := range spec.Transports {
+			protocol := string(transport)
+			switch protocol {
+			case "openai-chat", "openai-responses", "anthropic-messages":
+			default:
+				continue
+			}
+			t.Run(id+"/"+protocol, func(t *testing.T) {
+				h, calls := recordingHandler(t)
+				node, connection := builtinConnection(id, routing.ProviderSettings{}, credentials.AuthOAuth)
+				h.testProviderModel(context.Background(), connection, node, spec, protocol, "model-x", time.Second)
+				got := calls()
+				if len(got) != 1 {
+					t.Fatalf("%d calls: %+v", len(got), got)
+				}
+			})
+		}
+	}
+}
+
+// MiMo Free's probe takes the bootstrap, and sends the marker and the JWT.
+func TestMimoFreeProbeTakesTheBootstrap(t *testing.T) {
+	catalog, _ := registry.NewBuiltinCatalog()
+	spec, _ := catalog.Lookup("mimo-free")
+	h, _ := recordingHandler(t)
+	var mu sync.Mutex
+	var calls []recordedCall
+	h.opts.DiscoveryClient.HTTP = probeHTTPFunc(func(r *http.Request) (*http.Response, error) {
+		var raw []byte
+		if r.Body != nil {
+			raw, _ = io.ReadAll(r.Body)
+		}
+		mu.Lock()
+		calls = append(calls, recordedCall{r.URL.String(), r.Header.Clone(), string(raw)})
+		mu.Unlock()
+		if strings.HasSuffix(r.URL.Path, "/bootstrap") {
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"jwt":"probe.jwt.fixture"}`))}, nil
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"choices":[{"message":{"role":"assistant","content":"pong"}}]}`))}, nil
+	})
+	node, connection := builtinConnection("mimo-free", routing.ProviderSettings{}, credentials.AuthNone)
+	result := h.testProviderModel(context.Background(), connection, node, spec, "openai-chat", "mimo-auto", 5*time.Second)
+	if !result.OK || len(calls) != 2 || !strings.HasSuffix(calls[0].URL, "/api/free-ai/bootstrap") || !strings.HasSuffix(calls[1].URL, "/api/free-ai/openai/chat") {
+		t.Fatalf("%+v calls %+v", result, calls)
+	}
+	if calls[1].Header.Get("Authorization") != "Bearer probe.jwt.fixture" || !strings.Contains(calls[1].Body, "You are MiMoCode") {
+		t.Errorf("chat call %v %s", calls[1].Header, calls[1].Body)
+	}
+}

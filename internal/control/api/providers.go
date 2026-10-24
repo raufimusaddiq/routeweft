@@ -614,7 +614,14 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	if _, native := h.opts.DiscoveryClient.HTTP.(*http.Client); !native {
 		client.Transport = roundTripperFromClient(h.opts.DiscoveryClient.HTTP)
 	}
-	response, err := wire.Send(route, &client, request)
+	// A provider whose credential is exchanged for the request's (Zed, MiMo Free)
+	// is probed through that exchange; the others keep the plain request they had.
+	var response *http.Response
+	if wire.Exchanges(route.ProviderID) {
+		response, err = wire.Send(route, &client, request)
+	} else {
+		response, err = client.Do(request)
+	}
 	if err != nil {
 		result.probeFailure(ctx, err)
 		return result

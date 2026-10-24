@@ -28,13 +28,19 @@ func ReadLinesLenient(ctx context.Context, src io.Reader, consume func(map[strin
 	return readLines(ctx, src, true, consume)
 }
 
+// ErrLinesEnded is what ReadLinesPin returns for a body that ended cleanly without
+// `[DONE]` or consume stopping it. It is not io.ErrUnexpectedEOF, which a transport
+// reports for a body that broke (a reset connection, a truncated chunk): that is a
+// read failure and is returned as it is.
+var ErrLinesEnded = errors.New("stream ended without a terminal line")
+
 // ReadLinesPin reads Zed's line framing as the pin does (executors/zed.js:118-135,
 // 189-209): each line is trimmed, a `data:` prefix removed, a line that is empty
 // or is not JSON skipped, and `[DONE]` ends the stream cleanly. consume gets the
 // decoded JSON value of any type (numbers as json.Number) and returns true to stop.
-// A stream that ends without `[DONE]` or consume stopping it is io.ErrUnexpectedEOF
-// so the caller can finish it as the pin does; it is not mistaken for a complete
-// one here. Lines are bounded as in ReadLines, which the pin is not.
+// A stream that ends cleanly without `[DONE]` or consume stopping it is
+// ErrLinesEnded, so the caller can finish it as the pin does; a body that breaks is
+// the read error itself. Lines are bounded as in ReadLines, which the pin is not.
 func ReadLinesPin(ctx context.Context, src io.Reader, consume func(any) (bool, error)) error {
 	scanner := bufio.NewScanner(src)
 	scanner.Buffer(make([]byte, 4096), 4<<20)
@@ -74,7 +80,7 @@ func ReadLinesPin(ctx context.Context, src io.Reader, consume func(any) (bool, e
 	if err := scanner.Err(); err != nil {
 		return err
 	}
-	return io.ErrUnexpectedEOF
+	return ErrLinesEnded
 }
 
 func readLines(ctx context.Context, src io.Reader, lenient bool, consume func(map[string]any) (bool, error)) error {

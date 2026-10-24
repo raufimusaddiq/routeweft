@@ -69,7 +69,8 @@ var mimoFreeHook = Hook{
 	Target:   func(routing.ProviderRef) (Target, error) { return Target{Endpoint: mimoChatEndpoint}, nil },
 	Finalize: mimoFreeMarker,
 	// The credential is the minted JWT, set by Do; the connection has no account.
-	Do: MimoFreeDo,
+	Do:       MimoFreeDo,
+	Exchange: true,
 }
 
 // mimoFreeMarker is injectSystemMarker (:63-72): a system message carrying the

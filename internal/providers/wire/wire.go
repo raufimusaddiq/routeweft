@@ -113,6 +113,12 @@ type Hook struct {
 	// first (Zed's LLM token, MiMo Free's bootstrap JWT). It receives the account
 	// the request is for and returns an ordinary response for the caller to classify.
 	Do func(routing.ProviderRef, *http.Client, *http.Request) (*http.Response, error)
+	// Exchange marks a Do that trades the account's credential for the one the
+	// request carries (Zed's LLM token, MiMo Free's JWT), so a request built outside
+	// serving, a connection probe, cannot reach the provider without it. A Do that
+	// only reshapes how a request is sent (Cursor, Codex, CommandCode, Grok CLI)
+	// does not set it, and a probe keeps sending those plainly.
+	Exchange bool
 	// AcceptedFailure reads an account failure out of a 2xx response whose body
 	// the client is shown as it is (Zed answers a failed status as the assistant's
 	// text, as the pin does). It reports how the account is to be accounted for, so
@@ -281,6 +287,9 @@ func Send(provider routing.ProviderRef, client *http.Client, request *http.Reque
 	}
 	return client.Do(request)
 }
+
+// Exchanges reports whether the provider's Do exchanges a credential (Hook.Exchange).
+func Exchanges(providerID string) bool { return For(providerID).Exchange }
 
 // AcceptedFailure reports the failure a 2xx response carries for the account that
 // served it, if the provider has such a response.

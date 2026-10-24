@@ -408,3 +408,45 @@ func TestZedFailureAfterOutputIsRelayedNotRetried(t *testing.T) {
 		t.Fatalf("%d %s (good served %d)", out.Code, out.Body, completions("good"))
 	}
 }
+
+// End to end: an upstream that breaks mid-stream is an error to every client, on the
+// Anthropic leg as on xAI's, never a clean truncated answer.
+func TestZedBrokenUpstreamIsAnErrorToTheClient(t *testing.T) {
+	for _, reset := range []bool{true, false} {
+		name := map[bool]string{true: "connection reset", false: "oversized line"}[reset]
+		for _, stream := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/%v", name, stream), func(t *testing.T) {
+				rig := newCodeBuddyRig(t, "zed", func(w http.ResponseWriter, r *http.Request) {
+					switch {
+					case strings.HasSuffix(r.URL.Path, "/client/llm_tokens"):
+						fmt.Fprint(w, `{"token":"llm-fixture"}`)
+					case strings.HasSuffix(r.URL.Path, "/models"):
+						fmt.Fprint(w, `{"models":[{"id":"glm-5.2","provider":"anthropic"}]}`)
+					default:
+						w.Header().Set("Content-Type", "application/x-ndjson")
+						fmt.Fprint(w, `{"event":{"type":"message_start","message":{"id":"m","role":"assistant","model":"glm-5.2","content":[],"usage":{"input_tokens":1,"output_tokens":0}}}}`+"\n"+
+							`{"event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}`+"\n"+
+							`{"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}}`+"\n")
+						if reset {
+							w.(http.Flusher).Flush()
+							panic(http.ErrAbortHandler)
+						}
+						fmt.Fprint(w, strings.Repeat("a", 5<<20)+"\n")
+					}
+				})
+				rig.settings = routing.ProviderSettings{UserID: "user-1", OrganizationID: "org-1"}
+				rig.endpoint = "chat/completions"
+				out := rig.post("/v1/chat/completions", fmt.Sprintf(`{"model":"x","stream":%v,"messages":[{"role":"user","content":"ping"}]}`, stream))
+				if stream {
+					if !strings.Contains(out.Body.String(), `"error"`) || strings.Contains(out.Body.String(), `"finish_reason":"stop"`) {
+						t.Fatalf("%d %s", out.Code, out.Body)
+					}
+					return
+				}
+				if out.Code < 500 || strings.Contains(out.Body.String(), "partial") && out.Code == 200 {
+					t.Fatalf("a broken upstream was answered: %d %s", out.Code, out.Body)
+				}
+			})
+		}
+	}
+}

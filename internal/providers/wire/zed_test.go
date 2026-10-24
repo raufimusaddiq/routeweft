@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -1055,5 +1056,99 @@ func TestZedFollowsAPathPrefixedBase(t *testing.T) {
 	response.Body.Close()
 	if !strings.Contains(string(text), "pong") || len(u.seen("/client/llm_tokens")) != 1 || len(u.seen("/models")) != 1 || len(u.seen("/"+zedEndpoint)) != 1 {
 		t.Fatalf("calls %v\n%s", u.calls, text)
+	}
+}
+
+// A body that breaks is not a body that ended. A connection reset mid-stream, or a
+// line past the bound, on a vendor leg must reach the client as an error and never
+// as a clean truncated answer (the pin's stream errors when its upstream read does).
+func TestZedBrokenUpstreamIsAnErrorOnEveryLeg(t *testing.T) {
+	broken := map[string]func(http.ResponseWriter, string){
+		"connection reset": func(w http.ResponseWriter, head string) {
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			fmt.Fprint(w, head)
+			w.(http.Flusher).Flush()
+			panic(http.ErrAbortHandler)
+		},
+		"oversized line": func(w http.ResponseWriter, head string) {
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			fmt.Fprint(w, head)
+			fmt.Fprint(w, strings.Repeat("a", 5<<20)+"\n")
+		},
+	}
+	for _, leg := range []struct{ model, head string }{
+		{"claude-sonnet-4.5", zedAnthropicHead},
+		{"gemini-3", zedGoogleHead},
+		{"gpt-5", zedResponsesHead},
+		{"grok-4", zedXAIChunk},
+	} {
+		for name, fail := range broken {
+			t.Run(leg.model+"/"+name, func(t *testing.T) {
+				u := newZedUpstream(t)
+				u.completions = func(w http.ResponseWriter, _ *http.Request) { fail(w, leg.head) }
+				body := fmt.Sprintf(`{"model":%q,"stream":true,"messages":[{"role":"user","content":"ping"}]}`, leg.model)
+				_, text := u.do(t, u.provider(), body)
+				got := shape(t, text)
+				if len(got) < 2 || got[len(got)-2] != "error" || got[len(got)-1] != "DONE" {
+					t.Fatalf("a broken upstream did not end in an error: %q\n%s", got, text)
+				}
+				if strings.Contains(text, `"finish_reason":"stop"`) {
+					t.Errorf("a broken upstream finished cleanly:\n%s", text)
+				}
+				if strings.Contains(text, "upstream_incomplete") || strings.Count(text, `"error"`) != 1 || strings.Count(text, "[DONE]") != 1 {
+					t.Errorf("one error and one [DONE] expected:\n%s", text)
+				}
+			})
+		}
+	}
+}
+
+// Exchange is set for the providers whose probe must take the credential exchange,
+// and for no provider whose Do only changes how a request is sent.
+func TestOnlyCredentialExchangesAreProbedThroughDo(t *testing.T) {
+	var got []string
+	for _, id := range Registered() {
+		if For(id).Exchange {
+			got = append(got, id)
+		}
+		if For(id).Exchange && For(id).Do == nil {
+			t.Errorf("%s declares an exchange and has no Do", id)
+		}
+	}
+	sort.Strings(got)
+	if want := []string{"mimo-free", "mmf", "zed"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("exchange hooks %v, want %v", got, want)
+	}
+	for _, id := range []string{"cursor", "codex", "commandcode", "grok-cli"} {
+		if Exchanges(id) || For(id).Do == nil {
+			t.Errorf("%s: exchanges=%v do=%v", id, Exchanges(id), For(id).Do != nil)
+		}
+	}
+}
+
+// The pin looks an unlisted model up on a fresh catalog every time it is asked for
+// one (zed.js:231-237; zedAuth.js:366-369, forceRefresh skips both the cache and
+// the in-flight share), and so does this: the refresh is not rate-limited. A listed
+// model is served from the cache.
+func TestZedRefreshesTheCatalogForAnUnlistedModelAsThePinDoes(t *testing.T) {
+	u := newZedUpstream(t)
+	reads := 0
+	u.models = func(w http.ResponseWriter, _ *http.Request) {
+		reads++
+		fmt.Fprint(w, `{"models":[{"id":"claude-sonnet-4.5","provider":"anthropic"}]}`)
+	}
+	u.completions = streamOf(zedXAIStream)
+	unlisted := `{"model":"grok-unlisted","stream":true,"messages":[{"role":"user","content":"ping"}]}`
+	u.do(t, u.provider(), unlisted)
+	if reads != 2 {
+		t.Fatalf("first request read the catalog %d times, want a load and a refresh", reads)
+	}
+	u.do(t, u.provider(), unlisted)
+	if reads != 3 {
+		t.Errorf("second request: %d reads, want one refresh more (the pin's)", reads)
+	}
+	u.do(t, u.provider(), zedChatBody)
+	if reads != 3 {
+		t.Errorf("a listed model re-read the catalog: %d", reads)
 	}
 }

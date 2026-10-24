@@ -80,6 +80,7 @@ var zedHook = Hook{
 	ForceStream:       true,
 	Finalize:          codebuddyStream,
 	Do:                ZedDo,
+	Exchange:          true,
 	AcceptedFailure:   zedAcceptedFailure,
 	// The session the client's own request resolves to (zed.js:251).
 	ClientRequestHeaders: zedClientThread,
@@ -769,9 +770,11 @@ func zedStatus(status any) (ended bool, failure string, failed bool) {
 // here and the relay writes the one `[DONE]` itself. Every other frame, a real
 // in-band upstream error included, passes through.
 type zedOut struct {
-	dst       io.Writer
-	sawError  bool
-	sawFailed bool
+	dst io.Writer
+	// sawError is set only by an error frame that reached the client: the held-back
+	// incomplete-stream frame is not one, and must not stop the relay from saying
+	// why the stream broke.
+	sawError bool
 }
 
 func (o *zedOut) Write(p []byte) (int, error) {
@@ -780,11 +783,10 @@ func (o *zedOut) Write(p []byte) (int, error) {
 	case text == "data: [DONE]\n\n":
 		return len(p), nil
 	case strings.HasPrefix(text, `data: {"error":`):
-		o.sawError = true
 		if strings.Contains(text, `"code":"upstream_incomplete"`) {
-			o.sawFailed = true
 			return len(p), nil
 		}
+		o.sawError = true
 	}
 	return o.dst.Write(p)
 }
@@ -857,7 +859,7 @@ func zedRelay(ctx context.Context, upstream io.Reader, vendorName string, leg ze
 	})
 	// Reading ended: the body is exhausted, Zed said so, or it reported a failure.
 	// Anything else (the client left, a line over the bound) is not a finish.
-	hard := readErr != nil && !errors.Is(readErr, io.ErrUnexpectedEOF)
+	hard := readErr != nil && !errors.Is(readErr, concerns.ErrLinesEnded)
 	var legErr error
 	if leg != nil {
 		if !hard && failure != nil {
