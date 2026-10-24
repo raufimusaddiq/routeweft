@@ -45,7 +45,7 @@ func openCodeGoSession(provider routing.ProviderRef, client http.Header, body []
 	}
 	var parsed map[string]any
 	_ = json.Unmarshal(body, &parsed)
-	session := resolveSession(client, parsed, provider)
+	session := resolveSession(client, parsed, provider, "opencode-go")
 	tool := detectClientTool(client, parsed)
 	if tool == "" {
 		tool = "generic"
@@ -76,9 +76,11 @@ func stringField(m map[string]any, keys ...string) (string, bool) {
 	return text, ok
 }
 
-// resolveSession is resolveSessionIdentity (utils/sessionManager.js:138-221) for
-// scope "opencode-go".
-func resolveSession(client http.Header, body map[string]any, provider routing.ProviderRef) string {
+// resolveSession is resolveSessionIdentity (utils/sessionManager.js:138-221).
+// scope is the pin's: the provider for opencode-go (opencode-go.js:145), the
+// target format for a caller of captureSessionId (translator/index.js:97, "openai"
+// for Zed). It only names the assistant-text conversations of one scope apart.
+func resolveSession(client http.Header, body map[string]any, provider routing.ProviderRef, scope string) string {
 	if userID, ok := stringField(body, "metadata", "user_id"); ok {
 		if session := claudeSessionFromUserID(userID); session != "" {
 			return "claude:" + session
@@ -106,7 +108,7 @@ func resolveSession(client http.Header, body map[string]any, provider routing.Pr
 	if text, _ := stringField(body, "metadata", "user_id"); normalizeSession(text) != "" {
 		return normalizeSession(text)
 	}
-	if key := assistantTextKey("opencode-go:"+provider.ConnectionID, body); key != "" {
+	if key := assistantTextKey(scope+":"+provider.ConnectionID, body); key != "" {
 		return assistantSessions.get(key)
 	}
 	if provider.ConnectionID != "" {

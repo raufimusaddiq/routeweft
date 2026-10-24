@@ -482,21 +482,188 @@ func TestZedVendorNames(t *testing.T) {
 	}
 }
 
-func TestZedThreadIDs(t *testing.T) {
+// thread_id is `body.thread_id || credentials._clientSessionId` (zed.js:251), and
+// _clientSessionId is resolveSessionId over the client's headers and the body as
+// the client sent it, scope "openai" (translator/index.js:96-99,
+// utils/sessionManager.js:138-248). One row per rung of the pin's ladder.
+func TestZedThreadIDFollowsThePinsSessionPrecedence(t *testing.T) {
 	zedReset()
-	provider := routing.ProviderRef{ConnectionID: "c1"}
-	if got := zedThreadID(map[string]any{"thread_id": "t", "session_id": "s"}, provider); got != "t" {
-		t.Errorf("thread_id %q", got)
+	t.Cleanup(zedReset)
+	provider := routing.ProviderRef{ProviderID: "zed", ConnectionID: "conn-1"}
+	session := func(headers map[string]string, body string) string {
+		h := http.Header{}
+		for k, v := range headers {
+			h.Set(k, v)
+		}
+		return zedClientThread(provider, h, []byte(body))[zedThreadHeader]
 	}
-	if got := zedThreadID(map[string]any{"prompt_cache_key": "k"}, provider); got != "k" {
-		t.Errorf("prompt_cache_key %q", got)
+	const uuid = "0a1b2c3d-1111-2222-3333-444455556666"
+	for _, tc := range []struct {
+		name    string
+		headers map[string]string
+		body    string
+		want    string
+	}{
+		{"claude user_id suffix", nil, `{"metadata":{"user_id":"user_abc_account_x_session_` + uuid + `"}}`, "claude:" + uuid},
+		{"claude user_id json", nil, `{"metadata":{"user_id":"{\"session_id\":\"s-json\"}"}}`, "claude:s-json"},
+		{"claude header", map[string]string{"x-claude-code-session-id": "s-hdr"}, `{}`, "claude:s-hdr"},
+		{"claude user_id beats claude header", map[string]string{"x-claude-code-session-id": "s-hdr"}, `{"metadata":{"user_id":"u_session_` + uuid + `"}}`, "claude:" + uuid},
+		{"claude beats x-session-id", map[string]string{"x-claude-code-session-id": "s-hdr", "x-session-id": "other"}, `{}`, "claude:s-hdr"},
+		{"antigravity sessionId", map[string]string{"x-session-id": "other"}, `{"request":{"sessionId":"ag-1"}}`, "antigravity:ag-1"},
+		{"antigravity numeric sessionId", nil, `{"request":{"sessionId":42}}`, "antigravity:42"},
+		{"antigravity requestId", nil, `{"requestId":"agent/` + uuid + `/9"}`, "antigravity:" + uuid},
+		{"x-session-id", map[string]string{"x-session-id": " h1 ", "session-id": "h2"}, `{"prompt_cache_key":"k"}`, "h1"},
+		{"session-id", map[string]string{"session-id": "h2", "x-amp-thread-id": "h3"}, `{}`, "h2"},
+		{"session_id header", map[string]string{"session_id": "h2b", "x-amp-thread-id": "h3"}, `{}`, "h2b"},
+		{"x-amp-thread-id", map[string]string{"x-amp-thread-id": "h3", "x-opencode-session": "h4"}, `{}`, "h3"},
+		{"x-opencode-session", map[string]string{"x-opencode-session": "h4", "x-client-request-id": "h5"}, `{}`, "h4"},
+		{"x-client-request-id", map[string]string{"x-client-request-id": "h5"}, `{"prompt_cache_key":"k"}`, "h5"},
+		{"prompt_cache_key", nil, `{"prompt_cache_key":"k","session_id":"s","conversation_id":"c"}`, "k"},
+		{"session_id", nil, `{"session_id":"s","conversation_id":"c"}`, "s"},
+		{"conversation_id", nil, `{"conversation_id":"c","metadata":{"user_id":"plain-user"}}`, "c"},
+		{"plain metadata.user_id", nil, `{"metadata":{"user_id":"plain-user"}}`, "plain-user"},
+		{"blank header falls through", map[string]string{"x-session-id": "   "}, `{"session_id":"s"}`, "s"},
+		{"over-long header falls through", map[string]string{"x-session-id": strings.Repeat("a", 257)}, `{"session_id":"s"}`, "s"},
+	} {
+		if got := session(tc.headers, tc.body); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+		}
 	}
-	first, again := zedThreadID(map[string]any{}, provider), zedThreadID(map[string]any{}, provider)
-	if first == "" || first != again {
-		t.Errorf("a connection's thread is stable: %q %q", first, again)
+}
+
+// Below the explicit ids: the first 50 characters of assistant text name the
+// conversation within a scope and connection (sessionManager.js:160-198), then the
+// connection's own session, each random, in memory, and idle for at most 2 hours.
+func TestZedThreadIDFallsBackToAssistantTextThenTheConnection(t *testing.T) {
+	zedReset()
+	t.Cleanup(zedReset)
+	now := time.Unix(1_000_000, 0)
+	sessionNow = func() time.Time { return now }
+	provider := routing.ProviderRef{ProviderID: "zed", ConnectionID: "conn-1"}
+	resolve := func(p routing.ProviderRef, body string) string {
+		return zedClientThread(p, nil, []byte(body))[zedThreadHeader]
 	}
-	if other := zedThreadID(map[string]any{}, routing.ProviderRef{ConnectionID: "c2"}); other == first {
-		t.Error("two connections share a thread")
+	prefix := strings.Repeat("assistant-prefix-", 4) // 68 characters
+	withText := func(text string) string {
+		return `{"messages":[{"role":"user","content":"q"},{"role":"assistant","content":` + fmt.Sprintf("%q", text) + `},{"role":"user","content":"more"}]}`
+	}
+	a := resolve(provider, withText(prefix))
+	if a == "" || a != resolve(provider, withText(prefix+" and a later tail")) {
+		t.Fatalf("the same opening assistant text must be the same session: %q", a)
+	}
+	// Responses-shaped input, and content parts, hash the same text.
+	if got := resolve(provider, `{"input":[{"role":"assistant","content":[{"type":"output_text","text":"`+prefix+`"}]}]}`); got != a {
+		t.Errorf("input/content parts: %q, want %q", got, a)
+	}
+	if b := resolve(provider, withText(strings.Repeat("different-start-", 5))); b == a {
+		t.Error("different assistant text shares a session")
+	}
+	// Scoped to the connection.
+	other := provider
+	other.ConnectionID = "conn-2"
+	if resolve(other, withText(prefix)) == a {
+		t.Error("two connections share an assistant-text session")
+	}
+	// Under 50 characters of assistant text is not a conversation key: the
+	// connection's session stands, and is stable.
+	short := resolve(provider, withText("short"))
+	if short == a || short != resolve(provider, `{"messages":[]}`) || short != resolve(provider, `{}`) {
+		t.Errorf("connection fallback %q", short)
+	}
+	if resolve(other, `{}`) == short {
+		t.Error("two connections share a session")
+	}
+	// A client with a session of its own never reaches the stores.
+	if got := zedClientThread(provider, http.Header{"X-Session-Id": {"mine"}}, []byte(withText(prefix)))[zedThreadHeader]; got != "mine" {
+		t.Errorf("explicit session %q", got)
+	}
+	// Lifetime: idle past two hours the sessions are new; used within, they last.
+	now = now.Add(time.Hour)
+	if resolve(provider, `{}`) != short {
+		t.Error("a session used within the TTL changed")
+	}
+	now = now.Add(time.Hour + 31*time.Minute)
+	if resolve(provider, `{}`) != short {
+		t.Error("a session used an hour ago was swept")
+	}
+	now = now.Add(2*time.Hour + sessionSweepInterval + time.Minute)
+	if got := resolve(provider, `{}`); got == short {
+		t.Error("an idle session survived the TTL")
+	}
+	if got := resolve(provider, withText(prefix)); got == a {
+		t.Error("an idle conversation survived the TTL")
+	}
+	// A process restart starts new sessions.
+	before := resolve(provider, `{}`)
+	zedReset()
+	if resolve(provider, `{}`) == before {
+		t.Error("sessions survived a restart")
+	}
+}
+
+// The envelope's thread_id is the body's own when truthy, whatever its type, else
+// the resolved session; prompt_id is whatever the body has, null included
+// (zed.js:251-252, JSON.stringify keeps null and drops undefined).
+func TestZedEnvelopeThreadAndPromptIDs(t *testing.T) {
+	zedReset()
+	t.Cleanup(zedReset)
+	provider := routing.ProviderRef{ProviderID: "zed", ConnectionID: "conn-1"}
+	envelope := func(body, resolved string) map[string]json.RawMessage {
+		chat, _ := decodeObject(body)
+		raw, _ := json.Marshal(zedEnvelope{ThreadID: zedThreadID(chat, resolved, provider), PromptID: zedPromptID(chat)})
+		var out map[string]json.RawMessage
+		_ = json.Unmarshal(raw, &out)
+		return out
+	}
+	for name, tc := range map[string]struct{ body, resolved, thread, prompt string }{
+		"body thread wins":     {`{"thread_id":"t","prompt_id":"p"}`, "resolved", `"t"`, `"p"`},
+		"empty string falls":   {`{"thread_id":""}`, "resolved", `"resolved"`, ``},
+		"null falls":           {`{"thread_id":null,"prompt_id":null}`, "resolved", `"resolved"`, `null`},
+		"false falls":          {`{"thread_id":false}`, "resolved", `"resolved"`, ``},
+		"zero falls":           {`{"thread_id":0}`, "resolved", `"resolved"`, ``},
+		"number is truthy":     {`{"thread_id":7}`, "resolved", `7`, ``},
+		"object is truthy":     {`{"thread_id":{}}`, "resolved", `{}`, ``},
+		"empty prompt is kept": {`{"prompt_id":""}`, "resolved", `"resolved"`, `""`},
+	} {
+		got := envelope(tc.body, tc.resolved)
+		if string(got["thread_id"]) != tc.thread || string(got["prompt_id"]) != tc.prompt {
+			t.Errorf("%s: thread %s prompt %s", name, got["thread_id"], got["prompt_id"])
+		}
+	}
+	// With no resolved session (a probe) the body it has decides, as for a client
+	// that sent no headers.
+	chat, _ := decodeObject(`{"session_id":"from-body"}`)
+	if got := string(zedThreadID(chat, "", provider)); got != `"from-body"` {
+		t.Errorf("unresolved: %s", got)
+	}
+}
+
+func decodeObject(text string) (map[string]any, error) {
+	decoder := json.NewDecoder(strings.NewReader(text))
+	decoder.UseNumber()
+	var out map[string]any
+	return out, decoder.Decode(&out)
+}
+
+// ZedDo takes the session ClientRequestHeaders resolved, and never forwards the
+// carrier header upstream.
+func TestZedDoSendsTheResolvedSessionAndNotTheCarrier(t *testing.T) {
+	u := newZedUpstream(t)
+	request, _ := http.NewRequest(http.MethodPost, u.URL+"/"+zedEndpoint, strings.NewReader(`{"model":"claude-sonnet-4.5","stream":true,"messages":[{"role":"user","content":"ping"}]}`))
+	request.Header.Set(zedThreadHeader, "claude:resolved-session")
+	response, err := ZedDo(u.provider(), u.Client(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, response.Body)
+	response.Body.Close()
+	for _, call := range u.calls {
+		if call.Header.Get(zedThreadHeader) != "" {
+			t.Errorf("the carrier reached %s", call.Path)
+		}
+	}
+	if got := decodeJSON(t, u.seen("/" + zedEndpoint)[0].Body)["thread_id"]; got != "claude:resolved-session" {
+		t.Errorf("thread_id %v", got)
 	}
 }
 

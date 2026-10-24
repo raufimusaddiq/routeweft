@@ -458,7 +458,7 @@ func modeCell(t *testing.T, spec registry.Spec, stream bool, chat, skips map[str
 		return pair(
 			ref("providers/wire:TestZedExchangesTheTokenAndSendsTheEnvelope", "providers/wire:TestZedServesEveryVendorShape", "providers/wire:TestZedFailedStatusIsAnInBandError", "providers/wire:TestZedTruncatedStreamIsAnError", "providers/wire:TestZedStopsUpstreamWhenTheClientLeaves", "ingress:TestZedIsServedThroughItsExchangeAndEnvelope"),
 			ref("ingress:TestZedIsServedThroughItsExchangeAndEnvelope", "ingress:TestZedFailedStatusIsAnUpstreamErrorNotAnAnswer", "ingress:TestNewForcedStreamsRejectTruncatedReplies"),
-			"LLM-token exchange, thread envelope, per-vendor request and NDJSON frames for Anthropic, OpenAI Responses, Google and xAI (executors/zed.js:60-282, shared/zedAuth.js:258-324); a failed status or a cut-off stream is an error. Open: the listing still sends the shared bearer (see Authenticated listing), and the thread id keeps the pin's client-session precedence only for body fields (PARITY 6.19)",
+			"LLM-token exchange, thread envelope, per-vendor request and NDJSON frames for Anthropic, OpenAI Responses, Google and xAI (executors/zed.js:60-282, shared/zedAuth.js:258-324); a failed status or a cut-off stream is an error. Open: the listing still sends the shared bearer (see Authenticated listing); the thread id resolves the pin's client session from headers and the client's body, but not after the pin's token savers (PARITY 6.19)",
 			"the forced stream folded to one body for the Chat, Responses and Messages clients (executors/zed.js:60-282); a failed status or a cut-off stream is a 502, never a completion")
 	case "mimo-free", "mmf":
 		return pair(

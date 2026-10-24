@@ -16,8 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/concerns"
 	geminiwire "github.com/raufimusaddiq/routeweft/internal/protocol/gemini"
@@ -80,6 +78,8 @@ var zedHook = Hook{
 	ForceStream:       true,
 	Finalize:          codebuddyStream,
 	Do:                ZedDo,
+	// The session the client's own request resolves to (zed.js:251).
+	ClientRequestHeaders: zedClientThread,
 }
 
 func zedRefuseWithoutAccount(provider routing.ProviderRef, _ []byte, _ string) (map[string]string, error) {
@@ -200,15 +200,14 @@ func (c *zedCaches) putCatalog(key string, catalog zedCatalog) {
 	c.models[key] = catalog
 }
 
-// zedReset empties both caches, for tests.
+// zedReset empties both caches and the session stores, for tests.
 func zedReset() {
 	zedState.mu.Lock()
 	defer zedState.mu.Unlock()
 	zedState.tokens, zedState.models = map[string]zedToken{}, map[string]zedCatalog{}
 	zedState.now = time.Now
-	zedThreads.mu.Lock()
-	zedThreads.ids = map[string]string{}
-	zedThreads.mu.Unlock()
+	connectionSessions, assistantSessions = newSessionStore(connectionSessionCap), newSessionStore(assistantSessionCap)
+	sessionNow = time.Now
 }
 
 // zedRejection is an exchange step the host answered with a non-2xx status. The
@@ -468,34 +467,58 @@ func (a zedAccount) vendor(ctx context.Context, client *http.Client, model strin
 	return zedVendorOf(vendor, model)
 }
 
-// zedThreads gives each connection a thread id that lasts the process, for a
-// request that names none (zed.js:251 reads credentials._clientSessionId, which
-// the pin derives per connection: utils/sessionManager.js:45-72).
-var zedThreads = struct {
-	mu  sync.Mutex
-	ids map[string]string
-}{ids: map[string]string{}}
+// zedThreadHeader carries the session the client's request resolves to from
+// Hook.ClientRequestHeaders, which sees the client's headers and original body, to
+// ZedDo. It exists only on the in-process request: ZedDo builds every upstream
+// request itself and never copies it.
+const zedThreadHeader = "X-Routeweft-Zed-Thread"
 
-func zedThreadID(chat map[string]any, provider routing.ProviderRef) string {
-	for _, field := range []string{"thread_id", "prompt_cache_key", "session_id", "conversation_id"} {
-		if id := strings.TrimSpace(concerns.Text(chat[field])); id != "" {
-			return id
+// zedSessionScope is the scope the pin passes to captureSessionId for Zed: the
+// target format (translator/index.js:97; registry/zed.js:26 format "openai").
+const zedSessionScope = "openai"
+
+// zedClientThread is credentials._clientSessionId (translator/index.js:96-99): the
+// session resolved from the client's headers and the body as the client sent it,
+// before conversion, with the pin's precedence, scope and lifetime (resolveSession,
+// opencodego_session.go; utils/sessionManager.js:138-221,246-248).
+func zedClientThread(provider routing.ProviderRef, client http.Header, body []byte) map[string]string {
+	var parsed map[string]any
+	_ = json.Unmarshal(body, &parsed)
+	return map[string]string{zedThreadHeader: resolveSession(client, parsed, provider, zedSessionScope)}
+}
+
+// zedTruthy is JavaScript truthiness for a decoded JSON value, for `a || b`.
+func zedTruthy(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return false
+	case string:
+		return typed != ""
+	case bool:
+		return typed
+	case json.Number:
+		f, err := typed.Float64()
+		return err != nil || f != 0
+	}
+	return true
+}
+
+// zedThreadID is `bodyRecord.thread_id || credentials._clientSessionId`
+// (zed.js:251): the body's own thread id when it is truthy, whatever its type,
+// else the session the client's request resolved to. A request that did not come
+// through a client (a probe) resolves it from the body it has, as the pin does for
+// a request with no raw headers.
+func zedThreadID(chat map[string]any, resolved string, provider routing.ProviderRef) json.RawMessage {
+	if value := chat["thread_id"]; zedTruthy(value) {
+		if encoded, err := json.Marshal(value); err == nil {
+			return encoded
 		}
 	}
-	zedThreads.mu.Lock()
-	defer zedThreads.mu.Unlock()
-	id, ok := zedThreads.ids[provider.ConnectionID]
-	if !ok {
-		if len(zedThreads.ids) >= 1000 {
-			for k := range zedThreads.ids {
-				delete(zedThreads.ids, k)
-				break
-			}
-		}
-		id = fmt.Sprintf("%s%d", uuid.NewString(), time.Now().UnixMilli())
-		zedThreads.ids[provider.ConnectionID] = id
+	if resolved == "" {
+		resolved = resolveSession(nil, chat, provider, zedSessionScope)
 	}
-	return id
+	encoded, _ := json.Marshal(resolved)
+	return encoded
 }
 
 // zedLeg converts a vendor's SSE to Chat SSE; nil for a vendor that already
@@ -566,11 +589,20 @@ func zedEndsOnAssistant(value any) bool {
 }
 
 type zedEnvelope struct {
-	ThreadID        string          `json:"thread_id"`
-	PromptID        string          `json:"prompt_id,omitempty"`
+	ThreadID        json.RawMessage `json:"thread_id"`
+	PromptID        json.RawMessage `json:"prompt_id,omitempty"` // as the body has it, null included; absent is omitted (JSON.stringify drops undefined)
 	Provider        string          `json:"provider"`
 	Model           string          `json:"model"`
 	ProviderRequest json.RawMessage `json:"provider_request"`
+}
+
+func zedPromptID(chat map[string]any) json.RawMessage {
+	value, present := chat["prompt_id"]
+	if !present {
+		return nil
+	}
+	encoded, _ := json.Marshal(value)
+	return encoded
 }
 
 // zedRefusal answers a request Zed's wire cannot carry as the client's error,
@@ -636,8 +668,8 @@ func ZedDo(provider routing.ProviderRef, client *http.Client, request *http.Requ
 		return zedRefusal(request, http.StatusBadRequest, "request cannot be expressed for Zed's "+vendor+" backend: "+err.Error()), nil
 	}
 	envelope, err := json.Marshal(zedEnvelope{
-		ThreadID:        zedThreadID(chat, provider),
-		PromptID:        concerns.Text(chat["prompt_id"]),
+		ThreadID:        zedThreadID(chat, request.Header.Get(zedThreadHeader), provider),
+		PromptID:        zedPromptID(chat),
 		Provider:        vendor,
 		Model:           model,
 		ProviderRequest: providerRequest,

@@ -85,8 +85,11 @@ func newCodeBuddyRig(t *testing.T, providerID string, upstream http.HandlerFunc)
 	return rig
 }
 
-func (rig *codebuddyRig) post(path, body string) *httptest.ResponseRecorder {
+func (rig *codebuddyRig) post(path, body string, headers ...string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	for i := 0; i+1 < len(headers); i += 2 {
+		r.Header.Set(headers[i], headers[i+1])
+	}
 	r.Header.Set("Authorization", "Bearer "+rig.key)
 	w := httptest.NewRecorder()
 	rig.mux.ServeHTTP(w, r)

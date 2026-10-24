@@ -201,3 +201,71 @@ func TestMimoFreeWithoutAJWTSendsNothingAndFails(t *testing.T) {
 		t.Fatalf("%d %s after %d chat calls", out.Code, out.Body, chatCalls)
 	}
 }
+
+// Zed's thread_id is the session the client's own request resolves to, from the
+// client's headers and the body as the client sent it, before conversion
+// (translator/index.js:96-99): a Messages client's metadata.user_id and a
+// Responses client's headers survive the hop to Chat that would drop them.
+func TestZedThreadIDIsResolvedFromTheClientRequest(t *testing.T) {
+	thread := func(t *testing.T, path, body string, headers ...string) any {
+		t.Helper()
+		rig, seen := newZedIngressRig(t, zedNDJSON)
+		if out := rig.post(path, body, headers...); out.Code != 200 {
+			t.Fatalf("%d %s", out.Code, out.Body)
+		}
+		sent := seen("/completions")
+		if len(sent) != 1 {
+			t.Fatalf("completions %d", len(sent))
+		}
+		for _, call := range sent {
+			if call.header.Get("X-Routeweft-Zed-Thread") != "" {
+				t.Error("the session carrier reached the upstream")
+			}
+		}
+		return sent[0].body["thread_id"]
+	}
+	const uuid = "0a1b2c3d-1111-2222-3333-444455556666"
+	chat := `{"model":"x","messages":[{"role":"user","content":"ping"}]}`
+	for name, tc := range map[string]struct {
+		path, body string
+		headers    []string
+		want       any
+	}{
+		"chat x-session-id header":     {"/v1/chat/completions", chat, []string{"x-session-id", "s-hdr"}, "s-hdr"},
+		"responses header":             {"/v1/responses", `{"model":"x","input":"ping"}`, []string{"x-client-request-id", "req-1"}, "req-1"},
+		"responses claude-code header": {"/v1/responses", `{"model":"x","input":"ping"}`, []string{"x-claude-code-session-id", uuid}, "claude:" + uuid},
+		"messages metadata.user_id":    {"/v1/messages", `{"model":"x","max_tokens":16,"metadata":{"user_id":"u_session_` + uuid + `"},"messages":[{"role":"user","content":"ping"}]}`, nil, "claude:" + uuid},
+		"messages plain metadata":      {"/v1/messages", `{"model":"x","max_tokens":16,"metadata":{"user_id":"plain"},"messages":[{"role":"user","content":"ping"}]}`, nil, "plain"},
+		"chat prompt_cache_key":        {"/v1/chat/completions", `{"model":"x","prompt_cache_key":"pck","messages":[{"role":"user","content":"ping"}]}`, nil, "pck"},
+		"body thread_id beats headers": {"/v1/chat/completions", `{"model":"x","thread_id":"mine","messages":[{"role":"user","content":"ping"}]}`, []string{"x-session-id", "s-hdr"}, "mine"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := thread(t, tc.path, tc.body, tc.headers...); got != tc.want {
+				t.Errorf("thread_id %v, want %v", got, tc.want)
+			}
+		})
+	}
+	// No explicit id: a conversation that shows the same opening assistant text
+	// is the same thread across requests; the connection's session otherwise.
+	opening := strings.Repeat("assistant-opening ", 4)
+	conversation := func(more string) string {
+		return `{"model":"x","messages":[{"role":"user","content":"a"},{"role":"assistant","content":"` + opening + `"},{"role":"user","content":"` + more + `"}]}`
+	}
+	rig, seen := newZedIngressRig(t, zedNDJSON)
+	for _, body := range []string{conversation("one"), conversation("two"), chat, chat} {
+		if out := rig.post("/v1/chat/completions", body); out.Code != 200 {
+			t.Fatalf("%d %s", out.Code, out.Body)
+		}
+	}
+	threads := seen("/completions")
+	if len(threads) != 4 {
+		t.Fatalf("completions %d", len(threads))
+	}
+	id := func(i int) any { return threads[i].body["thread_id"] }
+	if id(0) == nil || id(0) == "" || id(0) != id(1) {
+		t.Errorf("one conversation, two turns: %v %v", id(0), id(1))
+	}
+	if id(2) == nil || id(2) != id(3) || id(2) == id(0) {
+		t.Errorf("the connection's session is its own and stable: %v %v vs %v", id(2), id(3), id(0))
+	}
+}
