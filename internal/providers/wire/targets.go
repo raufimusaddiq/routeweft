@@ -335,6 +335,15 @@ type CredentialError struct{ Err error }
 func (e *CredentialError) Error() string { return e.Err.Error() }
 func (e *CredentialError) Unwrap() error { return e.Err }
 
+// ApplyClientRequestHeaders sets the headers a provider derives from the client's
+// request. body is the one the client's identity is read from, before the
+// provider's own body rewrites.
+func ApplyClientRequestHeaders(provider routing.ProviderRef, request *http.Request, client http.Header, body []byte) {
+	if hook := For(provider.ProviderID).ClientRequestHeaders; hook != nil {
+		set(request.Header, hook(provider, client, body))
+	}
+}
+
 // ApplyRequestHeaders runs after body normalization and URL resolution so signatures cover the wire bytes.
 func ApplyRequestHeaders(provider routing.ProviderRef, request *http.Request, body []byte) error {
 	if provider.ProviderID == "kiro" {

@@ -295,6 +295,19 @@ func TestHookRefusalIsATargetError(t *testing.T) {
 	}
 }
 
+func TestClientRequestHeaderHooksAreExactlyTheDeclaredProviders(t *testing.T) {
+	var got []string
+	for _, id := range Registered() {
+		if For(id).ClientRequestHeaders != nil {
+			got = append(got, id)
+		}
+	}
+	sort.Strings(got)
+	if want := []string{"opencode-go"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("client request header hooks %v, want %v", got, want)
+	}
+}
+
 func TestRequestHeaderHooksAreExactlyTheDeclaredProviders(t *testing.T) {
 	var got []string
 	for _, id := range Registered() {
@@ -303,7 +316,7 @@ func TestRequestHeaderHooksAreExactlyTheDeclaredProviders(t *testing.T) {
 		}
 	}
 	sort.Strings(got)
-	if want := []string{"codex", "cursor", "grok-cli", "qoder"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"codex", "cursor", "grok-cli", "opencode-go", "qoder"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("request header hooks %v, want %v", got, want)
 	}
 }
