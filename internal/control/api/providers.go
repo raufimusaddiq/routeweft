@@ -614,7 +614,7 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	if _, native := h.opts.DiscoveryClient.HTTP.(*http.Client); !native {
 		client.Transport = roundTripperFromClient(h.opts.DiscoveryClient.HTTP)
 	}
-	response, err := client.Do(request)
+	response, err := wire.Send(route, &client, request)
 	if err != nil {
 		result.probeFailure(ctx, err)
 		return result

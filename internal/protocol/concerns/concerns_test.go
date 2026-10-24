@@ -397,6 +397,26 @@ func TestReadLinesLenient(t *testing.T) {
 	}
 }
 
+// [DONE] is Zed's terminal: the stream ends cleanly there and nothing after it is
+// read; without it, or a stop from consume, a truncated stream is not finished.
+func TestReadLinesUntilDone(t *testing.T) {
+	var got []string
+	collect := func(line map[string]any) (bool, error) { got = append(got, JSONText(line["a"])); return false, nil }
+	if err := ReadLinesUntilDone(context.Background(), strings.NewReader("data: {\"a\":1}\n{\"a\":2}\ndata: [DONE]\n{\"a\":3}\n"), collect); err != nil || strings.Join(got, ",") != "1,2" {
+		t.Errorf("err=%v got=%v", err, got)
+	}
+	if err := ReadLinesUntilDone(context.Background(), strings.NewReader("{\"a\":1}\n"), collect); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Errorf("a stream with no terminal must be unexpected EOF: %v", err)
+	}
+	if err := ReadLinesUntilDone(context.Background(), strings.NewReader("{\"a\":1}\nnot json\n"), collect); err == nil || errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Errorf("a garbled line must be refused: %v", err)
+	}
+	got = nil
+	if err := ReadLinesUntilDone(context.Background(), strings.NewReader("{\"a\":1}\n{\"a\":2}\n"), func(line map[string]any) (bool, error) { got = append(got, JSONText(line["a"])); return true, nil }); err != nil || len(got) != 1 {
+		t.Errorf("consume stopping the stream: err=%v got=%v", err, got)
+	}
+}
+
 // A Strict rule never suffixes: two names that become one are an error, whichever
 // order they are declared in and whether the other is rewritten or already valid.
 // The default rule is unchanged and still suffixes.

@@ -100,6 +100,9 @@ func TestSanitizeScopePerProvider(t *testing.T) {
 		got := finalize(t, id, chat, in)
 		if id == "zed" {
 			same(t, got, `{"model":"claude-deepseek","temperature":1,"messages":[{"role":"assistant","content":"a"}],"stream":true}`)
+		} else if id == "mimo-free" || id == "mmf" {
+			// Sanitation leaves it alone; only the MiMoCode system marker is added.
+			same(t, got, `{"model":"claude-deepseek","temperature":1,"messages":[{"role":"system","content":"`+MimoSystemMarker+`"},{"role":"assistant","content":"a"}]}`)
 		} else if got != in {
 			t.Errorf("%s sanitized: %s", id, got)
 		}

@@ -55,7 +55,7 @@ var codexHook = Hook{
 	Compact:         codexCompactBody,
 	ClientHeaders:   []string{"x-codex-beta-features"},
 	RequestHeaders:  codexSession,
-	Do:              CodexDo,
+	Do:              accountless(CodexDo),
 }
 
 // codexBody is transformRequest (codex.js:417-519) for a streaming request.

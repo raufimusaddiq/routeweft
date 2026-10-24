@@ -76,17 +76,14 @@ and what follows from it:
    signature are implemented (`wire/iflow.go`, `wire/qoder.go`); Vertex's service-account
    JWT (`E/vertex.js:125-160`) and MiMo's SSO `clientSign` (`shared/mimoAccount.js:96`) are
    credential mints, which belong with onboarding/refresh, not with the wire hooks.
-8. **Readiness contradicts the wire for three providers (found, not changed).** Zed,
-   MiMo free and `mmf` are declared `ready`, and the pin needs for each a wire
-   Routeweft does not have: Zed's LLM-token exchange, `{thread_id, provider,
-   provider_request}` envelope and NDJSON frames (`E/zed.js:246-305`); MiMo free's
-   bootstrap JWT and system marker (`E/mimo-free.js:63-105`). A request to them reaches
-   the upstream unauthenticated or in the wrong shape. The readiness column is pinned
-   by the P08 matrix (`docs/P08_TEST_MATRIX.md`, generated from
-   `internal/parity/p08_matrix_test.go`), which this task does not edit, so the
-   metadata is left as it is; the correction is a `registry.notReady` entry and a
-   regenerated matrix. Making them `unavailable` also needs a transport change, which is
-   a routing decision. See PARITY §6.19.
+8. **Readiness contradicted the wire for three providers (closed by #192).** Zed,
+   MiMo free and `mmf` were declared `ready` with no executor behind them: a request
+   reached the upstream unauthenticated or in the wrong shape. #192 built the executors
+   (Zed's LLM-token exchange, `{thread_id, provider, provider_request}` envelope and
+   NDJSON frames, `E/zed.js:246-305`; MiMo free's bootstrap JWT and system marker,
+   `E/mimo-free.js:63-105`), offline against the pin's shapes, so the three stay `ready`
+   and the P08 cells became evidence. None has met a live gateway; whether that warrants
+   `experimental` is the owner's call. See PARITY §6.19.
 
 ## Per-provider comparison
 
@@ -118,15 +115,15 @@ protocol legs are under `internal/protocol/`; gating is in
 | grok-web | Web-message envelope/model mode and browser headers (`E/grok-web.js:226-283`); `sso` Cookie (`:285-290`); web stream codec (`:61-219`) and explicit HTTP error messages (`:307-326`). | MISSING: registry declaration is not a cookie session, envelope or codec. No implementation in this slice. |
 | xiaomi-mimo | Only Desktop preview models switch to account `/api/route/chat/completions` with Cookie, default thinking/params (`E/xiaomi-mimo.js:4-7,30-68`); async session handshake and one 401 refresh (`:71-92`). Cloud models keep DefaultExecutor. | PARTIAL: cloud Chat/Messages exists; preview session, target switch and retry absent. A blanket Xiaomi cookie rule would break cloud API-key calls. |
 | xiaomi-tokenplan | Region-selected Chat vs Anthropic path (`E/xiaomi-tokenplan.js:11-20`). | Existing `wire/targets.go` region/transport hook. Unknown region preserves configured host rather than silently selecting another credential destination. |
-| zed | Model-to-provider resolution (`E/zed.js:226-244`); `/completions` envelope with provider_request, thread/prompt IDs and Zed capability headers (`:246-281`); token-mediated fetch, provider-specific stream wrapping (`:100-219`), trial_blocked error (`:284-305`). | MISSING: generic Chat declaration lacks token exchange, envelope, `/completions` and wrapper. This slice does not enable it. |
+| zed | Model-to-provider resolution (`E/zed.js:226-244`); `/completions` envelope with provider_request, thread/prompt IDs and Zed capability headers (`:246-281`); token-mediated fetch, provider-specific stream wrapping (`:100-219`), trial_blocked error (`:284-305`). | PRESENT (#192, offline): `wire/zed.go` exchanges the LLM token, posts the envelope to `/completions` and unwraps the NDJSON. The `trial_blocked` message rewrite and the authenticated listing are not done. |
 | azure | Deployment endpoint/api-version (`E/azure.js:8-24`), api-key/bearer selection (`:26-52`), identity body transform (`:54-56`). | Existing `wire/targets.go` target/api-key hook. Deliberately refuses missing endpoint/invalid deployment instead of pin's environment/OpenAI fallback; local configuration is not provider health. |
 | ollama-local | **Only** connection-specific local host + `/api/chat` target override (`E/ollama-local.js:9-11`); remaining behavior is DefaultExecutor. | PARTIAL: native Ollama NDJSON leg exists; pin's `resolveOllamaLocalHost` setting precedence lacks a provider-specific serving fixture. No signing/cookie envelope exists to port. |
 | ollama | **No specialized executor** (`E/index.js:32-60,87-91`); registry Ollama wire (`R/ollama.js:16-26`). | Native Ollama NDJSON protocol exists. Hosted bearer/endpoint qualification remains open, not a hidden special executor. |
 | kimchi | Provider-specific Claude/thinking/system/tool/cache artifacts sanitation (`E/kimchi.js:4-93,100-120`). | PARTIAL: existing `wire/quirks_chat.go` sanitation uses model name rather than pin's live model metadata; unsupported system shapes remain intact. Ticket omitted this executor. |
 | opencode | Session/request scoped headers, public bearer and model-selected Chat/Responses/Messages target (`E/opencode.js:417-426,471-507`); forced streaming, Responses tools/state/reasoning, fingerprint tools (`:428-464`). | PARTIAL: Chat target/forced-stream hook exists. Other transports are explicitly refused; session/fingerprint/model rules remain open. |
 | opencode-go | Model-dependent Responses target (`E/opencode-go.js:133-136`), session headers (`:139-170`), prior-response stripping/forced Responses stream/store=false, Luna tools/input normalization (`:173-208`). | MISSING executor: declared protocols alone lack these mechanics. Ticket omitted this separate executor. |
-| mimo-free | Fingerprint bootstrap JWT/cache helpers (`E/mimo-free.js:1-105`), source/affinity headers and system marker (`:113-129`), fresh JWT and one 401/403 bootstrap retry (`:131-163`). | MISSING executor; correct free Chat URL alone does not authenticate. No bootstrap/cache implemented here. |
-| mmf | Alias to mimo-free (`E/index.js:68`). | Same missing executor; not a separate mechanism to implement. |
+| mimo-free | Fingerprint bootstrap JWT/cache helpers (`E/mimo-free.js:1-105`), source/affinity headers and system marker (`:113-129`), fresh JWT and one 401/403 bootstrap retry (`:131-163`). | PRESENT (#192, offline): `wire/mimofree.go` bootstraps and caches the JWT, retries once on 401/403 and adds the headers and marker; a JWT that cannot be minted refuses the request. |
+| mmf | Alias to mimo-free (`E/index.js:68`). | Same executor under its alias; served by the same hook (#192). |
 | perplexity-web | Model/thinking selection, conversation continuation, perplexity_ask envelope (`E/perplexity-web.js:396-436`), bearer **or** session cookie (`:438-449`), web answer/citation stream/fold (`:85-389,487-503`), HTTP error messages (`:467-478`). | MISSING: no cookie/envelope/codec executor; ticket omitted this provider. |
 | byteplus, cloudflare-ai, nvidia | Registry free-tier entries, no specialized executors (`E/index.js:32-60,87-91`; `R/byteplus.js:20-24`, `R/cloudflare-ai.js:21-33`, `R/nvidia.js:17-23`). | Shared API-key mechanisms; Cloudflare has an existing account target hook and native System One result-envelope handling. “Free” does not imply no-auth/bootstrap or the MiMo executor. |
 
@@ -219,8 +216,8 @@ served provider.
 | perplexity-web | not (`E/perplexity-web.js:396-436`) | - | not (`:446-449`) | - | - | not (`:467-478`) | not | not |
 | xiaomi-mimo | not: preview defaults (`E/xiaomi-mimo.js:54-68`) | not: SSO `clientSign` (`S/mimoAccount.js:96-174`) | not: preview only (`:41-52,71-92`) | - | not: one 401 refresh (`:83-92`) | - | does (cloud models) | not: preview route (`:30-34`) |
 | xiaomi-tokenplan | - | - | - | - | - | - | - | does (`E/xiaomi-tokenplan.js:11-20`) |
-| mimo-free (`mmf`) | not: system marker (`E/mimo-free.js:63-72`) | not: bootstrap JWT (`:79-105`) | - (a bearer JWT) | - | not: re-bootstrap on 401/403 (`:148-156`) | - | not (`:117-125`) | does: URL |
-| zed | not (`E/zed.js:246-281`) | not: LLM-token exchange (`S/zedAuth.js`) | - | does on the declared Chat seam (#185, PARITY §6.19; `R/zed.js:27`) | not: NDJSON status frames (`E/zed.js:100-219`) | differs: trial_blocked cools the account; message not rewritten (`:284-305`) | not | not |
+| mimo-free (`mmf`) | does (#192): system marker (`E/mimo-free.js:63-72`) | does (#192): bootstrap JWT (`:79-105`) | - (a bearer JWT) | - | does (#192): re-bootstrap on 401/403 (`:148-156`) | - | does (#192, `:117-125`) | does: URL |
+| zed | does (#192): envelope (`E/zed.js:246-281`) | does (#192): LLM-token exchange (`S/zedAuth.js`) | - | does on the declared Chat seam (#185, PARITY §6.19; `R/zed.js:27`) | does (#192): NDJSON status frames (`E/zed.js:100-219`); a failed status or cut-off stream is an error | differs: trial_blocked cools the account; message not rewritten (`:284-305`) | does (#192) | does (#192): `/completions` |
 | opencode | not: Responses, Messages models (`E/opencode.js:471-507`) | - | - | does | - | - | not: session, request ids (`:417-426`) | differs: Chat models only |
 | opencode-go | not: Responses models (`E/opencode-go.js:173-208`) | - | - | does for Responses-only models (#185, PARITY §6.19; `R/opencode-go.js:41`, `E/opencode-go.js:179-200`) | - | - | not (`:139-170`) | does: Responses-only models (`:133-136`) |
 | kimchi | differs: model-name sanitation (`E/kimchi.js:4-93`) | - | - | - | - | - | - | - |
@@ -242,7 +239,7 @@ served provider.
 | **codex** | `R/codex.js:40` | **does (second slice)** |
 | **grok-cli** | `R/grok-cli.js:46` | **does (second slice)** |
 | openai | `R/openai.js:28` | **not, by decision**: the fold refuses `logprobs` and annotations, which api.openai.com answers on a non-stream request, so forcing would turn a working request into a 502. A usage-preserving fold of those fields is the precondition, and is open. |
-| zed | `R/zed.js:27` | does on the declared Chat seam (#185, PARITY §6.19); token exchange/envelope/NDJSON remain open |
+| zed | `R/zed.js:27` | does on the declared Chat seam (#185, PARITY §6.19); token exchange, envelope and NDJSON landed in #192 |
 | opencode-go (model `gpt-5.6-luna`) | `R/opencode-go.js:41` | does (#185, PARITY §6.19); the executor also forces the other Responses-only models (`E/opencode-go.js:179-200`) |
 
 ## Implemented mechanism: stream-only Responses endpoints

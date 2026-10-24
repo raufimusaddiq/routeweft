@@ -33,7 +33,7 @@ type sanitizeScope struct{ strip, inject bool }
 var noSanitize = map[string]bool{
 	"antigravity": true, "azure": true, "codex": true, "commandcode": true,
 	"cursor": true, "devin-cli": true, "gemini-cli": true, "grok-cli": true,
-	"grok-web": true, "iflow": true, "kiro": true, "mimo-free": true,
+	"grok-web": true, "iflow": true, "kiro": true, "mimo-free": true, "mmf": true,
 	"perplexity-web": true, "qoder": true, "trae": true, "vertex": true,
 	"vertex-partner": true, "windsurf": true, "zed": true,
 }

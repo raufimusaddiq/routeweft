@@ -316,7 +316,7 @@ func TestRequestHeaderHooksAreExactlyTheDeclaredProviders(t *testing.T) {
 		}
 	}
 	sort.Strings(got)
-	if want := []string{"codex", "cursor", "grok-cli", "opencode-go", "qoder"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"codex", "cursor", "grok-cli", "opencode-go", "qoder", "zed"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("request header hooks %v, want %v", got, want)
 	}
 }

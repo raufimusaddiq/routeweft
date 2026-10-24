@@ -55,7 +55,7 @@ var commandCodeHook = Hook{
 	OpenAIHeaders: commandCodeHeaders,
 	Target:        func(routing.ProviderRef) (Target, error) { return Target{Endpoint: commandCodeEndpoint}, nil },
 	Finalize:      commandCodeStream,
-	Do:            CommandCodeDo,
+	Do:            accountless(CommandCodeDo),
 	// Every request needs the bearer; an empty one is an account problem, not an upstream 401.
 	RequireCredential: true,
 }

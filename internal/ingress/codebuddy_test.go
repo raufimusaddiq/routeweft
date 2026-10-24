@@ -26,6 +26,11 @@ type codebuddyRig struct {
 	headers  []http.Header
 	outcomes []RequestOutcome
 	accounts []string
+	// settings, endpoint and token shape the ProviderRef a test serves; the zero
+	// values are CodeBuddy's.
+	settings routing.ProviderSettings
+	endpoint string
+	noToken  bool
 }
 
 // newCodeBuddyRig serves a CodeBuddy provider from a scripted upstream; nothing
@@ -67,7 +72,12 @@ func newCodeBuddyRig(t *testing.T, providerID string, upstream http.HandlerFunc)
 			return out, true
 		},
 		AccountProvider: func(_ *runtime.RuntimeSnapshot, _, account, _ string) (routing.ProviderRef, bool) {
-			return routing.ProviderRef{ProviderID: providerID, ConnectionID: account, BaseURL: server.URL + "/v2/" + account, Protocol: "openai-chat", UpstreamModel: "glm-5.2", APIToken: "secret"}, true
+			token := "secret"
+			if rig.noToken {
+				token = ""
+			}
+			return routing.ProviderRef{ProviderID: providerID, ConnectionID: account, BaseURL: server.URL + "/v2/" + account, Protocol: "openai-chat", UpstreamModel: "glm-5.2", APIToken: token,
+				Endpoint: rig.endpoint, Connection: routing.ConnectionMetadata{Settings: rig.settings}}, true
 		},
 		OnRequestComplete: func(o RequestOutcome) { rig.mu.Lock(); rig.outcomes = append(rig.outcomes, o); rig.mu.Unlock() },
 	})

@@ -27,7 +27,19 @@ func ReadLinesLenient(ctx context.Context, src io.Reader, consume func(map[strin
 	return readLines(ctx, src, true, consume)
 }
 
+// ReadLinesUntilDone is ReadLinesLenient for an upstream whose `[DONE]` line is
+// its terminal (Zed: executors/zed.js:118-122): the stream ends cleanly there. A
+// stream that ends without it, or without consume stopping it, is still
+// io.ErrUnexpectedEOF.
+func ReadLinesUntilDone(ctx context.Context, src io.Reader, consume func(map[string]any) (bool, error)) error {
+	return readLinesMode(ctx, src, true, true, consume)
+}
+
 func readLines(ctx context.Context, src io.Reader, lenient bool, consume func(map[string]any) (bool, error)) error {
+	return readLinesMode(ctx, src, lenient, false, consume)
+}
+
+func readLinesMode(ctx context.Context, src io.Reader, lenient, doneEnds bool, consume func(map[string]any) (bool, error)) error {
 	scanner := bufio.NewScanner(src)
 	scanner.Buffer(make([]byte, 4096), 4<<20)
 	total := 0
@@ -47,6 +59,9 @@ func readLines(ctx context.Context, src io.Reader, lenient bool, consume func(ma
 		if lenient {
 			line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if line == "[DONE]" {
+				if doneEnds {
+					return nil
+				}
 				continue
 			}
 		}

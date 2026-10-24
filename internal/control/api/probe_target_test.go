@@ -269,7 +269,6 @@ func TestQoderProbeIsUnavailableUntilConversionLegExists(t *testing.T) {
 func TestForcedStreamProbesUseTheServingShape(t *testing.T) {
 	catalog, _ := registry.NewBuiltinCatalog()
 	for _, tc := range []struct{ provider, model, protocol, path string }{
-		{"zed", "claude-sonnet-4.5", "openai-chat", "/chat/completions"},
 		{"opencode-go", "gpt-5.6-luna", "openai-chat", "/responses"},
 		{"opencode-go", "grok-4.6", "anthropic-messages", "/responses"},
 		{"opencode-go", "muse-spark-1.2-contributor", "openai-responses", "/responses"},
@@ -294,5 +293,65 @@ func TestForcedStreamProbesUseTheServingShape(t *testing.T) {
 	result := h.testProviderModel(context.Background(), connection, node, spec, "openai-chat", "gpt-5.6-luna", time.Second)
 	if result.OK || len(calls()) != 0 || result.UpstreamModelID != "" || result.Error != "model requires the Responses transport" {
 		t.Fatalf("%+v %+v", result, calls())
+	}
+}
+
+// A Zed probe tests the request serving would send: the LLM-token exchange, then
+// Zed's envelope at /completions, and the NDJSON stream read back as Chat. Before
+// the exchange existed it posted the raw access token to /chat/completions.
+func TestZedProbeTakesTheExchangeAndTheEnvelope(t *testing.T) {
+	catalog, _ := registry.NewBuiltinCatalog()
+	spec, _ := catalog.Lookup("zed")
+	h, _ := recordingHandler(t)
+	var mu sync.Mutex
+	var calls []recordedCall
+	h.opts.DiscoveryClient.HTTP = probeHTTPFunc(func(r *http.Request) (*http.Response, error) {
+		var raw []byte
+		if r.Body != nil {
+			raw, _ = io.ReadAll(r.Body)
+		}
+		mu.Lock()
+		calls = append(calls, recordedCall{r.URL.String(), r.Header.Clone(), string(raw)})
+		mu.Unlock()
+		reply := func(contentType, body string) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{contentType}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+		}
+		switch r.URL.Path {
+		case "/client/llm_tokens":
+			return reply("application/json", `{"token":"llm-fixture"}`)
+		case "/models":
+			return reply("application/json", `{"models":[{"id":"claude-sonnet-4.5","provider":"anthropic"}]}`)
+		}
+		return reply("application/x-ndjson", `{"event":{"type":"message_start","message":{"id":"m","role":"assistant","model":"claude-sonnet-4.5","content":[],"usage":{"input_tokens":3,"output_tokens":0}}}}
+{"event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}
+{"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"pong"}}}
+{"event":{"type":"content_block_stop","index":0}}
+{"event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}}
+{"event":{"type":"message_stop"}}
+{"status":"stream_ended"}
+`)
+	})
+	node, connection := builtinConnection("zed", routing.ProviderSettings{UserID: "user-1", OrganizationID: "org-1"}, credentials.AuthOAuth)
+	result := h.testProviderModel(context.Background(), connection, node, spec, "openai-chat", "claude-sonnet-4.5", 5*time.Second)
+	if !result.OK {
+		t.Fatalf("%+v", result)
+	}
+	var paths []string
+	for _, call := range calls {
+		paths = append(paths, strings.TrimPrefix(call.URL, "https://cloud.zed.dev"))
+	}
+	if strings.Join(paths, " ") != "/client/llm_tokens /models /completions" {
+		t.Fatalf("calls %v", paths)
+	}
+	last := calls[len(calls)-1]
+	if last.Header.Get("Authorization") != "Bearer llm-fixture" || !strings.Contains(last.Body, `"provider":"anthropic"`) || !strings.Contains(last.Body, `"provider_request"`) {
+		t.Errorf("completions %v %s", last.Header, last.Body)
+	}
+	// Without the user id the exchange needs, the probe says so and sends nothing.
+	calls = nil
+	node, connection = builtinConnection("zed", routing.ProviderSettings{}, credentials.AuthOAuth)
+	result = h.testProviderModel(context.Background(), connection, node, spec, "openai-chat", "claude-sonnet-4.5", 5*time.Second)
+	if result.OK || len(calls) != 0 || !strings.Contains(result.Error, "user id") {
+		t.Errorf("%+v after %d calls", result, len(calls))
 	}
 }
