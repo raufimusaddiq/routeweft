@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -696,49 +697,221 @@ func TestZedStatuses(t *testing.T) {
 	}
 }
 
-// A failed status is the end of the stream with an error the dispatcher and the
-// client can see, not text the assistant said.
-func TestZedFailedStatusIsAnInBandError(t *testing.T) {
-	u := newZedUpstream(t)
-	u.completions = streamOf(`{"event":{"type":"message_start","message":{"id":"m","role":"assistant","model":"claude-sonnet-4.5","content":[],"usage":{"input_tokens":1,"output_tokens":0}}}}
-{"status":{"failed":{"message":"quota exhausted"}}}
-`)
-	response, text := u.do(t, u.provider(), zedChatBody)
-	if response.StatusCode != 200 || !strings.Contains(text, `"error"`) || !strings.Contains(text, "quota exhausted") || !strings.HasSuffix(strings.TrimSpace(text), "[DONE]") {
-		t.Fatalf("%s", text)
+// shape reduces Chat SSE to what the pin's observed output is compared on: the
+// text and finish of each chunk, tool-call chunks, frames that are not objects, and
+// the terminal. Role-only and usage-only chunks and ids are the legs' own.
+func shape(t *testing.T, sse string) []string {
+	t.Helper()
+	var out []string
+	for _, frame := range strings.Split(strings.TrimSpace(sse), "\n\n") {
+		payload := strings.TrimPrefix(strings.TrimSpace(frame), "data: ")
+		if payload == "[DONE]" {
+			out = append(out, "DONE")
+			continue
+		}
+		var chunk struct {
+			Error   any `json:"error"`
+			Choices []struct {
+				Delta struct {
+					Content   string `json:"content"`
+					ToolCalls []any  `json:"tool_calls"`
+				} `json:"delta"`
+				Finish string `json:"finish_reason"`
+			} `json:"choices"`
+		}
+		if json.Unmarshal([]byte(payload), &chunk) != nil || (chunk.Choices == nil && chunk.Error == nil) {
+			out = append(out, "raw:"+payload)
+			continue
+		}
+		if chunk.Error != nil {
+			out = append(out, "error")
+			continue
+		}
+		for _, choice := range chunk.Choices {
+			var parts []string
+			if choice.Delta.Content != "" {
+				parts = append(parts, "text:"+choice.Delta.Content)
+			}
+			if len(choice.Delta.ToolCalls) > 0 {
+				parts = append(parts, "tool")
+			}
+			if choice.Finish != "" {
+				parts = append(parts, "finish:"+choice.Finish)
+			}
+			if len(parts) > 0 {
+				out = append(out, strings.Join(parts, " "))
+			}
+		}
 	}
-	if strings.Contains(text, `"finish_reason":"stop"`) {
-		t.Errorf("a failure was reported as a clean stop: %s", text)
-	}
+	return out
 }
 
-// A stream that stops without stream_ended or [DONE] was cut off.
-func TestZedTruncatedStreamIsAnError(t *testing.T) {
-	for name, body := range map[string]string{
-		"ends mid-message": `{"event":{"type":"message_start","message":{"id":"m","role":"assistant","model":"claude-sonnet-4.5","content":[],"usage":{"input_tokens":1,"output_tokens":0}}}}` + "\n",
-		"no terminal":      strings.Replace(zedAnthropicStream, `{"status":"stream_ended"}`+"\n", "", 1),
-		"garbled line":     "not json\n" + zedAnthropicStream,
+const (
+	zedAnthropicHead = `{"event":{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4.5","content":[],"usage":{"input_tokens":11,"output_tokens":0}}}}
+{"event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}
+{"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"pong"}}}
+`
+	zedAnthropicTail = `{"event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}}
+{"event":{"type":"message_stop"}}
+{"status":"stream_ended"}
+`
+	zedGoogleHead = `{"event":{"candidates":[{"content":{"role":"model","parts":[{"text":"pong"}]}}],"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":3,"totalTokenCount":14}}}
+`
+	zedGoogleTail = `{"event":{"candidates":[{"content":{"role":"model","parts":[{"text":"."}]},"finishReason":"STOP"}]}}
+{"status":"stream_ended"}
+`
+	zedResponsesHead = `{"event":{"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}}
+{"event":{"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_1","role":"assistant","content":[]}}}
+{"event":{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"pong"}}
+`
+	zedResponsesTool = `{"event":{"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}}
+{"event":{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":""}}}
+{"event":{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"q\":1}"}}
+`
+	zedResponsesDone = `{"event":{"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[],"usage":{"input_tokens":11,"output_tokens":3,"total_tokens":14}}}}
+{"status":"stream_ended"}
+`
+	zedXAIChunk = `{"event":{"id":"x1","object":"chat.completion.chunk","created":5,"model":"grok-4","choices":[{"index":0,"delta":{"content":"pong"}}]}}
+`
+)
+
+// The end of the stream, case by case, against what the pin's own wrapper
+// (executors/zed.js:148-219) wrote for the same input when it was run offline on
+// these sanitized lines: a failed status is the assistant's text with a clean stop,
+// a body that stops short is finished (the Responses translator closes a started
+// turn, the others send nothing), a line that is not JSON is skipped, and [DONE]
+// comes last, once.
+func TestZedStreamEndsAsThePinEndsIt(t *testing.T) {
+	failedMessage := func(message string) string {
+		return fmt.Sprintf(`{"status":{"failed":{"message":%q}}}`+"\n", message)
+	}
+	for _, tc := range []struct {
+		name, model, stream string
+		want                []string
+	}{
+		{"anthropic failed", "claude-sonnet-4.5", zedAnthropicHead + failedMessage("quota exhausted"),
+			[]string{"text:pong", "text:[Zed error] quota exhausted finish:stop", "DONE"}},
+		{"anthropic cut off", "claude-sonnet-4.5", zedAnthropicHead,
+			[]string{"text:pong", "DONE"}},
+		{"anthropic ended without a terminal event", "claude-sonnet-4.5", zedAnthropicHead + `{"status":"stream_ended"}` + "\n",
+			[]string{"text:pong", "DONE"}},
+		{"anthropic non-JSON line skipped", "claude-sonnet-4.5", zedAnthropicHead + "not json\n" +
+			`{"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"!"}}}` + "\n" + zedAnthropicTail,
+			[]string{"text:pong", "text:!", "finish:stop", "DONE"}},
+		{"google failed", "gemini-3", zedGoogleHead + failedMessage("boom"),
+			[]string{"text:pong", "text:[Zed error] boom finish:stop", "DONE"}},
+		{"google cut off", "gemini-3", zedGoogleHead,
+			[]string{"text:pong", "DONE"}},
+		{"google non-JSON line skipped", "gemini-3", "oops\n" + zedGoogleHead + zedGoogleTail,
+			[]string{"text:pong", "text:.", "finish:stop", "DONE"}},
+		{"responses cut off closes the started turn", "gpt-5", zedResponsesHead,
+			[]string{"text:pong", "finish:stop", "DONE"}},
+		{"responses failed: error text, then the flush", "gpt-5", zedResponsesHead + failedMessage("boom"),
+			[]string{"text:pong", "text:[Zed error] boom finish:stop", "finish:stop", "DONE"}},
+		{"responses failed as a bare string", "gpt-5", zedResponsesHead + `{"status":"failed"}` + "\n",
+			[]string{"text:pong", "text:[Zed error] request failed finish:stop", "finish:stop", "DONE"}},
+		{"responses tool call cut off finishes as tool_calls", "gpt-5", zedResponsesTool,
+			[]string{"tool", "tool", "finish:tool_calls", "DONE"}},
+		{"responses already finished is not finished twice", "gpt-5", zedResponsesTool + zedResponsesDone,
+			[]string{"tool", "tool", "finish:tool_calls", "DONE"}},
+		{"responses that sent nothing has nothing to flush", "gpt-5", "",
+			[]string{"DONE"}},
+		{"responses non-JSON line skipped", "gpt-5", "x\n" + zedResponsesHead + zedResponsesDone,
+			[]string{"text:pong", "finish:stop", "DONE"}},
+		{"xai cut off", "grok-4", zedXAIChunk,
+			[]string{"text:pong", "DONE"}},
+		{"xai failed", "grok-4", zedXAIChunk + failedMessage("boom"),
+			[]string{"text:pong", "text:[Zed error] boom finish:stop", "DONE"}},
+		{"xai non-JSON line skipped, [DONE] ends", "grok-4", "junk\n" + zedXAIChunk + "data: [DONE]\n" + zedXAIChunk,
+			[]string{"text:pong", "DONE"}},
+		// The pin relays whatever JSON an xAI line holds (enqueueSseObject): a
+		// scalar as it is, an array item by item, falsy items dropped.
+		{"xai non-object JSON is relayed as the pin does", "grok-4", zedXAIChunk + "123\n[1,0,null,\"\"]\n\"s\"\n0\n[DONE]\n",
+			[]string{"text:pong", "raw:123", "raw:1", `raw:"s"`, "DONE"}},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			u := newZedUpstream(t)
-			u.completions = streamOf(body)
-			_, text := u.do(t, u.provider(), zedChatBody)
-			if !strings.Contains(text, `"error"`) || !strings.Contains(text, "zed_stream_error") {
-				t.Fatalf("a cut-off stream looked like an answer: %s", text)
+			u.completions = streamOf(tc.stream)
+			body := fmt.Sprintf(`{"model":%q,"stream":true,"messages":[{"role":"user","content":"ping"}]}`, tc.model)
+			response, text := u.do(t, u.provider(), body)
+			if response.StatusCode != 200 {
+				t.Fatalf("%d %s", response.StatusCode, text)
+			}
+			if got := shape(t, text); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("got  %q\nwant %q\n%s", got, tc.want, text)
+			}
+			if strings.Count(text, "[DONE]") != 1 || strings.Contains(text, "upstream_incomplete") || strings.Contains(text, "zed_stream_error") {
+				t.Errorf("one [DONE] and no invented error expected:\n%s", text)
 			}
 		})
 	}
 }
 
-// The unwrapped stream also accepts the pin's other framings: SSE `data:` prefix,
-// a bare vendor chunk, CRLF.
+// The error chunk is createErrorChunk (zed.js:97-107): its own id, the model the
+// request named, and the message as the assistant's content.
+func TestZedErrorChunkNamesTheRequestedModel(t *testing.T) {
+	u := newZedUpstream(t)
+	u.completions = streamOf(zedAnthropicHead + `{"status":{"failed":{"error":"nope"}}}` + "\n")
+	_, text := u.do(t, u.provider(), zedChatBody)
+	var found bool
+	for _, frame := range strings.Split(text, "\n\n") {
+		if !strings.Contains(frame, "[Zed error]") {
+			continue
+		}
+		found = true
+		var chunk struct {
+			ID, Object, Model string
+			Choices           []struct {
+				Delta  struct{ Content string }
+				Finish string `json:"finish_reason"`
+			}
+		}
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(frame, "data: ")), &chunk); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(chunk.ID, "chatcmpl-zed-error-") || chunk.Object != "chat.completion.chunk" || chunk.Model != "claude-sonnet-4.5" ||
+			chunk.Choices[0].Delta.Content != "[Zed error] nope" || chunk.Choices[0].Finish != "stop" {
+			t.Errorf("%+v", chunk)
+		}
+	}
+	if !found {
+		t.Fatalf("no error chunk: %s", text)
+	}
+}
+
+// Whatever the pin's translators did with the lines before the failure reaches the
+// client first, in order, and nothing the legs wrote about the early end does.
+func TestZedFailureKeepsEarlierContentInOrder(t *testing.T) {
+	u := newZedUpstream(t)
+	u.completions = streamOf(zedAnthropicHead + `{"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" more"}}}` + "\n" + `{"status":{"failed":{"message":"x"}}}` + "\n" + zedAnthropicTail)
+	_, text := u.do(t, u.provider(), zedChatBody)
+	want := []string{"text:pong", "text: more", "text:[Zed error] x finish:stop", "DONE"}
+	if got := shape(t, text); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+// The reader takes the pin's framings: an SSE `data:` prefix, a bare vendor
+// chunk, CRLF, and lines after [DONE] are not read.
 func TestZedAcceptsTheFramingsTheCodecDoes(t *testing.T) {
 	u := newZedUpstream(t)
 	u.completions = streamOf("data: " + `{"event":{"id":"x1","object":"chat.completion.chunk","created":5,"model":"grok-4","choices":[{"index":0,"delta":{"content":"pong"}}]}}` + "\r\n\r\n" +
 		`{"id":"x1","object":"chat.completion.chunk","created":5,"model":"grok-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` + "\r\n" +
-		"data: [DONE]\r\n")
+		"data:[DONE]\r\n" + zedXAIChunk)
 	_, text := u.do(t, u.provider(), `{"model":"grok-4","stream":true,"messages":[{"role":"user","content":"ping"}]}`)
-	if !strings.Contains(text, "pong") || strings.Contains(text, `"error"`) {
+	if want := []string{"text:pong", "finish:stop", "DONE"}; !reflect.DeepEqual(shape(t, text), want) {
+		t.Fatalf("%q\n%s", shape(t, text), text)
+	}
+}
+
+// What is not a stream end stays an error: the client leaving is handled in
+// TestZedStopsUpstreamWhenTheClientLeaves, and an oversized line is refused
+// where the pin has no bound.
+func TestZedOversizedLineIsAnErrorNotAFinish(t *testing.T) {
+	u := newZedUpstream(t)
+	u.completions = streamOf(zedXAIChunk + strings.Repeat("a", 5<<20) + "\n")
+	_, text := u.do(t, u.provider(), `{"model":"grok-4","stream":true,"messages":[{"role":"user","content":"ping"}]}`)
+	if !strings.Contains(text, "zed_stream_error") || strings.Count(text, "[DONE]") != 1 {
 		t.Fatalf("%s", text)
 	}
 }

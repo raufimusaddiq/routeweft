@@ -123,17 +123,55 @@ func TestZedWithoutItsUserIDIsRefusedBeforeAnythingIsSent(t *testing.T) {
 	}
 }
 
-func TestZedFailedStatusIsAnUpstreamErrorNotAnAnswer(t *testing.T) {
-	rig, _ := newZedIngressRig(t, `{"status":{"failed":{"message":"quota exhausted"}}}`+"\n")
-	out := rig.post("/v1/chat/completions", `{"model":"x","messages":[{"role":"user","content":"ping"}]}`)
-	if out.Code != 502 || strings.Contains(out.Body.String(), `"finish_reason"`) {
-		t.Fatalf("%d %s", out.Code, out.Body)
+// The pin writes a failed status as the assistant's text with a clean stop
+// (zed.js:97-107,173-179), so every client gets a completion carrying it: that is
+// the observed behavior, kept (PARITY 6.19).
+func TestZedFailedStatusIsTheAssistantsTextWithACleanStop(t *testing.T) {
+	const failed = `{"event":{"type":"message_start","message":{"id":"m","role":"assistant","model":"glm-5.2","content":[],"usage":{"input_tokens":1,"output_tokens":0}}}}` + "\n" +
+		`{"status":{"failed":{"message":"quota exhausted"}}}` + "\n"
+	for _, tc := range []struct{ path, body, want string }{
+		{"/v1/chat/completions", `{"model":"x","messages":[{"role":"user","content":"ping"}]}`, `"content":"[Zed error] quota exhausted"`},
+		{"/v1/responses", `{"model":"x","input":"ping"}`, `[Zed error] quota exhausted`},
+		{"/v1/messages", `{"model":"x","max_tokens":16,"messages":[{"role":"user","content":"ping"}]}`, `[Zed error] quota exhausted`},
+	} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/%v", tc.path, stream), func(t *testing.T) {
+				rig, _ := newZedIngressRig(t, failed)
+				out := rig.post(tc.path, strings.TrimSuffix(tc.body, "}")+fmt.Sprintf(`,"stream":%v}`, stream))
+				if out.Code != 200 || !strings.Contains(out.Body.String(), tc.want) || strings.Contains(out.Body.String(), "upstream_stream_error") {
+					t.Fatalf("%d %s", out.Code, out.Body)
+				}
+				if !stream && !json.Valid(out.Body.Bytes()) {
+					t.Fatalf("not one JSON body: %s", out.Body)
+				}
+			})
+		}
 	}
-	// The failed account is cooled, so the streaming client gets a rig of its own.
-	rig, _ = newZedIngressRig(t, `{"status":{"failed":{"message":"quota exhausted"}}}`+"\n")
-	streamed := rig.post("/v1/chat/completions", `{"model":"x","stream":true,"messages":[{"role":"user","content":"ping"}]}`)
-	if !strings.Contains(streamed.Body.String(), "quota exhausted") || strings.Contains(streamed.Body.String(), `"finish_reason":"stop"`) {
-		t.Fatalf("%s", streamed.Body)
+}
+
+// A stream that stops before stream_ended is finished as the pin finishes it
+// (zed.js:200-208): what arrived is the answer, with no error invented.
+func TestZedCutOffStreamIsFinishedAsThePinDoes(t *testing.T) {
+	const cutOff = `{"event":{"type":"message_start","message":{"id":"m","role":"assistant","model":"glm-5.2","content":[],"usage":{"input_tokens":1,"output_tokens":0}}}}` + "\n" +
+		`{"event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}` + "\n" +
+		`{"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}}` + "\n"
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprint(stream), func(t *testing.T) {
+			rig, _ := newZedIngressRig(t, cutOff)
+			out := rig.post("/v1/chat/completions", fmt.Sprintf(`{"model":"x","stream":%v,"messages":[{"role":"user","content":"ping"}]}`, stream))
+			if out.Code != 200 || !strings.Contains(out.Body.String(), "partial") || strings.Contains(out.Body.String(), "upstream_incomplete") || strings.Contains(out.Body.String(), `"error"`) {
+				t.Fatalf("%d %s", out.Code, out.Body)
+			}
+		})
+	}
+}
+
+// A line that is not JSON is skipped (zed.js:132-134).
+func TestZedNonJSONLineIsSkipped(t *testing.T) {
+	rig, _ := newZedIngressRig(t, "keep-alive\n"+zedNDJSON)
+	out := rig.post("/v1/chat/completions", `{"model":"x","messages":[{"role":"user","content":"ping"}]}`)
+	if out.Code != 200 || !strings.Contains(out.Body.String(), "pong") {
+		t.Fatalf("%d %s", out.Code, out.Body)
 	}
 }
 

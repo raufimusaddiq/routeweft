@@ -695,13 +695,7 @@ func ZedDo(provider routing.ProviderRef, client *http.Client, request *http.Requ
 	reader, writer := io.Pipe()
 	upstream := response.Body
 	go func() {
-		err := zedRelay(ctx, upstream, leg, writer)
-		if err != nil && ctx.Err() == nil {
-			sse := &concerns.SSEWriter{Ctx: ctx, Dst: writer}
-			if sse.Event("", map[string]any{"error": map[string]any{"message": err.Error(), "type": "api_error", "code": "zed_stream_error"}}) == nil {
-				sse.Done()
-			}
-		}
+		_ = zedRelay(ctx, upstream, vendor, leg, model, writer)
 		upstream.Close()
 		writer.Close()
 	}()
@@ -758,71 +752,192 @@ func zedStatus(status any) (ended bool, failure string, failed bool) {
 	return false, "", false
 }
 
-// zedRelay unwraps Zed's NDJSON into the vendor's own SSE and runs the vendor's
-// leg over it, writing Chat SSE to dst (wrapZedCompletionStream, zed.js:148-219).
-//
-// Divergences from the pin, each toward not reporting a failure as an answer: a
-// `failed` status ends the stream with an in-band error, where the pin writes
-// "[Zed error] <message>" as the assistant's text with a clean stop
-// (zed.js:97-107,173-179); a stream that ends with neither stream_ended nor
-// [DONE] is an error, where the pin finishes it (zed.js:200-208); and a line
-// that is not JSON is an error, where the pin skips it (zed.js:132-134).
-func zedRelay(ctx context.Context, upstream io.Reader, leg zedLeg, dst io.Writer) error {
-	if leg == nil {
-		sse := &concerns.SSEWriter{Ctx: ctx, Dst: dst}
-		err := concerns.ReadLinesUntilDone(ctx, upstream, func(line map[string]any) (bool, error) {
-			event, stop, err := zedUnwrap(line)
-			if err != nil || stop {
-				return stop, err
-			}
-			if event == nil {
-				return false, nil
-			}
-			return false, sse.Event("", event)
-		})
-		if err != nil {
-			return err
+// zedOut sits between a vendor leg and the client. The legs end a stream that
+// stopped short with an `upstream_incomplete` error object and `[DONE]`
+// (concerns.FailChatStream); the pin's wrapper does neither, so both are held back
+// here and the relay writes the one `[DONE]` itself. Every other frame, a real
+// in-band upstream error included, passes through.
+type zedOut struct {
+	dst       io.Writer
+	sawError  bool
+	sawFailed bool
+}
+
+func (o *zedOut) Write(p []byte) (int, error) {
+	text := string(p)
+	switch {
+	case text == "data: [DONE]\n\n":
+		return len(p), nil
+	case strings.HasPrefix(text, `data: {"error":`):
+		o.sawError = true
+		if strings.Contains(text, `"code":"upstream_incomplete"`) {
+			o.sawFailed = true
+			return len(p), nil
 		}
-		return sse.Done()
 	}
-	vendorReader, vendorWriter := io.Pipe()
+	return o.dst.Write(p)
+}
+
+// zedResponsesTerminals are the Responses events after which the pin's translator
+// has sent its finish (finishReasonSent) and has nothing left to flush.
+var zedResponsesTerminals = map[string]bool{"response.completed": true, "response.incomplete": true, "response.failed": true, "error": true}
+
+// zedRelay is wrapZedCompletionStream (zed.js:148-219): Zed's NDJSON is unwrapped
+// into the vendor's own SSE, the vendor's leg turns it into Chat SSE, and the
+// stream ends as the pin ends it.
+//
+//   - A `failed` status writes "[Zed error] <message>" as the assistant's text with
+//     finish_reason "stop" (createErrorChunk, :97-107,173-179), then finishes.
+//   - `stream_ended`, `[DONE]` and the end of the body all finish (:180-182,200-208);
+//     a stream cut off is not an error. Finishing is the translator's flush
+//     (convertProviderEvent(provider, null, state), :159): the OpenAI Responses
+//     translator closes a started turn with its finish chunk, the others have
+//     nothing to send. The Go legs end a stream that stopped short with an error
+//     object, so the Responses flush is a synthesized `response.completed` and the
+//     legs' error tail is dropped (zedOut).
+//   - A line that is not JSON is skipped (:132-134).
+//   - `[DONE]` is written once, last (:161).
+//
+// Not replicated, being accidents of the pin: a `null` line or `{"event":null}`
+// is handed to the translator as its flush call, ending the turn early, and a
+// stream that has produced nothing is not given a finish. A line over 4 MiB, or a
+// body over the translated-response bound, is an error, as for every other leg.
+func zedRelay(ctx context.Context, upstream io.Reader, vendorName string, leg zedLeg, model string, dst io.Writer) error {
+	out := &zedOut{dst: dst}
+	chat := &concerns.SSEWriter{Ctx: ctx, Dst: out}
+	var vendorWriter *io.PipeWriter
+	var vendor *concerns.SSEWriter
 	legDone := make(chan error, 1)
-	go func() {
-		err := leg(ctx, vendorReader, dst)
-		_ = vendorReader.CloseWithError(err)
-		legDone <- err
-	}()
-	vendor := &concerns.SSEWriter{Ctx: ctx, Dst: vendorWriter}
-	readErr := concerns.ReadLinesUntilDone(ctx, upstream, func(line map[string]any) (bool, error) {
-		event, stop, err := zedUnwrap(line)
-		if err != nil || stop {
-			return stop, err
+	if leg != nil {
+		var vendorReader *io.PipeReader
+		vendorReader, vendorWriter = io.Pipe()
+		vendor = &concerns.SSEWriter{Ctx: ctx, Dst: vendorWriter}
+		go func() {
+			err := leg(ctx, vendorReader, out)
+			_ = vendorReader.CloseWithError(err)
+			legDone <- err
+		}()
+	}
+	var failure *string
+	relayed, terminal := false, false
+	readErr := concerns.ReadLinesPin(ctx, upstream, func(value any) (bool, error) {
+		event, status, isStatus := zedFrame(value)
+		if isStatus {
+			ended, message, failed := zedStatus(status)
+			if failed {
+				failure = &message
+				return true, nil
+			}
+			return ended, nil
 		}
 		if event == nil {
 			return false, nil
 		}
+		relayed = true
+		if leg == nil {
+			return false, zedPassThrough(chat, event)
+		}
+		if object, ok := event.(map[string]any); ok {
+			if kind, _ := object["type"].(string); zedResponsesTerminals[kind] {
+				terminal = true
+			}
+		}
 		return false, vendor.Event("", event)
 	})
-	_ = vendorWriter.CloseWithError(readErr)
-	legErr := <-legDone
-	if readErr != nil && !(errors.Is(readErr, io.ErrClosedPipe) && legErr != nil) {
-		return readErr
+	// Reading ended: the body is exhausted, Zed said so, or it reported a failure.
+	// Anything else (the client left, a line over the bound) is not a finish.
+	hard := readErr != nil && !errors.Is(readErr, io.ErrUnexpectedEOF)
+	var legErr error
+	if leg != nil {
+		if !hard && failure != nil {
+			// The leg has written everything it read once it takes the next byte;
+			// the error chunk goes after that and before the flush.
+			_, _ = vendorWriter.Write([]byte("\n"))
+		}
+		if !hard {
+			if failure != nil {
+				if err := zedErrorChunk(chat, model, *failure); err != nil {
+					hard, readErr = true, err
+				}
+			}
+			if !hard && relayed && !terminal && vendorName == zedVendorOpenAI {
+				_ = vendor.Event("", map[string]any{"type": "response.completed", "response": map[string]any{"status": "completed", "output": []any{}}})
+			}
+		}
+		// A body that merely stopped is a clean end to the leg, which reports it as
+		// short (and is answered below); only a read that failed is passed on.
+		if hard {
+			_ = vendorWriter.CloseWithError(readErr)
+		} else {
+			_ = vendorWriter.Close()
+		}
+		legErr = <-legDone
+	} else if !hard && failure != nil {
+		if err := zedErrorChunk(chat, model, *failure); err != nil {
+			hard, readErr = true, err
+		}
 	}
-	return legErr
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	// The legs report a stream that stopped short; the pin finishes it.
+	if errors.Is(legErr, io.ErrUnexpectedEOF) {
+		legErr = nil
+	}
+	err := readErr
+	if !hard {
+		err = legErr
+	}
+	if err != nil && !out.sawError {
+		_ = chat.Event("", map[string]any{"error": map[string]any{"message": err.Error(), "type": "api_error", "code": "zed_stream_error"}})
+	}
+	// The legs' [DONE] was held back (zedOut); this is the one, written past it.
+	_ = (&concerns.SSEWriter{Ctx: ctx, Dst: dst}).Done()
+	return err
 }
 
-// zedUnwrap is unwrapZedLine (zed.js:118-135) with the status handling of
-// processLine: the event to relay, or whether the stream is over.
-func zedUnwrap(line map[string]any) (event any, stop bool, err error) {
-	if value, ok := line["event"]; ok {
-		return value, false, nil
-	}
-	if status, ok := line["status"]; ok {
-		ended, message, failed := zedStatus(status)
-		if failed {
-			return nil, true, errors.New("[Zed error] " + message)
+// zedFrame is unwrapZedLine (zed.js:118-135): a line with an "event" key is that
+// event, one with a "status" key is that status, and any other JSON value is itself
+// an event. A `null` event is dropped (see zedRelay).
+func zedFrame(value any) (event, status any, isStatus bool) {
+	if object, ok := value.(map[string]any); ok {
+		if event, ok := object["event"]; ok {
+			return event, nil, false
 		}
-		return nil, ended, nil
+		if status, ok := object["status"]; ok {
+			return nil, status, true
+		}
 	}
-	return line, false, nil
+	return value, nil, false
+}
+
+// zedPassThrough is enqueueSseObject (zed.js:109-116) for the xAI path, where the
+// event already is a Chat chunk: an array is relayed item by item, and an item
+// that is falsy is dropped.
+func zedPassThrough(chat *concerns.SSEWriter, event any) error {
+	items, ok := event.([]any)
+	if !ok {
+		items = []any{event}
+	}
+	for _, item := range items {
+		if !zedTruthy(item) {
+			continue
+		}
+		if err := chat.Event("", item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// zedErrorChunk is createErrorChunk (zed.js:97-107): the failure as the
+// assistant's text, finishing the turn, under the model the request named.
+func zedErrorChunk(chat *concerns.SSEWriter, model, message string) error {
+	return chat.Event("", map[string]any{
+		"id":      fmt.Sprintf("chatcmpl-zed-error-%d", time.Now().UnixMilli()),
+		"object":  "chat.completion.chunk",
+		"created": time.Now().Unix(),
+		"model":   model,
+		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": "[Zed error] " + message}, "finish_reason": "stop"}},
+	})
 }

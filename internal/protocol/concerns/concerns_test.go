@@ -397,23 +397,38 @@ func TestReadLinesLenient(t *testing.T) {
 	}
 }
 
-// [DONE] is Zed's terminal: the stream ends cleanly there and nothing after it is
-// read; without it, or a stop from consume, a truncated stream is not finished.
-func TestReadLinesUntilDone(t *testing.T) {
-	var got []string
-	collect := func(line map[string]any) (bool, error) { got = append(got, JSONText(line["a"])); return false, nil }
-	if err := ReadLinesUntilDone(context.Background(), strings.NewReader("data: {\"a\":1}\n{\"a\":2}\ndata: [DONE]\n{\"a\":3}\n"), collect); err != nil || strings.Join(got, ",") != "1,2" {
+// Zed's framing as the pin reads it (executors/zed.js:118-135,189-209): `data:`
+// stripped, empty and non-JSON lines skipped, any JSON value delivered, [DONE]
+// ends the stream cleanly and nothing after it is read; a stream with no end is
+// unexpected EOF for the caller to finish.
+func TestReadLinesPin(t *testing.T) {
+	read := func(input string, stop bool) ([]string, error) {
+		var got []string
+		err := ReadLinesPin(context.Background(), strings.NewReader(input), func(value any) (bool, error) {
+			encoded, _ := json.Marshal(value)
+			got = append(got, string(encoded))
+			return stop, nil
+		})
+		return got, err
+	}
+	got, err := read("data: {\"a\":1}\n\n  {\"a\":2}  \nnot json\n{\"a\":\ndata:3\n[1,2]\n\"s\"\nnull\ndata:[DONE]\n{\"a\":9}\n", false)
+	if err != nil || strings.Join(got, " ") != `{"a":1} {"a":2} 3 [1,2] "s" null` {
 		t.Errorf("err=%v got=%v", err, got)
 	}
-	if err := ReadLinesUntilDone(context.Background(), strings.NewReader("{\"a\":1}\n"), collect); !errors.Is(err, io.ErrUnexpectedEOF) {
-		t.Errorf("a stream with no terminal must be unexpected EOF: %v", err)
+	if _, err := read("{\"a\":1}\n", false); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Errorf("no end must be unexpected EOF: %v", err)
 	}
-	if err := ReadLinesUntilDone(context.Background(), strings.NewReader("{\"a\":1}\nnot json\n"), collect); err == nil || errors.Is(err, io.ErrUnexpectedEOF) {
-		t.Errorf("a garbled line must be refused: %v", err)
-	}
-	got = nil
-	if err := ReadLinesUntilDone(context.Background(), strings.NewReader("{\"a\":1}\n{\"a\":2}\n"), func(line map[string]any) (bool, error) { got = append(got, JSONText(line["a"])); return true, nil }); err != nil || len(got) != 1 {
+	if got, err := read("{\"a\":1}\n{\"a\":2}\n", true); err != nil || len(got) != 1 {
 		t.Errorf("consume stopping the stream: err=%v got=%v", err, got)
+	}
+	if _, err := read("{\"a\":1} trailing\n", false); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Errorf("a line with text after the value is not JSON and is skipped: %v", err)
+	}
+	var big []string
+	err = ReadLinesPin(context.Background(), strings.NewReader(strings.Repeat("a", 5<<20)+"\n"), func(any) (bool, error) { return false, nil })
+	_ = big
+	if err == nil || errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Errorf("an oversized line is a read failure: %v", err)
 	}
 }
 

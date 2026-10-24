@@ -41,11 +41,7 @@ func TestOpenCodeGoForcedStreamAcrossClientProtocols(t *testing.T) {
 }
 
 func TestNewForcedStreamsRejectTruncatedReplies(t *testing.T) {
-	// A Zed stream that stops before stream_ended was cut off (TestZedIsServedThroughItsExchangeAndEnvelope serves the whole one).
-	zed, _ := newZedIngressRig(t, `{"event":{"type":"message_start","message":{"id":"m","role":"assistant","model":"glm-5.2","content":[],"usage":{"input_tokens":1,"output_tokens":0}}}}`+"\n")
-	if out := zed.post("/v1/chat/completions", `{"model":"x","messages":[{"role":"user","content":"ping"}]}`); out.Code != 502 {
-		t.Fatalf("%d %s", out.Code, out.Body)
-	}
+	// Zed finishes a stream that stops short, as the pin does (TestZedCutOffStreamIsFinishedAsThePinDoes); the others refuse it.
 	goRig := newResponsesRig(t, "opencode-go", "gpt-5.6-luna", []string{"acct"}, serveStream(frame("response.created", `{"type":"response.created","response":{"id":"r1"}}`)))
 	if out := goRig.post("/v1/responses", `{"model":"x","input":"ping"}`); out.Code != 502 {
 		t.Fatalf("%d %s", out.Code, out.Body)

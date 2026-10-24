@@ -3,6 +3,7 @@ package concerns
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -27,19 +28,56 @@ func ReadLinesLenient(ctx context.Context, src io.Reader, consume func(map[strin
 	return readLines(ctx, src, true, consume)
 }
 
-// ReadLinesUntilDone is ReadLinesLenient for an upstream whose `[DONE]` line is
-// its terminal (Zed: executors/zed.js:118-122): the stream ends cleanly there. A
-// stream that ends without it, or without consume stopping it, is still
-// io.ErrUnexpectedEOF.
-func ReadLinesUntilDone(ctx context.Context, src io.Reader, consume func(map[string]any) (bool, error)) error {
-	return readLinesMode(ctx, src, true, true, consume)
+// ReadLinesPin reads Zed's line framing as the pin does (executors/zed.js:118-135,
+// 189-209): each line is trimmed, a `data:` prefix removed, a line that is empty
+// or is not JSON skipped, and `[DONE]` ends the stream cleanly. consume gets the
+// decoded JSON value of any type (numbers as json.Number) and returns true to stop.
+// A stream that ends without `[DONE]` or consume stopping it is io.ErrUnexpectedEOF
+// so the caller can finish it as the pin does; it is not mistaken for a complete
+// one here. Lines are bounded as in ReadLines, which the pin is not.
+func ReadLinesPin(ctx context.Context, src io.Reader, consume func(any) (bool, error)) error {
+	scanner := bufio.NewScanner(src)
+	scanner.Buffer(make([]byte, 4096), 4<<20)
+	total := 0
+	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
+		advance, token, err := bufio.ScanLines(data, atEOF)
+		total += advance
+		if total > MaxTranslatedResponseBytes {
+			return 0, nil, errors.New("translated upstream response exceeds limit")
+		}
+		return advance, token, err
+	})
+	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "data:") {
+			line = strings.TrimLeft(line[len("data:"):], " \t")
+		}
+		if line == "" {
+			continue
+		}
+		if line == "[DONE]" {
+			return nil
+		}
+		decoder := json.NewDecoder(strings.NewReader(line))
+		decoder.UseNumber()
+		var value any
+		if decoder.Decode(&value) != nil || decoder.Decode(new(any)) != io.EOF {
+			continue
+		}
+		if stop, err := consume(value); err != nil || stop {
+			return err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return io.ErrUnexpectedEOF
 }
 
 func readLines(ctx context.Context, src io.Reader, lenient bool, consume func(map[string]any) (bool, error)) error {
-	return readLinesMode(ctx, src, lenient, false, consume)
-}
-
-func readLinesMode(ctx context.Context, src io.Reader, lenient, doneEnds bool, consume func(map[string]any) (bool, error)) error {
 	scanner := bufio.NewScanner(src)
 	scanner.Buffer(make([]byte, 4096), 4<<20)
 	total := 0
@@ -59,9 +97,6 @@ func readLinesMode(ctx context.Context, src io.Reader, lenient, doneEnds bool, c
 		if lenient {
 			line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if line == "[DONE]" {
-				if doneEnds {
-					return nil
-				}
 				continue
 			}
 		}
