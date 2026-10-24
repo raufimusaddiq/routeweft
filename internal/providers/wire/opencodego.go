@@ -65,7 +65,15 @@ func openCodeGoFinalize(provider routing.ProviderRef, body Body) bool {
 // (:179-207). The pin's remaining input work (the empty-input placeholder,
 // function_call/function_call_output coercion, tool flattening) is not here.
 func openCodeGoNormalize(provider routing.ProviderRef, body Body) bool {
-	if !openCodeGoForcesStream(provider) {
+	// The gate and the Luna check read the base id, "model(level)" stripped of its
+	// thinking suffix (:54-63,179,202). Only this rewrite widens: which wire a
+	// model is routed to, and the forced stream, stay on the exact id (#185).
+	model := openCodeGoBaseModel(provider.UpstreamModel)
+	if model == "" {
+		model, _ = body.text("model")
+		model = openCodeGoBaseModel(model)
+	}
+	if provider.Protocol != openaiadapter.ResponsesProtocol || openCodeGoTransport(model) != provider.Protocol {
 		return false
 	}
 	changed := false
@@ -101,7 +109,7 @@ func openCodeGoNormalize(provider routing.ProviderRef, body Body) bool {
 	if body.set("store", false) {
 		changed = true
 	}
-	luna := provider.UpstreamModel == openCodeGoLuna
+	luna := model == openCodeGoLuna
 	if luna && body.dropKeys(openCodeGoLunaOmit...) {
 		changed = true
 	}
@@ -109,6 +117,11 @@ func openCodeGoNormalize(provider routing.ProviderRef, body Body) bool {
 		changed = true
 	}
 	return changed
+}
+
+// openCodeGoBaseModel is baseModelId (executors/opencode-go.js:54-56).
+func openCodeGoBaseModel(model string) string {
+	return strings.TrimSpace(opencodeThinkingSuffix.ReplaceAllString(model, ""))
 }
 
 // openCodeGoInput rewrites only the input items the pin touches. Every item a

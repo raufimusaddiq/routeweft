@@ -175,3 +175,37 @@ func TestOpenCodeGoDropsResponseFormatForDeepseekOnly(t *testing.T) {
 		}
 	}
 }
+
+// The pin tests the base id, so "model(level)" is rewritten as "model"
+// (executors/opencode-go.js:54-63,179,202).
+func TestOpenCodeGoThinkingSuffixIsRewrittenLikeTheBaseModel(t *testing.T) {
+	in := `{"model":"x","temperature":0.2,"seed":3,"max_tokens":9,"reasoning_effort":"low","previous_response_id":"resp_1","metadata":{"a":"b"},` + openCodeGoReplay[strings.Index(openCodeGoReplay, `"future_field"`):]
+	for _, base := range []string{"gpt-5.6-luna", "grok-4.6", "muse-spark-1.2-contributor", "muse-spark-1.3-contributor"} {
+		want := decodeBody(t, openCodeGoFinal(base, responses, in))
+		for _, suffixed := range []string{base + "(high)", base + "(xhigh) ", " " + base + "(low)", base + "(a b)"} {
+			got := decodeBody(t, openCodeGoFinal(suffixed, responses, in))
+			// The forced stream still follows the exact id, so it alone may differ.
+			delete(want, "stream")
+			delete(got, "stream")
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("%q differs from %q:\n got %v\nwant %v", suffixed, base, got, want)
+			}
+		}
+	}
+	// The suffix does not make a model Responses-only or Luna.
+	for _, model := range []string{"glm-5.3(high)", "deepseek-v4-pro(low)", "gpt-5.6-luna-mini(high)", "(high)"} {
+		got := decodeBody(t, openCodeGoFinal(model, responses, `{"temperature":1,"max_tokens":9,"input":[{"type":"reasoning"}]}`))
+		if got["temperature"] != 1.0 || got["max_tokens"] != 9.0 || got["store"] != nil || len(got["input"].([]any)) != 1 {
+			t.Fatalf("%s rewritten: %v", model, got)
+		}
+	}
+	// Only the Responses wire is normalized; Luna on Chat keeps its fields.
+	if got := decodeBody(t, openCodeGoFinal("gpt-5.6-luna(high)", chat, `{"temperature":1,"max_tokens":9}`)); got["temperature"] != 1.0 || got["max_tokens"] != 9.0 {
+		t.Fatalf("chat wire rewritten: %v", got)
+	}
+	// An empty route model falls back to the body's, as `model || body?.model` does.
+	p := routing.ProviderRef{ProviderID: "opencode-go", Protocol: responses}
+	if got := decodeBody(t, string(FinalizeBodyAt(p, "responses", []byte(`{"model":"gpt-5.6-luna(high)","temperature":1,"input":[]}`)))); got["temperature"] != nil || got["store"] != false {
+		t.Fatalf("body model not used: %v", got)
+	}
+}
