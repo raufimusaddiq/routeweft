@@ -1,9 +1,11 @@
 package wire
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -78,6 +80,7 @@ var zedHook = Hook{
 	ForceStream:       true,
 	Finalize:          codebuddyStream,
 	Do:                ZedDo,
+	AcceptedFailure:   zedAcceptedFailure,
 	// The session the client's own request resolves to (zed.js:251).
 	ClientRequestHeaders: zedClientThread,
 }
@@ -692,15 +695,23 @@ func ZedDo(provider routing.ProviderRef, client *http.Client, request *http.Requ
 		response.Body = &zedBody{ReadCloser: response.Body, cancel: cancel}
 		return response, nil
 	}
+	// A failed status ahead of any output is read before the reply is handed on, so
+	// the dispatcher can cool the account and try the next candidate; the client is
+	// still shown the pin's text (zedRelay). Past the first output a failure can no
+	// longer move to another account and is only relayed.
+	upstream, headFailure := zedPeekHead(response.Body)
+	response.Header = response.Header.Clone()
+	response.Header.Del(zedFailureHeader)
+	if headFailure != nil {
+		response.Header.Set(zedFailureHeader, base64.StdEncoding.EncodeToString([]byte(*headFailure)))
+	}
 	reader, writer := io.Pipe()
-	upstream := response.Body
 	go func() {
 		_ = zedRelay(ctx, upstream, vendor, leg, model, writer)
 		upstream.Close()
 		writer.Close()
 	}()
 	response.Body = &zedBody{ReadCloser: reader, cancel: cancel}
-	response.Header = response.Header.Clone()
 	response.Header.Set("Content-Type", "text/event-stream")
 	response.Header.Del("Content-Length")
 	response.Header.Del("Content-Encoding")
@@ -940,4 +951,104 @@ func zedErrorChunk(chat *concerns.SSEWriter, model, message string) error {
 		"model":   model,
 		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": "[Zed error] " + message}, "finish_reason": "stop"}},
 	})
+}
+
+// zedFailureHeader carries a failed status found ahead of any output from ZedDo to
+// the dispatcher on the in-process response (Hook.AcceptedFailure removes it).
+const zedFailureHeader = "X-Routeweft-Zed-Failure"
+
+// zedHeadLimit bounds what is read looking for the first decisive line.
+const zedHeadLimit = 1 << 20
+
+// zedHeadLine reads one line as zedRelay will: decisive when it is an event, the end
+// of the stream, or a failed status; a `queued`-style status, an empty line, a line
+// that is not JSON and a null event decide nothing yet.
+func zedHeadLine(raw []byte) (decisive bool, failure *string) {
+	line := strings.TrimSpace(string(raw))
+	line = strings.TrimLeft(strings.TrimPrefix(line, "data:"), " \t")
+	if line == "" {
+		return false, nil
+	}
+	if line == "[DONE]" {
+		return true, nil
+	}
+	decoder := json.NewDecoder(strings.NewReader(line))
+	decoder.UseNumber()
+	var value any
+	if decoder.Decode(&value) != nil || decoder.Decode(new(any)) != io.EOF {
+		return false, nil
+	}
+	event, status, isStatus := zedFrame(value)
+	if !isStatus {
+		return event != nil, nil
+	}
+	ended, message, failed := zedStatus(status)
+	if failed {
+		return true, &message
+	}
+	return ended, nil
+}
+
+// zedPeekHead reads up to the first decisive line of body and returns a reader that
+// replays everything read followed by the rest. failure is the message when that
+// line is a failed status.
+func zedPeekHead(body io.ReadCloser) (io.ReadCloser, *string) {
+	reader := bufio.NewReaderSize(body, 64<<10)
+	var head, pending []byte
+	var failure *string
+	for len(head) < zedHeadLimit {
+		chunk, err := reader.ReadSlice('\n')
+		head = append(head, chunk...)
+		pending = append(pending, chunk...)
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		decisive, failed := zedHeadLine(pending)
+		pending = pending[:0]
+		if decisive {
+			failure = failed
+			break
+		}
+		if err != nil {
+			break
+		}
+	}
+	return struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(head), reader), body}, failure
+}
+
+// zedAcceptedFailure is Hook.AcceptedFailure: how a failed status the client is
+// shown as text counts against the account. The pin has no account accounting for
+// it; Routeweft reads the message the way it reads an upstream error body: quota,
+// billing and rate words lock the account, authentication words ask for a refresh,
+// anything else is a failed attempt that falls back and cools for the default
+// backoff.
+func zedAcceptedFailure(response *http.Response) (routing.Classification, bool) {
+	encoded := response.Header.Get(zedFailureHeader)
+	response.Header.Del(zedFailureHeader)
+	if encoded == "" {
+		return routing.Classification{}, false
+	}
+	message, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return routing.Classification{}, false
+	}
+	lower := strings.ToLower(string(message))
+	has := func(words ...string) bool {
+		for _, word := range words {
+			if strings.Contains(lower, word) {
+				return true
+			}
+		}
+		return false
+	}
+	switch {
+	case has("quota", "billing", "credit", "limit", "exhaust", "rate"):
+		return routing.Classification{Outcome: routing.OutcomeQuotaLock}, true
+	case has("unauthorized", "authentication", "permission", "forbidden", "expired token", "invalid token"):
+		return routing.Classification{Outcome: routing.OutcomeAuthRefreshRequired}, true
+	}
+	return routing.Classification{Outcome: routing.OutcomeFallbackAccount}, true
 }

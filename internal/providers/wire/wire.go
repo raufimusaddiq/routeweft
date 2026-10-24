@@ -113,6 +113,12 @@ type Hook struct {
 	// first (Zed's LLM token, MiMo Free's bootstrap JWT). It receives the account
 	// the request is for and returns an ordinary response for the caller to classify.
 	Do func(routing.ProviderRef, *http.Client, *http.Request) (*http.Response, error)
+	// AcceptedFailure reads an account failure out of a 2xx response whose body
+	// the client is shown as it is (Zed answers a failed status as the assistant's
+	// text, as the pin does). It reports how the account is to be accounted for, so
+	// the dispatcher cools it and may try the next candidate, and it removes
+	// whatever marker Do left on the response.
+	AcceptedFailure func(*http.Response) (routing.Classification, bool)
 }
 
 var hooks = map[string]Hook{
@@ -274,6 +280,15 @@ func Send(provider routing.ProviderRef, client *http.Client, request *http.Reque
 		return do(provider, client, request)
 	}
 	return client.Do(request)
+}
+
+// AcceptedFailure reports the failure a 2xx response carries for the account that
+// served it, if the provider has such a response.
+func AcceptedFailure(provider routing.ProviderRef, response *http.Response) (routing.Classification, bool) {
+	if read := For(provider.ProviderID).AcceptedFailure; read != nil {
+		return read(response)
+	}
+	return routing.Classification{}, false
 }
 
 // ForcesStream reports whether the selected provider/model route only answers streams.

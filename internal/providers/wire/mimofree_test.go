@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -380,5 +381,63 @@ func TestMimoFreeFingerprintIsAStableDigest(t *testing.T) {
 	first := mimoDeviceFingerprint()
 	if first != mimoDeviceFingerprint() || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(first) {
 		t.Errorf("fingerprint %q", first)
+	}
+}
+
+// The bootstrap is built from the request URL as the chat path is: a base with a
+// path prefix keeps it for both (v8 migration allows such a base).
+func TestMimoFreeBootstrapKeepsTheBasePathPrefix(t *testing.T) {
+	mimoReset()
+	t.Cleanup(mimoReset)
+	var mu sync.Mutex
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/mimo/api/free-ai/bootstrap":
+			fmt.Fprintf(w, `{"jwt":%q}`, jwtWithExp(time.Now().Add(time.Hour).Unix()))
+		case "/mimo/api/free-ai/openai/chat":
+			fmt.Fprint(w, `{"choices":[{"message":{"content":"pong"}}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	for _, prefix := range []string{"/mimo", "/mimo/"} {
+		mimoReset()
+		paths = nil
+		provider := routing.ProviderRef{ProviderID: "mimo-free", BaseURL: server.URL + prefix, Protocol: chat, Endpoint: mimoChatEndpoint}
+		target, err := ResolveTarget(provider, provider.Endpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := target.URL(func(raw string) (*url.URL, error) { return url.Parse(raw) })
+		if err != nil || parsed.Path != "/mimo/api/free-ai/openai/chat" {
+			t.Fatalf("chat URL %v %v", parsed, err)
+		}
+		request, _ := http.NewRequest(http.MethodPost, parsed.String(), strings.NewReader(`{"model":"m","messages":[]}`))
+		response, err := MimoFreeDo(provider, server.Client(), request)
+		if err != nil {
+			t.Fatalf("%q: %v", prefix, err)
+		}
+		response.Body.Close()
+		if response.StatusCode != 200 || strings.Join(paths, " ") != "/mimo/api/free-ai/bootstrap /mimo/api/free-ai/openai/chat" {
+			t.Errorf("%q: status %d, calls %v", prefix, response.StatusCode, paths)
+		}
+	}
+}
+
+// A chat URL that is not the one the hook resolves has no bootstrap to derive: the
+// request is refused, and nothing is sent to a guessed host path.
+func TestMimoFreeRefusesAChatURLItCannotDeriveTheBootstrapFrom(t *testing.T) {
+	u := newMimoUpstream(t)
+	request, _ := http.NewRequest(http.MethodPost, u.URL+"/other/chat", strings.NewReader(`{"model":"m"}`))
+	if _, err := MimoFreeDo(routing.ProviderRef{ProviderID: "mimo-free"}, u.Client(), request); err == nil {
+		t.Fatal("a request was sent without a derivable bootstrap")
+	}
+	if len(u.calls) != 0 {
+		t.Errorf("calls %v", u.calls)
 	}
 }

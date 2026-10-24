@@ -38,9 +38,12 @@ import (
 const (
 	// MimoSystemMarker is MIMO_SYSTEM_MARKER (mimo-free.js:24-25).
 	MimoSystemMarker = "You are MiMoCode, an interactive CLI tool that helps users with software engineering tasks."
-	// mimoBootstrapPath is BOOTSTRAP_URL's path (mimo-free.js:7); the host is the
-	// one the chat request is dialled at, which the SSRF policy has validated.
+	// mimoBootstrapPath is BOOTSTRAP_URL's path (mimo-free.js:7) and
+	// mimoChatEndpoint the chat URL's (registry/mimo-free.js:18), both under the
+	// base the connection is dialled at: the bootstrap goes to the same host and
+	// path prefix as the chat request, which the SSRF policy has validated.
 	mimoBootstrapPath = "/api/free-ai/bootstrap"
+	mimoChatEndpoint  = "api/free-ai/openai/chat"
 	mimoSource        = "mimocode-cli-free"
 	// mimoFallbackTTL and mimoExpiryBuffer are JWT_FALLBACK_TTL_SEC and
 	// JWT_EXPIRY_BUFFER_MS (:11-12).
@@ -62,6 +65,8 @@ var mimoUserAgents = []string{
 }
 
 var mimoFreeHook = Hook{
+	// The chat URL is the base plus this, whatever the wire the route carries.
+	Target:   func(routing.ProviderRef) (Target, error) { return Target{Endpoint: mimoChatEndpoint}, nil },
 	Finalize: mimoFreeMarker,
 	// The credential is the minted JWT, set by Do; the connection has no account.
 	Do: MimoFreeDo,
@@ -262,7 +267,13 @@ func MimoFreeDo(_ routing.ProviderRef, client *http.Client, request *http.Reques
 	if len(raw) > mimoRequestLimit {
 		return nil, errors.New("request exceeds the limit")
 	}
-	endpoint := (&url.URL{Scheme: request.URL.Scheme, Host: request.URL.Host, Path: mimoBootstrapPath}).String()
+	// The bootstrap is built from the request URL as the chat path is built: the
+	// base's path prefix is kept and only the endpoint differs.
+	prefix, found := strings.CutSuffix(request.URL.Path, "/"+mimoChatEndpoint)
+	if !found {
+		return nil, errors.New("MiMo chat URL does not end in " + mimoChatEndpoint + "; the bootstrap URL cannot be derived")
+	}
+	endpoint := (&url.URL{Scheme: request.URL.Scheme, Host: request.URL.Host, Path: prefix + mimoBootstrapPath}).String()
 	var stream struct {
 		Stream bool `json:"stream"`
 	}

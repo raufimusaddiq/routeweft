@@ -2,6 +2,7 @@ package wire
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -968,5 +969,91 @@ func TestZedStopsUpstreamWhenTheClientLeaves(t *testing.T) {
 	case <-released:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the upstream request outlived the client")
+	}
+}
+
+// A failed status ahead of any output is found before the reply is handed on, and
+// the client text is untouched.
+func TestZedHeadFailureIsMarkedAndTheTextIsStillThePins(t *testing.T) {
+	for name, tc := range map[string]struct {
+		stream string
+		marked bool
+	}{
+		"failed first":       {`{"status":{"failed":{"message":"quota exhausted"}}}` + "\n", true},
+		"queued then failed": {`{"status":"queued"}` + "\n" + "keep-alive\n" + `{"status":{"failed":{"message":"quota exhausted"}}}` + "\n", true},
+		"as a bare string":   {`{"status":"failed"}` + "\n", true},
+		"output first":       {zedAnthropicHead + `{"status":{"failed":{"message":"late"}}}` + "\n", false},
+		"ended first":        {`{"status":"stream_ended"}` + "\n" + `{"status":{"failed":{"message":"ignored"}}}` + "\n", false},
+		"done first":         {"[DONE]\n" + `{"status":{"failed":{"message":"ignored"}}}` + "\n", false},
+		"nothing at all":     {"", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			u := newZedUpstream(t)
+			u.completions = streamOf(tc.stream)
+			request, _ := http.NewRequest(http.MethodPost, u.URL+"/"+zedEndpoint, strings.NewReader(zedChatBody))
+			response, err := ZedDo(u.provider(), u.Client(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			text, _ := io.ReadAll(response.Body)
+			failure, marked := zedAcceptedFailure(response)
+			if marked != tc.marked {
+				t.Fatalf("marked=%v %+v", marked, failure)
+			}
+			if response.Header.Get(zedFailureHeader) != "" {
+				t.Error("the marker survived the hook")
+			}
+			if tc.marked {
+				if got := shape(t, string(text)); len(got) == 0 || !strings.HasPrefix(got[len(got)-2], "text:[Zed error] ") || got[len(got)-1] != "DONE" {
+					t.Errorf("client text is not the pin's: %q\n%s", got, text)
+				}
+			}
+		})
+	}
+}
+
+func TestZedAcceptedFailureClassification(t *testing.T) {
+	for message, want := range map[string]routing.Outcome{
+		"monthly quota exhausted": routing.OutcomeQuotaLock,
+		"Billing issue":           routing.OutcomeQuotaLock,
+		"rate limited":            routing.OutcomeQuotaLock,
+		"credits depleted":        routing.OutcomeQuotaLock,
+		"unauthorized":            routing.OutcomeAuthRefreshRequired,
+		"Authentication failed":   routing.OutcomeAuthRefreshRequired,
+		"upstream went away":      routing.OutcomeFallbackAccount,
+		"request failed":          routing.OutcomeFallbackAccount,
+	} {
+		response := &http.Response{Header: http.Header{}}
+		response.Header.Set(zedFailureHeader, base64.StdEncoding.EncodeToString([]byte(message)))
+		got, ok := zedAcceptedFailure(response)
+		if !ok || got.Outcome != want || !got.AllowsFallback() {
+			t.Errorf("%q: %+v ok=%v, want %s", message, got, ok, want)
+		}
+	}
+	if _, ok := zedAcceptedFailure(&http.Response{Header: http.Header{}}); ok {
+		t.Error("an unmarked response is a failure")
+	}
+	if _, ok := zedAcceptedFailure(&http.Response{Header: http.Header{zedFailureHeader: {"!!not base64"}}}); ok {
+		t.Error("a garbled marker is a failure")
+	}
+}
+
+// The exchange and the catalog sit under the same path prefix as /completions.
+func TestZedFollowsAPathPrefixedBase(t *testing.T) {
+	u := newZedUpstream(t)
+	prefixed := httptest.NewServer(http.StripPrefix("/zedproxy", u.Server.Config.Handler))
+	defer prefixed.Close()
+	provider := u.provider()
+	provider.BaseURL = prefixed.URL + "/zedproxy"
+	request, _ := http.NewRequest(http.MethodPost, prefixed.URL+"/zedproxy/"+zedEndpoint, strings.NewReader(zedChatBody))
+	response, err := ZedDo(provider, prefixed.Client(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if !strings.Contains(string(text), "pong") || len(u.seen("/client/llm_tokens")) != 1 || len(u.seen("/models")) != 1 || len(u.seen("/"+zedEndpoint)) != 1 {
+		t.Fatalf("calls %v\n%s", u.calls, text)
 	}
 }

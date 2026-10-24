@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
@@ -190,7 +191,8 @@ func TestMimoFreeAndMmfAreServedWithABootstrappedJWT(t *testing.T) {
 					mu.Lock()
 					calls = append(calls, p192Call{r.URL.Path, r.Header.Clone(), body})
 					mu.Unlock()
-					if strings.HasSuffix(r.URL.Path, "/api/free-ai/bootstrap") {
+					// The base is path-prefixed (/v2/acct); the bootstrap keeps the prefix.
+					if r.URL.Path == "/v2/acct/api/free-ai/bootstrap" {
 						fmt.Fprint(w, `{"jwt":"eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.sig"}`)
 						return
 					}
@@ -305,5 +307,104 @@ func TestZedThreadIDIsResolvedFromTheClientRequest(t *testing.T) {
 	}
 	if id(2) == nil || id(2) != id(3) || id(2) == id(0) {
 		t.Errorf("the connection's session is its own and stable: %v %v vs %v", id(2), id(3), id(0))
+	}
+}
+
+// A failed Zed status is shown to the client as the pin shows it, but it is still
+// the account's failure: the account cools, and the next candidate serves.
+func zedTwoAccountRig(t *testing.T, failing string, failedBody, goodBody string) (*codebuddyRig, func(account string) int) {
+	t.Helper()
+	var mu sync.Mutex
+	completions := map[string]int{}
+	rig := newCodeBuddyRig(t, "zed", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/client/llm_tokens"):
+			fmt.Fprint(w, `{"token":"llm-fixture"}`)
+		case strings.HasSuffix(r.URL.Path, "/models"):
+			fmt.Fprint(w, `{"models":[{"id":"glm-5.2","provider":"anthropic"}]}`)
+		default:
+			account := strings.Split(strings.TrimPrefix(r.URL.Path, "/v2/"), "/")[0]
+			mu.Lock()
+			completions[account]++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			if account == failing {
+				fmt.Fprint(w, failedBody)
+				return
+			}
+			fmt.Fprint(w, goodBody)
+		}
+	})
+	rig.settings = routing.ProviderSettings{UserID: "user-1", OrganizationID: "org-1"}
+	rig.endpoint = "chat/completions"
+	rig.accounts = []string{"quota", "good"}
+	return rig, func(account string) int { mu.Lock(); defer mu.Unlock(); return completions[account] }
+}
+
+const zedQuotaFailure = `{"status":{"failed":{"message":"monthly quota exhausted"}}}` + "\n"
+
+func TestZedFailedStatusCoolsTheAccountAndTheNextCandidateServes(t *testing.T) {
+	for _, tc := range []struct{ path, body string }{
+		{"/v1/chat/completions", `{"model":"x","messages":[{"role":"user","content":"ping"}]`},
+		{"/v1/responses", `{"model":"x","input":"ping"`},
+		{"/v1/messages", `{"model":"x","max_tokens":16,"messages":[{"role":"user","content":"ping"}]`},
+	} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/%v", tc.path, stream), func(t *testing.T) {
+				rig, completions := zedTwoAccountRig(t, "quota", zedQuotaFailure, zedNDJSON)
+				out := rig.post(tc.path, tc.body+fmt.Sprintf(`,"stream":%v}`, stream))
+				if out.Code != 200 || !strings.Contains(out.Body.String(), "pong") || strings.Contains(out.Body.String(), "Zed error") {
+					t.Fatalf("the next candidate did not serve: %d %s", out.Code, out.Body)
+				}
+				if completions("quota") != 1 || completions("good") != 1 {
+					t.Errorf("attempts quota=%d good=%d", completions("quota"), completions("good"))
+				}
+				if until, cooling := rig.state.CooldownUntil("quota", time.Now()); !cooling || !until.After(time.Now()) {
+					t.Error("the account whose quota failed was not cooled")
+				}
+				if _, cooling := rig.state.CooldownUntil("good", time.Now()); cooling {
+					t.Error("the serving account was cooled")
+				}
+				if out.Header().Get("X-Routeweft-Zed-Failure") != "" {
+					t.Error("the in-process marker reached the client")
+				}
+				// The cooled account is not tried again.
+				rig.post(tc.path, tc.body+`}`)
+				if completions("quota") != 1 {
+					t.Errorf("a cooled account was tried again: %d", completions("quota"))
+				}
+			})
+		}
+	}
+}
+
+// With no other candidate the client is shown the pin's text, and the account is
+// cooled all the same.
+func TestZedFailedStatusWithNoOtherCandidateStillShowsThePinsTextAndCools(t *testing.T) {
+	rig, completions := zedTwoAccountRig(t, "quota", zedQuotaFailure, zedNDJSON)
+	rig.accounts = []string{"quota"}
+	out := rig.post("/v1/chat/completions", `{"model":"x","messages":[{"role":"user","content":"ping"}]}`)
+	if out.Code != 200 || !strings.Contains(out.Body.String(), `"content":"[Zed error] monthly quota exhausted"`) || !strings.Contains(out.Body.String(), `"finish_reason":"stop"`) {
+		t.Fatalf("%d %s", out.Code, out.Body)
+	}
+	if _, cooling := rig.state.CooldownUntil("quota", time.Now()); !cooling {
+		t.Error("the failed account was not cooled")
+	}
+	if again := rig.post("/v1/chat/completions", `{"model":"x","messages":[{"role":"user","content":"ping"}]}`); again.Code != 503 || completions("quota") != 1 {
+		t.Errorf("a cooled account served again: %d %s (%d attempts)", again.Code, again.Body, completions("quota"))
+	}
+}
+
+// Ahead of the failure the client already has output, so there is no other
+// account to move to: the pin's text follows what was sent and the same account
+// answers.
+func TestZedFailureAfterOutputIsRelayedNotRetried(t *testing.T) {
+	partial := `{"event":{"type":"message_start","message":{"id":"m","role":"assistant","model":"glm-5.2","content":[],"usage":{"input_tokens":1,"output_tokens":0}}}}` + "\n" +
+		`{"event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}` + "\n" +
+		`{"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"first"}}}` + "\n" + zedQuotaFailure
+	rig, completions := zedTwoAccountRig(t, "quota", partial, zedNDJSON)
+	out := rig.post("/v1/chat/completions", `{"model":"x","stream":true,"messages":[{"role":"user","content":"ping"}]}`)
+	if !strings.Contains(out.Body.String(), "first") || !strings.Contains(out.Body.String(), "[Zed error] monthly quota exhausted") || completions("good") != 0 {
+		t.Fatalf("%d %s (good served %d)", out.Code, out.Body, completions("good"))
 	}
 }
