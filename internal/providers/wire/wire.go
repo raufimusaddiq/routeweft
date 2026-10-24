@@ -24,6 +24,10 @@ import (
 type Hook struct {
 	// RequestHeaders signs the final body and URL, after all other headers are applied.
 	RequestHeaders func(routing.ProviderRef, []byte, string) (map[string]string, error)
+	// ClientRequestHeaders derives headers from the client's own request and the
+	// body before provider normalization, for an identity the provider reads from
+	// the client's session (opencode-go). It runs after RequestHeaders and wins.
+	ClientRequestHeaders func(routing.ProviderRef, http.Header, []byte) map[string]string
 	// BearerMessages sends the credential on a native Messages request as a
 	// bearer token instead of x-api-key.
 	BearerMessages bool
@@ -135,7 +139,7 @@ var hooks = map[string]Hook{
 	"codebuddy-cn":     codebuddyCN,
 	"codebuddy-intl":   codebuddyIntl,
 	"zed":              {ForceStream: true, Finalize: codebuddyStream},
-	"opencode-go":      {ForceStream: true, ForceStreamFor: openCodeGoForcesStream, ForcedTransport: openCodeGoTransport, FinalizeAccount: openCodeGoStream},
+	"opencode-go":      {ForceStream: true, ForceStreamFor: openCodeGoForcesStream, ForcedTransport: openCodeGoTransport, FinalizeAccount: openCodeGoFinalize, RequestHeaders: openCodeGoSessionFallback, ClientRequestHeaders: openCodeGoSession},
 	"opencode":         {Target: opencodeTarget, OpenAIHeaders: opencodeHeaders, ForceStream: true, Finalize: codebuddyStream},
 	"vertex-partner":   {Target: vertexPartnerTarget},
 	"cloudflare-ai":    {Target: cloudflareTarget},

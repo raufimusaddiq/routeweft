@@ -2,6 +2,8 @@ package ingress
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -139,5 +141,80 @@ func TestNewForcedStreamsCancelUpstream(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestOpenCodeGoSessionHeaderAndBodyOnTheWire(t *testing.T) {
+	const body = `{"model":"x","stream":false,"max_tokens":64,"reasoning_effort":"high","temperature":0.2,"previous_response_id":"resp_1","prompt_cache_key":"thread-1",` +
+		`"input":[{"type":"reasoning","id":"rs_1","encrypted_content":"opaque"},{"role":"system","content":"s"},{"role":"user","content":"ping"}]}`
+	run := func(t *testing.T, model string, headers ...string) upstreamCall {
+		t.Helper()
+		rig := newResponsesRig(t, "opencode-go", model, []string{"acct"}, serveStream(codexStream))
+		if out := rig.post("/v1/responses", body, headers...); out.Code != 200 {
+			t.Fatalf("%d %s", out.Code, out.Body)
+		}
+		return rig.calls[0]
+	}
+
+	luna := run(t, "gpt-5.6-luna", "x-session-id", "untrusted", "User-Agent", "codex-tui/1")
+	if got := luna.header.Get("x-opencode-session"); !strings.HasPrefix(got, "ses_") || len(got) != 36 || strings.Contains(got, "untrusted") {
+		t.Fatalf("derived session %q", got)
+	}
+	if luna.header.Get("x-session-id") != "" {
+		t.Fatal("client session header forwarded")
+	}
+	for _, gone := range []string{"temperature", "previous_response_id", "max_tokens", "max_output_tokens", "reasoning_effort"} {
+		if _, has := luna.body[gone]; has {
+			t.Fatalf("%s sent: %v", gone, luna.body)
+		}
+	}
+	input := luna.body["input"].([]any)
+	if luna.body["stream"] != true || luna.body["store"] != false || luna.body["prompt_cache_key"] != "thread-1" ||
+		luna.body["reasoning"].(map[string]any)["effort"] != "high" || len(input) != 2 || input[0].(map[string]any)["role"] != "developer" {
+		t.Fatalf("body %v", luna.body)
+	}
+
+	grok := run(t, "grok-4.6", "x-opencode-session", "ses_client")
+	if grok.header.Get("x-opencode-session") != "ses_client" {
+		t.Fatalf("native session %q", grok.header.Get("x-opencode-session"))
+	}
+	if grok.body["temperature"] != 0.2 || grok.body["max_output_tokens"] != 64.0 || grok.body["previous_response_id"] != nil {
+		t.Fatalf("grok body %v", grok.body)
+	}
+
+	// The same conversation gets the same session on every request, a different client another.
+	again := run(t, "gpt-5.6-luna", "x-session-id", "untrusted", "User-Agent", "codex-tui/1")
+	other := run(t, "gpt-5.6-luna", "x-session-id", "untrusted", "User-Agent", "claude-cli/2")
+	if again.header.Get("x-opencode-session") != luna.header.Get("x-opencode-session") || other.header.Get("x-opencode-session") == luna.header.Get("x-opencode-session") {
+		t.Fatalf("stability: %q %q %q", luna.header.Get("x-opencode-session"), again.header.Get("x-opencode-session"), other.header.Get("x-opencode-session"))
+	}
+}
+
+// The pin resolves the session from the body the client sent, before translation
+// (handlers/chatCore.js:69-74). A conversion leg drops metadata.user_id; the
+// session must still come from it.
+func TestOpenCodeGoSessionIsResolvedBeforeConversionDropsIt(t *testing.T) {
+	digest := func(tool, session string) string {
+		sum := sha256.Sum256([]byte("opencode-go\x00" + tool + "\x00" + session))
+		return "ses_" + hex.EncodeToString(sum[:])[:32]
+	}
+	for _, tc := range []struct{ name, path, body, want string }{
+		{"messages to responses", "/v1/messages", `{"model":"x","max_tokens":16,"metadata":{"user_id":"user_x_session_ab12-cd"},"messages":[{"role":"user","content":"ping"}]}`, digest("claude", "claude:ab12-cd")},
+		{"chat to responses", "/v1/chat/completions", `{"model":"x","metadata":{"user_id":"user_x_session_ab12-cd"},"messages":[{"role":"user","content":"ping"}]}`, digest("claude", "claude:ab12-cd")},
+		{"chat plain user_id", "/v1/chat/completions", `{"model":"x","metadata":{"user_id":"plain-user"},"messages":[{"role":"user","content":"ping"}]}`, digest("claude", "plain-user")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newResponsesRig(t, "opencode-go", "gpt-5.6-luna", []string{"acct"}, serveStream(codexStream))
+			if out := rig.post(tc.path, tc.body, "User-Agent", "claude-cli/2"); out.Code != 200 {
+				t.Fatalf("%d %s", out.Code, out.Body)
+			}
+			call := rig.calls[0]
+			if _, has := call.body["metadata"]; has {
+				t.Fatalf("metadata reached Luna: %v", call.body)
+			}
+			if got := call.header.Get("x-opencode-session"); got != tc.want {
+				t.Fatalf("session %q want %q", got, tc.want)
+			}
+		})
 	}
 }

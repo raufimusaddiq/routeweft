@@ -316,6 +316,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	r = withClientBody(r, body)
 	request, err := anthropicadapter.ParseMessagesRequest(body)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
@@ -451,6 +452,24 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	h.handleOpenAI(w, r, openaiadapter.ChatProtocol, false)
 }
 
+type clientBodyKey struct{}
+
+// withClientBody records the body the client sent. A provider that reads the
+// client's identity from it needs the original: a conversion leg drops fields
+// such as metadata.user_id, and the pin resolves the session before translating
+// (handlers/chatCore.js:69-74).
+func withClientBody(r *http.Request, body []byte) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), clientBodyKey{}, body))
+}
+
+// clientBodyOf is the client's original body, or fallback when none was recorded.
+func clientBodyOf(r *http.Request, fallback []byte) []byte {
+	if body, ok := r.Context().Value(clientBodyKey{}).([]byte); ok {
+		return body
+	}
+	return fallback
+}
+
 func (h *Handler) newUpstreamRequest(r *http.Request, snapshot *runtime.RuntimeSnapshot, provider routing.ProviderRef, endpoint string, body []byte, headers http.Header, resolved ...wire.Target) (*http.Request, error) {
 	validate := transport.ValidatePublicURL
 	if h.opts.AllowPrivateUpstreams {
@@ -474,6 +493,7 @@ func (h *Handler) newUpstreamRequest(r *http.Request, snapshot *runtime.RuntimeS
 	// Registry quirks are provider normalization, step 8 of AGENTS §6: they run on
 	// what the savers and prompt-cache anchoring (steps 2-7) left, so nothing after
 	// them can put back a field a quirk removed.
+	clientBody := clientBodyOf(r, body)
 	body = wire.FinalizeBodyAt(provider, target.Endpoint, body)
 	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, base.String(), bytes.NewReader(body))
 	if err != nil {
@@ -501,6 +521,7 @@ func (h *Handler) newUpstreamRequest(r *http.Request, snapshot *runtime.RuntimeS
 	if err := wire.ApplyRequestHeaders(provider, request, body); err != nil {
 		return nil, err
 	}
+	wire.ApplyClientRequestHeaders(provider, request, r.Header, clientBody)
 	return request, nil
 }
 
