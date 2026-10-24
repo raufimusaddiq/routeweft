@@ -4,8 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
@@ -126,5 +128,81 @@ func TestOpenCodeGoSessionHeaderIsAppliedAndProbeFallsBack(t *testing.T) {
 	ApplyClientRequestHeaders(routing.ProviderRef{ProviderID: "opencode"}, other, client, nil)
 	if len(other.Header) != 0 {
 		t.Fatalf("other provider got headers: %v", other.Header)
+	}
+}
+
+// restartProcess is a new process: the pin's in-memory stores start empty.
+func restartProcess() {
+	connectionSessions, assistantSessions = newSessionStore(connectionSessionCap), newSessionStore(assistantSessionCap)
+}
+
+func withClock(t *testing.T, start time.Time) *time.Time {
+	t.Helper()
+	now := start
+	sessionNow = func() time.Time { return now }
+	t.Cleanup(func() { sessionNow = time.Now; restartProcess() })
+	return &now
+}
+
+const ocgOpening = `{"messages":[{"role":"assistant","content":"` + "this assistant opening is comfortably longer than fifty characters" + `"}]}`
+
+// The pin's ids are random per process (sessionManager.js:15,45-66,183-198): the
+// same inside one process, different after a restart, different per connection.
+func TestOpenCodeGoSessionLastsForTheProcessNotForever(t *testing.T) {
+	withClock(t, time.Unix(1_800_000_000, 0))
+	restartProcess()
+	for name, body := range map[string]string{"connection": `{}`, "assistant text": ocgOpening} {
+		first := ocgSession(nil, body, "acct")
+		if again := ocgSession(nil, body, "acct"); again != first {
+			t.Fatalf("%s: unstable inside a process", name)
+		}
+		if other := ocgSession(nil, body, "other"); other == first {
+			t.Fatalf("%s: shared across connections", name)
+		}
+		restartProcess()
+		if after := ocgSession(nil, body, "acct"); after == first {
+			t.Fatalf("%s: survived a restart; the pin's ids do not", name)
+		}
+	}
+}
+
+func TestOpenCodeGoSessionExpiresIdleAtTheSweepAfterTheTTL(t *testing.T) {
+	start := time.Unix(1_800_000_000, 0)
+	now := withClock(t, start)
+	restartProcess()
+	first := ocgSession(nil, `{}`, "acct") // lastUsed t0, first sweep t0+30m
+	// Used every 59 minutes: each use refreshes lastUsed, so it never expires.
+	for i := 1; i <= 4; i++ {
+		*now = start.Add(time.Duration(i) * 59 * time.Minute)
+		if ocgSession(nil, `{}`, "acct") != first {
+			t.Fatalf("refreshed session expired at use %d", i)
+		}
+	}
+	// Idle from lastUsed=L: the sweep at tick t removes it only when t-L > 2h, so it
+	// survives to the first tick more than 2h after L, and is gone after.
+	last := *now
+	*now = last.Add(2 * time.Hour)
+	if ocgSession(nil, `{}`, "acct") != first {
+		t.Fatal("expired exactly at the TTL; the pin keeps it until a sweep sees it idle for more")
+	}
+	*now = (*now).Add(3 * time.Hour)
+	if got := ocgSession(nil, `{}`, "acct"); got == first {
+		t.Fatal("idle session outlived the TTL")
+	}
+}
+
+func TestOpenCodeGoSessionStoreEvictsTheOldestAtTheCap(t *testing.T) {
+	withClock(t, time.Unix(1_800_000_000, 0))
+	restartProcess()
+	first := ocgSession(nil, `{}`, "c0")
+	for i := 1; i < connectionSessionCap; i++ {
+		ocgSession(nil, `{}`, "c"+strconv.Itoa(i))
+	}
+	if ocgSession(nil, `{}`, "c0") != first {
+		t.Fatal("evicted below the cap")
+	}
+	ocgSession(nil, `{}`, "overflow") // a 1001st entry evicts c0, the oldest insertion
+	if ocgSession(nil, `{}`, "c0") == first {
+		t.Fatal("oldest entry kept at the cap")
 	}
 }

@@ -31,6 +31,7 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 		}
 		return
 	}
+	r = withClientBody(r, body)
 	var chat *openaiadapter.ChatRequest
 	var responses *openaiadapter.ResponsesRequest
 	var model string

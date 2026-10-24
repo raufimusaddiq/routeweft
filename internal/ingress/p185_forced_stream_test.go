@@ -2,6 +2,8 @@ package ingress
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -185,5 +187,34 @@ func TestOpenCodeGoSessionHeaderAndBodyOnTheWire(t *testing.T) {
 	other := run(t, "gpt-5.6-luna", "x-session-id", "untrusted", "User-Agent", "claude-cli/2")
 	if again.header.Get("x-opencode-session") != luna.header.Get("x-opencode-session") || other.header.Get("x-opencode-session") == luna.header.Get("x-opencode-session") {
 		t.Fatalf("stability: %q %q %q", luna.header.Get("x-opencode-session"), again.header.Get("x-opencode-session"), other.header.Get("x-opencode-session"))
+	}
+}
+
+// The pin resolves the session from the body the client sent, before translation
+// (handlers/chatCore.js:69-74). A conversion leg drops metadata.user_id; the
+// session must still come from it.
+func TestOpenCodeGoSessionIsResolvedBeforeConversionDropsIt(t *testing.T) {
+	digest := func(tool, session string) string {
+		sum := sha256.Sum256([]byte("opencode-go\x00" + tool + "\x00" + session))
+		return "ses_" + hex.EncodeToString(sum[:])[:32]
+	}
+	for _, tc := range []struct{ name, path, body, want string }{
+		{"messages to responses", "/v1/messages", `{"model":"x","max_tokens":16,"metadata":{"user_id":"user_x_session_ab12-cd"},"messages":[{"role":"user","content":"ping"}]}`, digest("claude", "claude:ab12-cd")},
+		{"chat to responses", "/v1/chat/completions", `{"model":"x","metadata":{"user_id":"user_x_session_ab12-cd"},"messages":[{"role":"user","content":"ping"}]}`, digest("claude", "claude:ab12-cd")},
+		{"chat plain user_id", "/v1/chat/completions", `{"model":"x","metadata":{"user_id":"plain-user"},"messages":[{"role":"user","content":"ping"}]}`, digest("claude", "plain-user")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newResponsesRig(t, "opencode-go", "gpt-5.6-luna", []string{"acct"}, serveStream(codexStream))
+			if out := rig.post(tc.path, tc.body, "User-Agent", "claude-cli/2"); out.Code != 200 {
+				t.Fatalf("%d %s", out.Code, out.Body)
+			}
+			call := rig.calls[0]
+			if _, has := call.body["metadata"]; has {
+				t.Fatalf("metadata reached Luna: %v", call.body)
+			}
+			if got := call.header.Get("x-opencode-session"); got != tc.want {
+				t.Fatalf("session %q want %q", got, tc.want)
+			}
+		})
 	}
 }

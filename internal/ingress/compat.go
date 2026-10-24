@@ -180,6 +180,7 @@ func (h *Handler) handleGeminiRoute(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	r = withClientBody(r, body)
 	request, err := geminiadapter.ParseRequest(model, stream, body)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
@@ -208,6 +209,7 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	r = withClientBody(r, body)
 	request, err := openaiadapter.ParseChatRequest(body)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
@@ -372,6 +374,7 @@ func (h *Handler) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	r = withClientBody(r, body)
 	request, err := systemoneadapter.ParseRequest(body)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())

@@ -10,8 +10,6 @@ import (
 	"strings"
 	"unicode/utf16"
 
-	"github.com/google/uuid"
-
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
@@ -40,10 +38,7 @@ func openCodeGoSessionFallback(provider routing.ProviderRef, body []byte, _ stri
 // the request resolves to is namespaced by the detected client and digested to an
 // opaque ses_ id, so no other agent's session id reaches the relay.
 //
-// Divergence from the pin: the pin keeps two random ids in process memory (one per
-// assistant-text hash, one per connection). Here the id is the hash itself and a
-// digest of the connection, so it is the same across restarts. A request with
-// neither still gets a fresh id, as in the pin.
+// The ids behind the digest have the pin's lifetime (opencodego_store.go).
 func openCodeGoSession(provider routing.ProviderRef, client http.Header, body []byte) map[string]string {
 	if native := normalizeSession(client.Get(openCodeGoSessionHeader)); native != "" {
 		return map[string]string{openCodeGoSessionHeader: native}
@@ -111,13 +106,13 @@ func resolveSession(client http.Header, body map[string]any, provider routing.Pr
 	if text, _ := stringField(body, "metadata", "user_id"); normalizeSession(text) != "" {
 		return normalizeSession(text)
 	}
-	if hash := assistantTextSession("opencode-go:"+provider.ConnectionID, body); hash != "" {
-		return hash
+	if key := assistantTextKey("opencode-go:"+provider.ConnectionID, body); key != "" {
+		return assistantSessions.get(key)
 	}
-	if session := connectionSession(provider); session != "" {
-		return session
+	if provider.ConnectionID != "" {
+		return connectionSessions.get(provider.ConnectionID)
 	}
-	return uuid.NewString()
+	return newSessionID(sessionNow())
 }
 
 func claudeSessionFromUserID(userID string) string {
@@ -157,9 +152,9 @@ func antigravitySession(body map[string]any) string {
 	return ""
 }
 
-// assistantTextSession keys a conversation on the first assistant text it holds
+// assistantTextKey keys a conversation on the first assistant text it holds
 // (sessionManager.js:160-198): the same text opens the same session.
-func assistantTextSession(scope string, body map[string]any) string {
+func assistantTextKey(scope string, body map[string]any) string {
 	items, _ := body["messages"].([]any)
 	if items == nil {
 		items, _ = body["input"].([]any)
