@@ -282,6 +282,18 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 					failedAttempt(err, nil, provider)
 					break
 				}
+				// A provider may answer a failure as a 2xx the client is shown as it
+				// is (Zed's failed status). The account still failed: cool it, and
+				// let the next candidate serve if one remains; this answer is what
+				// the client gets if none does.
+				if failure, failed := wire.AcceptedFailure(provider, response); failed {
+					now := time.Now()
+					h.recordClassification(provider.ConnectionID, failure.Classification, now)
+					if failure.AllowsFallback() && index+1 < len(candidates) && used < maxAccountAttempts {
+						failedAttempt(nil, response, provider)
+						break
+					}
+				}
 				return response, provider, nil
 			}
 			if provider.ProviderID == "kiro" && (response.StatusCode == 401 || response.StatusCode == 403 || response.StatusCode == 404) {

@@ -303,7 +303,7 @@ func TestClientRequestHeaderHooksAreExactlyTheDeclaredProviders(t *testing.T) {
 		}
 	}
 	sort.Strings(got)
-	if want := []string{"opencode-go"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"opencode-go", "zed"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("client request header hooks %v, want %v", got, want)
 	}
 }
@@ -316,7 +316,7 @@ func TestRequestHeaderHooksAreExactlyTheDeclaredProviders(t *testing.T) {
 		}
 	}
 	sort.Strings(got)
-	if want := []string{"codex", "cursor", "grok-cli", "opencode-go", "qoder"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"codex", "cursor", "grok-cli", "opencode-go", "qoder", "zed"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("request header hooks %v, want %v", got, want)
 	}
 }

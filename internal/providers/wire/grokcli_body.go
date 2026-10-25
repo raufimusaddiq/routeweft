@@ -60,7 +60,7 @@ var grokCLIHook = Hook{
 	ForceStream:    true,
 	Finalize:       grokCLIBody,
 	RequestHeaders: grokCLIHeaders,
-	Do:             GrokCLIDo,
+	Do:             accountless(GrokCLIDo),
 	ClassifyError:  grokCLIPaymentRequired,
 }
 

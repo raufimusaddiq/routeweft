@@ -27,7 +27,7 @@ jobs:
           echo "ORACLE_DIR=$oracle_dir" >> "$GITHUB_ENV"
       - run: node compat/parity/inventory.mjs
       - run: go test -race ./internal/app -run TestPinnedSystemOneDifferential -count=1
-      - run: go test -race ./internal/security ./internal/ingress ./internal/providers/shared
+      - run: go test -race ./internal/security ./internal/ingress ./internal/providers/shared ./internal/providers/wire ./internal/protocol/concerns
       - run: go test -race ./internal/parity ./internal/protocol/hub -count=1
       # Provider catalog, model seeds, quota readers and onboarding flows are
       # compared against the oracle: no hand-kept provider list can drift.

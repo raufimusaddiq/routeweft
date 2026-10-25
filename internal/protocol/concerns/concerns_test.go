@@ -397,6 +397,46 @@ func TestReadLinesLenient(t *testing.T) {
 	}
 }
 
+// Zed's framing as the pin reads it (executors/zed.js:118-135,189-209): `data:`
+// stripped, empty and non-JSON lines skipped, any JSON value delivered, [DONE]
+// ends the stream cleanly and nothing after it is read; a stream with no end is
+// unexpected EOF for the caller to finish.
+func TestReadLinesPin(t *testing.T) {
+	read := func(input string, stop bool) ([]string, error) {
+		var got []string
+		err := ReadLinesPin(context.Background(), strings.NewReader(input), func(value any) (bool, error) {
+			encoded, _ := json.Marshal(value)
+			got = append(got, string(encoded))
+			return stop, nil
+		})
+		return got, err
+	}
+	got, err := read("data: {\"a\":1}\n\n  {\"a\":2}  \nnot json\n{\"a\":\ndata:3\n[1,2]\n\"s\"\nnull\ndata:[DONE]\n{\"a\":9}\n", false)
+	if err != nil || strings.Join(got, " ") != `{"a":1} {"a":2} 3 [1,2] "s" null` {
+		t.Errorf("err=%v got=%v", err, got)
+	}
+	if _, err := read("{\"a\":1}\n", false); !errors.Is(err, ErrLinesEnded) {
+		t.Errorf("a clean end without a terminal must be ErrLinesEnded: %v", err)
+	}
+	// A body that breaks is its own error, never the clean end.
+	broken := io.MultiReader(strings.NewReader("{\"a\":1}\n"), iotestErrReader{io.ErrUnexpectedEOF})
+	if err := ReadLinesPin(context.Background(), broken, func(any) (bool, error) { return false, nil }); !errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, ErrLinesEnded) {
+		t.Errorf("a broken body: %v", err)
+	}
+	if got, err := read("{\"a\":1}\n{\"a\":2}\n", true); err != nil || len(got) != 1 {
+		t.Errorf("consume stopping the stream: err=%v got=%v", err, got)
+	}
+	if _, err := read("{\"a\":1} trailing\n", false); !errors.Is(err, ErrLinesEnded) {
+		t.Errorf("a line with text after the value is not JSON and is skipped: %v", err)
+	}
+	var big []string
+	err = ReadLinesPin(context.Background(), strings.NewReader(strings.Repeat("a", 5<<20)+"\n"), func(any) (bool, error) { return false, nil })
+	_ = big
+	if err == nil || errors.Is(err, ErrLinesEnded) {
+		t.Errorf("an oversized line is a read failure: %v", err)
+	}
+}
+
 // A Strict rule never suffixes: two names that become one are an error, whichever
 // order they are declared in and whether the other is rewritten or already valid.
 // The default rule is unchanged and still suffixes.
@@ -431,3 +471,7 @@ func TestStrictToolNameRuleRefusesCollisions(t *testing.T) {
 		t.Errorf("the default rule must keep suffixing: %q", loose.Safe("a b"))
 	}
 }
+
+type iotestErrReader struct{ err error }
+
+func (r iotestErrReader) Read([]byte) (int, error) { return 0, r.err }

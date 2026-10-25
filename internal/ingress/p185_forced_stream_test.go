@@ -9,33 +9,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
-)
 
-func TestZedForcedStreamAcrossClientProtocols(t *testing.T) {
-	for _, tc := range []struct{ path, body string }{
-		{"/v1/chat/completions", `{"model":"x","messages":[{"role":"user","content":"ping"}]`},
-		{"/v1/responses", `{"model":"x","input":"ping"`},
-		{"/v1/messages", `{"model":"x","max_tokens":16,"messages":[{"role":"user","content":"ping"}]`},
-	} {
-		for _, stream := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/%v", tc.path, stream), func(t *testing.T) {
-				rig := newCodeBuddyRig(t, "zed", sseUpstream(codebuddySSE))
-				out := rig.post(tc.path, tc.body+fmt.Sprintf(`,"stream":%v}`, stream))
-				if out.Code != 200 || !strings.Contains(out.Body.String(), "pong") || (!stream && !json.Valid(out.Body.Bytes())) {
-					t.Fatalf("%d %s", out.Code, out.Body)
-				}
-				if len(rig.seen) != 1 || rig.seen[0]["stream"] != true {
-					t.Fatalf("outbound %v", rig.seen)
-				}
-				if len(rig.outcomes) != 1 || rig.outcomes[0].InputTokens != 11 || rig.outcomes[0].OutputTokens != 3 {
-					t.Fatalf("usage %+v", rig.outcomes)
-				}
-			})
-		}
-	}
-}
+	"github.com/raufimusaddiq/routeweft/internal/routing"
+)
 
 func TestOpenCodeGoForcedStreamAcrossClientProtocols(t *testing.T) {
 	for _, tc := range []struct{ path, body string }{
@@ -62,10 +41,7 @@ func TestOpenCodeGoForcedStreamAcrossClientProtocols(t *testing.T) {
 }
 
 func TestNewForcedStreamsRejectTruncatedReplies(t *testing.T) {
-	zed := newCodeBuddyRig(t, "zed", sseUpstream("data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"))
-	if out := zed.post("/v1/chat/completions", `{"model":"x","messages":[{"role":"user","content":"ping"}]}`); out.Code != 502 {
-		t.Fatalf("%d %s", out.Code, out.Body)
-	}
+	// Zed finishes a stream that stops short, as the pin does (TestZedCutOffStreamIsFinishedAsThePinDoes); the others refuse it.
 	goRig := newResponsesRig(t, "opencode-go", "gpt-5.6-luna", []string{"acct"}, serveStream(frame("response.created", `{"type":"response.created","response":{"id":"r1"}}`)))
 	if out := goRig.post("/v1/responses", `{"model":"x","input":"ping"}`); out.Code != 502 {
 		t.Fatalf("%d %s", out.Code, out.Body)
@@ -113,7 +89,15 @@ func TestNewForcedStreamsCancelUpstream(t *testing.T) {
 				var key string
 				path, body := "/v1/chat/completions", `{"model":"x","messages":[{"role":"user","content":"ping"}]`
 				if provider == "zed" {
-					rig := newCodeBuddyRig(t, provider, upstream)
+					// Only /completions stalls; the exchange and the catalog answer.
+					rig := newCodeBuddyRig(t, provider, func(w http.ResponseWriter, r *http.Request) {
+						if strings.HasSuffix(r.URL.Path, "/completions") {
+							upstream(w, r)
+							return
+						}
+						zedUpstream(t, "", new([]p192Call), new(sync.Mutex))(w, r)
+					})
+					rig.settings = routing.ProviderSettings{UserID: "user-1", OrganizationID: "org-1"}
 					mux, key = rig.mux, rig.key
 				} else {
 					rig := newResponsesRig(t, provider, "gpt-5.6-luna", []string{"acct"}, func(_ string, w http.ResponseWriter, r *http.Request) { upstream(w, r) })

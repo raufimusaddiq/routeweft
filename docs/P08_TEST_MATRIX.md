@@ -40,12 +40,12 @@ known good view (#173); the quota and token cells are written against that rule.
 
 Of the 81 active providers:
 
-- **45** have at least one provider-specific test (a `P` cell).
+- **46** have at least one provider-specific test (a `P` cell).
 - **0** have no `P` cell but a codec-level test (`C`) for a provider the build refuses: none.
-- **33** are shared-path only: every evidenced cell is a table row (`T`) or the shared path (`S`), and the rest are not applicable, refused or gaps: `alicode-intl`, `alitp-intl`, `alicode`, `alims-intl`, `baidu`, `bazaarlink`, `blackbox`, `bluesminds`, `byteplus`, `cerebras`, `chutes`, `cohere`, `featherless`, `fireworks`, `hyperbolic`, `kilo-gateway`, `llm7`, `morph`, `nebius`, `nvidia`, `poolside`, `sambanova`, `siliconflow`, `tencent`, `together`, `venice`, `volcengine-ark`, `openai`, `mmf`, `ollama-local`, `tokenrouter`, `muse`, `xai`.
+- **32** are shared-path only: every evidenced cell is a table row (`T`) or the shared path (`S`), and the rest are not applicable, refused or gaps: `alicode-intl`, `alitp-intl`, `alicode`, `alims-intl`, `baidu`, `bazaarlink`, `blackbox`, `bluesminds`, `byteplus`, `cerebras`, `chutes`, `cohere`, `featherless`, `fireworks`, `hyperbolic`, `kilo-gateway`, `llm7`, `morph`, `nebius`, `nvidia`, `poolside`, `sambanova`, `siliconflow`, `tencent`, `together`, `venice`, `volcengine-ark`, `openai`, `ollama-local`, `tokenrouter`, `muse`, `xai`.
 - **3** have no test of any kind: every cell is `N`, `U` or `G`: `vertex`, `grok-web`, `perplexity-web`.
 
-Counting only the serving path (a `P` in streaming, non-streaming, error shapes or tokens), **26** providers have a provider-specific test: `api-airforce`, `groq`, `mistral`, `openrouter`, `codex`, `anthropic`, `gemini`, `deepseek`, `minimax`, `xiaomi-tokenplan`, `opencode`, `ollama`, `typesafe`, `vertex-partner`, `cloudflare-ai`, `iflow`, `kimi`, `xiaomi-mimo`, `cline`, `clinepass`, `codebuddy-cn`, `codebuddy-intl`, `grok-cli`, `kenari`, `zed`, `azure`. The other 55 have one only for listing, quota or import, or none.
+Counting only the serving path (a `P` in streaming, non-streaming, error shapes or tokens), **28** providers have a provider-specific test: `api-airforce`, `groq`, `mistral`, `openrouter`, `codex`, `anthropic`, `gemini`, `deepseek`, `minimax`, `xiaomi-tokenplan`, `mimo-free`, `mmf`, `opencode`, `ollama`, `typesafe`, `vertex-partner`, `cloudflare-ai`, `iflow`, `kimi`, `xiaomi-mimo`, `cline`, `clinepass`, `codebuddy-cn`, `codebuddy-intl`, `grok-cli`, `kenari`, `zed`, `azure`. The other 53 have one only for listing, quota or import, or none.
 
 Kinds count cells, not providers: a `P` row can still have `T`, `S` and `G` cells, and the per-column tables below say which.
 
@@ -57,11 +57,11 @@ Cells by kind and column:
 | Quota / usage read | 23 | 0 | 0 | 0 | 0 | 1 | 57 |
 | Applicable unavailability | 20 | 1 | 0 | 52 | 5 | 3 | 0 |
 | Import / refresh | 18 | 0 | 3 | 0 | 0 | 3 | 57 |
-| Streaming | 14 | 5 | 51 | 1 | 3 | 7 | 0 |
-| Non-streaming | 15 | 5 | 50 | 1 | 3 | 7 | 0 |
+| Streaming | 17 | 5 | 51 | 1 | 3 | 4 | 0 |
+| Non-streaming | 18 | 5 | 50 | 1 | 3 | 4 | 0 |
 | Error shapes | 24 | 6 | 1 | 47 | 3 | 0 | 0 |
 | Cached vs ordinary tokens | 13 | 5 | 5 | 54 | 3 | 1 | 0 |
-| **All cells** | **149** | **22** | **130** | **157** | **17** | **25** | **148** |
+| **All cells** | **155** | **22** | **130** | **157** | **17** | **19** | **148** |
 
 648 cells in all (81 providers x 8 behaviours). `N` cells carry a pin citation in the evidence tables below.
 
@@ -113,8 +113,8 @@ Cells by kind and column:
 | `minimax` | ready | N | P | P | N | T | T | P | P |
 | `minimax-cn` | ready | N | P | P | N | T | T | S | S |
 | `xiaomi-tokenplan` | ready | N | N | S | N | P | P | P | S |
-| `mimo-free` | ready | P | N | S | N | G | G | S | S |
-| `mmf` | ready | N | N | S | N | G | G | S | S |
+| `mimo-free` | ready | P | N | S | N | P | P | S | S |
+| `mmf` | ready | N | N | S | N | P | P | S | S |
 | `opencode` | ready | P | N | S | N | P | P | P | S |
 | `ollama` | ready | P | P | P | N | P | P | P | P |
 | `ollama-local` | experimental | G | N | S | N | S | S | S | S |
@@ -147,7 +147,7 @@ Cells by kind and column:
 | `grok-web` | unavailable | N | N | U | G | U | U | U | U |
 | `perplexity-web` | unavailable | N | N | U | G | U | U | U | U |
 | `kenari` | ready | P | P | P | N | P | P | P | S |
-| `zed` | ready | G | P | P | P | G | G | P | S |
+| `zed` | ready | G | P | P | P | P | P | P | S |
 | `kimchi` | ready | P | N | S | P | T | T | S | S |
 | `azure` | experimental | N | N | S | N | P | P | P | S |
 
@@ -386,6 +386,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `openrouter` — passthrough stream relayed byte for byte Tests: `ingress:TestOpenRouterPassthroughStreamRelaysBytes`, `ingress:TestRegistryNativeTransportWires`.
 - **P** `gemini` — every converted client over streamGenerateContent Tests: `ingress:TestGeminiServesEveryConvertedClient`, `ingress:TestGeminiArrayFramedStreamIsServedWithUnobservedUsage`.
 - **P** `xiaomi-tokenplan` — Chat and Messages wires post to their own paths Tests: `ingress:TestConnectionScopedTargetsStreamAndNonStream`, `ingress:TestTokenplanRoutesPerWire`.
+- **P** `mimo-free`, `mmf` — (mmf is the same executor under its alias, executors/index.js:68) bootstrap JWT with expiry buffer and one 401/403 re-bootstrap, the gateway's headers and the MiMoCode system marker (executors/mimo-free.js:24-33,79-159); a JWT that cannot be minted refuses the request Tests: `providers/wire:TestMimoFreeBootstrapsAJWTAndSendsTheGatewaysHeaders`, `providers/wire:TestMimoFreeRetriesOnceWithAFreshJWTOnAuthFailure`, `providers/wire:TestMimoFreeRefusesWhenTheJWTCannotBeMinted`, `ingress:TestMimoFreeAndMmfAreServedWithABootstrappedJWT`.
 - **P** `opencode` — forced stream (registry/opencode.js:20), Zen target Tests: `ingress:TestOpenCodeForcedStreamFoldsToOneJSONBody`, `providers/wire:TestOpenCodeForcesStream`.
 - **P** `ollama` — NDJSON stream conversion Tests: `ingress:TestOllamaFinalLineWithoutNewlineIsAccounted`, `ingress:TestTruncatedOllamaStreamIsAFailure`, `protocol/ollama:TestStreamIsConvertedLineByLine`.
 - **P** `typesafe` — System One stream, usage at EOF Tests: `app:TestConfiguredSystemOneWireAndAccounting`, `ingress:TestSystemOneStreamUsageAtEOFAndAfterOversizedOpaqueLine`.
@@ -393,6 +394,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `cline`, `clinepass` — an SSE body is not unwrapped Tests: `ingress:TestClineEnvelopeOnlyUnwrapsNonStreamSuccess`.
 - **P** `codebuddy-cn`, `codebuddy-intl` — gateway answers only streams; empty tool_calls stripped, cancellation reaches the upstream Tests: `ingress:TestCodeBuddyStreamingClientKeepsItsStreamMinusEmptyToolCalls`, `ingress:TestCodeBuddyForcedStreamCancellationReachesUpstream`, `ingress:TestCodeBuddyInbandStreamErrorRelaysParsedMessage`.
 - **P** `kenari` — Chat, Responses and Messages natively, both modes; Responses custom-tool rewrite on the stream Tests: `app:TestConfiguredKenariNativeWire`, `providers/wire:TestResponsesStreamRewritesConvertedCalls`.
+- **P** `zed` — LLM-token exchange, thread envelope, per-vendor request and NDJSON frames for Anthropic, OpenAI Responses, Google and xAI (executors/zed.js:60-282, shared/zedAuth.js:258-324); a failed status, a cut-off stream and a non-JSON line end as the pin ends them. Open: the listing still sends the shared bearer (see Authenticated listing); the thread id resolves the pin's client session from headers and the client's body, but not after the pin's token savers (PARITY 6.19) Tests: `providers/wire:TestZedExchangesTheTokenAndSendsTheEnvelope`, `providers/wire:TestZedServesEveryVendorShape`, `providers/wire:TestZedStreamEndsAsThePinEndsIt`, `providers/wire:TestZedBrokenUpstreamIsAnErrorOnEveryLeg`, `providers/wire:TestZedErrorChunkNamesTheRequestedModel`, `providers/wire:TestZedStopsUpstreamWhenTheClientLeaves`, `ingress:TestZedIsServedThroughItsExchangeAndEnvelope`.
 - **P** `azure` — deployment path, api-version and Api-Key header, streamed Tests: `ingress:TestConnectionScopedTargetsStreamAndNonStream`.
 - **C** `antigravity`, `gemini-cli` — Cloud Code stream codec; the provider is unavailable (URL, client headers and project id are not bound) Tests: `protocol/gemini:TestAntigravityStreamText`, `protocol/gemini:TestCloudCodeResponseLegsServeBothWires`.
 - **C** `cursor` — Connect stream codec and cancellation; the provider is unavailable Tests: `providers/wire:TestCursorConsumeStreamsTextAndStops`, `providers/wire:TestCursorDoStopsUpstreamWhenTheClientLeaves`.
@@ -414,17 +416,16 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **S** `ollama-local` — the shared Ollama codec; no test names ollama-local (experimental) Tests: `ingress:TestTruncatedOllamaStreamIsAFailure`, `protocol/ollama:TestBufferedBodyIsConverted`.
 - **U** `vertex`, `grok-web`, `perplexity-web` — refused by its immutable readiness; no codec exists to test Tests: `ingress:TestReadinessMatchesIngressReachability`.
 - **G** `codex` — the table row proves the URL, bearer and CLI headers only. The pin's executor also forces stream:true and store:false, injects default instructions, maps review models, drops unsupported fields and filters to an allowlist (executors/codex.js:415-515); Routeweft forwards the client's body (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`, `ingress:TestCodexProviderHeadersCarryCLIFingerprint`.
-- **G** `mimo-free`, `mmf` — (mmf is an alias of mimo-free, P02 audit) the table row proves the URL only. The pin bootstraps a JWT and injects the MiMoCode system marker the free endpoint requires (executors/mimo-free.js:24-33,105-160: 403 "Illegal access" without it); Routeweft does neither (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`.
 - **G** `vertex-partner` — only the URL seam is tested; the target is an absolute Google host, so no request is dispatched in a test (provider is experimental) Tests: `providers/wire:TestVertexPartnerTargetUsesTheConnectionProject`.
 - **G** `qoder` — only the request signing seam is tested; no response codec exists at the pin for dispatch (registry/qoder.js:19-26), so streamed and buffered bodies are untested Tests: `ingress:TestQoderDispatchSeamSignsFinalRequest`.
 - **G** `grok-cli` — the table row proves the URL and bearer only. The pin's executor sends the grok-shell identity (x-grok-session-id, conv-id, req-id, turn-idx, model-override, email, userid), forces stream:true and store:false and normalizes input and tools (executors/grok-cli.js:362-470); Routeweft sends none of that at inference, though its listing needs the identity (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`.
-- **G** `zed` — the table row proves a bearer POST to cloud.zed.dev/completions, which is not Zed's wire. The pin exchanges an LLM token, posts {thread_id, provider, model, provider_request} per upstream vendor and unwraps NDJSON events (executors/zed.js:60-283; registry/zed.js transport); none of it exists in Routeweft (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`.
 
 ### Non-streaming
 
 - **P** `api-airforce` — folded to one JSON body; a failed stream is never returned as partial JSON Tests: `ingress:TestAirforceForcedStreamAcrossClientProtocols`, `ingress:TestAirforceStreamFailureDoesNotReturnPartialJSON`.
 - **P** `gemini` — every converted client over generateContent Tests: `ingress:TestGeminiServesEveryConvertedClient`, `protocol/gemini:TestBufferedResponse`.
 - **P** `xiaomi-tokenplan` — Chat and Messages wires post to their own paths Tests: `ingress:TestConnectionScopedTargetsStreamAndNonStream`, `ingress:TestTokenplanRoutesPerWire`.
+- **P** `mimo-free`, `mmf` — (mmf is the same executor under its alias) the same bootstrap and marker on a buffered request; Accept follows the body's stream; a JWT that cannot be minted sends nothing Tests: `providers/wire:TestMimoFreeAcceptFollowsTheBodysStream`, `providers/wire:TestMimoSystemMarker`, `ingress:TestMimoFreeAndMmfAreServedWithABootstrappedJWT`, `ingress:TestMimoFreeWithoutAJWTSendsNothingAndFails`.
 - **P** `opencode` — folded to one JSON body Tests: `ingress:TestOpenCodeForcedStreamFoldsToOneJSONBody`.
 - **P** `ollama` — buffered body conversion Tests: `protocol/ollama:TestBufferedBodyIsConverted`, `ingress:TestOllamaRefusalMovesToTheNextCandidate`.
 - **P** `typesafe` — System One non-stream Tests: `app:TestConfiguredSystemOneWireAndAccounting`.
@@ -434,6 +435,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `cline`, `clinepass` — the {success,data} envelope is unwrapped and accounted Tests: `ingress:TestClineEnvelopeFixtureIsUnwrappedAndAccounted`, `ingress:TestClineEnvelopeIsUnwrappedBeforeResponsesTranslation`, `ingress:TestClineAuthorizationPrefixReachesUpstream`.
 - **P** `codebuddy-cn`, `codebuddy-intl` — a non-stream client gets one JSON body folded from the forced stream Tests: `ingress:TestCodeBuddyNonStreamClientsGetOneJSONBodyFromAForcedStream`, `ingress:TestCodeBuddyJSONAnswerToANonStreamRequestPassesThrough`, `ingress:TestCodeBuddyForcedStreamFailuresAreErrorsNotPartialAnswers`.
 - **P** `kenari` — native wires and the Responses body rewrite Tests: `app:TestConfiguredKenariNativeWire`, `providers/wire:TestRewriteResponsesBody`.
+- **P** `zed` — the forced stream folded to one body for the Chat, Responses and Messages clients (executors/zed.js:60-282); a failed status is the assistant's text with a clean stop and still cools the account and lets the next candidate serve, a cut-off stream is finished, as the pin does Tests: `ingress:TestZedIsServedThroughItsExchangeAndEnvelope`, `ingress:TestZedFailedStatusIsTheAssistantsTextWithACleanStop`, `ingress:TestZedFailedStatusCoolsTheAccountAndTheNextCandidateServes`, `ingress:TestZedQuotaLockOutlastsTheDefaultBackoffAndARateLimitDoesNot`, `ingress:TestZedCutOffStreamIsFinishedAsThePinDoes`.
 - **P** `azure` — deployment path, api-version and Api-Key header Tests: `ingress:TestAzureRequestShape`, `ingress:TestConnectionScopedTargetsStreamAndNonStream`.
 - **C** `antigravity`, `gemini-cli` — Cloud Code buffered codec; the provider is unavailable Tests: `protocol/gemini:TestAntigravityBufferedResponse`, `protocol/gemini:TestCloudCodeResponseLegsServeBothWires`.
 - **C** `cursor` — buffered body codec; the provider is unavailable Tests: `protocol/cursor:TestBufferedBody`.
@@ -453,11 +455,9 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **S** `ollama-local` — the shared Ollama codec; no test names ollama-local (experimental) Tests: `ingress:TestTruncatedOllamaStreamIsAFailure`, `protocol/ollama:TestBufferedBodyIsConverted`.
 - **U** `vertex`, `grok-web`, `perplexity-web` — refused by its immutable readiness; no codec exists to test Tests: `ingress:TestReadinessMatchesIngressReachability`.
 - **G** `codex` — the table row proves the URL, bearer and CLI headers only. The pin's executor also forces stream:true and store:false, injects default instructions, maps review models, drops unsupported fields and filters to an allowlist (executors/codex.js:415-515); Routeweft forwards the client's body (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`, `ingress:TestCodexProviderHeadersCarryCLIFingerprint`.
-- **G** `mimo-free`, `mmf` — (mmf is an alias of mimo-free, P02 audit) the table row proves the URL only. The pin bootstraps a JWT and injects the MiMoCode system marker the free endpoint requires (executors/mimo-free.js:24-33,105-160: 403 "Illegal access" without it); Routeweft does neither (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`.
 - **G** `vertex-partner` — only the URL seam is tested; the target is an absolute Google host, so no request is dispatched in a test (provider is experimental) Tests: `providers/wire:TestVertexPartnerTargetUsesTheConnectionProject`.
 - **G** `qoder` — only the request signing seam is tested; no response codec exists at the pin for dispatch (registry/qoder.js:19-26), so streamed and buffered bodies are untested Tests: `ingress:TestQoderDispatchSeamSignsFinalRequest`.
 - **G** `grok-cli` — the table row proves the URL and bearer only. The pin's executor sends the grok-shell identity (x-grok-session-id, conv-id, req-id, turn-idx, model-override, email, userid), forces stream:true and store:false and normalizes input and tools (executors/grok-cli.js:362-470); Routeweft sends none of that at inference, though its listing needs the identity (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`.
-- **G** `zed` — the table row proves a bearer POST to cloud.zed.dev/completions, which is not Zed's wire. The pin exchanges an LLM token, posts {thread_id, provider, model, provider_request} per upstream vendor and unwraps NDJSON events (executors/zed.js:60-283; registry/zed.js transport); none of it exists in Routeweft (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`.
 
 ### Error shapes
 
@@ -538,7 +538,7 @@ These are findings, not new work in this PR. Each is recorded in PARITY and stay
 2. **Codex `usage_limit_reached` ignored `resets_at` when this audit began.** P02 (#177) closed it (`wire/error_reset.go`); the gap guard for it was removed and the Codex cell is now P.
 3. **Groq has no quota reader in effect.** The reader discards the `x-ratelimit-*` headers the pin reads (`usage/groq.js:44-129`) and always returns an error.
 4. **A zero DeepSeek balance reads as unlimited** (the reader's `window()` treats a total of 0 as unlimited), so the account is never seen as out of credit. P05 listed this as open; no test exists for it because the expected behaviour would fail.
-5. **Providers declared ready whose pin executor is not replicated.** The shared-path table proves their URL and credential only: Codex (`executors/codex.js:415-515`: forced stream, `store:false`, default instructions, allowlist), Grok CLI (`executors/grok-cli.js:362-470`: grok-shell identity, forced stream), Zed (`executors/zed.js:60-283`: a different endpoint, LLM-token exchange and NDJSON envelope) and MiMo Free and its alias mmf (`executors/mimo-free.js:24-160`: JWT bootstrap and the system marker the endpoint requires). Their streaming and non-streaming cells are `G`. Whether their readiness should change is a product decision for #76 P02 and the readiness table (#176); this PR changes neither.
+5. **Providers declared ready whose pin executor is not replicated.** The shared-path table proves their URL and credential only: Codex (`executors/codex.js:415-515`: forced stream, `store:false`, default instructions, allowlist) and Grok CLI (`executors/grok-cli.js:362-470`: grok-shell identity, forced stream). Their streaming and non-streaming cells are `G`. Whether their readiness should change is a product decision for #76 P02 and the readiness table (#176). Zed and MiMo Free with its alias mmf were in this list until #192, which built their executors (token exchange, thread envelope, NDJSON frames, bootstrap JWT); their cells are now evidence and their readiness stays `ready`.
 6. Smaller, in the cell notes: Zed's `{limited:N}` quota form, Qoder's absent pool read as unlimited, Command Code's empty window, MiniMax's camelCase envelope, Zed's `trial_blocked` message rewrite, Gemini CLI's `retryDelay` hint, Claude's and Zed's authenticated listing.
 
 ## What stays open

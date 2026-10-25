@@ -109,8 +109,22 @@ type Hook struct {
 	ClientHeaders []string
 	// Do sends the request in place of client.Do, for a provider whose exchange is
 	// not one request and one reply (Cursor's Connect stream, which the client
-	// answers mid-turn). It returns an ordinary response for the caller to classify.
-	Do func(*http.Client, *http.Request) (*http.Response, error)
+	// answers mid-turn), or whose credential is exchanged for a short-lived one
+	// first (Zed's LLM token, MiMo Free's bootstrap JWT). It receives the account
+	// the request is for and returns an ordinary response for the caller to classify.
+	Do func(routing.ProviderRef, *http.Client, *http.Request) (*http.Response, error)
+	// Exchange marks a Do that trades the account's credential for the one the
+	// request carries (Zed's LLM token, MiMo Free's JWT), so a request built outside
+	// serving, a connection probe, cannot reach the provider without it. A Do that
+	// only reshapes how a request is sent (Cursor, Codex, CommandCode, Grok CLI)
+	// does not set it, and a probe keeps sending those plainly.
+	Exchange bool
+	// AcceptedFailure reads an account failure out of a 2xx response whose body
+	// the client is shown as it is (Zed answers a failed status as the assistant's
+	// text, as the pin does). It reports how the account is to be accounted for, so
+	// the dispatcher cools it and may try the next candidate, and it removes
+	// whatever marker Do left on the response.
+	AcceptedFailure func(*http.Response) (FailedAnswer, bool)
 }
 
 var hooks = map[string]Hook{
@@ -148,13 +162,15 @@ var hooks = map[string]Hook{
 	"clinepass":        clineHook,
 	"codebuddy-cn":     codebuddyCN,
 	"codebuddy-intl":   codebuddyIntl,
-	"zed":              {ForceStream: true, Finalize: codebuddyStream},
+	"zed":              zedHook,
+	"mimo-free":        mimoFreeHook,
+	"mmf":              mimoFreeHook,
 	"opencode-go":      {ForceStream: true, ForceStreamFor: openCodeGoForcesStream, ForcedTransport: openCodeGoTransport, FinalizeAccount: openCodeGoFinalize, RequestHeaders: openCodeGoSessionFallback, ClientRequestHeaders: openCodeGoSession},
 	"opencode":         {Target: opencodeTarget, OpenAIHeaders: opencodeHeaders, ForceStream: true, Finalize: codebuddyStream},
 	"vertex-partner":   {Target: vertexPartnerTarget},
 	"cloudflare-ai":    {Target: cloudflareTarget},
 	"commandcode":      commandCodeHook,
-	"cursor":           {RequestHeaders: cursorHeaders, Target: cursorTarget, ForceStream: true, RequireCredential: true, Do: CursorDo},
+	"cursor":           {RequestHeaders: cursorHeaders, Target: cursorTarget, ForceStream: true, RequireCredential: true, Do: accountless(CursorDo)},
 }
 
 var minimaxHook = Hook{Finalize: chain(dropOutputConfig, requireClaudeToolType), Target: betaQuery}
@@ -178,6 +194,13 @@ var clineHook = Hook{
 		unwrapped, _ := clineprovider.UnwrapEnvelope(body)
 		return unwrapped
 	},
+}
+
+// accountless adapts a Do that needs nothing of the account but its request.
+func accountless(do func(*http.Client, *http.Request) (*http.Response, error)) func(routing.ProviderRef, *http.Client, *http.Request) (*http.Response, error) {
+	return func(_ routing.ProviderRef, client *http.Client, request *http.Request) (*http.Response, error) {
+		return do(client, request)
+	}
 }
 
 // For returns the hook registered for a provider id; the zero Hook if none.
@@ -260,9 +283,29 @@ func set(headers http.Header, values map[string]string) {
 // Send performs the request through the provider's own exchange when it has one.
 func Send(provider routing.ProviderRef, client *http.Client, request *http.Request) (*http.Response, error) {
 	if do := For(provider.ProviderID).Do; do != nil {
-		return do(client, request)
+		return do(provider, client, request)
 	}
 	return client.Do(request)
+}
+
+// Exchanges reports whether the provider's Do exchanges a credential (Hook.Exchange).
+func Exchanges(providerID string) bool { return For(providerID).Exchange }
+
+// FailedAnswer is an account failure carried by a 2xx response: how the account is
+// to be accounted for, and the message the upstream gave.
+type FailedAnswer struct {
+	routing.Classification
+	Message string
+}
+
+// AcceptedFailure reports the failure a 2xx response carries for the account that
+// served it, if the provider has such a response. Serving and the connection probe
+// both read it.
+func AcceptedFailure(provider routing.ProviderRef, response *http.Response) (FailedAnswer, bool) {
+	if read := For(provider.ProviderID).AcceptedFailure; read != nil {
+		return read(response)
+	}
+	return FailedAnswer{}, false
 }
 
 // ForcesStream reports whether the selected provider/model route only answers streams.

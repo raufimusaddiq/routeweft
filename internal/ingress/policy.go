@@ -371,7 +371,7 @@ func (h *Handler) recordClassification(account string, classification routing.Cl
 	if h.opts.State == nil || account == "" {
 		return
 	}
-	deadline := routing.CooldownDeadline(classification, now, 30*time.Second)
+	deadline := routing.CooldownDeadline(classification, now, routing.DefaultFallbackBackoff)
 	if deadline.IsZero() {
 		return
 	}

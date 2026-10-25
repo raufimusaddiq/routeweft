@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
+	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
 // A probe, a model listing and a route listing take the base, target, query and
@@ -269,7 +271,6 @@ func TestQoderProbeIsUnavailableUntilConversionLegExists(t *testing.T) {
 func TestForcedStreamProbesUseTheServingShape(t *testing.T) {
 	catalog, _ := registry.NewBuiltinCatalog()
 	for _, tc := range []struct{ provider, model, protocol, path string }{
-		{"zed", "claude-sonnet-4.5", "openai-chat", "/chat/completions"},
 		{"opencode-go", "gpt-5.6-luna", "openai-chat", "/responses"},
 		{"opencode-go", "grok-4.6", "anthropic-messages", "/responses"},
 		{"opencode-go", "muse-spark-1.2-contributor", "openai-responses", "/responses"},
@@ -294,5 +295,172 @@ func TestForcedStreamProbesUseTheServingShape(t *testing.T) {
 	result := h.testProviderModel(context.Background(), connection, node, spec, "openai-chat", "gpt-5.6-luna", time.Second)
 	if result.OK || len(calls()) != 0 || result.UpstreamModelID != "" || result.Error != "model requires the Responses transport" {
 		t.Fatalf("%+v %+v", result, calls())
+	}
+}
+
+// A Zed probe tests the request serving would send: the LLM-token exchange, then
+// Zed's envelope at /completions, and the NDJSON stream read back as Chat. Before
+// the exchange existed it posted the raw access token to /chat/completions.
+func TestZedProbeTakesTheExchangeAndTheEnvelope(t *testing.T) {
+	catalog, _ := registry.NewBuiltinCatalog()
+	spec, _ := catalog.Lookup("zed")
+	h, _ := recordingHandler(t)
+	var mu sync.Mutex
+	var calls []recordedCall
+	h.opts.DiscoveryClient.HTTP = probeHTTPFunc(func(r *http.Request) (*http.Response, error) {
+		var raw []byte
+		if r.Body != nil {
+			raw, _ = io.ReadAll(r.Body)
+		}
+		mu.Lock()
+		calls = append(calls, recordedCall{r.URL.String(), r.Header.Clone(), string(raw)})
+		mu.Unlock()
+		reply := func(contentType, body string) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{contentType}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+		}
+		switch r.URL.Path {
+		case "/client/llm_tokens":
+			return reply("application/json", `{"token":"llm-fixture"}`)
+		case "/models":
+			return reply("application/json", `{"models":[{"id":"claude-sonnet-4.5","provider":"anthropic"}]}`)
+		}
+		return reply("application/x-ndjson", `{"event":{"type":"message_start","message":{"id":"m","role":"assistant","model":"claude-sonnet-4.5","content":[],"usage":{"input_tokens":3,"output_tokens":0}}}}
+{"event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}
+{"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"pong"}}}
+{"event":{"type":"content_block_stop","index":0}}
+{"event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}}
+{"event":{"type":"message_stop"}}
+{"status":"stream_ended"}
+`)
+	})
+	node, connection := builtinConnection("zed", routing.ProviderSettings{UserID: "user-1", OrganizationID: "org-1"}, credentials.AuthOAuth)
+	result := h.testProviderModel(context.Background(), connection, node, spec, "openai-chat", "claude-sonnet-4.5", 5*time.Second)
+	if !result.OK {
+		t.Fatalf("%+v", result)
+	}
+	var paths []string
+	for _, call := range calls {
+		paths = append(paths, strings.TrimPrefix(call.URL, "https://cloud.zed.dev"))
+	}
+	if strings.Join(paths, " ") != "/client/llm_tokens /models /completions" {
+		t.Fatalf("calls %v", paths)
+	}
+	last := calls[len(calls)-1]
+	if last.Header.Get("Authorization") != "Bearer llm-fixture" || !strings.Contains(last.Body, `"provider":"anthropic"`) || !strings.Contains(last.Body, `"provider_request"`) {
+		t.Errorf("completions %v %s", last.Header, last.Body)
+	}
+	// Without the user id the exchange needs, the probe says so and sends nothing.
+	calls = nil
+	node, connection = builtinConnection("zed", routing.ProviderSettings{}, credentials.AuthOAuth)
+	result = h.testProviderModel(context.Background(), connection, node, spec, "openai-chat", "claude-sonnet-4.5", 5*time.Second)
+	if result.OK || len(calls) != 0 || !strings.Contains(result.Error, "user id") {
+		t.Errorf("%+v after %d calls", result, len(calls))
+	}
+}
+
+// Only a credential exchange changes how a probe is sent. The providers whose Do
+// reshapes sending (Cursor, Codex, CommandCode, Grok CLI) are probed as before: one
+// plain request, with no retry and no synthesized answer in between.
+func TestProbesOfProvidersWithAReshapingDoStayPlain(t *testing.T) {
+	catalog, _ := registry.NewBuiltinCatalog()
+	for _, id := range []string{"cursor", "codex", "commandcode", "grok-cli"} {
+		spec, _ := catalog.Lookup(id)
+		for _, transport := range spec.Transports {
+			protocol := string(transport)
+			switch protocol {
+			case "openai-chat", "openai-responses", "anthropic-messages":
+			default:
+				continue
+			}
+			t.Run(id+"/"+protocol, func(t *testing.T) {
+				h, calls := recordingHandler(t)
+				node, connection := builtinConnection(id, routing.ProviderSettings{}, credentials.AuthOAuth)
+				h.testProviderModel(context.Background(), connection, node, spec, protocol, "model-x", time.Second)
+				got := calls()
+				if len(got) != 1 {
+					t.Fatalf("%d calls: %+v", len(got), got)
+				}
+			})
+		}
+	}
+}
+
+// MiMo Free's probe takes the bootstrap, and sends the marker and the JWT.
+func TestMimoFreeProbeTakesTheBootstrap(t *testing.T) {
+	catalog, _ := registry.NewBuiltinCatalog()
+	spec, _ := catalog.Lookup("mimo-free")
+	h, _ := recordingHandler(t)
+	var mu sync.Mutex
+	var calls []recordedCall
+	h.opts.DiscoveryClient.HTTP = probeHTTPFunc(func(r *http.Request) (*http.Response, error) {
+		var raw []byte
+		if r.Body != nil {
+			raw, _ = io.ReadAll(r.Body)
+		}
+		mu.Lock()
+		calls = append(calls, recordedCall{r.URL.String(), r.Header.Clone(), string(raw)})
+		mu.Unlock()
+		if strings.HasSuffix(r.URL.Path, "/bootstrap") {
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"jwt":"probe.jwt.fixture"}`))}, nil
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"choices":[{"message":{"role":"assistant","content":"pong"}}]}`))}, nil
+	})
+	node, connection := builtinConnection("mimo-free", routing.ProviderSettings{}, credentials.AuthNone)
+	result := h.testProviderModel(context.Background(), connection, node, spec, "openai-chat", "mimo-auto", 5*time.Second)
+	if !result.OK || len(calls) != 2 || !strings.HasSuffix(calls[0].URL, "/api/free-ai/bootstrap") || !strings.HasSuffix(calls[1].URL, "/api/free-ai/openai/chat") {
+		t.Fatalf("%+v calls %+v", result, calls)
+	}
+	if calls[1].Header.Get("Authorization") != "Bearer probe.jwt.fixture" || !strings.Contains(calls[1].Body, "You are MiMoCode") {
+		t.Errorf("chat call %v %s", calls[1].Header, calls[1].Body)
+	}
+}
+
+type probeRuntime struct{ state *runtime.RuntimeState }
+
+func (r probeRuntime) Load() (*runtime.RuntimeSnapshot, error) {
+	return &runtime.RuntimeSnapshot{}, nil
+}
+func (r probeRuntime) State() *runtime.RuntimeState { return r.state }
+
+// A Zed account that answers a failed status is not a reachable model: the probe
+// reports the failure with the upstream's message and cools the account, as serving
+// does.
+func TestZedProbeOfAFailedAccountIsNotReachableAndCoolsIt(t *testing.T) {
+	catalog, _ := registry.NewBuiltinCatalog()
+	spec, _ := catalog.Lookup("zed")
+	for _, tc := range []struct {
+		message string
+		cooled  time.Duration
+	}{
+		{"monthly quota exhausted", 5 * time.Minute},
+		{"rate limit exceeded", routing.DefaultFallbackBackoff},
+	} {
+		t.Run(tc.message, func(t *testing.T) {
+			h, _ := recordingHandler(t)
+			state := runtime.NewState()
+			h.opts.Runtime = probeRuntime{state}
+			h.opts.DiscoveryClient.HTTP = probeHTTPFunc(func(r *http.Request) (*http.Response, error) {
+				reply := func(contentType, body string) (*http.Response, error) {
+					return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{contentType}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+				}
+				switch r.URL.Path {
+				case "/client/llm_tokens":
+					return reply("application/json", `{"token":"llm-fixture"}`)
+				case "/models":
+					return reply("application/json", `{"models":[{"id":"claude-sonnet-4.5","provider":"anthropic"}]}`)
+				}
+				return reply("application/x-ndjson", fmt.Sprintf(`{"status":{"failed":{"message":%q}}}`+"\n", tc.message))
+			})
+			node, connection := builtinConnection("zed", routing.ProviderSettings{UserID: "user-1", OrganizationID: "org-1"}, credentials.AuthOAuth)
+			result := h.testProviderModel(context.Background(), connection, node, spec, "openai-chat", "claude-sonnet-4.5", 5*time.Second)
+			if result.OK || result.Classification == "reachable" || result.ServedModelID != "" || result.Status != http.StatusBadGateway ||
+				!strings.Contains(result.Error, tc.message) {
+				t.Fatalf("a failed account probed as healthy: %+v", result)
+			}
+			until, cooling := state.CooldownUntil(connection.ID, time.Now())
+			if !cooling || until.Sub(time.Now()) < tc.cooled-5*time.Second || until.Sub(time.Now()) > tc.cooled+5*time.Second {
+				t.Errorf("cooled until %v (cooling=%v), want about %v", until, cooling, tc.cooled)
+			}
+		})
 	}
 }

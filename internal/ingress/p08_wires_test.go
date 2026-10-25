@@ -27,7 +27,9 @@ import (
 // connection or the model, so a table row cannot stand for them. Each has its
 // own test.
 var nativeWireSkips = map[string]string{
-	"zed":              "forced stream on the declared Chat wire (TestZedForcedStreamAcrossClientProtocols); Zed exchange remains open",
+	"zed":              "LLM-token exchange, thread envelope and NDJSON frames (TestZedIsServedThroughItsExchangeAndEnvelope)",
+	"mimo-free":        "bootstrap JWT, headers and the MiMoCode marker (TestMimoFreeAndMmfAreServedWithABootstrappedJWT)",
+	"mmf":              "the same executor under its alias (TestMimoFreeAndMmfAreServedWithABootstrappedJWT)",
 	"azure":            "deployment path and api-version from connection settings (TestAzureRequestShape)",
 	"cloudflare-ai":    "account-scoped URL from connection settings (wire.TestCloudflareTargetURLs)",
 	"vertex-partner":   "project-scoped URL from connection settings (wire.TestVertexPartnerTargetUsesTheConnectionProject)",
