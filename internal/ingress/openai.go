@@ -313,6 +313,9 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 	if errors.As(err, &gateFailure) {
 		// The gate's verdict, in the code the pin gives it (executors/kiro.js:493-504).
 		h.writeError(w, 502, concerns.Text(gateFailure.Value["code"]), concerns.Text(gateFailure.Value["message"]))
+		// The account is penalized as it is when the same failure ends a stream (above); a
+		// client that left was handled before this point.
+		h.recordClassification(provider.ConnectionID, classifyResponse(http.StatusBadGateway, nil), time.Now())
 		h.emitTranslated(r, provider, 502, false, promptcache.Usage{}, false, started)
 		return
 	}
@@ -332,6 +335,7 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 		if translation.Integrity != nil && errors.As(err, &kiroFailure) {
 			// A Kiro leg's failure keeps the pin's code (executors/kiro.js:690-700).
 			h.writeError(w, 502, concerns.Text(kiroFailure.Value["code"]), concerns.Text(kiroFailure.Value["message"]))
+			h.recordClassification(provider.ConnectionID, classifyResponse(http.StatusBadGateway, nil), time.Now())
 		} else if errors.As(err, &failure) {
 			// The site reported a failure inside its answer: the client gets the
 			// pin's 502 document, and the attempt is classified as failed.

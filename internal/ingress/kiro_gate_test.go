@@ -584,3 +584,59 @@ func TestKiroToolArrayContractOnEveryWire(t *testing.T) {
 		}
 	}
 }
+
+// A failed Kiro answer penalizes the account the same way whether the client streams or not:
+// the buffered path classifies the gate's failure as the streamed one does, and a client that
+// left is not charged to the account.
+func TestKiroGateFailureCoolsTheAccountOnBufferedAndStreamedPaths(t *testing.T) {
+	stubRepairSleep(t)
+	corrupt := func() []byte {
+		f := append([]byte(nil), kiroFrame("assistantResponseEvent", `{"content":"x"}`)...)
+		f[len(f)-1] ^= 0xff
+		return f
+	}
+	failures := map[string][]func() io.ReadCloser{
+		"2xx refusal":        {answer(kiroAnswer(kiroFrame("assistantResponseEvent", `{"content":"x"}`), kiroFrame("messageStopEvent", `{"stopReason":"refusal"}`)))},
+		"twice corrupt":      {answer(corrupt()), answer(corrupt())},
+		"ellipsis twice":     {answer(kiroEllipsisTurn), answer(kiroEllipsisTurn)},
+		"buffer exceeded":    nil,
+		"repair refused 4xx": nil,
+	}
+	delete(failures, "buffer exceeded")
+	delete(failures, "repair refused 4xx")
+	for name, answers := range failures {
+		for _, client := range clientWires {
+			for _, stream := range []bool{false, true} {
+				s, _ := kiroScripted(t, routing.ProviderSettings{}, answers...)
+				s.handler.opts.State = rtstate.NewState()
+				w := s.call(client, stream)
+				if !strings.Contains(w.Body.String(), "kiro_") && !strings.Contains(w.Body.String(), "Kiro") {
+					t.Fatalf("%s %s stream=%v: not a gate failure: %.200s", name, client, stream, w.Body)
+				}
+				if _, cooling := s.handler.opts.State.CooldownUntil("a", time.Now()); !cooling {
+					t.Errorf("%s %s stream=%v: the failing account was not cooled", name, client, stream)
+				}
+			}
+		}
+	}
+	// An answer that is served leaves the account alone on both paths.
+	for _, stream := range []bool{false, true} {
+		s, _ := kiroScripted(t, routing.ProviderSettings{}, answer(kiroGoodTurn))
+		s.handler.opts.State = rtstate.NewState()
+		s.call(openai.ChatProtocol, stream)
+		if _, cooling := s.handler.opts.State.CooldownUntil("a", time.Now()); cooling {
+			t.Errorf("stream=%v: a good answer cooled the account", stream)
+		}
+	}
+	// A Kiro leg's own failure on the buffered path is classified too.
+	s, _ := kiroScripted(t, routing.ProviderSettings{})
+	s.handler.opts.State = rtstate.NewState()
+	translation := ChatTranslation{Integrity: &kiroadapter.ResponseOptions{}, Response: func([]byte) ([]byte, error) {
+		return nil, &concerns.StreamFailure{Value: map[string]any{"code": "kiro_terminal_refusal", "message": "refused"}}
+	}}
+	response := &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(string(kiroGoodTurn)))}
+	s.handler.writeOpenAITranslation(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil), response, routing.ProviderRef{ProviderID: "kiro", Protocol: "kiro", ConnectionID: "a"}, translation, false, time.Now())
+	if _, cooling := s.handler.opts.State.CooldownUntil("a", time.Now()); !cooling {
+		t.Error("a buffered leg failure did not cool the account")
+	}
+}
