@@ -28,7 +28,7 @@ is the only way that file changes.
 
 `compat/parity/generate-antigravity-retry.mjs` evaluates the pinned `base.js` and
 `antigravity.js` retry path, `computeRetryDelay` and the system-prompt rewrites with a
-scripted network, clock and timers, and writes `internal/providers/wire/testdata/antigravity_pin.json`
+scripted network, clock and timers (a wait moves the clock), the IDE request id, V8's `Date.parse`, and writes `internal/providers/wire/testdata/antigravity_pin.json`
 (PARITY 6.21). It needs `ORACLE_DIR` and `TZ=UTC`; the Go tests only read the file.
 
 CI runs this as the `parity` PR job, alongside existing Go/UI/container jobs.

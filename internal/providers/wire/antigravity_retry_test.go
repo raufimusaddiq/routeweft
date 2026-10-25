@@ -32,13 +32,23 @@ type antigravityPin struct {
 			Body    string            `json:"body"`
 			Network string            `json:"network"`
 		} `json:"steps"`
-		Calls int     `json:"calls"`
-		Waits []int64 `json:"waits"`
+		Sent  []string `json:"sent"`
+		Calls int      `json:"calls"`
+		Waits []int64  `json:"waits"`
 		Final struct {
 			Status int    `json:"status"`
 			Error  string `json:"error"`
 		} `json:"final"`
 	} `json:"scenarios"`
+	IDs []struct {
+		Name      string  `json:"name"`
+		RequestID *string `json:"requestId"`
+		SessionID string  `json:"sessionId"`
+		Contents  int     `json:"contents"`
+		Model     string  `json:"model"`
+		ID        string  `json:"id"`
+	} `json:"ids"`
+	Dates  [][2]any `json:"dates"`
 	Delays []struct {
 		Name    string            `json:"name"`
 		Status  int               `json:"status"`
@@ -78,14 +88,18 @@ func loadAntigravityPin(t *testing.T) antigravityPin {
 	return pin
 }
 
+// testClock is the clock the retry code reads; a recorded wait moves it, as the pin's
+// scripted one moves.
+var testClock time.Time
+
 // pinNow fixes the clock at the instant the pin's was fixed at.
 func pinNow(t *testing.T, milliseconds int64) time.Time {
 	t.Helper()
-	now := time.UnixMilli(milliseconds)
+	testClock = time.UnixMilli(milliseconds)
 	previous := antigravityNow
-	antigravityNow = func() time.Time { return now }
+	antigravityNow = func() time.Time { return testClock }
 	t.Cleanup(func() { antigravityNow = previous })
-	return now
+	return testClock
 }
 
 // recordSleeps replaces the retry wait with a record of it.
@@ -95,6 +109,7 @@ func recordSleeps(t *testing.T) *[]time.Duration {
 	previous := antigravitySleep
 	antigravitySleep = func(ctx context.Context, delay time.Duration) error {
 		waits = append(waits, delay)
+		testClock = testClock.Add(delay)
 		return ctx.Err()
 	}
 	t.Cleanup(func() { antigravitySleep = previous })
@@ -142,10 +157,15 @@ type countedBody struct {
 
 func (b *countedBody) Close() error { b.closed.Add(1); return nil }
 
+// antigravityEnvelope is what the generator sends the pin's executor: three turns in
+// the session -4242, under the translator's own request id.
+const antigravityEnvelope = `{"model":"gemini-3.8-flash-high","project":"synthetic-project","requestId":"agent-synthetic",` +
+	`"request":{"sessionId":"-4242","contents":[{"role":"user","parts":[{"text":"hello"}]},{"role":"model","parts":[{"text":"hello"}]},{"role":"user","parts":[{"text":"hello"}]}]}}`
+
 func antigravityRequest(ctx context.Context, t *testing.T) *http.Request {
 	t.Helper()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://daily.example.invalid/v1internal:streamGenerateContent?alt=sse",
-		strings.NewReader(`{"project":"p","request":{"contents":[]}}`))
+		strings.NewReader(antigravityEnvelope))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,6 +193,7 @@ func TestAntigravityRetriesAsThePinDoes(t *testing.T) {
 	}
 	for _, scenario := range pin.Scenarios {
 		t.Run(scenario.Name, func(t *testing.T) {
+			testClock = time.UnixMilli(pin.Now)
 			waits := recordSleeps(t)
 			steps := make([]upstreamStep, len(scenario.Steps))
 			for index, step := range scenario.Steps {
@@ -199,9 +220,23 @@ func TestAntigravityRetriesAsThePinDoes(t *testing.T) {
 			case response.StatusCode != scenario.Final.Status:
 				t.Errorf("status %d, the pin answered %d", response.StatusCode, scenario.Final.Status)
 			}
+			// Each attempt carries the id the pin built for it, from the clock at that moment;
+			// the rest of the body does not change.
 			for index, body := range server.bodies {
-				if body != server.bodies[0] {
-					t.Errorf("request %d sent a different body", index)
+				var sent, pinSent map[string]json.RawMessage
+				if err := json.Unmarshal([]byte(body), &sent); err != nil || index >= len(scenario.Sent) {
+					t.Fatalf("request %d: %v (the pin sent %d)", index, err, len(scenario.Sent))
+				}
+				_ = json.Unmarshal([]byte(scenario.Sent[index]), &pinSent)
+				if string(sent["requestId"]) != string(pinSent["requestId"]) {
+					t.Errorf("request %d: id %s, the pin sent %s", index, sent["requestId"], pinSent["requestId"])
+				}
+				var first map[string]json.RawMessage
+				_ = json.Unmarshal([]byte(server.bodies[0]), &first)
+				delete(sent, "requestId")
+				delete(first, "requestId")
+				if !reflect.DeepEqual(sent, first) {
+					t.Errorf("request %d changed more than its id", index)
 				}
 			}
 		})
@@ -234,11 +269,6 @@ func TestAntigravityRetryDelayIsThePins(t *testing.T) {
 	}
 }
 
-// Where the Go reading of a header is deliberately not V8's. Each is a Retry-After
-// the pin's legacy Date.parse reads as a date and so stops at, where this goes on to
-// the next header; none is a form a server sends (antigravity_retry.go).
-var antigravityLegacyDateForms = map[string]bool{"0.": true, "0.5": true, "- 5": true}
-
 func TestAntigravityParsersAreThePins(t *testing.T) {
 	pin := loadAntigravityPin(t)
 	now := pinNow(t, pin.Now)
@@ -250,12 +280,6 @@ func TestAntigravityParsersAreThePins(t *testing.T) {
 				header.Set(name, value)
 			}
 			got, found := parseAntigravityRetryHeaders(header, now)
-			if _, companion := c.Headers["x-ratelimit-reset-after"]; companion && antigravityLegacyDateForms[c.Headers["retry-after"]] {
-				if !found || got != 8000 {
-					t.Errorf("%v: %d %v, want the next header's 8000", c.Headers, got, found)
-				}
-				continue
-			}
 			if string(c.Value) == "null" {
 				if found {
 					t.Errorf("%v: %d, the pin has none", c.Headers, got)
@@ -569,19 +593,32 @@ func TestAntigravityClosesTheAnswersItRepeats(t *testing.T) {
 	response.Body.Close()
 }
 
-// Security: a repeat is the same request through the same client, so the transport's
-// own checks (address policy, redirect policy) apply to it again, and nothing is added.
+// Security: a repeat is the same request through the same client, apart from the id the
+// pin rebuilds, so the transport's own checks (address policy, redirect policy) apply to
+// it again, and nothing is added.
 func TestAntigravityRepeatIsTheSameRequestThroughTheSameClient(t *testing.T) {
+	pinNow(t, 1_700_000_000_000)
 	recordSleeps(t)
 	server, _, err := sendAntigravity(t, context.Background(), upstreamStep{status: 502}, upstreamStep{status: 502}, upstreamStep{status: 200})
 	if err != nil || len(server.requests) != 3 {
 		t.Fatalf("%v, %d requests", err, len(server.requests))
 	}
 	first := server.requests[0]
+	ids := map[string]bool{}
 	for index, request := range server.requests {
-		if request.Method != first.Method || request.URL.String() != first.URL.String() || !reflect.DeepEqual(request.Header, first.Header) || server.bodies[index] != server.bodies[0] {
+		var sent map[string]json.RawMessage
+		_ = json.Unmarshal([]byte(server.bodies[index]), &sent)
+		ids[string(sent["requestId"])] = true
+		delete(sent, "requestId")
+		var firstSent map[string]json.RawMessage
+		_ = json.Unmarshal([]byte(server.bodies[0]), &firstSent)
+		delete(firstSent, "requestId")
+		if request.Method != first.Method || request.URL.String() != first.URL.String() || !reflect.DeepEqual(request.Header, first.Header) || !reflect.DeepEqual(sent, firstSent) {
 			t.Errorf("request %d differs: %s %s %v", index, request.Method, request.URL, request.Header)
 		}
+	}
+	if len(ids) != 3 {
+		t.Errorf("%d distinct request ids over 3 attempts; the pin builds one per attempt", len(ids))
 	}
 	if first.Header.Get("Authorization") != "Bearer synthetic-token" || first.Header.Get("User-Agent") != antigravityUserAgent {
 		t.Errorf("headers: %v", first.Header)
@@ -610,5 +647,71 @@ func TestAntigravityIsTheOnlyCloudCodeWireThatRepeats(t *testing.T) {
 	}
 	if For("gemini-cli").Do != nil {
 		t.Error("gemini-cli repeats; its pin executor has no such hook")
+	}
+}
+
+// buildIdeRequestId: the same session, model and turns under the same clock give the pin's id.
+func TestAntigravityRequestIDIsTheIDEFormThePinBuilds(t *testing.T) {
+	pin := loadAntigravityPin(t)
+	now := time.UnixMilli(pin.Now)
+	for _, c := range pin.IDs {
+		contents := make([]string, c.Contents)
+		for index := range contents {
+			contents[index] = `{"role":"user","parts":[{"text":"hello"}]}`
+		}
+		envelope := map[string]any{"model": c.Model, "request": json.RawMessage(`{"sessionId":"` + c.SessionID + `","contents":[` + strings.Join(contents, ",") + `]}`)}
+		if c.RequestID != nil {
+			envelope["requestId"] = *c.RequestID
+		}
+		payload, _ := json.Marshal(envelope)
+		var sent struct {
+			RequestID string `json:"requestId"`
+		}
+		if err := json.Unmarshal(withIDERequestID(payload, antigravityRef, now), &sent); err != nil || sent.RequestID != c.ID {
+			t.Errorf("%s: %q (%v), the pin builds %q", c.Name, sent.RequestID, err, c.ID)
+		}
+	}
+}
+
+func TestAntigravityRequestIDFailsOpen(t *testing.T) {
+	now := time.UnixMilli(1_700_000_000_000)
+	for name, payload := range map[string]string{"not json": "payload", "array": "[1]", "null": "null", "empty": ""} {
+		if got := withIDERequestID([]byte(payload), antigravityRef, now); string(got) != payload {
+			t.Errorf("%s: %q", name, got)
+		}
+	}
+	// With no session in the envelope the connection stands for it, as the pin's chain ends (:105).
+	withConnection := routing.ProviderRef{ProviderID: "antigravity", ConnectionID: "synthetic-connection"}
+	a := withIDERequestID([]byte(`{"model":"m","request":{"contents":[]}}`), withConnection, now)
+	b := withIDERequestID([]byte(`{"model":"m","request":{"contents":[]}}`), antigravityRef, now)
+	if bytes.Equal(a, b) || !strings.Contains(string(a), "agent/") || !strings.Contains(string(b), "agent/") {
+		t.Errorf("%s %s", a, b)
+	}
+}
+
+// Date.parse, as V8 answers it for the strings the generator drew, plus the forms the
+// ticket names (0.5, 0., "- 5", RFC 850 with a two-digit year).
+func TestAntigravityDateParseIsV8s(t *testing.T) {
+	pin := loadAntigravityPin(t)
+	if len(pin.Dates) < 3000 {
+		t.Fatalf("only %d recorded dates", len(pin.Dates))
+	}
+	named := map[string]bool{}
+	for _, c := range pin.Dates {
+		text := c[0].(string)
+		got, ok := jsDateParse(text)
+		want, wantOK := 0.0, c[1] != nil
+		if wantOK {
+			want = c[1].(float64)
+		}
+		if ok != wantOK || (ok && got != want) {
+			t.Errorf("%q: %v %v, V8 %v %v", text, got, ok, want, wantOK)
+		}
+		named[text] = true
+	}
+	for _, text := range []string{"0.5", "0.", "- 5", "Tuesday, 14-Nov-49 22:13:25 GMT", "Tuesday, 14-Nov-50 22:13:25 GMT", "Tuesday, 14-Nov-68 22:13:25 GMT"} {
+		if !named[text] {
+			t.Errorf("%q is not in the recorded dates", text)
+		}
 	}
 }

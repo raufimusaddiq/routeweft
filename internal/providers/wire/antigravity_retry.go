@@ -3,6 +3,8 @@ package wire
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"math"
@@ -12,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
 // Antigravity retries a failed answer on the same URL before it is given up on:
@@ -34,11 +38,10 @@ import (
 //     at antigravityErrorLimit, and what it did not read is still the response's;
 //   - the pin never closes the answer it retries on; this does.
 //
-// Not replicated: V8's legacy Date.parse fallback for a Retry-After that is not a
-// number (antigravity.js:364). It reads zone-less forms in the host's zone, so the
-// pin's own answer differs from host to host. The forms a server sends are read: an
-// HTTP-date, and the non-positive integers the fallback turns into a month or a year
-// (legacyIntegerDate). Anything else is read as no date, so the next header is tried.
+// Each attempt is built again, as the pin's loop builds it (base.js:128-130): the
+// IDE-format requestId carries the clock (antigravity.js:100-111), so a repeat has a
+// new one. A Retry-After that is not a positive number is read as Date.parse reads
+// it (antigravity_date.go).
 
 const (
 	// antigravityMaxRetryAfter is MAX_RETRY_AFTER_MS (antigravity.js:20): a longer
@@ -86,19 +89,22 @@ var (
 )
 
 // AntigravityDo sends the request and repeats it while the pin would (base.js:127-181).
-func AntigravityDo(client *http.Client, request *http.Request) (*http.Response, error) {
-	body, err := replayableBody(request)
-	if err != nil {
-		return nil, err
+func AntigravityDo(provider routing.ProviderRef, client *http.Client, request *http.Request) (*http.Response, error) {
+	var payload []byte
+	if request.Body != nil {
+		var err error
+		payload, err = io.ReadAll(request.Body)
+		request.Body.Close()
+		if err != nil {
+			return nil, err
+		}
 	}
 	ctx := request.Context()
 	used := 0
 	for {
 		attempt := request.Clone(ctx)
-		if attempt.Body, err = body(); err != nil {
-			return nil, err
-		}
-		attempt.GetBody = body
+		body := withIDERequestID(payload, provider, antigravityNow())
+		attempt.Body, attempt.GetBody, attempt.ContentLength = io.NopCloser(bytes.NewReader(body)), nil, int64(len(body))
 		response, err := client.Do(attempt)
 		if err != nil {
 			// A client that left is not a failure to repeat (base.js:170).
@@ -128,22 +134,64 @@ func AntigravityDo(client *http.Client, request *http.Request) (*http.Response, 
 	}
 }
 
-// replayableBody returns a function that yields the request body as often as it is
-// asked, without holding a copy when the request can already be replayed.
-func replayableBody(request *http.Request) (func() (io.ReadCloser, error), error) {
-	if request.Body == nil || request.Body == http.NoBody {
-		return func() (io.ReadCloser, error) { return http.NoBody, nil }, nil
+var ideRequestID = regexp.MustCompile(`^agent/[^/]+/[0-9]+/[^/]+/[0-9]+$`)
+
+// withIDERequestID is buildIdeRequestId (antigravity.js:100-111) as transformRequest
+// puts it in the envelope (:309): an id already in the IDE form stays, any other is
+// built from the session, the model, the length of the conversation and the clock.
+// A body that is not a JSON object is returned as it is.
+func withIDERequestID(payload []byte, provider routing.ProviderRef, now time.Time) []byte {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(payload, &envelope) != nil || envelope == nil {
+		return payload
 	}
-	if request.GetBody != nil {
-		request.Body.Close()
-		return request.GetBody, nil
+	var current, model string
+	_ = json.Unmarshal(envelope["requestId"], &current)
+	if ideRequestID.MatchString(current) {
+		return payload
 	}
-	payload, err := io.ReadAll(request.Body)
-	request.Body.Close()
+	_ = json.Unmarshal(envelope["model"], &model)
+	var inner struct {
+		SessionID string          `json:"sessionId"`
+		Contents  json.RawMessage `json:"contents"`
+	}
+	_ = json.Unmarshal(envelope["request"], &inner)
+	count := 1 // not a list: Array.isArray is false
+	if bytes.HasPrefix(bytes.TrimSpace(inner.Contents), []byte("[")) {
+		var list []json.RawMessage
+		if json.Unmarshal(inner.Contents, &list) == nil {
+			count = len(list)
+		}
+	}
+	session := inner.SessionID
+	if session == "" {
+		session = provider.ConnectionID
+	}
+	if session == "" {
+		session = "anonymous"
+	}
+	id := "agent/" + uuidFromSeed("antigravity:conversation:"+session) + "/" + strconv.FormatInt(now.UnixMilli(), 10) + "/" +
+		uuidFromSeed("antigravity:trajectory:"+session+":"+model+":agent") + "/" + strconv.Itoa(max(1, count*2-1))
+	encoded, err := json.Marshal(id)
 	if err != nil {
-		return nil, err
+		return payload
 	}
-	return func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(payload)), nil }, nil
+	envelope["requestId"] = encoded
+	out, err := json.Marshal(envelope)
+	if err != nil {
+		return payload
+	}
+	return out
+}
+
+// uuidFromSeed is the pin's (antigravity.js:92-98): the first 16 bytes of a SHA-256,
+// marked as version 5.
+func uuidFromSeed(seed string) string {
+	sum := sha256.Sum256([]byte(seed))
+	sum[6] = sum[6]&0x0f | 0x50
+	sum[8] = sum[8]&0x3f | 0x80
+	hexed := hex.EncodeToString(sum[:16])
+	return hexed[:8] + "-" + hexed[8:12] + "-" + hexed[12:16] + "-" + hexed[16:20] + "-" + hexed[20:]
 }
 
 // peekAntigravityError reads the head of an error body for the decision and puts it
@@ -200,7 +248,8 @@ func parseAntigravityRetryHeaders(header http.Header, now time.Time) (int64, boo
 		if numeric && seconds > 0 {
 			return seconds * 1000, true
 		}
-		if diff, valid := antigravityDate(text, numeric, now); valid {
+		if date, valid := jsDateParse(text); valid {
+			diff := int64(date) - now.UnixMilli()
 			return diff, diff > 0
 		}
 	}
@@ -218,50 +267,6 @@ func parseAntigravityRetryHeaders(header http.Header, now time.Time) (int64, boo
 		return diff, diff > 0
 	}
 	return 0, false
-}
-
-// antigravityDate reads a Retry-After that was not a positive number as the pin's
-// new Date(text) does, for the forms a server sends. It reports the milliseconds
-// from now (negative when past) and whether text was a date at all.
-func antigravityDate(text string, numeric bool, now time.Time) (int64, bool) {
-	if numeric {
-		return legacyIntegerDate(text, now)
-	}
-	for _, layout := range []string{"Mon, 02 Jan 2006 15:04:05 GMT", "Mon, 02 Jan 2006 15:04:05 -0700", "Monday, 02-Jan-06 15:04:05 GMT"} {
-		if parsed, err := time.Parse(layout, text); err == nil {
-			return parsed.UnixMilli() - now.UnixMilli(), true
-		}
-	}
-	return 0, false
-}
-
-// legacyIntegerDate is what V8 makes of an integer that parseInt read as not
-// positive ("0", "-5", "-2030"): 1 to 12 is a month of 2000 or 2001 (past), 13 to
-// 31 is no date, 32 to 49 is the year 20xx, 50 to 99 the year 19xx and 100 up a
-// year as written, taken as 1 January in UTC. Text that is not an integer is no date.
-func legacyIntegerDate(text string, now time.Time) (int64, bool) {
-	digits := strings.TrimLeft(text, "+-")
-	if len(text)-len(digits) > 1 || digits == "" || strings.Trim(digits, "0123456789") != "" {
-		return 0, false
-	}
-	value, _ := jsParseInt(digits)
-	var year int64
-	switch {
-	case value <= 12:
-		return -1, true
-	case value <= 31:
-		return 0, false
-	case value <= 49:
-		year = 2000 + value
-	case value <= 99:
-		year = 1900 + value
-	default:
-		year = value
-	}
-	if year > 275760 {
-		return 0, false
-	}
-	return time.Date(int(year), time.January, 1, 0, 0, 0, 0, time.UTC).UnixMilli() - now.UnixMilli(), true
 }
 
 const jsSpace = "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"

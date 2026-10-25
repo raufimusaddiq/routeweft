@@ -53,13 +53,14 @@ return { AntigravityExecutor, PROVIDERS, DEFAULT_RETRY_CONFIG, ANTIGRAVITY_PROMP
 function build(steps) {
   const waits = [];
   const calls = [];
+  let elapsed = 0; // a wait moves the clock, as it does
   class FakeDate extends Date {
-    constructor(...args) { super(...(args.length ? args : [NOW])); }
-    static now() { return NOW; }
+    constructor(...args) { super(...(args.length ? args : [NOW + elapsed])); }
+    static now() { return NOW + elapsed; }
   }
   const stubs = {
     crypto, Date: FakeDate, AbortController, AbortSignal, structuredClone, FETCH_CONNECT_TIMEOUT_MS: connectMs,
-    setTimeout: (fn, ms) => { if (ms !== connectMs) { waits.push(ms); queueMicrotask(fn); } return 0; },
+    setTimeout: (fn, ms) => { if (ms !== connectMs) { waits.push(ms); elapsed += ms; queueMicrotask(fn); } return 0; },
     clearTimeout() {},
     proxyAwareFetch: async (url, options) => {
       const step = steps[Math.min(calls.length, steps.length - 1)];
@@ -79,8 +80,10 @@ function build(steps) {
   return { executor: new exports.AntigravityExecutor(), exports, waits, calls };
 }
 
-const request = { request: { contents: [{ role: 'user', parts: [{ text: 'hello' }] }] } };
-const credentials = { accessToken: 'synthetic', projectId: 'synthetic-project' };
+const model = 'gemini-3.8-flash-high';
+const turn = role => ({ role, parts: [{ text: 'hello' }] });
+const request = { model, project: 'synthetic-project', requestId: 'agent-synthetic', request: { sessionId: '-4242', contents: [turn('user'), turn('model'), turn('user')] } };
+const credentials = { accessToken: 'synthetic', projectId: 'synthetic-project', connectionId: 'synthetic-connection' };
 const httpDate = seconds => new Date(NOW + seconds * 1000).toUTCString();
 const unix = seconds => String(Math.floor(NOW / 1000) + seconds);
 const ok = { status: 200, body: '{}' };
@@ -153,6 +156,21 @@ for (const [name, steps] of Object.entries(scenarios)) {
     final = { error: error.message };
   }
   results.push({ name, steps, calls: calls.length, waits, final, sent: calls.map(c => c.body) });
+}
+
+// The request id of each attempt, and what it is built from.
+const ids = [];
+for (const [name, requestId, sessionId, contents] of [
+  ['one turn', 'agent-x', '-1', 1], ['three turns', 'agent-x', '-1', 3], ['five turns', 'agent-x', '-77', 5], ['no turns', 'agent-x', '-1', 0],
+  ['another session', 'agent-x', '9007199254740993', 3], ['no id', undefined, '-1', 3],
+  ['id in the IDE form', 'agent/c/1/t/1', '-1', 3], ['id nearly in the IDE form', 'agent/c/1/t/1/', '-1', 3], ['id with letters in the time', 'agent/c/x/t/1', '-1', 3],
+  ['uuid id', 'agent-0b0a6f6e-0000-4000-8000-000000000000', '-1', 3],
+]) {
+  const { executor } = build([ok]);
+  const body = { model, request: { sessionId, contents: Array.from({ length: contents }, () => turn('user')) } };
+  if (requestId !== undefined) body.requestId = requestId;
+  const sent = executor.transformRequest(model, body, true, credentials);
+  ids.push({ name, requestId: requestId ?? null, sessionId, contents, model, id: sent.requestId });
 }
 
 // computeRetryDelay on its own: the status, the attempt and the answer.
@@ -245,10 +263,26 @@ for (const [name, value] of [['agent', 'agent'], ['image_gen', 'image_gen'], ['s
   requestTypes.push({ name: 'absent', rootHas: 'requestType' in sent, nestedHas: 'requestType' in sent.request, nested: null });
 }
 
+// Date.parse, which the pin applies to a Retry-After that is not a positive number.
+// The strings are fixed here (a seeded draw from the pieces V8's legacy parser reads),
+// the answers are V8's under TZ=UTC.
+const dates = [];
+{
+  let state = 0x9e3779b9;
+  const draw = n => { state = (state + 0x6D2B79F5) | 0; let t = Math.imul(state ^ (state >>> 15), 1 | state); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) % n; };
+  const pieces = ['0', '00', '1', '2', '5', '7', '12', '13', '23', '24', '31', '32', '49', '50', '59', '60', '99', '100', '2023', '2024', '10000', '123456', '+002023', '-002023', '999999999', '1234567890123',
+    ' ', ' ', '  ', ':', ':', '.', '.', '-', '-', '+', '+', ',', '/', '(x)', '(', ')', '\u00a0', 'Mon', 'Tue', 'Tuesday', 'Nov', 'November', 'jan', 'FEB', 'may', 'GMT', 'UTC', 'UT', 'Z', 'EST', 'PST', 'pm', 'AM', 'T', 'foo', 'x', '\u017f',
+    '22:13:20', '22:13', '10:00:00.5', '1.5', '0.5', '.5', '2023-11-14', '2023-11-14T22:13:20Z', '2023-11-14T22:13:20.123+01:00', '2023-11', '+05:30', '-0800', '+0100', 'GMT+1', 'GMT-0800'];
+  const strings = ['0.5', '0.', '- 5', '0 s', '-5', '', '-', '+', 'abc', 'Tue, 14 Nov 2023 22:13:25 GMT', 'Tue, 14 Nov 2023 22:13:25 +0100', 'Tuesday, 14-Nov-23 22:13:25 GMT', 'Tuesday, 14-Nov-49 22:13:25 GMT',
+    'Tuesday, 14-Nov-50 22:13:25 GMT', 'Tuesday, 14-Nov-68 22:13:25 GMT', 'Tuesday, 14-Nov-69 22:13:25 GMT', 'Tuesday, 14-Nov-99 22:13:25 GMT', 'Tue Nov 14 22:13:30 2023', '14 Nov 2023', 'Nov 14, 2023', '11/14/2023'];
+  for (let i = 0; i < 4000; i++) { let text = ''; for (let n = 1 + draw(6); n > 0; n--) text += pieces[draw(pieces.length)]; strings.push(text); }
+  for (const text of new Set(strings)) { const time = Date.parse(text); dates.push([text, Number.isNaN(time) ? null : time]); }
+}
+
 const { exports } = build([ok]);
 writeFileSync(out, JSON.stringify({
   pin, now: NOW,
   retry: Object.fromEntries(Object.entries(exports.PROVIDERS.antigravity.retry).map(([status, entry]) => [status, entry])),
-  scenarios: results, delays, parsed, rewrites: rewrote, requestTypes,
+  scenarios: results, ids, delays, parsed, dates, rewrites: rewrote, requestTypes,
 }, null, 1) + '\n');
 console.log(`wrote ${results.length} scenarios, ${delays.length} delays, ${parsed.length} parser cases, ${rewrote.length} rewrites`);

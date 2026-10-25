@@ -139,7 +139,7 @@ var hooks = map[string]Hook{
 	"codex":       codexHook,
 	"grok-cli":    grokCLIHook,
 	"gemini-cli":  {ClassifyError: geminiCLIRetryInfo, Route: cloudCodeRoute, RequestHeaders: geminiCLIHeaders, RequireCredential: true},
-	"antigravity": {Route: cloudCodeRoute, RequestHeaders: antigravityHeaders, RequireCredential: true, Finalize: antigravityPrompts, Do: accountless(AntigravityDo)},
+	"antigravity": {Route: cloudCodeRoute, RequestHeaders: antigravityHeaders, RequireCredential: true, Finalize: antigravityPrompts, Do: AntigravityDo},
 	// The gateway requires SSE even for buffered clients (registry/api-airforce.js:25-32).
 	"api-airforce": {ForceStream: true, Finalize: codebuddyStream, OpenAIHeaders: func(routing.ProviderRef) map[string]string {
 		return map[string]string{"HTTP-Referer": "https://endpoint-proxy.local", "X-Title": "Endpoint Proxy"}
