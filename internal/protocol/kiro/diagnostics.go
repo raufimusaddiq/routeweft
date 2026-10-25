@@ -123,6 +123,10 @@ func (m *machine) classify(ctx context.Context, err error) error {
 		}
 		return m.fail(pinFailure{code: concerns.Text(failure.Value["code"]), message: message, provenance: concerns.Text(failure.Value["code"]), transport: "valid_complete_frame", disposition: dispIncomplete})
 	}
+	var corrupt *corruptFrameError
+	if errors.As(err, &corrupt) {
+		return m.fail(pinFailure{code: "kiro_missing_terminal", message: corrupt.message, provenance: "corrupt_eventstream_frame", transport: "corrupt_frame", disposition: dispIncomplete})
+	}
 	var truncated *concerns.TruncatedFrameError
 	switch {
 	case errors.As(err, &truncated):

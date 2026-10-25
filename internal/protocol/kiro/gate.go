@@ -446,14 +446,19 @@ func (r *gateRun) read(ctx context.Context, src io.ReadCloser, label string) (at
 	}
 	var content, reasoning strings.Builder
 	hasTools := false
-	m := newMachine(options, func(delta map[string]any) error {
+	var m *machine
+	m = newMachine(options, func(delta map[string]any) error {
 		content.WriteString(concerns.Text(delta["content"]))
 		reasoning.WriteString(concerns.Text(delta["reasoning_content"]))
 		if len(concerns.Items(delta["tool_calls"])) > 0 {
 			hasTools = true
+			return conv.delta(delta)
 		}
-		return conv.delta(delta)
+		// Text, reasoning and code are sized as the pin writes them (m.pinDelta), not as
+		// Routeweft delivers them: the pin drops what is inside <thinking> tags.
+		return nil
 	})
+	m.pinDelta = conv.delta
 	source := &gateSource{ctx: ctx, run: r, chunks: chunks, last: time.Now(), m: m, conv: conv, rawCap: r.limit + concerns.MaxEventStreamMessageBytes}
 	m.onFrame = func() { source.last = time.Now() }
 
@@ -550,8 +555,34 @@ func (c *convertedSize) chunk(delta map[string]any, finish any, usage map[string
 	if usage != nil {
 		document["usage"] = usage
 	}
-	encoded, _ := json.Marshal(document)
-	return len("data: ") + len(encoded) + len("\n\n")
+	return len("data: ") + jsonLength(document) + len("\n\n")
+}
+
+// jsonLength is the byte length of JSON.stringify(value): Go's encoder escapes <, > and &
+// and the line separators U+2028/U+2029, which JavaScript writes as they are.
+func jsonLength(value any) int {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return 0
+	}
+	encoded := bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))
+	length := 0
+	for i := 0; i < len(encoded); {
+		switch {
+		case encoded[i] != '\\':
+			length++
+			i++
+		case i+5 < len(encoded) && encoded[i+1] == 'u' && encoded[i+2] == '2' && encoded[i+3] == '0' && encoded[i+4] == '2' && (encoded[i+5] == '8' || encoded[i+5] == '9'):
+			length += 3 // U+2028 and U+2029 are three bytes of UTF-8
+			i += 6
+		default:
+			length += 2 // any other escape pair, or the start of \uXXXX, is counted as written
+			i += 2
+		}
+	}
+	return length
 }
 
 func (c *convertedSize) delta(delta map[string]any) error { return c.add(c.chunk(delta, nil, nil)) }

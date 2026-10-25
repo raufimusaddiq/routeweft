@@ -74,6 +74,10 @@ type machine struct {
 	provenance   string // what ended the answer, as the pin names it (executors/kiro.js:878,886)
 	explicitStop bool
 	onFrame      func()
+	pinDelta     func(map[string]any) error // sizes what the pin would have written
+	pinThinking  bool
+	pinReasoned  bool
+	hasCode      bool
 	hold         string
 	inThinking   bool
 	dropNewline  bool
@@ -93,6 +97,12 @@ func newMachine(options ResponseOptions, emit func(map[string]any) error) *machi
 		counts: map[string]int{}, toolsByID: map[string]*toolBuffer{}, textReasonOn: options.ThinkingTags}
 }
 
+// corruptFrameError is a frame whose payload is not one JSON document: the pin's
+// parseEventFrame throws and the answer ends as a corrupt frame (executors/kiro.js:1295-1299, :964-967).
+type corruptFrameError struct{ message string }
+
+func (e *corruptFrameError) Error() string { return e.message }
+
 func decodeAny(payload []byte) (any, bool, error) {
 	if len(bytes.TrimSpace(payload)) == 0 {
 		return nil, false, nil
@@ -101,53 +111,12 @@ func decodeAny(payload []byte) (any, bool, error) {
 	decoder.UseNumber()
 	var value any
 	if err := decoder.Decode(&value); err != nil {
-		return nil, false, failure("upstream_invalid", "Kiro sent an event whose payload is not JSON")
+		return nil, false, &corruptFrameError{"AWS EventStream payload is not valid JSON (" + err.Error() + ")"}
 	}
 	if decoder.Decode(new(any)) != io.EOF {
-		return nil, false, failure("upstream_invalid", "Kiro sent an event whose payload has data after the JSON")
+		return nil, false, &corruptFrameError{"AWS EventStream payload is not valid JSON (data after the document)"}
 	}
 	return value, true, nil
-}
-
-// carriesContent reports whether a payload holds anything: an unknown event with
-// something in it may be text the client was owed.
-func carriesContent(value any) bool {
-	switch v := value.(type) {
-	case nil:
-		return false
-	case string:
-		return v != ""
-	case map[string]any:
-		for _, item := range v {
-			if carriesContent(item) {
-				return true
-			}
-		}
-		return false
-	case []any:
-		for _, item := range v {
-			if carriesContent(item) {
-				return true
-			}
-		}
-		return false
-	}
-	return true
-}
-
-// onlyKeys fails when an object carries a non-empty value under a key the leg
-// does not read. The pin ignores such keys; here they may be content.
-func onlyKeys(event string, object map[string]any, known ...string) error {
-	for key, value := range object {
-		allowed := false
-		for _, name := range known {
-			allowed = allowed || key == name
-		}
-		if !allowed && carriesContent(value) {
-			return failure("upstream_unsupported_event", fmt.Sprintf("Kiro %s carries %q, which has no Chat equivalent", event, key))
-		}
-	}
-	return nil
 }
 
 func (m *machine) deliver(delta map[string]any) error {
@@ -232,25 +201,6 @@ func (m *machine) flushText() error {
 	held := m.hold
 	m.hold = ""
 	return m.deliver(map[string]any{key: held})
-}
-
-func stringField(object map[string]any, event, key string) (string, bool, error) {
-	value, present := object[key]
-	if !present || value == nil {
-		return "", false, nil
-	}
-	text, isText := value.(string)
-	if !isText {
-		return "", false, failure("upstream_invalid", fmt.Sprintf("Kiro %s sent %s that is not a string", event, key))
-	}
-	return text, true, nil
-}
-
-func (m *machine) contentAfterStop(event string) error {
-	if m.terminal {
-		return failure("upstream_content_after_stop", fmt.Sprintf("Kiro sent %s after the response had stopped", event))
-	}
-	return nil
 }
 
 // normalizeStopReason is executors/kiro.js:145-151.
@@ -338,88 +288,102 @@ func (m *machine) stop(reason, provenance string) {
 	}
 }
 
-// handle reads one frame. terminal is true for the event that ends the answer.
-func (m *machine) handle(event concerns.EventStreamEvent) (bool, error) {
-	if kind, set := event.Headers[":message-type"]; set {
-		text, isText := kind.(string)
-		if !isText {
-			return false, failure("upstream_invalid", "Kiro sent a frame whose :message-type is not a string")
-		}
-		switch text {
-		case "event":
-		case "exception", "error":
-			message := "Kiro upstream sent an EventStream " + text
-			if value, present, _ := decodeAny(event.Payload); present {
-				if object := concerns.Object(value); concerns.Text(object["message"]) != "" {
-					message = concerns.Text(object["message"])
-				}
+// jsTruthy and jsText are JavaScript's truthiness and String(value || "") on a decoded
+// JSON value, which is how the pin reads loosely typed fields (executors/kiro.js:146, :880-882).
+func jsTruthy(value any) bool {
+	switch v := value.(type) {
+	case nil:
+		return false
+	case bool:
+		return v
+	case string:
+		return v != ""
+	case json.Number:
+		f, err := v.Float64()
+		return err != nil || f != 0
+	}
+	return true
+}
+
+func jsText(value any) string {
+	if !jsTruthy(value) {
+		return ""
+	}
+	switch v := value.(type) {
+	case string:
+		return v
+	case bool:
+		return "true"
+	case json.Number:
+		return v.String()
+	case []any:
+		parts := make([]string, len(v))
+		for i, item := range v {
+			if item != nil {
+				parts[i] = jsText(item)
 			}
-			return false, failure("upstream_eventstream_error", message)
-		default:
-			return false, failure("upstream_invalid", fmt.Sprintf("Kiro sent a frame of message type %q", text))
+		}
+		return strings.Join(parts, ",")
+	}
+	return "[object Object]"
+}
+
+// firstSet is JavaScript's a ?? b.
+func firstSet(object map[string]any, keys ...string) any {
+	for _, key := range keys {
+		if value := object[key]; value != nil {
+			return value
 		}
 	}
-	kind, isText := event.Headers[":event-type"].(string)
-	if !isText || kind == "" {
-		return false, failure("upstream_unsupported_event", "Kiro sent a frame with no event type")
+	return nil
+}
+
+// handle reads one frame the way the pin's processEvent does (executors/kiro.js:792-923):
+// fields are read loosely, an event it has no branch for is counted under "other" and
+// ignored, and a payload that is not one JSON document ends the answer as a corrupt
+// frame. terminal is true for the event that carries a stop reason.
+func (m *machine) handle(event concerns.EventStreamEvent) (bool, error) {
+	payload, _, err := decodeAny(event.Payload)
+	if err != nil {
+		return false, err
 	}
+	object := concerns.Object(payload)
+	if kind, _ := event.Headers[":message-type"].(string); kind == "error" || kind == "exception" {
+		message := "Kiro upstream sent an EventStream " + kind
+		if text, _ := object["message"].(string); text != "" {
+			message = text
+		}
+		return false, failure("upstream_eventstream_error", message)
+	}
+	kind, _ := event.Headers[":event-type"].(string)
 	m.frames++
 	if m.onFrame != nil {
 		m.onFrame()
 	}
 	m.counts[eventCountKey(kind)]++
-	payload, present, err := decodeAny(event.Payload)
-	if err != nil {
-		return false, err
-	}
-	object := concerns.Object(payload)
-	if payload != nil && object == nil {
-		switch kind {
-		case "metadataEvent", "MetadataEvent", "metricsEvent", "contextUsageEvent", "meteringEvent":
-			return false, failure("upstream_invalid", "Kiro "+kind+" is not an object")
-		}
-	}
 	switch kind {
 	case "assistantResponseEvent":
-		if err := m.contentAfterStop(kind); err != nil {
-			return false, err
+		if content, isText := object["content"].(string); isText {
+			return false, m.answerText(content)
 		}
-		if present && object == nil {
-			return false, failure("upstream_invalid", "Kiro assistantResponseEvent is not an object")
-		}
-		if err := onlyKeys(kind, object, "content"); err != nil {
-			return false, err
-		}
-		content, _, err := stringField(object, kind, "content")
-		if err != nil {
-			return false, err
-		}
-		return false, m.text(content)
-	case "codeEvent":
-		if err := m.contentAfterStop(kind); err != nil {
-			return false, err
-		}
-		if present && object == nil {
-			return false, failure("upstream_invalid", "Kiro codeEvent is not an object")
-		}
-		if err := onlyKeys(kind, object, "content"); err != nil {
-			return false, err
-		}
-		content, _, err := stringField(object, kind, "content")
-		if err != nil || content == "" {
-			return false, err
-		}
-		return false, m.deliver(map[string]any{"content": content})
 	case "reasoningContentEvent":
-		if err := m.contentAfterStop(kind); err != nil {
-			return false, err
-		}
 		return false, m.reasoning(payload)
-	case "toolUseEvent":
-		if err := m.contentAfterStop(kind); err != nil {
-			return false, err
+	case "codeEvent":
+		if content, isText := object["content"].(string); isText {
+			m.hasCode = true
+			m.delivered = true
+			if m.pinDelta != nil {
+				if err := m.pinDelta(map[string]any{"content": content}); err != nil {
+					return false, err
+				}
+			}
+			if content == "" {
+				return false, nil
+			}
+			return false, m.deliver(map[string]any{"content": content})
 		}
-		err := m.toolUse(payload, present)
+	case "toolUseEvent":
+		err := m.toolUse(payload)
 		var fragment *toolFragmentError
 		if errors.As(err, &fragment) {
 			// One rejected fragment belongs to one tool: the pin logs it and keeps the
@@ -431,24 +395,7 @@ func (m *machine) handle(event concerns.EventStreamEvent) (bool, error) {
 		}
 		return false, err
 	case "messageStopEvent":
-		if present && object == nil {
-			return false, failure("upstream_invalid", "Kiro messageStopEvent is not an object")
-		}
-		if err := onlyKeys(kind, object, "stopReason", "stop_reason"); err != nil {
-			return false, err
-		}
-		reason, _, err := stringField(object, kind, "stopReason")
-		if err != nil {
-			return false, err
-		}
-		alias, _, err := stringField(object, kind, "stop_reason")
-		if err != nil {
-			return false, err
-		}
-		if alias != "" {
-			m.stop(normalizeStopReason(alias), "message_stop_event")
-		}
-		reason = normalizeStopReason(reason)
+		reason := normalizeStopReason(jsText(firstSet(object, "stopReason", "stop_reason")))
 		if reason == "" {
 			reason = "end_turn"
 			if m.sawToolUse {
@@ -459,135 +406,107 @@ func (m *machine) handle(event concerns.EventStreamEvent) (bool, error) {
 		m.explicitStop = true
 		return true, nil
 	case "metadataEvent", "MetadataEvent":
-		// Only stop reasons are read; tokenUsage is accounting bookkeeping.
-		if err := onlyKeys(kind, object, "metadataEvent", "metadata", "stopReason", "stop_reason", "tokenUsage"); err != nil {
-			return false, err
-		}
-		if object == nil && carriesContent(payload) {
-			return false, failure("upstream_invalid", "Kiro metadata is not an object")
-		}
 		metadata := object
 		for _, key := range []string{"metadataEvent", "metadata"} {
-			if raw := object[key]; raw != nil {
-				nested := concerns.Object(raw)
-				if nested == nil || metadata != nil && len(metadata) > 1 {
-					return false, failure("upstream_invalid", "Kiro metadata envelope is ambiguous or not an object")
-				}
-				metadata = nested
+			if jsTruthy(object[key]) {
+				metadata = concerns.Object(object[key])
 				break
 			}
 		}
-		if err := onlyKeys(kind, metadata, "stopReason", "stop_reason", "tokenUsage"); err != nil {
-			return false, err
+		if reason := normalizeStopReason(jsText(firstSet(metadata, "stopReason", "stop_reason"))); reason != "" {
+			m.stop(reason, "metadata_stop_reason")
+			m.explicitStop = true
+			return true, nil
 		}
-		terminal := false
-		for _, key := range []string{"stopReason", "stop_reason"} {
-			reason, _, err := stringField(metadata, kind, key)
-			if err != nil {
-				return false, err
-			}
-			if reason = normalizeStopReason(reason); reason != "" {
-				m.stop(reason, "metadata_stop_reason")
-				m.explicitStop = true
-				terminal = true
-			}
-		}
-		return terminal, nil
 	case "metricsEvent":
-		// Read counts only; no estimates or credit accounting.
-		keys := []string{"inputTokens", "outputTokens", "cacheReadInputTokens", "cache_read_input_tokens", "cacheCreationInputTokens", "cache_creation_input_tokens"}
-		if err := onlyKeys(kind, object, append(keys, "metricsEvent")...); err != nil {
-			return false, err
-		}
+		// Counts only; no estimates or credit accounting (PARITY 6.8).
 		metrics := object
-		if raw := object["metricsEvent"]; raw != nil {
-			nested := concerns.Object(raw)
-			if nested == nil || len(object) != 1 {
-				return false, failure("upstream_invalid", "Kiro metrics envelope is ambiguous or not an object")
-			}
-			metrics = nested
-		}
-		if err := onlyKeys(kind, metrics, keys...); err != nil {
-			return false, err
+		if jsTruthy(object["metricsEvent"]) {
+			metrics = concerns.Object(object["metricsEvent"])
 		}
 		if usage, observed := concerns.KiroUsage(metrics); observed {
 			m.usage = usage.OpenAI()
 		} else {
 			m.unmeasured++
 		}
-		return false, nil
-	case "contextUsageEvent":
-		// The pin uses this percentage only for estimates, which are not reported.
-		return false, onlyKeys(kind, object, "contextUsagePercentage")
-	case "meteringEvent":
-		// Credits are bookkeeping; neither usage nor unit enters Chat token usage.
-		if err := onlyKeys(kind, object, "meteringEvent", "usage", "unit"); err != nil {
-			return false, err
-		}
-		if raw := object["meteringEvent"]; raw != nil {
-			nested := concerns.Object(raw)
-			if nested == nil || len(object) != 1 {
-				return false, failure("upstream_invalid", "Kiro metering envelope is ambiguous or not an object")
-			}
-			return false, onlyKeys(kind, nested, "usage", "unit")
-		}
-		return false, nil
 	}
-	return false, failure("upstream_unsupported_event", fmt.Sprintf("Kiro sent an unproven event type %q", kind))
+	// contextUsageEvent, meteringEvent and every other type: counted, never content.
+	return false, nil
 }
 
+// answerText is an assistantResponseEvent's text. What reaches the client is text();
+// what the pin would have written is pinText(), which the integrity bound is counted on.
+func (m *machine) answerText(content string) error {
+	if m.pinDelta != nil {
+		if err := m.pinText(content); err != nil {
+			return err
+		}
+	}
+	return m.text(content)
+}
+
+// pinText is the pin's tag reader (executors/kiro.js:808-833), kept only to size the
+// converted output it would have produced: it always drops what is inside
+// <thinking> tags (the request does not matter), keeps a tag that two frames split,
+// and writes an empty content delta when nothing has been reasoned yet.
+func (m *machine) pinText(content string) error {
+	trimNewline := func(s string) string { return strings.TrimPrefix(s, "\n") }
+	if m.pinThinking {
+		end := strings.Index(content, closeTag)
+		if end < 0 {
+			content = ""
+		} else {
+			m.pinThinking = false
+			content = trimNewline(content[end+len(closeTag):])
+		}
+	} else if start := strings.Index(content, openTag); start >= 0 {
+		end := strings.Index(content[start+len(openTag):], closeTag)
+		if end < 0 {
+			m.pinThinking = true
+			content = content[:start]
+		} else {
+			content = content[:start] + trimNewline(content[start+len(openTag)+end+len(closeTag):])
+		}
+	}
+	if content != "" || !m.pinReasoned {
+		return m.pinDelta(map[string]any{"content": content})
+	}
+	return nil
+}
+
+// reasoning is the pin's reasoningContentEvent (executors/kiro.js:834-841): the text is
+// payload.reasoningContentEvent or the payload itself, as a string or its text/content.
 func (m *machine) reasoning(payload any) error {
+	object := concerns.Object(payload)
+	value := payload
+	if jsTruthy(object["reasoningContentEvent"]) {
+		value = object["reasoningContentEvent"]
+	}
 	var text string
-	switch v := payload.(type) {
-	case nil:
-		return nil
+	switch v := value.(type) {
 	case string:
 		text = v
 	case map[string]any:
-		if err := onlyKeys("reasoningContentEvent", v, "reasoningContentEvent", "text", "content"); err != nil {
-			return err
-		}
-		if v["reasoningContentEvent"] != nil && (v["text"] != nil || v["content"] != nil) {
-			return failure("upstream_invalid", "Kiro reasoning envelope has multiple text values")
-		}
-		value := v
-		switch nested := v["reasoningContentEvent"].(type) {
-		case string:
-			text = nested
-			value = nil
-		case map[string]any:
-			if err := onlyKeys("reasoningContentEvent", nested, "text", "content"); err != nil {
-				return err
-			}
-			value = nested
-		case nil:
-		default:
-			return failure("upstream_invalid", "Kiro reasoningContentEvent is neither text nor an object")
-		}
 		for _, key := range []string{"text", "content"} {
-			if raw, present := value[key]; present && raw != nil {
-				found, isText := raw.(string)
-				if !isText {
-					return failure("upstream_invalid", "Kiro reasoningContentEvent sent text that is not a string")
-				}
-				if text != "" && found != "" {
-					return failure("upstream_invalid", "Kiro reasoning event has multiple text values")
-				}
-				if text == "" {
-					text = found
-				}
+			if found, isText := v[key].(string); isText && found != "" {
+				text = found
+				break
 			}
 		}
-	default:
-		return failure("upstream_invalid", "Kiro reasoningContentEvent is neither text nor an object")
 	}
 	if text == "" {
 		return nil
 	}
+	m.pinReasoned = true
+	if m.pinDelta != nil {
+		if err := m.pinDelta(map[string]any{"reasoning_content": text}); err != nil {
+			return err
+		}
+	}
 	return m.deliver(map[string]any{"reasoning_content": text})
 }
 
-func (m *machine) toolUse(payload any, present bool) error {
+func (m *machine) toolUse(payload any) error {
 	m.sawToolUse = true
 	var values []any
 	switch v := payload.(type) {
@@ -597,16 +516,13 @@ func (m *machine) toolUse(payload any, present bool) error {
 	default:
 		values = []any{v}
 	}
-	if !present || len(values) == 0 || values[0] == nil {
+	if len(values) == 0 || values[0] == nil {
 		return fragment("Kiro toolUseEvent is empty")
 	}
 	for _, raw := range values {
 		value := concerns.Object(raw)
 		if value == nil {
 			return fragment("Kiro toolUseEvent holds something that is not an object")
-		}
-		if err := onlyKeys("toolUseEvent", value, "toolUseId", "name", "input", "stop"); err != nil {
-			return err
 		}
 		// stop is a fragment marker the pin never reads; the message stop event owns
 		// terminal semantics.

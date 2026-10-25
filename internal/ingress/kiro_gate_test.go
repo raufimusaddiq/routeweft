@@ -460,3 +460,24 @@ func TestKiroServesACleanEOFWithoutAStopEvent(t *testing.T) {
 		}
 	}
 }
+
+// What Routeweft used to refuse the pin serves (executors/kiro.js:792-923): an event it has no
+// branch for, a key it does not read, content after the stop. One request, the answer served.
+func TestKiroServesWhatThePinServes(t *testing.T) {
+	turns := map[string][]byte{
+		"unknown event":      kiroAnswer(kiroFrame("surpriseEvent", `{"content":"lost?"}`), kiroFrame("assistantResponseEvent", `{"content":"Complete answer."}`), kiroFrame("messageStopEvent", `{}`)),
+		"unread key":         kiroAnswer(kiroFrame("assistantResponseEvent", `{"content":"Complete answer.","extra":"y"}`), kiroFrame("messageStopEvent", `{}`)),
+		"content after stop": kiroAnswer(kiroFrame("assistantResponseEvent", `{"content":"Complete "}`), kiroFrame("messageStopEvent", `{}`), kiroFrame("assistantResponseEvent", `{"content":"answer."}`)),
+	}
+	for name, turn := range turns {
+		for _, client := range clientWires {
+			for _, stream := range []bool{false, true} {
+				s, seen := kiroScripted(t, routing.ProviderSettings{}, answer(turn), answer(kiroGoodTurn))
+				w := s.call(client, stream)
+				if w.Code != 200 || !strings.Contains(w.Body.String(), "Complete") || strings.Contains(w.Body.String(), "kiro_") || len(seen.calls()) != 1 {
+					t.Errorf("%s %s stream=%v: %d, %d requests: %.300s", name, client, stream, w.Code, len(seen.calls()), w.Body)
+				}
+			}
+		}
+	}
+}

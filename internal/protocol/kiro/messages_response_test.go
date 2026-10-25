@@ -244,7 +244,6 @@ func TestMessagesStreamFailures(t *testing.T) {
 		"tool_use no use": {stop("tool_use")}, // with text the pin keeps the text (executors/kiro.js:787-790)
 		"max with a call": {tool("t", "n", `{}`), stop("max_tokens")},
 		"bad tool input":  {event("toolUseEvent", `{"toolUseId":"t","name":"n","input":"[1]"}`), stop("")},
-		"unknown event":   {text("x"), event("mysteryEvent", `{"content":"y"}`), stop("")},
 		"upstream error":  {text("x"), rawFrame(append(header(":message-type", 7, "exception"), header(":exception-type", 7, "ThrottlingException")...), `{"message":"slow down"}`)},
 	} {
 		t.Run(name, func(t *testing.T) {

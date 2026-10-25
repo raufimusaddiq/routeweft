@@ -234,16 +234,23 @@ func TestGateReportsFinalFailuresWithPinCodesAndDiagnostics(t *testing.T) {
 	}
 }
 
-// The failures Routeweft adds to the pin's list (approved Kiro decisions) are final too.
-func TestGateDoesNotRetryAnswersRoutewefRefuses(t *testing.T) {
+// What Routeweft used to refuse, the pin serves, so the gate releases it on the first attempt.
+func TestGateServesWhatThePinServes(t *testing.T) {
 	for name, raw := range map[string][]byte{
-		"event the leg refuses":  join(event("surpriseEvent", `{"a":1}`), stop("end_turn")),
-		"content after the stop": join(stop("end_turn"), text("late")),
+		"event the pin has no branch for": join(event("surpriseEvent", `{"a":1}`), text("answer"), stop("end_turn")),
+		"content after the stop":          join(text("a"), stop("end_turn"), text("late")),
+		"unread key":                      join(event("assistantResponseEvent", `{"content":"a","extra":"y"}`), stop("end_turn")),
 	} {
 		r := answers(good())
-		if _, err := runGate(t, raw, GateConfig{Repair: true}, r); err == nil || len(r.kinds) != 0 {
-			t.Fatalf("%s: err %v retries %v", name, err, r.kinds)
+		got, err := runGate(t, raw, GateConfig{Repair: true}, r)
+		if err != nil || got != string(raw) || len(r.kinds) != 0 {
+			t.Errorf("%s: err %v retries %v", name, err, r.kinds)
 		}
+	}
+	// A payload that is not JSON is a corrupt frame: repaired once.
+	r := answers(good())
+	if got, err := runGate(t, join(text("a"), event("surpriseEvent", `{oops`)), GateConfig{Repair: true}, r); err != nil || got != string(good()) || len(r.kinds) != 1 || r.kinds[0] != "" {
+		t.Errorf("err %v retries %v", err, r.kinds)
 	}
 }
 
@@ -701,9 +708,9 @@ func TestGateReportsBothAttemptsDiagnostics(t *testing.T) {
 		t.Fatalf("%v", d)
 	}
 	// Unknown event types are counted under "other" (:806-807); the failure keeps the counts.
-	_, err = runGate(t, join(text("a"), event("surprise1", `{}`)), GateConfig{Repair: true}, nil)
+	_, err = runGate(t, join(text("a"), event("surprise1", `{}`), stop("refusal")), GateConfig{Repair: true}, nil)
 	counts, _ := failureValue(t, err)["details"].(map[string]any)["event_counts"].(map[string]any)
-	if counts["other"] != 1 || counts["assistantResponseEvent"] != 1 || len(counts) != 2 {
+	if counts["other"] != 1 || counts["assistantResponseEvent"] != 1 || counts["messageStopEvent"] != 1 || len(counts) != 3 {
 		t.Fatalf("event counts %v", counts)
 	}
 }
@@ -892,4 +899,46 @@ func TestGateCancellationDuringTheRepairWait(t *testing.T) {
 		t.Fatal("the late repair response was left open")
 	}
 	settle(t, before)
+}
+
+// The bound is counted on what the pin writes. The pin always drops what is inside
+// <thinking> tags (executors/kiro.js:808-833), whatever the request asked for, so that text is
+// not converted output; a tag split across frames is not seen and is written; an unfinished
+// tag leaves an empty content delta. The expected sizes are spelled out from the pin's chunk
+// shape, one envelope per delta with the role merged into the first.
+func TestGateBoundIgnoresThinkingTextAsThePinDoes(t *testing.T) {
+	const envelope = `"id":"chatcmpl-1700000000000","object":"chat.completion.chunk","created":1700000000,"model":"m"`
+	chunk := func(delta, finish string) int {
+		return len(`data: {` + envelope + `,"choices":[{"index":0,"delta":` + delta + `,"finish_reason":` + finish + `}]}` + "\n\n")
+	}
+	finish := chunk(`{}`, `"stop"`) + len("data: [DONE]\n\n")
+	big := strings.Repeat("x", 5000)
+	cases := []struct {
+		name   string
+		frames [][]byte
+		size   int
+	}{
+		{"closed tag is dropped", [][]byte{text("<thinking>" + big + "</thinking>\nok")}, chunk(`{"role":"assistant","content":"ok"}`, `null`) + finish},
+		{"tag around text keeps the text", [][]byte{text("a<thinking>" + big + "</thinking>\nb")}, chunk(`{"role":"assistant","content":"ab"}`, `null`) + finish},
+		{"tag open across frames", [][]byte{text("<thinking>" + big), text(big + "</thinking>\nZ")}, chunk(`{"role":"assistant","content":""}`, `null`) + chunk(`{"content":"Z"}`, `null`) + finish},
+		// JSON.stringify writes <, >, & and U+2028 as they are; the size is theirs, not Go's escaped one.
+		{"markup and separators are not escaped", [][]byte{text("a<b>&c\u2028d")}, chunk("{\"role\":\"assistant\",\"content\":\"a<b>&c\u2028d\"}", `null`) + finish},
+		{"tag split across frames is not seen", [][]byte{text("<thin"), text("king>q")}, chunk(`{"role":"assistant","content":"<thin"}`, `null`) + chunk(`{"content":"king>q"}`, `null`) + finish},
+	}
+	for _, c := range cases {
+		for _, tags := range []bool{false, true} {
+			raw := join(append(append([][]byte{}, c.frames...), stop("end_turn"))...)
+			for limit, want := range map[int]bool{c.size: true, c.size - 1: false} {
+				_, err := Gate(context.Background(), bodyOf(raw), GateConfig{MaxBytes: limit}, ResponseOptions{Model: "m", ThinkingTags: tags}, nil, nil)
+				if (err == nil) != want {
+					t.Errorf("%s (thinking tags %v): limit %d, pin size %d: err %v", c.name, tags, limit, c.size, err)
+				}
+			}
+		}
+	}
+	// What the client receives is unchanged: the reasoning inside the tags is delivered when the request asked.
+	delivered, err := KiroResponseToChat(join(text("<thinking>why</thinking>\nok"), stop("end_turn")), ResponseOptions{ThinkingTags: true})
+	if err != nil || !strings.Contains(string(delivered), `"reasoning_content":"why"`) || !strings.Contains(string(delivered), `"content":"ok"`) {
+		t.Fatalf("%v %s", err, delivered)
+	}
 }

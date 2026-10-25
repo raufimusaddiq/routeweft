@@ -326,9 +326,9 @@ func TestToolFailuresAreLocalToTheStream(t *testing.T) {
 			}
 		})
 	}
-	// Content carried under a key the leg does not read is still refused (approved Kiro decision).
-	if out, err := stream(t, join(text("kept"), event("toolUseEvent", `{"toolUseId":"a","name":"x","input":{},"extra":"text"}`), stop("tool_use")), ResponseOptions{}); err == nil || out.finish() != nil {
-		t.Errorf("content-bearing unknown key: %v", err)
+	// A key the pin does not read is not read (executors/kiro.js:846-871): the call is served.
+	if out, err := stream(t, join(text("kept"), event("toolUseEvent", `{"toolUseId":"a","name":"x","input":{},"extra":"text"}`), stop("tool_use")), ResponseOptions{}); err != nil || out.finish() != "tool_calls" {
+		t.Errorf("an unread key on a tool call: %v %+v", err, out)
 	}
 	// A null toolUseId is an absent one: the pin generates an id (executors/kiro.js:854).
 	if out, err := stream(t, join(event("toolUseEvent", `{"toolUseId":null,"name":"x","input":{}}`), stop("tool_use")), ResponseOptions{}); err != nil || len(out.calls()) != 1 {
@@ -474,63 +474,81 @@ func TestCleanEOFWithOutputCompletes(t *testing.T) {
 	}
 }
 
+// The pin has no rule against content after a stop event: processEvent handles every frame
+// the same (executors/kiro.js:792-923), so late text is delivered and a late call is served.
 func TestEventsAfterTheStop(t *testing.T) {
 	for name, frame := range map[string][]byte{
 		"text":      text("late"),
 		"code":      event("codeEvent", `{"content":"late"}`),
 		"reasoning": event("reasoningContentEvent", `{"text":"late"}`),
-		"tool":      tool("a", "x", `{}`),
 	} {
 		out, err := stream(t, join(text("x"), stop("end_turn"), frame), ResponseOptions{})
-		if err == nil || out.finish() != nil {
-			t.Errorf("%s: content after the stop must fail: %+v", name, out)
+		if err != nil || out.finish() != "stop" || (out.delta("content")+out.delta("reasoning_content")) != "xlate" {
+			t.Errorf("%s: %v %+v", name, err, out)
 		}
 	}
+	out, err := stream(t, join(text("x"), stop("end_turn"), tool("a", "x", `{}`)), ResponseOptions{})
+	if err != nil || out.finish() != "tool_calls" || len(out.calls()) != 1 {
+		t.Errorf("a call after the stop: %v %+v", err, out)
+	}
 	// Usage and bookkeeping after the stop are normal.
-	out, err := stream(t, join(text("x"), stop("end_turn"), event("metricsEvent", `{"inputTokens":3,"outputTokens":4}`), event("meteringEvent", `{"usage":1}`), event("contextUsageEvent", `{}`)), ResponseOptions{})
+	out, err = stream(t, join(text("x"), stop("end_turn"), event("metricsEvent", `{"inputTokens":3,"outputTokens":4}`), event("meteringEvent", `{"usage":1}`), event("contextUsageEvent", `{}`)), ResponseOptions{})
 	if err != nil || out.finish() != "stop" || out.usage() == nil {
 		t.Fatalf("%v %+v", err, out)
 	}
 }
 
+// An event the pin has no branch for is counted under "other" and ignored; a field it does
+// not read is not read (executors/kiro.js:806-807, :923; kiro-terminal-integrity.test.js
+// "caps diagnostic event-type cardinality"). The one thing that ends the answer is a frame
+// whose payload is not one JSON document (:964-967).
 func TestUnknownEvents(t *testing.T) {
-	cases := []struct {
-		name  string
-		frame []byte
-		ok    bool
-	}{
-		{"harmless contextUsageEvent", event("contextUsageEvent", `{"contextUsagePercentage":12.5}`), true},
-		{"harmless meteringEvent", event("meteringEvent", `{"unit":"credit","usage":0.1}`), true},
-		{"harmless metricsEvent", event("metricsEvent", `{"inputTokens":1,"outputTokens":2}`), true},
-		{"metadata without a stop", event("metadataEvent", `{"tokenUsage":{"outputTokens":3}}`), true},
-		{"unknown, empty payload", event("brandNewEvent", ``), false},
-		{"unknown, empty object", event("brandNewEvent", `{}`), false},
-		{"unknown, null", event("brandNewEvent", `null`), false},
-		{"unknown, empty fields", event("brandNewEvent", `{"a":"","b":[],"c":{},"d":null}`), false},
-		{"unknown with text", event("brandNewEvent", `{"content":"lost?"}`), false},
-		{"unknown with a string", event("followupPromptEvent", `"hello"`), false},
-		{"unknown with a number", event("brandNewEvent", `{"n":0}`), false},
-		{"unknown with a list", event("supplementaryWebLinksEvent", `{"links":[{"url":"u"}]}`), false},
-		{"unknown with false", event("brandNewEvent", `false`), false},
-		{"no event type", rawFrame(header(":message-type", 7, "event"), `{"content":"x"}`), false},
-		{"empty event type", rawFrame(header(":event-type", 7, ""), `{}`), false},
-		{"event type not a string", rawFrame([]byte{11, ':', 'e', 'v', 'e', 'n', 't', '-', 't', 'y', 'p', 'e', 0}, `{}`), false},
-		{"payload not json", event("brandNewEvent", `{oops`), false},
-		{"payload with trailing data", event("brandNewEvent", `{} {}`), false},
-		{"known event with an unread key", event("assistantResponseEvent", `{"content":"x","extra":"y"}`), false},
-		{"known event with an empty unread key", event("assistantResponseEvent", `{"content":"x","extra":""}`), true},
-		{"codeEvent with an unread key", event("codeEvent", `{"content":"x","language":"go"}`), false},
+	served := map[string][]byte{
+		"harmless contextUsageEvent":           event("contextUsageEvent", `{"contextUsagePercentage":12.5}`),
+		"harmless meteringEvent":               event("meteringEvent", `{"unit":"credit","usage":0.1}`),
+		"harmless metricsEvent":                event("metricsEvent", `{"inputTokens":1,"outputTokens":2}`),
+		"metadata without a stop":              event("metadataEvent", `{"tokenUsage":{"outputTokens":3}}`),
+		"unknown, empty payload":               event("brandNewEvent", ``),
+		"unknown, empty object":                event("brandNewEvent", `{}`),
+		"unknown, null":                        event("brandNewEvent", `null`),
+		"unknown, empty fields":                event("brandNewEvent", `{"a":"","b":[],"c":{},"d":null}`),
+		"unknown with text":                    event("brandNewEvent", `{"content":"lost?"}`),
+		"unknown with a string":                event("followupPromptEvent", `"hello"`),
+		"unknown with a number":                event("brandNewEvent", `{"n":0}`),
+		"unknown with a list":                  event("supplementaryWebLinksEvent", `{"links":[{"url":"u"}]}`),
+		"unknown with false":                   event("brandNewEvent", `false`),
+		"no event type":                        rawFrame(header(":message-type", 7, "event"), `{"content":"x"}`),
+		"empty event type":                     rawFrame(header(":event-type", 7, ""), `{}`),
+		"event type not a string":              rawFrame([]byte{11, ':', 'e', 'v', 'e', 'n', 't', '-', 't', 'y', 'p', 'e', 0}, `{}`),
+		"known event with an empty unread key": event("assistantResponseEvent", `{"content":"","extra":""}`),
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			out, err := stream(t, join(c.frame, text("t"), stop("end_turn")), ResponseOptions{})
-			if c.ok != (err == nil && out.finish() == "stop") {
-				t.Fatalf("err %v %+v", err, out)
-			}
-			if !c.ok && len(out.errors) != 1 {
-				t.Fatalf("%+v", out)
+	for name, frame := range served {
+		t.Run(name, func(t *testing.T) {
+			out, err := stream(t, join(frame, text("t"), stop("end_turn")), ResponseOptions{})
+			if err != nil || out.finish() != "stop" || out.delta("content") != "t" {
+				t.Fatalf("the pin serves this answer: err %v %+v", err, out)
 			}
 		})
+	}
+	// Fields the pin does not read do not fail the event it does read.
+	for name, frame := range map[string][]byte{
+		"assistantResponseEvent with an unread key": event("assistantResponseEvent", `{"content":"x","extra":"y"}`),
+		"codeEvent with an unread key":              event("codeEvent", `{"content":"x","language":"go"}`),
+	} {
+		out, err := stream(t, join(frame, text("t"), stop("end_turn")), ResponseOptions{})
+		if err != nil || out.finish() != "stop" || out.delta("content") != "xt" {
+			t.Errorf("%s: %v %+v", name, err, out)
+		}
+	}
+	for name, frame := range map[string][]byte{
+		"payload not json":           event("brandNewEvent", `{oops`),
+		"payload with trailing data": event("brandNewEvent", `{} {}`),
+	} {
+		out, err := stream(t, join(frame, text("t"), stop("end_turn")), ResponseOptions{})
+		if err == nil || len(out.errors) != 1 || out.errors[0]["code"] != "kiro_missing_terminal" ||
+			out.errors[0]["details"].(map[string]any)["terminal_provenance"] != "corrupt_eventstream_frame" {
+			t.Errorf("%s: %v %+v", name, err, out)
+		}
 	}
 }
 
@@ -549,58 +567,54 @@ func TestUnknownEventsAreCounted(t *testing.T) {
 	}
 }
 
+// Fields are read as the pin reads them: a value of the wrong kind is simply not the text
+// (executors/kiro.js:808, :834-845, :872-888). Nothing here fails the answer.
 func TestKnownEventPayloadShapes(t *testing.T) {
 	type row struct {
 		payload string
-		ok      bool
 		content string
 	}
 	rows := map[string][]row{
 		"assistantResponseEvent": {
-			{``, true, ""}, {`{}`, true, ""}, {`{"content":""}`, true, ""}, {`{"content":null}`, true, ""}, {`{"content":"hi"}`, true, "hi"},
-			{`null`, false, ""}, {`"hi"`, false, ""}, {`5`, false, ""}, {`[]`, false, ""}, {`true`, false, ""}, {`{"content":5}`, false, ""}, {`{"content":{}}`, false, ""}, {`{"content":["a"]}`, false, ""},
+			{``, ""}, {`{}`, ""}, {`{"content":""}`, ""}, {`{"content":null}`, ""}, {`{"content":"hi"}`, "hi"},
+			{`null`, ""}, {`"hi"`, ""}, {`5`, ""}, {`[]`, ""}, {`true`, ""}, {`{"content":5}`, ""}, {`{"content":{}}`, ""}, {`{"content":["a"]}`, ""},
 		},
 		"codeEvent": {
-			{``, true, ""}, {`{}`, true, ""}, {`{"content":"c"}`, true, "c"}, {`null`, false, ""}, {`"c"`, false, ""}, {`{"content":false}`, false, ""},
+			{``, ""}, {`{}`, ""}, {`{"content":"c"}`, "c"}, {`null`, ""}, {`"c"`, ""}, {`{"content":false}`, ""},
 		},
 	}
 	for kind, list := range rows {
 		for _, r := range list {
 			out, err := stream(t, join(event(kind, r.payload), stop("end_turn")), ResponseOptions{})
-			if r.ok != (err == nil) {
-				t.Errorf("%s %s: err %v", kind, r.payload, err)
-				continue
-			}
-			if r.ok && out.delta("content") != r.content {
-				t.Errorf("%s %s: content %q", kind, r.payload, out.delta("content"))
+			if err != nil || out.delta("content") != r.content {
+				t.Errorf("%s %s: err %v content %q", kind, r.payload, err, out.delta("content"))
 			}
 		}
 	}
 	reasoning := []row{
-		{``, true, ""}, {`{}`, true, ""}, {`null`, true, ""}, {`"thought"`, true, "thought"}, {`{"text":"a"}`, true, "a"}, {`{"content":"b"}`, true, "b"},
-		{`{"reasoningContentEvent":"c"}`, true, "c"}, {`{"reasoningContentEvent":{"text":"d"}}`, true, "d"}, {`{"reasoningContentEvent":{"content":"e"}}`, true, "e"},
-		{`{"reasoningContentEvent":{"text":""}}`, true, ""}, {`{"text":5}`, false, ""}, {`{"reasoningContentEvent":5}`, false, ""}, {`{"reasoningContentEvent":{"text":false}}`, false, ""},
-		{`5`, false, ""}, {`[]`, false, ""}, {`{"signature":"s"}`, false, ""}, {`{"reasoningContentEvent":{"text":"x","redactedContent":"r"}}`, false, ""},
+		{``, ""}, {`{}`, ""}, {`null`, ""}, {`"thought"`, "thought"}, {`{"text":"a"}`, "a"}, {`{"content":"b"}`, "b"},
+		{`{"reasoningContentEvent":"c"}`, "c"}, {`{"reasoningContentEvent":{"text":"d"}}`, "d"}, {`{"reasoningContentEvent":{"content":"e"}}`, "e"},
+		{`{"reasoningContentEvent":{"text":""}}`, ""}, {`{"text":"one","content":"two"}`, "one"}, {`{"reasoningContentEvent":"one","text":"two"}`, "one"},
+		{`{"text":5}`, ""}, {`{"reasoningContentEvent":5}`, ""}, {`5`, ""}, {`[]`, ""}, {`{"signature":"s"}`, ""},
 	}
 	for _, r := range reasoning {
 		out, err := stream(t, join(event("reasoningContentEvent", r.payload), stop("end_turn")), ResponseOptions{})
-		if r.ok != (err == nil) {
-			t.Errorf("reasoning %s: err %v", r.payload, err)
-			continue
-		}
-		if r.ok && out.delta("reasoning_content") != r.content {
-			t.Errorf("reasoning %s: %q", r.payload, out.delta("reasoning_content"))
+		if err != nil || out.delta("reasoning_content") != r.content {
+			t.Errorf("reasoning %s: err %v %q", r.payload, err, out.delta("reasoning_content"))
 		}
 	}
-	for _, payload := range []string{`null`, `"x"`, `5`, `[]`, `{"stopReason":5}`, `{"stopReason":"end_turn","extra":"y"}`} {
-		if _, err := stream(t, join(text("x"), event("messageStopEvent", payload)), ResponseOptions{}); err == nil {
-			t.Errorf("messageStopEvent %s must fail", payload)
+	// A stop event's reason is String(stopReason ?? stop_reason) normalized; no reason is end_turn.
+	for payload, want := range map[string]string{`null`: "stop", `"x"`: "stop", `5`: "stop", `[]`: "stop", ``: "stop", `{}`: "stop",
+		`{"stop_reason":"end_turn"}`: "stop", `{"stopReason":"end_turn","extra":"y"}`: "stop", `{"stopReason":"max_tokens"}`: "length",
+		`{"stopReason":"end_turn","stop_reason":"refusal"}`: "stop", `{"stopReason":null,"stop_reason":"max_tokens"}`: "length"} {
+		out, err := stream(t, join(text("x"), event("messageStopEvent", payload)), ResponseOptions{})
+		if err != nil || out.finish() != want {
+			t.Errorf("messageStopEvent %q: %v %v", payload, err, out.finish())
 		}
 	}
-	for _, payload := range []string{``, `{}`, `{"stop_reason":"end_turn"}`} {
-		if out, err := stream(t, join(text("x"), event("messageStopEvent", payload)), ResponseOptions{}); err != nil || out.finish() != "stop" {
-			t.Errorf("messageStopEvent %q: %v", payload, err)
-		}
+	// A reason that is not a known string is an unknown stop (String(5) is "5").
+	if out, err := stream(t, join(text("x"), event("messageStopEvent", `{"stopReason":5}`)), ResponseOptions{}); err == nil || out.errors[0]["code"] != "kiro_unknown_stop_reason" {
+		t.Errorf("stopReason 5: %v %+v", err, out)
 	}
 }
 
@@ -613,14 +627,18 @@ func TestUpstreamExceptionFrames(t *testing.T) {
 		}
 	}
 	frame := rawFrame(header(":message-type", 7, "exception"), ``)
-	if out, err := stream(t, frame, ResponseOptions{}); err == nil || len(out.errors) != 1 {
+	if out, err := stream(t, frame, ResponseOptions{}); err == nil || len(out.errors) != 1 || out.errors[0]["message"] != "Kiro upstream sent an EventStream exception" {
 		t.Fatalf("%v %+v", err, out)
 	}
-	if out, err := stream(t, rawFrame(header(":message-type", 7, "mystery"), `{}`), ResponseOptions{}); err == nil || len(out.errors) != 1 {
-		t.Fatalf("%v %+v", err, out)
-	}
-	if out, err := stream(t, rawFrame(append(header(":message-type", 6, "event"), header(":event-type", 7, "x")...), `{}`), ResponseOptions{}); err == nil {
-		t.Fatalf("a :message-type that is not a string must fail: %+v", out)
+	// Only "error" and "exception" are special: any other :message-type, of any header kind, is an event (:793-803).
+	for name, frame := range map[string][]byte{
+		"other type":     rawFrame(append(header(":message-type", 7, "mystery"), header(":event-type", 7, "assistantResponseEvent")...), `{"content":"x"}`),
+		"not a string":   rawFrame(append(header(":message-type", 6, "event"), header(":event-type", 7, "assistantResponseEvent")...), `{"content":"x"}`),
+		"without a type": rawFrame(header(":event-type", 7, "assistantResponseEvent"), `{"content":"x"}`),
+	} {
+		if out, err := stream(t, join(frame, stop("end_turn")), ResponseOptions{}); err != nil || out.delta("content") != "x" {
+			t.Errorf("%s: %v %+v", name, err, out)
+		}
 	}
 }
 
@@ -795,39 +813,42 @@ func TestKiroUsage(t *testing.T) {
 	}
 }
 
-func TestUnreadKeysAndAmbiguousResponseValuesFail(t *testing.T) {
+// Unread keys and ambiguous envelopes are resolved the way the pin resolves them: first set
+// wins, nothing fails (executors/kiro.js:834-841, :872-888, :906-921).
+func TestUnreadKeysAndAmbiguousResponseValuesAreReadAsThePinReadsThem(t *testing.T) {
 	for _, kind := range []string{"assistantResponseEvent", "codeEvent", "reasoningContentEvent", "toolUseEvent", "messageStopEvent", "metadataEvent", "metricsEvent", "contextUsageEvent", "meteringEvent"} {
 		for _, value := range []string{`"lost"`, `0`, `false`, `["lost"]`, `{"text":"lost"}`} {
-			out, err := stream(t, join(event(kind, `{"unread":`+value+`}`), stop("")), ResponseOptions{})
-			if err == nil || out.finish() != nil {
-				t.Errorf("%s unread %s succeeded", kind, value)
+			out, err := stream(t, join(event(kind, `{"unread":`+value+`}`), text("t"), stop("end_turn")), ResponseOptions{})
+			if err != nil || out.finish() != "stop" {
+				t.Errorf("%s unread %s: %v %+v", kind, value, err, out)
 			}
 		}
 	}
+	// A metadata envelope is the first truthy of metadataEvent, metadata, the payload (:880-881).
 	for _, frame := range [][]byte{
-		event("metadataEvent", `{"stopReason":5}`),
 		event("metadataEvent", `{"metadata":{"stopReason":"end_turn"},"stopReason":"refusal"}`),
 		event("metricsEvent", `{"metricsEvent":{"inputTokens":1},"inputTokens":2}`),
 		event("metricsEvent", `{"metricsEvent":"lost"}`),
-		event("reasoningContentEvent", `{"text":"one","content":"two"}`),
-		event("reasoningContentEvent", `{"reasoningContentEvent":"one","text":"two"}`),
 	} {
-		if out, err := stream(t, join(frame, stop("")), ResponseOptions{}); err == nil || out.finish() != nil {
-			t.Errorf("ambiguous event succeeded: %+v", out)
+		if out, err := stream(t, join(frame, text("t"), stop("end_turn")), ResponseOptions{}); err != nil || out.finish() != "stop" {
+			t.Errorf("%s: %v %+v", frame, err, out)
 		}
+	}
+	if out, err := stream(t, join(text("x"), event("metadataEvent", `{"stopReason":5}`)), ResponseOptions{}); err == nil || out.errors[0]["code"] != "kiro_unknown_stop_reason" {
+		t.Errorf("a numeric stop reason is an unknown one: %v %+v", err, out)
 	}
 	for _, kind := range []string{"messageStopEvent", "metadataEvent"} {
 		out, err := stream(t, join(text("x"), event(kind, `{"stopReason":"end_turn","stop_reason":"refusal"}`)), ResponseOptions{})
-		if err == nil || out.finish() != nil {
-			t.Errorf("%s hid refusal", kind)
+		if err != nil || out.finish() != "stop" {
+			t.Errorf("%s: stopReason ?? stop_reason takes the first: %v %+v", kind, err, out)
 		}
 	}
 	state := newMachine(ResponseOptions{}, func(map[string]any) error { return nil })
 	_, err := state.handle(concerns.EventStreamEvent{Headers: map[string]any{":event-type": "unknown"}, Payload: []byte(`{}`)})
 	// Counted under "other", as the pin caps the diagnostic's cardinality
 	// (executors/kiro.js:806-807, kiro-terminal-integrity.test.js "caps diagnostic event-type cardinality").
-	if err == nil || state.counts["other"] != 1 || state.counts["unknown"] != 0 {
-		t.Fatal("unproven events must be counted and fail")
+	if err != nil || state.counts["other"] != 1 || state.counts["unknown"] != 0 {
+		t.Fatalf("an unknown event is counted and ignored: %v %v", err, state.counts)
 	}
 	for i := 0; i < 99; i++ {
 		_, _ = state.handle(concerns.EventStreamEvent{Headers: map[string]any{":event-type": fmt.Sprintf("unknownEvent%d", i)}, Payload: []byte(`{}`)})
@@ -890,9 +911,10 @@ func BenchmarkKiroStreamToChat(b *testing.B) {
 func TestBookkeepingPayloadKinds(t *testing.T) {
 	for _, kind := range []string{"metadataEvent", "metricsEvent", "contextUsageEvent", "meteringEvent"} {
 		for _, payload := range []string{"", `null`, `{}`, `[]`, `""`, `"lost"`, `0`, `false`, `{oops`, `{} {}`} {
-			out, err := stream(t, join(event(kind, payload), stop("")), ResponseOptions{})
-			valid := payload == "" || payload == `null` || payload == `{}`
-			if (err == nil) != valid || !valid && out.finish() != nil {
+			out, err := stream(t, join(event(kind, payload), text("t"), stop("end_turn")), ResponseOptions{})
+			// Only a payload that is not one JSON document ends the answer (:964-967).
+			corrupt := payload == `{oops` || payload == `{} {}`
+			if corrupt != (err != nil) || !corrupt && out.finish() != "stop" {
 				t.Errorf("%s %q: %v", kind, payload, err)
 			}
 		}
