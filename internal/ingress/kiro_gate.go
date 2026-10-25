@@ -11,6 +11,7 @@ import (
 	"time"
 
 	kiroadapter "github.com/raufimusaddiq/routeweft/internal/protocol/kiro"
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
@@ -37,24 +38,101 @@ func repairOf(response *http.Response) repairFunc {
 	return repair
 }
 
-// kiroRepairRequest builds the repair for one Kiro attempt: the same account, the
-// same surface, the body with the repair instruction in its current user turn.
-func (h *Handler) kiroRepairRequest(build func(body []byte) (*http.Request, error), send func(*http.Request) (*http.Response, error), body []byte) repairFunc {
+// The repair request is BaseExecutor.prototype.execute (executors/kiro.js:459-463,
+// executors/base.js:100-184), not the attempt again: it starts at the first host,
+// retries a host in place on 502/503/504 (and a network error as a 502) with the
+// pin's backoff, moves to the next host on 429 and on 401/403/404 while one
+// remains, and otherwise returns whatever answered. The in-place counter is one
+// per host, shared by the statuses (base.js:104, :113).
+var repairBackoff = map[int]struct {
+	attempts int
+	delay    time.Duration
+}{
+	http.StatusBadGateway:         {3, 3 * time.Second},
+	http.StatusServiceUnavailable: {3, 2 * time.Second},
+	http.StatusGatewayTimeout:     {2, 3 * time.Second},
+}
+
+// repairSleep is the in-place retry delay; tests replace it.
+var repairSleep = func(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (h *Handler) kiroRepairRequest(resolve func(index int) (wire.Target, error), build func(body []byte, target wire.Target) (*http.Request, error), send func(*http.Request) (*http.Response, error), body []byte) repairFunc {
 	return func(ctx context.Context, kind string) (io.ReadCloser, int, error) {
 		repaired, err := kiroadapter.RepairRequest(body, kind)
 		if err != nil {
 			return nil, 0, err
 		}
-		request, err := build(repaired)
-		if err != nil {
-			return nil, 0, err
+		inPlace := map[int]int{}
+		retry := func(index, status int) (bool, error) {
+			policy, set := repairBackoff[status]
+			if !set || inPlace[index] >= policy.attempts {
+				return false, nil
+			}
+			inPlace[index]++
+			return true, repairSleep(ctx, policy.delay)
 		}
-		request = request.WithContext(ctx)
-		response, err := send(request)
-		if err != nil {
-			return nil, 0, err
+		count, lastErr := 1, error(nil)
+		for index := 0; index < count; index++ {
+			target, err := resolve(index)
+			if err != nil {
+				return nil, 0, err
+			}
+			if target.EndpointCount > 0 {
+				count = target.EndpointCount
+			}
+			request, err := build(repaired, target)
+			if err != nil {
+				return nil, 0, err
+			}
+			response, err := send(request.WithContext(ctx))
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil, 0, ctx.Err()
+				}
+				lastErr = err
+				again, waitErr := retry(index, http.StatusBadGateway)
+				if waitErr != nil {
+					return nil, 0, waitErr
+				}
+				if again {
+					index--
+					continue
+				}
+				if index+1 < count {
+					continue
+				}
+				return nil, 0, err
+			}
+			again, waitErr := retry(index, response.StatusCode)
+			if waitErr != nil {
+				response.Body.Close()
+				return nil, 0, waitErr
+			}
+			if again {
+				response.Body.Close()
+				index--
+				continue
+			}
+			status := response.StatusCode
+			if index+1 < count && (status == http.StatusTooManyRequests || status == 401 || status == 403 || status == 404) {
+				response.Body.Close()
+				continue
+			}
+			return response.Body, status, nil
 		}
-		return response.Body, response.StatusCode, nil
+		if lastErr != nil {
+			return nil, 0, lastErr
+		}
+		return nil, 0, fmt.Errorf("all %d URLs failed", count)
 	}
 }
 
@@ -67,6 +145,9 @@ const (
 	envKiroTTFTMS      = "ROUTEWEFT_KIRO_TOOL_CALL_REPAIR_TTFT_TIMEOUT_MS"
 	envKiroStallMS     = "ROUTEWEFT_KIRO_TOOL_CALL_REPAIR_STALL_TIMEOUT_MS"
 )
+
+// kiroHeartbeatEvery is the pin's 10 s (executors/kiro.js:15); zero keeps it. Tests shorten it.
+var kiroHeartbeatEvery time.Duration
 
 func envPositive(name string) int {
 	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name)))
@@ -94,6 +175,8 @@ func kiroGateConfig(provider routing.ProviderRef) kiroadapter.GateConfig {
 		MaxBytes: envPositive(envKiroBufferBytes),
 		TTFT:     ttft,
 		Stall:    stall,
+
+		HeartbeatEvery: kiroHeartbeatEvery,
 	}
 }
 

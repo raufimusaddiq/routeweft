@@ -261,11 +261,13 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				return nil, provider, &dispatchError{502, "upstream_configuration_error", "provider URL or endpoint is not allowed"}
 			}
 			if outbound.Integrity != nil {
-				// The one repair request of the integrity gate is this attempt again with
-				// an instruction in its user turn (executors/kiro.js:459-463).
-				attemptProvider, endpoint, body, headers, resolved := provider, outbound.Endpoint, outbound.Body, outbound.Headers, target
-				request = withRepair(request, h.kiroRepairRequest(func(repaired []byte) (*http.Request, error) {
-					return h.newUpstreamRequest(r, snapshot, attemptProvider, endpoint, repaired, headers, resolved)
+				// The one repair request of the integrity gate is the pin's base executor
+				// run again on the repaired body (executors/kiro.js:459-463).
+				attemptProvider, endpoint, body, headers := provider, outbound.Endpoint, outbound.Body, outbound.Headers
+				request = withRepair(request, h.kiroRepairRequest(func(index int) (wire.Target, error) {
+					return wire.ResolveTarget(attemptProvider, endpoint, index)
+				}, func(repaired []byte, target wire.Target) (*http.Request, error) {
+					return h.newUpstreamRequest(r, snapshot, attemptProvider, endpoint, repaired, headers, target)
 				}, func(retry *http.Request) (*http.Response, error) {
 					return wire.Send(attemptProvider, h.clientFor(attemptProvider), retry)
 				}, body))

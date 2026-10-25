@@ -269,7 +269,7 @@ func TestToolCallsAreDeferredAndRestored(t *testing.T) {
 		t.Fatalf("%v %v", out.finish(), err)
 	}
 	// An array payload carries several calls.
-	out, err = stream(t, join(event("toolUseEvent", `[{"toolUseId":"a","name":"x","input":{}},{"toolUseId":"b","name":"y","input":""}]`), stop("tool_use")), ResponseOptions{})
+	out, err = stream(t, join(event("toolUseEvent", `[{"toolUseId":"a","name":"x","input":{}},{"toolUseId":"b","name":"y","input":"{}"}]`), stop("tool_use")), ResponseOptions{})
 	if err != nil || len(out.calls()) != 2 || out.calls()[1]["arguments"] != "{}" {
 		t.Fatalf("%v %v", out.calls(), err)
 	}
@@ -280,7 +280,10 @@ func TestToolCallsAreDeferredAndRestored(t *testing.T) {
 	}
 }
 
-// One unusable call fails the stream and none of that turn's calls are sent.
+// One unusable tool fragment or call does not take the turn with it: the pin keeps
+// the usable calls and the text, and the turn fails only when nothing else was
+// produced (kiro-usage-and-tool-integrity.test.js "C", executors/kiro.js:738-759,
+// :972-980, :1053-1063).
 func TestToolFailuresAreLocalToTheStream(t *testing.T) {
 	cases := map[string][]byte{
 		"empty event":       event("toolUseEvent", ``),
@@ -292,7 +295,6 @@ func TestToolFailuresAreLocalToTheStream(t *testing.T) {
 		"blank name":        event("toolUseEvent", `{"toolUseId":"a","name":" ","input":{}}`),
 		"name not text":     event("toolUseEvent", `{"toolUseId":"a","name":5,"input":{}}`),
 		"blank id":          event("toolUseEvent", `{"toolUseId":" ","name":"x","input":{}}`),
-		"null id":           event("toolUseEvent", `{"toolUseId":null,"name":"x","input":{}}`),
 		"id a number":       event("toolUseEvent", `{"toolUseId":5,"name":"x","input":{}}`),
 		"no input":          event("toolUseEvent", `{"toolUseId":"a","name":"x"}`),
 		"null input":        event("toolUseEvent", `{"toolUseId":"a","name":"x","input":null}`),
@@ -300,28 +302,47 @@ func TestToolFailuresAreLocalToTheStream(t *testing.T) {
 		"number input":      event("toolUseEvent", `{"toolUseId":"a","name":"x","input":5}`),
 		"input not json":    event("toolUseEvent", `{"toolUseId":"a","name":"x","input":"{oops"}`),
 		"input a json list": event("toolUseEvent", `{"toolUseId":"a","name":"x","input":"[1]"}`),
-		"unknown content":   event("toolUseEvent", `{"toolUseId":"a","name":"x","input":{},"extra":"text"}`),
 		"wrapper no name":   event("toolUseEvent", `{"toolUseId":"a","name":"tool_call","input":{"arguments":{}}}`),
 		"wrapper no args":   event("toolUseEvent", `{"toolUseId":"a","name":"tool_call","input":{"name":"n"}}`),
 	}
 	for name, bad := range cases {
 		t.Run(name, func(t *testing.T) {
 			out, err := stream(t, join(text("kept"), tool("good", "x", `{}`), bad, stop("tool_use")), ResponseOptions{})
-			if err == nil || len(out.errors) != 1 || out.finish() != nil || len(out.calls()) != 0 {
-				t.Fatalf("err %v %+v", err, out)
+			if err != nil || out.finish() != "tool_calls" || len(out.calls()) != 1 || out.calls()[0]["id"] != "good" {
+				t.Fatalf("the usable call was lost: err %v %+v", err, out)
 			}
 			if out.delta("content") != "kept" {
-				t.Fatalf("streamed text was retracted: %q", out.delta("content"))
+				t.Fatalf("streamed text was lost: %q", out.delta("content"))
+			}
+			// With no usable call and no text, the turn is the failure the gate repairs.
+			out, err = stream(t, join(bad, stop("tool_use")), ResponseOptions{})
+			if err == nil || len(out.errors) != 1 || out.errors[0]["code"] != "invalid_kiro_tool_call" || out.finish() != nil {
+				t.Fatalf("an unusable-only turn must fail as invalid_kiro_tool_call: %v %+v", err, out)
+			}
+			// With text and no usable call the text stands (:1053).
+			out, err = stream(t, join(text("only text"), bad, stop("tool_use")), ResponseOptions{})
+			if err != nil || out.finish() != "stop" || out.delta("content") != "only text" {
+				t.Fatalf("text was thrown away with the bad call: %v %+v", err, out)
 			}
 		})
 	}
+	// Content carried under a key the leg does not read is still refused (approved Kiro decision).
+	if out, err := stream(t, join(text("kept"), event("toolUseEvent", `{"toolUseId":"a","name":"x","input":{},"extra":"text"}`), stop("tool_use")), ResponseOptions{}); err == nil || out.finish() != nil {
+		t.Errorf("content-bearing unknown key: %v", err)
+	}
+	// A null toolUseId is an absent one: the pin generates an id (executors/kiro.js:854).
+	if out, err := stream(t, join(event("toolUseEvent", `{"toolUseId":null,"name":"x","input":{}}`), stop("tool_use")), ResponseOptions{}); err != nil || len(out.calls()) != 1 {
+		t.Errorf("null id: %v %+v", err, out)
+	}
+	// Fragment errors are per tool: the rejected fragment is skipped, what was buffered is kept.
 	for name, frames := range map[string][][]byte{
 		"name changes":   {tool("a", "x", `"{"`), tool("a", "y", `"}"`)},
 		"kind changes":   {event("toolUseEvent", `{"toolUseId":"a","name":"x","input":"{"}`), event("toolUseEvent", `{"toolUseId":"a","name":"x","input":{}}`)},
 		"object to text": {tool("a", "x", `{}`), event("toolUseEvent", `{"toolUseId":"a","name":"x","input":"{}"}`)},
 	} {
-		if out, err := stream(t, join(append(frames, stop("tool_use"))...), ResponseOptions{}); err == nil || out.finish() != nil {
-			t.Errorf("%s: %v", name, err)
+		out, err := stream(t, join(append(append([][]byte{tool("good", "x", `{}`)}, frames...), stop("tool_use"))...), ResponseOptions{})
+		if err != nil || out.finish() != "tool_calls" || len(out.calls()) < 1 || out.calls()[0]["id"] != "good" {
+			t.Errorf("%s: %v %+v", name, err, out)
 		}
 	}
 	// A wrapper call that is whole is served.
@@ -352,11 +373,16 @@ func TestStopReasons(t *testing.T) {
 		{"MaxTokens", [][]byte{text("x"), stop("MaxTokens")}, "length"},
 		{"max tokens with a call", [][]byte{tool("a", "x", `{}`), stop("max_tokens")}, ""},
 		{"tool_use with a call", [][]byte{tool("a", "x", `{}`), stop("tool_use")}, "tool_calls"},
-		{"tool_use with none", [][]byte{text("x"), stop("tool_use")}, ""},
+		// The turn declared a tool call and made none, but it has text: the pin keeps the text (:787-790).
+		{"tool_use with none", [][]byte{text("x"), stop("tool_use")}, "stop"},
+		{"tool_use with none and no text", [][]byte{stop("tool_use")}, ""},
 		{"no reason after a tool event", [][]byte{tool("a", "x", `{}`), stop("")}, "tool_calls"},
 		{"context window after output", [][]byte{text("x"), stop("model_context_window_exceeded")}, "length"},
 		{"context window before output", [][]byte{stop("model_context_window_exceeded")}, ""},
-		{"context window with a call", [][]byte{text("x"), tool("a", "x", `{}`), stop("model_context_window_exceeded")}, ""},
+		// A truncation after output keeps the output, calls included (:1014-1018, :1079-1083).
+		{"context window with a call", [][]byte{text("x"), tool("a", "x", `{}`), stop("model_context_window_exceeded")}, "length"},
+		{"context window with only a call", [][]byte{tool("a", "x", `{}`), stop("model_context_window_exceeded")}, ""},
+		{"max tokens with text and a call", [][]byte{text("x"), tool("a", "x", `{}`), stop("max_tokens")}, "length"},
 		{"refusal", [][]byte{text("x"), stop("refusal")}, ""},
 		{"content filtered", [][]byte{text("x"), stop("content_filtered")}, ""},
 		{"guardrail", [][]byte{text("x"), stop("guardrail_intervened")}, ""},
@@ -385,37 +411,66 @@ func TestStopReasons(t *testing.T) {
 	}
 }
 
-// The pin counts a clean EOF as success when output arrived (executors/kiro.js:1065-1075);
-// this does not.
-func TestNoTerminalIsAFailure(t *testing.T) {
-	cases := map[string][]byte{
-		"empty body":              nil,
+// A clean end with output and no stop event completes the answer, exactly as the pin
+// does (executors/kiro.js:1008-1075; tests/unit/kiro-terminal-integrity.test.js:169
+// "accepts CLI-compatible text and usage frames at clean EOF without messageStop").
+// This replaces the earlier approved rule "require a terminal" for Kiro only; the
+// generic EventStream reader still reports the missing terminal (concerns.NoTerminalError).
+// What still fails is what the pin fails: nothing at all, a cut frame, corrupt bytes.
+func TestCleanEOFWithOutputCompletes(t *testing.T) {
+	complete := map[string][]byte{
 		"text only":               join(text("x")),
+		"text with usage frames":  join(text("Complete answer."), event("meteringEvent", `{"usage":2,"unit":"credit"}`), event("contextUsageEvent", `{"contextUsagePercentage":10}`)),
 		"metadata without a stop": join(text("x"), event("metadataEvent", `{"tokenUsage":{}}`)),
-		"usage only":              join(event("metricsEvent", `{"inputTokens":1,"outputTokens":1}`)),
-		"truncated frame":         join(text("x"), stop("end_turn"))[:len(join(text("x"), stop("end_turn")))-3],
-		"trailing garbage":        append(join(text("x"), stop("end_turn")), 1, 2, 3),
-		"corrupt after stop":      append(join(text("x"), stop("end_turn")), make([]byte, 20)...),
+		"reasoning only":          join(event("reasoningContentEvent", `{"text":"thinking"}`)),
 	}
-	for name, body := range cases {
+	for name, body := range complete {
 		t.Run(name, func(t *testing.T) {
 			out, err := stream(t, body, ResponseOptions{})
-			if err == nil || out.finish() != nil || len(out.errors) != 1 {
+			if err != nil || out.finish() != "stop" || len(out.errors) != 0 {
 				t.Fatalf("err %v %+v", err, out)
 			}
-			if _, err := KiroResponseToChat(body, ResponseOptions{}); err == nil {
-				t.Fatal("the buffered leg must fail too")
+			if buffered, err := KiroResponseToChat(body, ResponseOptions{}); err != nil || !strings.Contains(string(buffered), `"finish_reason":"stop"`) {
+				t.Fatalf("buffered: %v %s", err, buffered)
+			}
+		})
+	}
+	// A tool call with no stop event is a tool turn (stopDisposition(null, sawToolUse)).
+	if out, err := stream(t, join(tool("a", "x", `{}`)), ResponseOptions{}); err != nil || out.finish() != "tool_calls" {
+		t.Fatalf("tool turn: %v %+v", err, out)
+	}
+	// An explicit stop with no output is still an explicit completion.
+	if out, err := stream(t, join(stop("end_turn")), ResponseOptions{}); err != nil || out.finish() != "stop" {
+		t.Fatalf("%v %+v", err, out)
+	}
+	fails := map[string][]byte{
+		"empty body":         nil,
+		"usage only":         join(event("metricsEvent", `{"inputTokens":1,"outputTokens":1}`)),
+		"metering only":      join(event("meteringEvent", `{"usage":2}`)),
+		"truncated frame":    join(text("x"), stop("end_turn"))[:len(join(text("x"), stop("end_turn")))-3],
+		"trailing garbage":   append(join(text("x"), stop("end_turn")), 1, 2, 3),
+		"corrupt after stop": append(join(text("x"), stop("end_turn")), make([]byte, 20)...),
+	}
+	for name, body := range fails {
+		t.Run(name, func(t *testing.T) {
+			out, err := stream(t, body, ResponseOptions{})
+			if err == nil || out.finish() != nil || len(out.errors) != 1 || out.errors[0]["code"] != "kiro_missing_terminal" {
+				t.Fatalf("err %v %+v", err, out)
 			}
 		})
 	}
 	// Fragmenting the transport changes nothing.
-	body := join(text("a"), stop("end_turn"))
+	body := join(text("a"))
 	var buffer bytes.Buffer
 	if err := KiroStreamToChat(context.Background(), iotest.OneByteReader(bytes.NewReader(body)), &buffer, ResponseOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := KiroStreamToChat(context.Background(), iotest.OneByteReader(bytes.NewReader(body[:len(body)-1])), io.Discard, ResponseOptions{}); err == nil {
-		t.Fatal("expected a failure")
+		t.Fatal("expected a failure for a cut frame")
+	}
+	// The empty answer is empty_response_eof (:1066-1075).
+	if out, _ := stream(t, nil, ResponseOptions{}); out.errors[0]["details"].(map[string]any)["terminal_provenance"] != "empty_response_eof" {
+		t.Fatalf("%+v", out.errors)
 	}
 }
 
@@ -553,7 +608,7 @@ func TestUpstreamExceptionFrames(t *testing.T) {
 	for _, kind := range []string{"exception", "error"} {
 		frame := rawFrame(append(header(":message-type", 7, kind), header(":exception-type", 7, "ThrottlingException")...), `{"message":"slow down"}`)
 		out, err := stream(t, join(text("x"), frame, stop("end_turn")), ResponseOptions{})
-		if err == nil || out.finish() != nil || len(out.errors) != 1 || out.errors[0]["message"] != "slow down" || out.errors[0]["code"] != "upstream_eventstream_error" {
+		if err == nil || out.finish() != nil || len(out.errors) != 1 || out.errors[0]["message"] != "slow down" || out.errors[0]["code"] != "kiro_upstream_eventstream_error" {
 			t.Fatalf("%s: %v %+v", kind, err, out)
 		}
 	}
@@ -639,8 +694,13 @@ func TestThinkingTagEdges(t *testing.T) {
 		})
 	}
 	// A held partial tag is flushed before the finish, and a stream that fails drops it with the stream.
-	out, err := stream(t, join(text("ok <thin")), ResponseOptions{ThinkingTags: true})
+	out, err := stream(t, join(text("ok <thin"), text("more")[:20]), ResponseOptions{ThinkingTags: true})
 	if err == nil || out.finish() != nil {
+		t.Fatalf("%v %+v", err, out)
+	}
+	// ... while a clean end completes the answer, the held text flushed as the model's own.
+	out, err = stream(t, join(text("ok <thin")), ResponseOptions{ThinkingTags: true})
+	if err != nil || out.delta("content") != "ok <thin" || out.finish() != "stop" {
 		t.Fatalf("%v %+v", err, out)
 	}
 }
@@ -751,8 +811,6 @@ func TestUnreadKeysAndAmbiguousResponseValuesFail(t *testing.T) {
 		event("metricsEvent", `{"metricsEvent":"lost"}`),
 		event("reasoningContentEvent", `{"text":"one","content":"two"}`),
 		event("reasoningContentEvent", `{"reasoningContentEvent":"one","text":"two"}`),
-		event("toolUseEvent", `{"toolUseId":"t","name":"x","input":{},"stop":"yes"}`),
-		join(tool("t", "x", `{"a":1}`), tool("t", "x", `{"b":2}`)),
 	} {
 		if out, err := stream(t, join(frame, stop("")), ResponseOptions{}); err == nil || out.finish() != nil {
 			t.Errorf("ambiguous event succeeded: %+v", out)
@@ -766,8 +824,19 @@ func TestUnreadKeysAndAmbiguousResponseValuesFail(t *testing.T) {
 	}
 	state := newMachine(ResponseOptions{}, func(map[string]any) error { return nil })
 	_, err := state.handle(concerns.EventStreamEvent{Headers: map[string]any{":event-type": "unknown"}, Payload: []byte(`{}`)})
-	if err == nil || state.counts["unknown"] != 1 {
+	// Counted under "other", as the pin caps the diagnostic's cardinality
+	// (executors/kiro.js:806-807, kiro-terminal-integrity.test.js "caps diagnostic event-type cardinality").
+	if err == nil || state.counts["other"] != 1 || state.counts["unknown"] != 0 {
 		t.Fatal("unproven events must be counted and fail")
+	}
+	for i := 0; i < 99; i++ {
+		_, _ = state.handle(concerns.EventStreamEvent{Headers: map[string]any{":event-type": fmt.Sprintf("unknownEvent%d", i)}, Payload: []byte(`{}`)})
+	}
+	if _, err := state.handle(concerns.EventStreamEvent{Headers: map[string]any{":event-type": "assistantResponseEvent"}, Payload: []byte(`{"content":"done"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if len(state.counts) != 2 || state.counts["other"] != 100 || state.counts["assistantResponseEvent"] != 1 {
+		t.Fatalf("event counts %v", state.counts)
 	}
 }
 
@@ -830,6 +899,44 @@ func TestBookkeepingPayloadKinds(t *testing.T) {
 	}
 }
 
+// pinMerge is mergeStopReason (executors/kiro.js:170-183) and pinFails is the
+// verdict finish() reaches (:1009-1099), restated independently of the code under
+// test so the matrix below is a differential check against the pin's own rules.
+func pinSeverity(reason string) int {
+	switch reason {
+	case "cancelled", "pause_turn", "model_context_window_exceeded":
+		return 5
+	case "refusal", "content_filtered":
+		return 6
+	case "malformed_model_output":
+		return 3
+	case "max_tokens":
+		return 2
+	case "end_turn", "tool_use":
+		return 1
+	}
+	return 4 // something_new: unknown_failure
+}
+
+func pinMerge(current, incoming string) string {
+	if current == "" || pinSeverity(incoming) > pinSeverity(current) {
+		return incoming
+	}
+	return current
+}
+
+func pinFails(merged string, output, calls bool) bool {
+	truncation := merged == "max_tokens" || merged == "model_context_window_exceeded"
+	var failing bool
+	switch merged {
+	case "malformed_model_output", "cancelled", "pause_turn", "model_context_window_exceeded", "refusal", "content_filtered", "something_new":
+		failing = true
+	case "max_tokens":
+		failing = calls // stopDisposition: max_tokens with tool calls is terminal_incomplete
+	}
+	return failing && !(truncation && output)
+}
+
 func TestTerminalReasonsCannotHideFailures(t *testing.T) {
 	for _, failure := range []string{"refusal", "content_filtered", "cancelled", "pause_turn", "malformed_model_output", "something_new"} {
 		for _, other := range []string{"end_turn", "tool_use", "max_tokens", "model_context_window_exceeded"} {
@@ -842,19 +949,16 @@ func TestTerminalReasonsCannotHideFailures(t *testing.T) {
 					if calls {
 						prefix = append(prefix, tool("t", "x", `{}`)...)
 					}
-					for _, pair := range [][]byte{join(stop(failure), stop(other)), join(stop(other), stop(failure))} {
-						out, err := stream(t, join(prefix, pair), ResponseOptions{})
-						if err == nil || out.finish() != nil {
-							t.Fatalf("%s vs %s output=%v calls=%v hid failure", failure, other, output, calls)
+					for _, order := range [][2]string{{failure, other}, {other, failure}} {
+						merged := pinMerge(pinMerge("", order[0]), order[1])
+						want := pinFails(merged, output, calls)
+						out, err := stream(t, join(prefix, stop(order[0]), stop(order[1])), ResponseOptions{})
+						if want != (err != nil) {
+							t.Fatalf("%v output=%v calls=%v: pin fails=%v, got err=%v finish=%v", order, output, calls, want, err, out.finish())
 						}
 					}
 				}
 			}
-		}
-	}
-	for _, pair := range [][]byte{join(stop("end_turn"), stop("tool_use")), join(stop("tool_use"), stop("end_turn"))} {
-		if _, err := stream(t, join(text("x"), pair), ResponseOptions{}); err == nil {
-			t.Fatal("end_turn hid missing call")
 		}
 	}
 }

@@ -186,10 +186,27 @@ func TestMessagesStreamToolCalls(t *testing.T) {
 	if events.types() != "message_start content_block_start content_block_delta content_block_stop content_block_start content_block_delta content_block_stop content_block_start content_block_delta content_block_stop message_delta message_stop" {
 		t.Fatal(events.types())
 	}
-	// A call with no input is an empty object, never an absent one.
-	events, _, err = streamMessages(t, join(event("toolUseEvent", `{"toolUseId":"t","name":"n","input":""}`), stop("")), ResponseOptions{})
-	if err != nil || concerns.JSONText(at(events.message(t), "content.0.input")) != `{}` || events.message(t)["stop_reason"] != "tool_use" {
+	// A call whose input is a blank string is dropped, as the pin's JSON.parse("") drops it
+	// (executors/kiro.js:731-735): alone it is the unusable-only failure, beside a usable call it is skipped.
+	if _, _, err = streamMessages(t, join(event("toolUseEvent", `{"toolUseId":"t","name":"n","input":""}`), stop("")), ResponseOptions{}); err == nil {
+		t.Fatal("a blank-input call was served")
+	}
+	events, _, err = streamMessages(t, join(event("toolUseEvent", `{"toolUseId":"t","name":"n","input":""}`), tool("u", "m", `{}`), stop("")), ResponseOptions{})
+	if err != nil || concerns.JSONText(at(events.message(t), "content.0.input")) != `{}` || at(events.message(t), "content.0.name") != "m" || len(concerns.Items(events.message(t)["content"])) != 1 {
 		t.Fatalf("%v %v", err, events.message(t))
+	}
+}
+
+// The Messages legs complete a clean end with output and no stop event, as the Chat leg does
+// (executors/kiro.js:1008-1075).
+func TestMessagesCleanEOFWithOutputCompletes(t *testing.T) {
+	body := join(text("Complete answer."), event("meteringEvent", `{"usage":2,"unit":"credit"}`))
+	events, raw, err := streamMessages(t, body, ResponseOptions{})
+	if err != nil || events[len(events)-1]["type"] != "message_stop" {
+		t.Fatalf("%v: %s", err, raw)
+	}
+	if buffered, err := KiroResponseToMessages(body, ResponseOptions{}); err != nil || !strings.Contains(string(buffered), `"stop_reason":"end_turn"`) {
+		t.Fatalf("%v %s", err, buffered)
 	}
 }
 
@@ -219,12 +236,12 @@ func TestMessagesStopReasons(t *testing.T) {
 // a truncated or refused answer as a finished one.
 func TestMessagesStreamFailures(t *testing.T) {
 	for name, frames := range map[string][][]byte{
-		"no terminal":     {text("partial")},
+		"cut frame":       {text("partial")[:20]},
 		"empty":           {},
 		"refusal":         {text("x"), stop("refusal")},
 		"cancelled":       {text("x"), stop("cancelled")},
 		"unknown":         {text("x"), stop("brand_new")},
-		"tool_use no use": {text("x"), stop("tool_use")},
+		"tool_use no use": {stop("tool_use")}, // with text the pin keeps the text (executors/kiro.js:787-790)
 		"max with a call": {tool("t", "n", `{}`), stop("max_tokens")},
 		"bad tool input":  {event("toolUseEvent", `{"toolUseId":"t","name":"n","input":"[1]"}`), stop("")},
 		"unknown event":   {text("x"), event("mysteryEvent", `{"content":"y"}`), stop("")},
@@ -313,9 +330,9 @@ func mustObject(t *testing.T, body []byte) map[string]any {
 
 func TestMessagesBufferedFailures(t *testing.T) {
 	for name, frames := range map[string][][]byte{
-		"no terminal": {text("x")},
-		"refusal":     {text("x"), stop("refusal")},
-		"bad tool":    {event("toolUseEvent", `{"toolUseId":"t","name":"n","input":"[1]"}`), stop("")},
+		"cut frame": {text("x")[:20]},
+		"refusal":   {text("x"), stop("refusal")},
+		"bad tool":  {event("toolUseEvent", `{"toolUseId":"t","name":"n","input":"[1]"}`), stop("")},
 	} {
 		if body, err := KiroResponseToMessages(join(frames...), ResponseOptions{}); err == nil {
 			t.Errorf("%s: a failed answer was served: %s", name, body)

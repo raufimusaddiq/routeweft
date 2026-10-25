@@ -37,7 +37,7 @@ const (
 // Attempt kinds (executors/kiro.js:445-452, :596-626).
 const (
 	kindComplete        = "complete"
-	kindPassThrough     = "pass_through"
+	kindTerminal        = "terminal_stop"
 	kindInvalidTool     = "invalid_tool"
 	kindEllipsis        = "ellipsis"
 	kindShortFinal      = "short_final"
@@ -84,10 +84,12 @@ func RepairRequest(body []byte, kind string) ([]byte, error) {
 		objects = append(objects, next)
 	}
 	message := objects[len(objects)-1]
+	// Content that is not text counts as empty, so the instruction replaces it
+	// (executors/kiro.js:139-140: typeof content === "string" ? content : "").
 	var content string
 	if raw, set := message["content"]; set {
 		if err := json.Unmarshal(raw, &content); err != nil {
-			return nil, errors.New("kiro current message content is not text")
+			content = ""
 		}
 	}
 	if content != "" {
@@ -113,10 +115,12 @@ type GateConfig struct {
 	// Repair is the repair switch (executors/kiro.js:376-377). Off, a malformed tool
 	// call is reported instead of retried; the other retries stay.
 	Repair bool
-	// MaxBytes bounds the EventStream held; zero is DefaultGateMaxBytes.
+	// MaxBytes bounds the converted output held (the pin counts the Chat SSE it
+	// buffers, :570); zero is DefaultGateMaxBytes.
 	MaxBytes int
-	// TTFT and Stall bound the wait for the first chunk and between chunks; zero is
-	// DefaultGateTimeout. A timeout is a missing terminal, as in the pin.
+	// TTFT and Stall bound the wait for the first validated frame and between
+	// validated frames; zero is DefaultGateTimeout. A timeout is a missing
+	// terminal, as in the pin.
 	TTFT, Stall time.Duration
 	// HeartbeatEvery is how often Heartbeat runs while the gate holds the answer;
 	// zero is GateHeartbeat.
@@ -124,13 +128,14 @@ type GateConfig struct {
 }
 
 // Retry sends the one repair request. It returns the response body and status; a
-// status outside 2xx is reported with the start of that body.
+// status outside 2xx is reported with the start of that body. An error is a
+// transport failure after the request's own fallbacks (executors/base.js:100-184).
 type Retry func(ctx context.Context, kind string) (body io.ReadCloser, status int, err error)
 
-func (c GateConfig) bounds() (max int, ttft, stall, beat time.Duration) {
-	max, ttft, stall, beat = c.MaxBytes, c.TTFT, c.Stall, c.HeartbeatEvery
-	if max <= 0 {
-		max = DefaultGateMaxBytes
+func (c GateConfig) bounds() (limit int, ttft, stall, beat time.Duration) {
+	limit, ttft, stall, beat = c.MaxBytes, c.TTFT, c.Stall, c.HeartbeatEvery
+	if limit <= 0 {
+		limit = DefaultGateMaxBytes
 	}
 	if ttft <= 0 {
 		ttft = DefaultGateTimeout
@@ -144,52 +149,56 @@ func (c GateConfig) bounds() (max int, ttft, stall, beat time.Duration) {
 	return
 }
 
+// gateFailure is encodeSSEError (executors/kiro.js:199-206): type upstream_error,
+// the code, the message and, when there are any, the details.
 func gateFailure(code, message string, details map[string]any) error {
-	value := map[string]any{"type": "api_error", "code": code, "message": message}
+	value := map[string]any{"type": "upstream_error", "code": code, "message": message}
 	if details != nil {
 		value["details"] = details
 	}
 	return &concerns.StreamFailure{Value: value}
 }
 
+// attempt is what readIntegrityAttempt returns (:543-627).
 type attempt struct {
 	kind    string
 	bytes   []byte
 	message string
+	diag    map[string]any
+	// failure is the terminal failure of an answer that is not retried (:445-447).
+	failure error
 }
 
 // Gate holds the upstream answer until it is known to be whole and usable
 // (executors/kiro.js:437-505). It returns the EventStream to convert, or a
-// concerns.StreamFailure the response leg reports in the client's wire. A
-// protocol failure the response leg already reports itself (a refusal, an upstream
-// error event, a stop that is final) is returned as the bytes, not retried. An
-// answer that is cut short, malformed, only an ellipsis or only an announced
-// action is retried exactly once through retry; a second such answer is the
-// failure. src is closed before Gate returns. beat runs at once and then every
+// concerns.StreamFailure the response leg reports in the client's wire. An answer
+// that is cut short, malformed, only an ellipsis or only an announced action is
+// retried exactly once through retry; a second such answer is the failure. A
+// final stop, an upstream error event or an over-bound buffer is the failure
+// at once. src is closed before Gate returns. beat runs at once and then every
 // HeartbeatEvery until the answer is released (:393-394); it may be nil.
 func Gate(ctx context.Context, src io.ReadCloser, config GateConfig, options ResponseOptions, retry Retry, beat func()) (io.Reader, error) {
-	max, ttft, stall, every := config.bounds()
+	limit, ttft, stall, every := config.bounds()
 	if beat == nil {
 		beat = func() {}
 	}
 	beat()
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
-	options.MaxToolBytes = max / 2
-	if options.MaxToolBytes < 1 {
-		options.MaxToolBytes = 1
-	}
+	run := gateRun{limit: limit, ttft: ttft, stall: stall, tick: ticker.C, beat: beat, options: options}
 
-	first, err := readAttempt(ctx, src, max, ttft, stall, ticker.C, beat, options)
+	first, err := run.read(ctx, src, "initial")
 	if err != nil {
 		return nil, err
 	}
 	switch first.kind {
-	case kindComplete, kindPassThrough:
+	case kindComplete:
 		return bytes.NewReader(first.bytes), nil
+	case kindTerminal:
+		return nil, first.failure
 	case kindInvalidTool:
 		if !config.Repair {
-			return nil, gateFailure("invalid_kiro_tool_call", first.message, nil)
+			return nil, gateFailure("invalid_kiro_tool_call", first.message, first.diag)
 		}
 	}
 
@@ -203,31 +212,55 @@ func Gate(ctx context.Context, src io.ReadCloser, config GateConfig, options Res
 	if retry == nil {
 		return nil, gateFailure("kiro_integrity_gate_failed", "Kiro integrity validation has no way to retry", nil)
 	}
-	body, status, err := retry(ctx, repair)
+	// The repair may wait a long time for response headers (and, below, for an error
+	// body): the pin's heartbeat is a timer of its own, so it keeps running through
+	// both waits (executors/kiro.js:393-394, :418-419). beat is only ever called from
+	// this goroutine, so the writes it makes stay serialized with each other.
+	sent, err := awaiting(ctx, run.tick, beat, func() repairResponse {
+		body, status, err := retry(ctx, repair)
+		return repairResponse{body, status, err}
+	}, func(r repairResponse) {
+		if r.body != nil {
+			_ = r.body.Close()
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	body, status, err := sent.body, sent.status, sent.err
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, gateFailure("kiro_integrity_retry_upstream_error", "Kiro integrity retry failed: "+err.Error(), map[string]any{"status": 502})
+		// The repair request itself threw: the gate reports it as its own failure (:407-416).
+		message := err.Error()
+		if message == "" {
+			message = "Kiro integrity validation failed"
+		}
+		return nil, gateFailure("kiro_integrity_gate_failed", message, nil)
 	}
 	if status < 200 || status >= 300 {
-		prefix, readErr := readPrefix(ctx, body, min(max, retryErrorBodyBytes), stall)
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+		prefix, err := awaiting(ctx, run.tick, beat, func() string {
+			return readPrefix(ctx, body, min(limit, retryErrorBodyBytes), stall)
+		}, nil)
+		if err != nil {
+			return nil, err
 		}
-		_ = readErr // a stalled error body is reported without its text (:473-475)
-		message := strings.TrimSpace(prefix)
+		message := prefix
 		if message == "" {
 			message = fmt.Sprintf("Kiro integrity retry failed with HTTP %d", status)
 		}
 		return nil, gateFailure("kiro_integrity_retry_upstream_error", message, map[string]any{"status": status})
 	}
-	second, err := readAttempt(ctx, body, max, ttft, stall, ticker.C, beat, options)
+	second, err := run.read(ctx, body, "retry")
 	if err != nil {
 		return nil, err
 	}
-	if second.kind == kindComplete || second.kind == kindPassThrough {
+	switch second.kind {
+	case kindComplete:
 		return bytes.NewReader(second.bytes), nil
+	case kindTerminal:
+		return nil, second.failure
 	}
 	code := "kiro_missing_terminal_retry_failed"
 	switch second.kind {
@@ -243,7 +276,45 @@ func Gate(ctx context.Context, src io.ReadCloser, config GateConfig, options Res
 		detail = second.kind
 	}
 	return nil, gateFailure(code, "Kiro integrity validation failed after one bounded retry: "+detail,
-		map[string]any{"attempts": []any{first.kind, second.kind}})
+		map[string]any{"attempts": []any{first.diag, second.diag}})
+}
+
+type repairResponse struct {
+	body   io.ReadCloser
+	status int
+	err    error
+}
+
+// awaiting runs work in its own goroutine and keeps the heartbeat going until it
+// returns. On cancellation it still waits for work (which honours ctx) so that
+// nothing is left running, and hands what work returned to discard.
+func awaiting[T any](ctx context.Context, tick <-chan time.Time, beat func(), work func() T, discard func(T)) (T, error) {
+	done := make(chan T, 1)
+	go func() { done <- work() }()
+	for {
+		select {
+		case value := <-done:
+			return value, nil
+		case <-tick:
+			beat()
+		case <-ctx.Done():
+			value := <-done
+			if discard != nil {
+				discard(value)
+			}
+			var zero T
+			return zero, ctx.Err()
+		}
+	}
+}
+
+// gateRun is the bounds and the heartbeat both attempts share.
+type gateRun struct {
+	limit       int
+	ttft, stall time.Duration
+	tick        <-chan time.Time
+	beat        func()
+	options     ResponseOptions
 }
 
 type gateChunk struct {
@@ -251,11 +322,92 @@ type gateChunk struct {
 	err  error
 }
 
-// readAttempt reads one answer into memory, bounded in size and time, and says
-// what it is. Only cancellation is returned as an error: everything else the
-// answer can do is a verdict. The reader goroutine has ended, and src is closed,
-// when readAttempt returns.
-func readAttempt(ctx context.Context, src io.ReadCloser, max int, ttft, stall time.Duration, beatTick <-chan time.Time, beat func(), options ResponseOptions) (attempt, error) {
+// errStalled and errOverflow end a read; they are the gate's own verdicts and pass
+// through the machine's error classification untouched.
+type gateStop struct{ stalled bool }
+
+func (e *gateStop) Error() string {
+	if e.stalled {
+		return "Kiro integrity validation stalled"
+	}
+	return "Kiro integrity buffer exceeded"
+}
+func (e *gateStop) PassThrough() {}
+
+// gateSource is the reader the EventStream parser pulls from: it owns the timers,
+// the heartbeat, the raw copy kept for the response leg, and the converted-output
+// accounting the pin's bound is defined on.
+type gateSource struct {
+	ctx    context.Context
+	run    *gateRun
+	chunks chan gateChunk
+	cur    []byte
+	raw    []byte
+	rawCap int
+	last   time.Time
+	m      *machine
+	conv   *convertedSize
+
+	framesSeen, deltasSeen int
+}
+
+func (g *gateSource) Read(p []byte) (int, error) {
+	if len(g.cur) > 0 {
+		n := copy(p, g.cur)
+		g.cur = g.cur[n:]
+		return n, nil
+	}
+	// A read that completed frames and produced nothing is acknowledged with the
+	// keep-alive comment the pin writes, which counts against the bound (:1162-1164).
+	if g.m.frames > g.framesSeen && g.m.deltas == g.deltasSeen {
+		if err := g.conv.add(len(": kiro-upstream\n\n")); err != nil {
+			return 0, err
+		}
+	}
+	g.framesSeen, g.deltasSeen = g.m.frames, g.m.deltas
+	for {
+		// The watchdog restarts on every validated frame, not on every byte: a
+		// partial frame is not progress (:559-566, kiro-terminal-integrity "treats
+		// validated non-semantic frames as watchdog activity").
+		budget := g.run.ttft
+		if g.m.frames > 0 {
+			budget = g.run.stall
+		}
+		timer := time.NewTimer(time.Until(g.last.Add(budget)))
+		select {
+		case next, open := <-g.chunks:
+			timer.Stop()
+			if !open || next.err == io.EOF {
+				return 0, io.EOF
+			}
+			if next.err != nil {
+				return 0, next.err
+			}
+			if len(g.raw)+len(next.data) > g.rawCap {
+				return 0, &gateStop{}
+			}
+			g.raw = append(g.raw, next.data...)
+			g.cur = next.data
+			n := copy(p, g.cur)
+			g.cur = g.cur[n:]
+			return n, nil
+		case <-g.run.tick:
+			timer.Stop()
+			g.run.beat()
+		case <-timer.C:
+			return 0, &gateStop{stalled: true}
+		case <-g.ctx.Done():
+			timer.Stop()
+			return 0, g.ctx.Err()
+		}
+	}
+}
+
+// read reads one answer into memory, bounded in converted size, raw size and time,
+// and says what it is (readIntegrityAttempt, :543-627). Only cancellation is
+// returned as an error. The reader goroutine has ended, and src is closed, when
+// read returns.
+func (r *gateRun) read(ctx context.Context, src io.ReadCloser, label string) (attempt, error) {
 	chunks := make(chan gateChunk)
 	quit := make(chan struct{})
 	ended := make(chan struct{})
@@ -280,61 +432,143 @@ func readAttempt(ctx context.Context, src io.ReadCloser, max int, ttft, stall ti
 			}
 		}
 	}()
-	finish := func() {
+	defer func() {
 		close(quit)
 		_ = src.Close()
 		<-ended
-	}
-	defer finish()
+	}()
 
-	var raw []byte
-	sawChunk := false
-	for {
-		wait := ttft
-		if sawChunk {
-			wait = stall
-		}
-		timer := time.NewTimer(wait)
-		var next gateChunk
-	receive:
-		for {
-			select {
-			case next = <-chunks:
-				break receive
-			case <-beatTick:
-				beat()
-			case <-timer.C:
-				timer.Stop()
-				return attempt{kind: kindMissingTerminal, message: "Kiro integrity validation stalled"}, nil
-			case <-ctx.Done():
-				timer.Stop()
-				return attempt{}, ctx.Err()
-			}
-		}
-		timer.Stop()
-		if next.err != nil {
-			if next.err == io.EOF {
-				break
-			}
-			if ctx.Err() != nil {
-				return attempt{}, ctx.Err()
-			}
-			return attempt{kind: kindMissingTerminal, message: next.err.Error()}, nil
-		}
-		sawChunk = true
-		if len(raw)+len(next.data) > max {
-			return attempt{}, gateFailure("kiro_integrity_buffer_exceeded", fmt.Sprintf("Kiro integrity buffer exceeded %d bytes", max), nil)
-		}
-		raw = append(raw, next.data...)
+	options := r.options
+	options.MaxToolBytes = max(1, r.limit/2)
+	conv := &convertedSize{limit: r.limit, model: options.Model}
+	if conv.model == "" {
+		conv.model = fallbackModel
 	}
-	return analyse(raw, options), nil
+	var content, reasoning strings.Builder
+	hasTools := false
+	m := newMachine(options, func(delta map[string]any) error {
+		content.WriteString(concerns.Text(delta["content"]))
+		reasoning.WriteString(concerns.Text(delta["reasoning_content"]))
+		if len(concerns.Items(delta["tool_calls"])) > 0 {
+			hasTools = true
+		}
+		return conv.delta(delta)
+	})
+	source := &gateSource{ctx: ctx, run: r, chunks: chunks, last: time.Now(), m: m, conv: conv, rawCap: r.limit + concerns.MaxEventStreamMessageBytes}
+	m.onFrame = func() { source.last = time.Now() }
+
+	reason, err := m.run(ctx, source)
+	if err == nil {
+		// The finish chunk and the terminator are converted output too (:1121-1122).
+		err = conv.finish(reason, m.usage)
+	}
+	raw := source.raw
+	if ctx.Err() != nil {
+		return attempt{}, ctx.Err()
+	}
+	if err != nil {
+		return r.verdict(m, err, raw, label), nil
+	}
+	diag := m.diagnostics("", "clean_eof", "", 0)
+	diag["attempt"] = label
+	if !hasTools {
+		if isEllipsisOnly(content.String()) || (trimJS(content.String()) == "" && isEllipsisOnly(reasoning.String())) {
+			return attempt{kind: kindEllipsis, diag: diag}, nil
+		}
+		if isShortFutureAction(content.String()) {
+			return attempt{kind: kindShortFinal, diag: diag}, nil
+		}
+	}
+	return attempt{kind: kindComplete, bytes: raw, diag: diag}, nil
+}
+
+// verdict maps the way an answer ended to the pin's attempt kinds (:596-616).
+func (r *gateRun) verdict(m *machine, err error, raw []byte, label string) attempt {
+	var stop *gateStop
+	if errors.As(err, &stop) {
+		if !stop.stalled {
+			message := fmt.Sprintf("Kiro integrity buffer exceeded %d bytes", r.limit)
+			return attempt{kind: kindTerminal, failure: gateFailure("kiro_integrity_buffer_exceeded", message,
+				map[string]any{"terminal_provenance": "integrity_buffer_exceeded"})}
+		}
+		// A timeout is a read error the gate itself raised (:526-540).
+		diag := map[string]any{"attempt": label, "terminal_provenance": "transport_read_error", "transport_state": "upstream_error",
+			"stop_reason": nil, "stop_disposition": dispIncomplete, "response_state": "no_semantic_output",
+			"event_counts": map[string]any{}, "incomplete_frame_bytes": 0}
+		return attempt{kind: kindMissingTerminal, message: stop.Error(), diag: diag}
+	}
+	var failure *concerns.StreamFailure
+	if !errors.As(err, &failure) {
+		return attempt{kind: kindMissingTerminal, message: err.Error()}
+	}
+	details, _ := failure.Value["details"].(map[string]any)
+	if details != nil {
+		details["attempt"] = label
+	}
+	code := concerns.Text(failure.Value["code"])
+	message := concerns.Text(failure.Value["message"])
+	switch code {
+	case "invalid_kiro_tool_call":
+		return attempt{kind: kindInvalidTool, message: message, diag: details}
+	case "kiro_retryable_protocol_failure":
+		return attempt{kind: kindRetryableStop, message: message, diag: details}
+	case "kiro_missing_terminal":
+		return attempt{kind: kindMissingTerminal, message: message, diag: details}
+	}
+	// A refusal, an incomplete stop, an unknown stop, an upstream error event, an
+	// over-bound tool buffer, an event Routeweft refuses: final, reported as it is (:445-447).
+	return attempt{kind: kindTerminal, failure: failure, message: message, diag: details}
+}
+
+// convertedSize counts the bytes of the Chat SSE the answer converts to, the unit
+// the pin's bound is defined on (:569-577). Deltas are sized as the pin writes
+// them: one envelope per delta, the role merged into the first.
+type convertedSize struct {
+	limit, total int
+	model        string
+	started      bool
+}
+
+func (c *convertedSize) add(n int) error {
+	c.total += n
+	if c.total > c.limit {
+		return &gateStop{}
+	}
+	return nil
+}
+
+func (c *convertedSize) chunk(delta map[string]any, finish any, usage map[string]any) int {
+	if !c.started {
+		merged := map[string]any{"role": "assistant"}
+		for key, value := range delta {
+			merged[key] = value
+		}
+		delta, c.started = merged, true
+	}
+	document := map[string]any{"id": "chatcmpl-1700000000000", "object": "chat.completion.chunk", "created": 1700000000, "model": c.model,
+		"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finish}}}
+	if usage != nil {
+		document["usage"] = usage
+	}
+	encoded, _ := json.Marshal(document)
+	return len("data: ") + len(encoded) + len("\n\n")
+}
+
+func (c *convertedSize) delta(delta map[string]any) error { return c.add(c.chunk(delta, nil, nil)) }
+
+func (c *convertedSize) finish(reason string, usage map[string]any) error {
+	if err := c.add(c.chunk(map[string]any{}, reason, usage)); err != nil {
+		return err
+	}
+	return c.add(len("data: [DONE]\n\n"))
 }
 
 // readPrefix reads at most limit bytes of an error body (readResponsePrefix,
-// executors/kiro.js:104-128) and closes it.
-func readPrefix(ctx context.Context, body io.ReadCloser, limit int, stall time.Duration) (string, error) {
+// executors/kiro.js:104-128) and closes it. A body that stalls is reported
+// without its text (:473-475).
+func readPrefix(ctx context.Context, body io.ReadCloser, limit int, stall time.Duration) string {
 	if body == nil {
-		return "", nil
+		return ""
 	}
 	result := make(chan []byte, 1)
 	go func() {
@@ -346,63 +580,13 @@ func readPrefix(ctx context.Context, body io.ReadCloser, limit int, stall time.D
 	select {
 	case data := <-result:
 		_ = body.Close()
-		return string(data), nil
+		return string(data)
 	case <-timer.C:
-		_ = body.Close()
-		<-result
-		return "", errors.New("Kiro retry error body stalled")
 	case <-ctx.Done():
-		_ = body.Close()
-		<-result
-		return "", ctx.Err()
 	}
-}
-
-// analyse is readIntegrityAttempt's verdict (executors/kiro.js:586-626) over a
-// whole EventStream.
-func analyse(raw []byte, options ResponseOptions) attempt {
-	var content, reasoning strings.Builder
-	hasTools := false
-	state := newMachine(options, func(delta map[string]any) error {
-		content.WriteString(concerns.Text(delta["content"]))
-		reasoning.WriteString(concerns.Text(delta["reasoning_content"]))
-		if len(concerns.Items(delta["tool_calls"])) > 0 {
-			hasTools = true
-		}
-		return nil
-	})
-	err := concerns.ReadEventStream(context.Background(), bytes.NewReader(raw), state.handle)
-	if err == nil {
-		_, err = state.finish()
-	}
-	if err != nil {
-		var failure *concerns.StreamFailure
-		if !errors.As(err, &failure) {
-			// A cut, corrupt or unterminated stream (:605-611, :614-616).
-			return attempt{kind: kindMissingTerminal, message: err.Error()}
-		}
-		code := concerns.Text(failure.Value["code"])
-		message := concerns.Text(failure.Value["message"])
-		switch {
-		case code == "invalid_kiro_tool_call" || code == "kiro_tool_use_without_call":
-			return attempt{kind: kindInvalidTool, message: message}
-		case code == "kiro_terminal_protocol_failure":
-			return attempt{kind: kindRetryableStop, message: message}
-		}
-		// A refusal, an incomplete stop, an upstream error event, an over-bound
-		// tool buffer or an event this leg refuses is final (:445-447): the
-		// response leg reports it from the same bytes.
-		return attempt{kind: kindPassThrough, bytes: raw, message: message}
-	}
-	if !hasTools {
-		if isEllipsisOnly(content.String()) || (strings.TrimSpace(content.String()) == "" && isEllipsisOnly(reasoning.String())) {
-			return attempt{kind: kindEllipsis}
-		}
-		if isShortFutureAction(content.String()) {
-			return attempt{kind: kindShortFinal}
-		}
-	}
-	return attempt{kind: kindComplete, bytes: raw}
+	_ = body.Close()
+	<-result
+	return ""
 }
 
 // jsWhitespace is what JavaScript's \s and String.prototype.trim treat as space;

@@ -29,6 +29,21 @@ type EventStreamEvent struct {
 	Payload []byte
 }
 
+// TruncatedFrameError is a stream that ended inside a frame; Pending is the bytes
+// of that frame already read. It is io.ErrUnexpectedEOF to errors.Is.
+type TruncatedFrameError struct{ Pending int }
+
+func (e *TruncatedFrameError) Error() string { return io.ErrUnexpectedEOF.Error() }
+func (e *TruncatedFrameError) Unwrap() error { return io.ErrUnexpectedEOF }
+
+// NoTerminalError is a stream that ended cleanly, between frames, without any
+// consumer marking a terminal. It is io.ErrUnexpectedEOF to errors.Is; a provider
+// whose protocol completes such a stream (Kiro) tells it from a cut stream by type.
+type NoTerminalError struct{}
+
+func (e *NoTerminalError) Error() string { return io.ErrUnexpectedEOF.Error() }
+func (e *NoTerminalError) Unwrap() error { return io.ErrUnexpectedEOF }
+
 // ReadEventStream validates frames before delivery. consume marks a terminal; success requires it and clean EOF.
 // It reads past terminals to detect trailing corruption. Callers emit success only after nil and close src on cancellation.
 func ReadEventStream(ctx context.Context, src io.Reader, consume func(EventStreamEvent) (bool, error)) error {
@@ -54,7 +69,10 @@ func ReadEventStream(ctx context.Context, src io.Reader, consume func(EventStrea
 				if terminal {
 					return nil
 				}
-				return io.ErrUnexpectedEOF
+				return &NoTerminalError{}
+			}
+			if err == io.ErrUnexpectedEOF {
+				return &TruncatedFrameError{Pending: n}
 			}
 			return err
 		}
@@ -72,9 +90,9 @@ func ReadEventStream(ctx context.Context, src io.Reader, consume func(EventStrea
 		}
 		frame := make([]byte, int(length))
 		copy(frame, prelude[:])
-		if _, err := read(frame[12:]); err != nil {
-			if err == io.EOF {
-				return io.ErrUnexpectedEOF
+		if got, err := read(frame[12:]); err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				return &TruncatedFrameError{Pending: 12 + got}
 			}
 			return err
 		}

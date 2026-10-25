@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -64,8 +64,16 @@ type machine struct {
 	sawToolUse   bool
 	stopReason   string
 	terminal     bool
+	unmeasured   int // metricsEvents that carried no count
 	usage        map[string]any
 	delivered    bool // a content or reasoning delta has reached the caller
+	frames       int  // validated frames handled
+	deltas       int  // deltas handed to emit
+	emittedCalls int  // tool calls emitted by finish
+	toolError    string
+	provenance   string // what ended the answer, as the pin names it (executors/kiro.js:878,886)
+	explicitStop bool
+	onFrame      func()
 	hold         string
 	inThinking   bool
 	dropNewline  bool
@@ -144,6 +152,7 @@ func onlyKeys(event string, object map[string]any, known ...string) error {
 
 func (m *machine) deliver(delta map[string]any) error {
 	m.delivered = true
+	m.deltas++
 	return m.emit(delta)
 }
 
@@ -268,33 +277,64 @@ func normalizeStopReason(value string) string {
 
 var refusalPattern = regexp.MustCompile(`content.*filter|guardrail|safety|policy|blocked`)
 
-// severity orders stop reasons so a later, milder one never hides a failure
-// (stopDisposition and mergeStopReason, executors/kiro.js:159-183).
-func severity(reason string) int {
+// Dispositions of a stop reason (stopDisposition, executors/kiro.js:159-168).
+const (
+	dispComplete   = "complete"
+	dispToolUse    = "tool_use"
+	dispLength     = "length"
+	dispRetryable  = "retryable_protocol_failure"
+	dispIncomplete = "terminal_incomplete"
+	dispRefusal    = "terminal_refusal"
+	dispUnknown    = "unknown_failure"
+)
+
+func disposition(reason string, hasTools bool) string {
 	switch {
-	case reason == "refusal" || refusalPattern.MatchString(reason):
-		return 6
-	case reason == "cancelled" || reason == "pause_turn":
-		return 5
 	case reason == "malformed_model_output" || reason == "invalid_model_output":
-		return 4
-	case reason == "model_context_window_exceeded":
-		return 3
+		return dispRetryable
+	case reason == "cancelled" || reason == "pause_turn" || reason == "model_context_window_exceeded":
+		return dispIncomplete
+	case reason == "refusal" || refusalPattern.MatchString(reason):
+		return dispRefusal
 	case reason == "max_tokens":
-		return 2
-	case reason == "end_turn" || reason == "tool_use" || reason == "":
-		return 1
+		if hasTools {
+			return dispIncomplete
+		}
+		return dispLength
+	case reason != "" && reason != "end_turn" && reason != "tool_use":
+		return dispUnknown
+	case hasTools || reason == "tool_use":
+		return dispToolUse
 	}
-	return 5
+	return dispComplete
 }
 
-func (m *machine) stop(reason string) {
+// severity orders stop reasons so a later, milder one never hides a failure
+// (mergeStopReason, executors/kiro.js:170-183).
+func severity(reason string) int {
+	switch disposition(reason, false) {
+	case dispRefusal:
+		return 6
+	case dispIncomplete:
+		return 5
+	case dispUnknown:
+		return 4
+	case dispRetryable:
+		return 3
+	case dispLength:
+		return 2
+	}
+	return 1
+}
+
+func (m *machine) stop(reason, provenance string) {
 	m.terminal = true
 	if reason == "" {
 		return
 	}
 	if m.stopReason == "" || severity(reason) > severity(m.stopReason) || (reason == "tool_use" && m.stopReason == "end_turn") {
 		m.stopReason = reason
+		m.provenance = provenance
 	}
 }
 
@@ -323,7 +363,11 @@ func (m *machine) handle(event concerns.EventStreamEvent) (bool, error) {
 	if !isText || kind == "" {
 		return false, failure("upstream_unsupported_event", "Kiro sent a frame with no event type")
 	}
-	m.counts[kind]++
+	m.frames++
+	if m.onFrame != nil {
+		m.onFrame()
+	}
+	m.counts[eventCountKey(kind)]++
 	payload, present, err := decodeAny(event.Payload)
 	if err != nil {
 		return false, err
@@ -375,7 +419,17 @@ func (m *machine) handle(event concerns.EventStreamEvent) (bool, error) {
 		if err := m.contentAfterStop(kind); err != nil {
 			return false, err
 		}
-		return false, m.toolUse(payload, present)
+		err := m.toolUse(payload, present)
+		var fragment *toolFragmentError
+		if errors.As(err, &fragment) {
+			// One rejected fragment belongs to one tool: the pin logs it and keeps the
+			// rest of the turn (executors/kiro.js:972-980).
+			if m.toolError == "" {
+				m.toolError = fragment.message
+			}
+			return false, nil
+		}
+		return false, err
 	case "messageStopEvent":
 		if present && object == nil {
 			return false, failure("upstream_invalid", "Kiro messageStopEvent is not an object")
@@ -392,7 +446,7 @@ func (m *machine) handle(event concerns.EventStreamEvent) (bool, error) {
 			return false, err
 		}
 		if alias != "" {
-			m.stop(normalizeStopReason(alias))
+			m.stop(normalizeStopReason(alias), "message_stop_event")
 		}
 		reason = normalizeStopReason(reason)
 		if reason == "" {
@@ -401,7 +455,8 @@ func (m *machine) handle(event concerns.EventStreamEvent) (bool, error) {
 				reason = "tool_use"
 			}
 		}
-		m.stop(reason)
+		m.stop(reason, "message_stop_event")
+		m.explicitStop = true
 		return true, nil
 	case "metadataEvent", "MetadataEvent":
 		// Only stop reasons are read; tokenUsage is accounting bookkeeping.
@@ -432,7 +487,8 @@ func (m *machine) handle(event concerns.EventStreamEvent) (bool, error) {
 				return false, err
 			}
 			if reason = normalizeStopReason(reason); reason != "" {
-				m.stop(reason)
+				m.stop(reason, "metadata_stop_reason")
+				m.explicitStop = true
 				terminal = true
 			}
 		}
@@ -457,7 +513,7 @@ func (m *machine) handle(event concerns.EventStreamEvent) (bool, error) {
 		if usage, observed := concerns.KiroUsage(metrics); observed {
 			m.usage = usage.OpenAI()
 		} else {
-			m.counts["metricsEvent.unmeasured"]++
+			m.unmeasured++
 		}
 		return false, nil
 	case "contextUsageEvent":
@@ -542,39 +598,35 @@ func (m *machine) toolUse(payload any, present bool) error {
 		values = []any{v}
 	}
 	if !present || len(values) == 0 || values[0] == nil {
-		return failure("upstream_invalid", "Kiro toolUseEvent is empty")
+		return fragment("Kiro toolUseEvent is empty")
 	}
 	for _, raw := range values {
 		value := concerns.Object(raw)
 		if value == nil {
-			return failure("upstream_invalid", "Kiro toolUseEvent holds something that is not an object")
+			return fragment("Kiro toolUseEvent holds something that is not an object")
 		}
 		if err := onlyKeys("toolUseEvent", value, "toolUseId", "name", "input", "stop"); err != nil {
 			return err
 		}
-		// stop is a fragment marker; the message stop event owns terminal semantics.
-		if marker := value["stop"]; marker != nil && marker != true && marker != false {
-			return failure("upstream_invalid", "Kiro tool stop marker is not a boolean")
-		}
+		// stop is a fragment marker the pin never reads; the message stop event owns
+		// terminal semantics.
 		name, isText := value["name"].(string)
 		if !isText || strings.TrimSpace(name) == "" {
-			return failure("upstream_invalid", "Kiro toolUseEvent is missing a tool name")
+			return fragment("Kiro toolUseEvent is missing a tool name")
 		}
 		name = strings.TrimSpace(name)
 		var id string
 		switch v := value["toolUseId"].(type) {
 		case nil:
-			if _, set := value["toolUseId"]; set {
-				return failure("upstream_invalid", "Kiro toolUseEvent has an invalid toolUseId")
-			}
+			// An absent and a null id are the same to the pin (executors/kiro.js:854).
 			id = concerns.GenerateToolCallID(0, len(m.tools), name)
 		case string:
 			if strings.TrimSpace(v) == "" {
-				return failure("upstream_invalid", "Kiro toolUseEvent has an invalid toolUseId")
+				return fragment("Kiro toolUseEvent has an invalid toolUseId")
 			}
 			id = v
 		default:
-			return failure("upstream_invalid", "Kiro toolUseEvent has an invalid toolUseId")
+			return fragment("Kiro toolUseEvent has an invalid toolUseId")
 		}
 		tool := m.toolsByID[id]
 		if tool == nil {
@@ -583,24 +635,21 @@ func (m *machine) toolUse(payload any, present bool) error {
 			m.tools = append(m.tools, tool)
 			m.toolBytes += len(id) + len(name) + 32
 		} else if tool.name != name {
-			return failure("upstream_invalid", "Kiro tool name changed between fragments")
+			return fragment("Kiro tool name changed between fragments")
 		}
 		input, set := value["input"]
 		if set {
 			switch v := input.(type) {
 			case string:
 				if tool.kind != "" && tool.kind != "string" {
-					return failure("upstream_invalid", "Kiro tool input changed fragment type")
+					return fragment("Kiro tool input changed fragment type")
 				}
 				tool.kind = "string"
 				tool.text = append(tool.text, v)
 				m.toolBytes += len(v)
 			case map[string]any:
 				if tool.kind != "" && tool.kind != "object" {
-					return failure("upstream_invalid", "Kiro tool input changed fragment type")
-				}
-				if tool.object != nil && !reflect.DeepEqual(tool.object, v) {
-					return failure("upstream_invalid", "Kiro tool input changed between object fragments")
+					return fragment("Kiro tool input changed fragment type")
 				}
 				tool.kind = "object"
 				m.toolBytes -= tool.bytes
@@ -608,7 +657,7 @@ func (m *machine) toolUse(payload any, present bool) error {
 				tool.bytes = len(concerns.JSONText(v))
 				m.toolBytes += tool.bytes
 			default:
-				return failure("upstream_invalid", "Kiro tool input must be a JSON object")
+				return fragment("Kiro tool input must be a JSON object")
 			}
 		}
 		if m.toolBytes > m.options.MaxToolBytes {
@@ -618,75 +667,111 @@ func (m *machine) toolUse(payload any, present bool) error {
 	return nil
 }
 
-// toolCalls validates every buffered call before any is emitted: one unusable
-// call fails the stream, and no call of that turn reaches the client.
-func (m *machine) toolCalls() ([]map[string]any, error) {
+// toolFragmentError is a tool fragment the pin rejects without ending the turn
+// (executors/kiro.js:972-980): the fragment belongs to one tool.
+type toolFragmentError struct{ message string }
+
+func (e *toolFragmentError) Error() string { return e.message }
+
+func fragment(message string) error { return &toolFragmentError{message} }
+
+// toolCalls validates the buffered calls one by one. An unusable call is dropped
+// and remembered, and the usable ones are kept: the pin validates per tool, not
+// per turn, so one bad fragment never takes the others with it
+// (executors/kiro.js:738-759).
+func (m *machine) toolCalls() []map[string]any {
 	var calls []map[string]any
 	for _, tool := range m.tools {
-		var input map[string]any
-		switch tool.kind {
-		case "":
-			return nil, failure("invalid_kiro_tool_call", fmt.Sprintf("Kiro tool call %s is missing input", tool.name))
-		case "object":
-			input = tool.object
-		default:
-			joined := strings.Join(tool.text, "")
-			input = map[string]any{}
-			if strings.TrimSpace(joined) != "" {
-				parsed, err := concerns.WireObject([]byte(joined))
-				if err != nil {
-					return nil, failure("invalid_kiro_tool_call", fmt.Sprintf("Kiro tool call %s input is not a JSON object", tool.name))
-				}
-				input = parsed
+		call, err := m.toolCall(tool)
+		if err != nil {
+			if m.toolError == "" {
+				m.toolError = err.Error()
 			}
+			continue
 		}
-		if tool.name == "tool_call" {
-			if nested, _ := input["name"].(string); strings.TrimSpace(nested) == "" {
-				return nil, failure("invalid_kiro_tool_call", "Invalid Kiro tool_call payload: missing nested MCP tool name")
-			}
-			if _, set := input["arguments"]; !set {
-				return nil, failure("invalid_kiro_tool_call", "Invalid Kiro tool_call payload: missing nested MCP tool arguments")
-			}
-		}
-		calls = append(calls, map[string]any{"id": tool.id, "name": m.options.Names.Original(tool.name), "arguments": concerns.JSONText(input)})
+		calls = append(calls, call)
 	}
-	return calls, nil
+	return calls
+}
+
+func (m *machine) toolCall(tool *toolBuffer) (map[string]any, error) {
+	var input map[string]any
+	switch tool.kind {
+	case "":
+		return nil, errors.New("Kiro tool call is missing input")
+	case "object":
+		input = tool.object
+	default:
+		joined := strings.Join(tool.text, "")
+		// A blank input is not JSON: the pin's JSON.parse("") throws and the call is
+		// dropped (executors/kiro.js:731-735).
+		parsed, err := concerns.WireObject([]byte(joined))
+		if err != nil {
+			return nil, fmt.Errorf("Kiro tool input must be valid object JSON (%v)", err)
+		}
+		input = parsed
+	}
+	if tool.name == "tool_call" {
+		if nested, _ := input["name"].(string); strings.TrimSpace(nested) == "" {
+			return nil, errors.New("Invalid Kiro tool_call payload: missing nested MCP tool name")
+		}
+		if _, set := input["arguments"]; !set {
+			return nil, errors.New("Invalid Kiro tool_call payload: missing nested MCP tool arguments")
+		}
+	}
+	return map[string]any{"id": tool.id, "name": m.options.Names.Original(tool.name), "arguments": concerns.JSONText(input)}, nil
+}
+
+// truncationReasons are the stops that mean "usable as far as it got, then the
+// budget ran out"; cancelled and pause_turn are abandoned turns whose partial
+// content stays private (executors/kiro.js:153-157).
+func truncationReason(reason string) bool {
+	return reason == "model_context_window_exceeded" || reason == "max_tokens"
 }
 
 // finish ends the answer after the reader returned cleanly: held text, tool
-// calls, then the finish reason (executors/kiro.js:996-1133). It returns the
-// finish reason; an answer that did not finish is an error.
+// calls, then the finish reason, in the order the pin decides them
+// (executors/kiro.js:996-1133). It returns the finish reason; an answer that did
+// not finish is an error. The stop reason is judged before the tool calls are
+// validated, so an authoritative failure is never reported as a tool defect.
 func (m *machine) finish() (string, error) {
-	if !m.terminal {
-		return "", io.ErrUnexpectedEOF
-	}
+	// m.terminal is not required: the pin completes an answer that ends cleanly
+	// without a stop event (executors/kiro.js:1008-1075); it fails only one that
+	// produced nothing at all (below).
 	if err := m.flushText(); err != nil {
 		return "", err
 	}
-	calls, err := m.toolCalls()
-	if err != nil {
-		return "", err
-	}
 	reason := m.stopReason
-	switch {
-	case reason == "end_turn", reason == "":
-		if len(calls) > 0 {
-			reason = concerns.FinishToolCalls
-		} else {
-			reason = concerns.FinishStop
+	declared := disposition(reason, m.sawToolUse)
+	// A truncation after output keeps what was streamed and closes as length (:1014-1018).
+	keptTruncation := truncationReason(reason) && m.deltas > 0
+	switch declared {
+	case dispRetryable, dispIncomplete, dispRefusal, dispUnknown:
+		if !keptTruncation {
+			return "", m.stopFailure(reason, declared)
 		}
-	case reason == "tool_use":
-		resolved, err := concerns.ResolveFinish(concerns.FinishToolCalls, len(calls), false)
-		if err != nil {
-			return "", failure("kiro_tool_use_without_call", err.Error())
+	}
+	calls := m.toolCalls()
+	// A declared tool turn that produced nothing usable is fatal only when the
+	// turn produced nothing else (:787-790, :1053-1063).
+	if len(calls) == 0 && !m.delivered {
+		if reason == "tool_use" {
+			return "", m.toolFailure("Kiro tool_use stop reason did not include a complete tool call")
 		}
-		reason = resolved
-	case reason == "max_tokens" && len(calls) == 0:
-		reason = concerns.FinishLength
-	case reason == "model_context_window_exceeded" && len(calls) == 0 && m.delivered:
-		reason = concerns.FinishLength
-	default:
-		return "", failure("kiro_terminal_"+severityName(reason), "Kiro ended with non-success stop reason: "+reason)
+		if m.toolError != "" {
+			return "", m.toolFailure(m.toolError)
+		}
+	}
+	if len(calls) == 0 && !m.delivered && !m.explicitStop {
+		return "", m.fail(pinFailure{code: "kiro_missing_terminal", message: "Kiro EventStream ended without model output", provenance: "empty_response_eof", transport: "clean_eof", disposition: dispIncomplete})
+	}
+	final := disposition(reason, len(calls) > 0)
+	truncated := final == dispIncomplete && truncationReason(reason) && (m.deltas > 0 || len(calls) > 0)
+	switch final {
+	case dispRetryable, dispIncomplete, dispRefusal, dispUnknown:
+		if !truncated {
+			return "", m.stopFailure(reason, final)
+		}
 	}
 	for index, call := range calls {
 		start := map[string]any{"index": index, "id": call["id"], "type": "function",
@@ -698,21 +783,17 @@ func (m *machine) finish() (string, error) {
 		if err := m.emit(map[string]any{"tool_calls": []any{more}}); err != nil {
 			return "", err
 		}
+		m.emittedCalls++
 	}
-	return reason, nil
-}
-
-func severityName(reason string) string {
-	switch reason {
-	case "cancelled", "pause_turn", "max_tokens", "model_context_window_exceeded":
-		return "incomplete"
-	case "malformed_model_output", "invalid_model_output":
-		return "protocol_failure"
+	switch {
+	case truncated:
+		return concerns.FinishLength, nil
+	case len(calls) > 0:
+		return concerns.FinishToolCalls, nil
+	case final == dispLength:
+		return concerns.FinishLength, nil
 	}
-	if reason == "refusal" || refusalPattern.MatchString(reason) {
-		return "refusal"
-	}
-	return "unknown_stop_reason"
+	return concerns.FinishStop, nil
 }
 
 func chunk(m *machine, delta map[string]any, finish any, usage map[string]any) map[string]any {
@@ -747,11 +828,7 @@ func KiroStreamToChat(ctx context.Context, src io.Reader, dst io.Writer, options
 		return writer.Event("", chunk(state, delta, finish, usage))
 	}
 	state = newMachine(options, func(delta map[string]any) error { return send(delta, nil, nil) })
-	err := concerns.ReadEventStream(ctx, src, state.handle)
-	var reason string
-	if err == nil {
-		reason, err = state.finish()
-	}
+	reason, err := state.run(ctx, src)
 	if err != nil {
 		_ = concerns.FailChatStream(ctx, writer, err)
 		return err
@@ -784,10 +861,7 @@ func KiroResponseToChat(body []byte, options ResponseOptions) ([]byte, error) {
 		}
 		return nil
 	})
-	if err := concerns.ReadEventStream(context.Background(), bytes.NewReader(body), state.handle); err != nil {
-		return nil, err
-	}
-	reason, err := state.finish()
+	reason, err := state.run(context.Background(), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

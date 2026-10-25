@@ -170,11 +170,7 @@ func KiroStreamToMessages(ctx context.Context, src io.Reader, dst io.Writer, opt
 		}
 		return blocks.accept(delta)
 	})
-	err := concerns.ReadEventStream(ctx, src, state.handle)
-	var reason string
-	if err == nil {
-		reason, err = state.finish()
-	}
+	reason, err := state.run(ctx, src)
 	if err == nil {
 		if err = start(); err == nil {
 			err = blocks.stop()
@@ -240,10 +236,7 @@ func KiroResponseToMessages(body []byte, options ResponseOptions) ([]byte, error
 		close: func(int) error { flush(); return nil },
 	}
 	state := newMachine(options, blocks.accept)
-	if err := concerns.ReadEventStream(context.Background(), bytes.NewReader(body), state.handle); err != nil {
-		return nil, err
-	}
-	reason, err := state.finish()
+	reason, err := state.run(context.Background(), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
