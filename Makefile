@@ -27,7 +27,7 @@ compat-test:
 parity-test:
 	node compat/parity/inventory.mjs
 	go test -race ./internal/app -run TestPinnedSystemOneDifferential -count=1
-	go test -race ./internal/security ./internal/ingress ./internal/providers/shared
+	go test -race ./internal/security ./internal/ingress ./internal/providers/shared ./internal/providers/wire ./internal/protocol/concerns
 	go test -race ./internal/parity ./internal/protocol/hub -count=1
 
 race:

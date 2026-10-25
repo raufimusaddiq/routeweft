@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -448,5 +449,62 @@ func TestZedBrokenUpstreamIsAnErrorToTheClient(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// When a failed attempt is kept for a fallback and the next candidate serves, the
+// kept response is released: for Zed its body is the relay pipe, so a leak would
+// leave the relay goroutine and the upstream request open.
+func TestFailedAttemptKeptForFallbackIsReleasedWhenTheNextCandidateServes(t *testing.T) {
+	released := make(chan struct{})
+	var once sync.Once
+	rig := newCodeBuddyRig(t, "zed", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/client/llm_tokens"):
+			fmt.Fprint(w, `{"token":"llm-fixture"}`)
+		case strings.HasSuffix(r.URL.Path, "/models"):
+			fmt.Fprint(w, `{"models":[{"id":"glm-5.2","provider":"anthropic"}]}`)
+		case strings.Contains(r.URL.Path, "/v2/quota/"):
+			// The failing account: the failure, then the connection stays open.
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			fmt.Fprint(w, zedQuotaFailure)
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+			once.Do(func() { close(released) })
+		default:
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			fmt.Fprint(w, zedNDJSON)
+		}
+	})
+	rig.settings = routing.ProviderSettings{UserID: "user-1", OrganizationID: "org-1"}
+	rig.endpoint = "chat/completions"
+	rig.accounts = []string{"quota", "good"}
+
+	out := rig.post("/v1/chat/completions", `{"model":"x","stream":true,"messages":[{"role":"user","content":"ping"}]}`)
+	if out.Code != 200 || !strings.Contains(out.Body.String(), "pong") {
+		t.Fatalf("%d %s", out.Code, out.Body)
+	}
+	select {
+	case <-released:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the failed attempt's upstream request is still open after the next candidate served")
+	}
+	// And the relay behind the kept response has ended: no goroutine is left in it.
+	relay := func() string {
+		buf := make([]byte, 1<<20)
+		stacks := string(buf[:runtime.Stack(buf, true)])
+		for _, frame := range []string{"wire.zedRelay", "wire.ZedDo", "concerns.ReadLinesPin"} {
+			if strings.Contains(stacks, frame) {
+				return stacks
+			}
+		}
+		return ""
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for relay() != "" && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if stacks := relay(); stacks != "" {
+		t.Fatalf("the failed attempt's relay goroutine is still running:\n%s", stacks)
 	}
 }

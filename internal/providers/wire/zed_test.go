@@ -1019,11 +1019,19 @@ func TestZedAcceptedFailureClassification(t *testing.T) {
 		"monthly quota exhausted": routing.OutcomeQuotaLock,
 		"Billing issue":           routing.OutcomeQuotaLock,
 		"rate limited":            routing.OutcomeQuotaLock,
-		"credits depleted":        routing.OutcomeQuotaLock,
-		"unauthorized":            routing.OutcomeAuthRefreshRequired,
-		"Authentication failed":   routing.OutcomeAuthRefreshRequired,
-		"upstream went away":      routing.OutcomeFallbackAccount,
-		"request failed":          routing.OutcomeFallbackAccount,
+		"Rate_Limit_Exceeded":     routing.OutcomeQuotaLock,
+		"too many requests":       routing.OutcomeQuotaLock,
+		"monthly limit reached":   routing.OutcomeQuotaLock,
+		// Transient errors that happen to contain the letters of a quota word.
+		"failed to generate a response": routing.OutcomeFallbackAccount,
+		"temperature must be moderate":  routing.OutcomeFallbackAccount,
+		"unlimited plan, upstream busy": routing.OutcomeFallbackAccount,
+		"deliberate failure":            routing.OutcomeFallbackAccount,
+		"credits depleted":              routing.OutcomeQuotaLock,
+		"unauthorized":                  routing.OutcomeAuthRefreshRequired,
+		"Authentication failed":         routing.OutcomeAuthRefreshRequired,
+		"upstream went away":            routing.OutcomeFallbackAccount,
+		"request failed":                routing.OutcomeFallbackAccount,
 	} {
 		response := &http.Response{Header: http.Header{}}
 		response.Header.Set(zedFailureHeader, base64.StdEncoding.EncodeToString([]byte(message)))
@@ -1150,5 +1158,73 @@ func TestZedRefreshesTheCatalogForAnUnlistedModelAsThePinDoes(t *testing.T) {
 	u.do(t, u.provider(), zedChatBody)
 	if reads != 3 {
 		t.Errorf("a listed model re-read the catalog: %d", reads)
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// The *http.Response client.Do returns is the transport's: its goroutines still read
+// it. ZedDo hands back a copy and leaves that one exactly as it received it, on the
+// served path, the failed-head path and the upstream-error path (deterministic
+// stand-in for a race the detector only sometimes catches).
+func TestZedDoNeverModifiesTheTransportsResponse(t *testing.T) {
+	for name, tc := range map[string]struct {
+		status int
+		body   string
+	}{
+		"served":         {200, zedAnthropicStream},
+		"failed head":    {200, `{"status":{"failed":{"message":"quota exhausted"}}}` + "\n"},
+		"upstream error": {403, `{"code":"trial_blocked"}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			zedReset()
+			t.Cleanup(zedReset)
+			var canned *http.Response
+			var original struct {
+				header        http.Header
+				contentLength int64
+				body          io.ReadCloser
+			}
+			reply := func(status int, contentType, text string) *http.Response {
+				return &http.Response{StatusCode: status, Status: fmt.Sprint(status), Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1,
+					Header:        http.Header{"Content-Type": {contentType}, "Content-Length": {fmt.Sprint(len(text))}, "Content-Encoding": {"identity"}},
+					ContentLength: int64(len(text)), Body: io.NopCloser(strings.NewReader(text))}
+			}
+			client := &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				switch r.URL.Path {
+				case "/client/llm_tokens":
+					return reply(200, "application/json", `{"token":"llm-fixture"}`), nil
+				case "/models":
+					return reply(200, "application/json", `{"models":[{"id":"claude-sonnet-4.5","provider":"anthropic"}]}`), nil
+				}
+				canned = reply(tc.status, "application/x-ndjson", tc.body)
+				original.header, original.contentLength, original.body = canned.Header.Clone(), canned.ContentLength, canned.Body
+				return canned, nil
+			})}
+			provider := routing.ProviderRef{ProviderID: "zed", ConnectionID: "c", BaseURL: "https://zed.example.test", Protocol: chat, APIToken: zedAccessToken,
+				Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{UserID: "user-1", OrganizationID: "org-1"}}}
+			request, _ := http.NewRequest(http.MethodPost, "https://zed.example.test/"+zedEndpoint, strings.NewReader(zedChatBody))
+			got, err := ZedDo(provider, client, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			io.Copy(io.Discard, got.Body)
+			got.Body.Close()
+			if got == canned {
+				t.Fatal("ZedDo returned the transport's own response")
+			}
+			if canned.ContentLength != original.contentLength || canned.Uncompressed || canned.Body != original.body || !reflect.DeepEqual(canned.Header, original.header) {
+				t.Errorf("the transport's response was modified: length %d (was %d), uncompressed %v, header %v (was %v)",
+					canned.ContentLength, original.contentLength, canned.Uncompressed, canned.Header, original.header)
+			}
+			if tc.status == 200 && (got.ContentLength != -1 || !got.Uncompressed || got.Header.Get("Content-Type") != "text/event-stream") {
+				t.Errorf("the copy was not reshaped: %d %v %v", got.ContentLength, got.Uncompressed, got.Header)
+			}
+			if tc.status != 200 && got.StatusCode != tc.status {
+				t.Errorf("status %d", got.StatusCode)
+			}
+		})
 	}
 }

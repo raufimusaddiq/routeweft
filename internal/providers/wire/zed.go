@@ -693,18 +693,22 @@ func ZedDo(provider routing.ProviderRef, client *http.Client, request *http.Requ
 		return fail(err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		response.Body = &zedBody{ReadCloser: response.Body, cancel: cancel}
-		return response, nil
+		// The transport's goroutines still own the response client.Do returned, so
+		// what is changed is a copy of it.
+		kept := *response
+		kept.Body = &zedBody{ReadCloser: response.Body, cancel: cancel}
+		return &kept, nil
 	}
 	// A failed status ahead of any output is read before the reply is handed on, so
 	// the dispatcher can cool the account and try the next candidate; the client is
 	// still shown the pin's text (zedRelay). Past the first output a failure can no
 	// longer move to another account and is only relayed.
 	upstream, headFailure := zedPeekHead(response.Body)
-	response.Header = response.Header.Clone()
-	response.Header.Del(zedFailureHeader)
+	kept := *response // see above: never the transport's own struct
+	kept.Header = response.Header.Clone()
+	kept.Header.Del(zedFailureHeader)
 	if headFailure != nil {
-		response.Header.Set(zedFailureHeader, base64.StdEncoding.EncodeToString([]byte(*headFailure)))
+		kept.Header.Set(zedFailureHeader, base64.StdEncoding.EncodeToString([]byte(*headFailure)))
 	}
 	reader, writer := io.Pipe()
 	go func() {
@@ -712,12 +716,12 @@ func ZedDo(provider routing.ProviderRef, client *http.Client, request *http.Requ
 		upstream.Close()
 		writer.Close()
 	}()
-	response.Body = &zedBody{ReadCloser: reader, cancel: cancel}
-	response.Header.Set("Content-Type", "text/event-stream")
-	response.Header.Del("Content-Length")
-	response.Header.Del("Content-Encoding")
-	response.ContentLength, response.Uncompressed = -1, true
-	return response, nil
+	kept.Body = &zedBody{ReadCloser: reader, cancel: cancel}
+	kept.Header.Set("Content-Type", "text/event-stream")
+	kept.Header.Del("Content-Length")
+	kept.Header.Del("Content-Encoding")
+	kept.ContentLength, kept.Uncompressed = -1, true
+	return &kept, nil
 }
 
 // zedBody ties the reply to the upstream request: closing it stops both.
@@ -1024,7 +1028,7 @@ func zedPeekHead(body io.ReadCloser) (io.ReadCloser, *string) {
 // zedAcceptedFailure is Hook.AcceptedFailure: how a failed status the client is
 // shown as text counts against the account. The pin has no account accounting for
 // it; Routeweft reads the message the way it reads an upstream error body: quota,
-// billing and rate words lock the account, authentication words ask for a refresh,
+// billing and rate-limit phrases lock the account, authentication words ask for a refresh,
 // anything else is a failed attempt that falls back and cools for the default
 // backoff.
 func zedAcceptedFailure(response *http.Response) (routing.Classification, bool) {
@@ -1047,7 +1051,7 @@ func zedAcceptedFailure(response *http.Response) (routing.Classification, bool) 
 		return false
 	}
 	switch {
-	case has("quota", "billing", "credit", "limit", "exhaust", "rate"):
+	case has("quota", "billing", "credit", "exhaust", "rate limit", "rate_limit", "rate-limit", "ratelimit", "usage limit", "limit exceeded", "limit reached", "too many requests"):
 		return routing.Classification{Outcome: routing.OutcomeQuotaLock}, true
 	case has("unauthorized", "authentication", "permission", "forbidden", "expired token", "invalid token"):
 		return routing.Classification{Outcome: routing.OutcomeAuthRefreshRequired}, true
