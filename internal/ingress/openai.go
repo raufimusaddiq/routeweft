@@ -70,7 +70,9 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 			if upstreamModel == "" {
 				upstreamModel = model
 			}
-			if chat != nil && h.opts.TranslateChat != nil {
+			if wire.HasCodec(plan.TargetProtocol) {
+				translated, err = h.codecTranslation(provider, chat, responses, nil, compact, upstreamModel)
+			} else if chat != nil && h.opts.TranslateChat != nil {
 				request := *chat
 				request.Model = upstreamModel
 				request.Scope = translationScope(r, provider)
@@ -298,7 +300,17 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 	}
 	translated, err := translation.Response(body)
 	if err != nil {
-		h.writeError(w, 502, "upstream_response_invalid", "upstream response could not be translated")
+		var failure *wire.WebAnswerError
+		if errors.As(err, &failure) {
+			// The site reported a failure inside its answer: the client gets the
+			// pin's 502 document, and the attempt is classified as failed.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write(failure.Body())
+			h.recordClassification(provider.ConnectionID, classifyResponse(http.StatusBadGateway, nil), time.Now())
+		} else {
+			h.writeError(w, 502, "upstream_response_invalid", "upstream response could not be translated")
+		}
 		usage, observed := shared.ParseUsage(provider.Protocol, body)
 		h.emitTranslated(r, provider, 502, false, usage, observed, started)
 		return

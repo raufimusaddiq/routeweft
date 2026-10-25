@@ -320,8 +320,8 @@ func importCell(spec registry.Spec) cell {
 		"gitlab":         {kindP, ref("providers/onboarding:TestGitlabPATRequiresVerification"), "PAT verified before it is stored"},
 		"kilocode":       {kindP, ref("control/api:TestOAuthDeviceApprovalStoresNonExpiringBearerOnce"), "device approval stores a non-expiring bearer; the pin has no refresh grant for it"},
 		"kimchi":         {kindP, ref("providers/onboarding:TestKimchiRejectsInvalidToken"), "token validated on import"},
-		"grok-web":       {kindG, nil, "cookie/session import has no implementation or test; the provider is unavailable"},
-		"perplexity-web": {kindG, nil, "cookie/session import has no implementation or test; the provider is unavailable"},
+		"grok-web":       {kindG, nil, "no import flow, as at the pin (a cookie is entered as the connection credential); sealed storage and non-exposure are tested in onboarding:TestWebSessionCookieSealedAndAbsentFromReadModelsLogsAndErrors; the provider is unavailable"},
+		"perplexity-web": {kindG, nil, "no import flow, as at the pin (a cookie is entered as the connection credential); sealed storage and non-exposure are tested in onboarding:TestWebSessionCookieSealedAndAbsentFromReadModelsLogsAndErrors; the provider is unavailable"},
 		"vertex":         {kindG, nil, "the service account or ADC JSON is typed in as the connection key and used at serving (TestVertexMintsAndCachesAServiceAccountToken); no import flow exists or is needed at the pin (vertex.js:62-72)"},
 		"gemini":         {kindN, nil, fmt.Sprintf("%s: the pin's oauth key is only the header scheme for the OAuth form of the API credential; Routeweft serves the API-key flow (PROVIDER_BASELINE)", pinFile(id))},
 	}
@@ -438,7 +438,7 @@ func modeCell(t *testing.T, spec registry.Spec, stream bool, chat, skips map[str
 	case "qoder":
 		return cell{kindG, ref("ingress:TestQoderDispatchSeamSignsFinalRequest"), "only the request signing seam is tested; the pin converts in its executor, not a translator leg (registry/qoder.js:19-26, executors/qoder.js:210-335,426-597), and that envelope and SSE unwrap are not built, so streamed and buffered bodies are untested"}
 	case "grok-web", "perplexity-web":
-		return cell{kindU, ref(readinessTest), "refused by its immutable readiness; no codec exists to test"}
+		return cell{kindU, ref(readinessTest), "refused by its immutable readiness; the hook Codec is proved with the fence lifted for the test run only (ingress:TestGrokWebIsServedToEveryClientWire, ingress:TestPerplexityWebThreadIsContinuedOnlyOnTheSameConnection)"}
 	case "iflow":
 		return cell{kindT, ref("ingress:TestRegistryNativeTransportWires", "ingress:TestIflowRequestIsSigned"), "Chat both modes through the table; the signature over the final body is asserted by TestIflowRequestIsSigned"}
 	case "kimi":
@@ -553,7 +553,7 @@ func errorsCell(spec registry.Spec) cell {
 		return c
 	}
 	if spec.Readiness.Status == registry.ProviderUnavailable {
-		return cell{kindU, ref(readinessTest), "refused by its immutable readiness; no error codec to test"}
+		return cell{kindU, ref(readinessTest), "refused by its immutable readiness; the pin's error frames and documents are proved with the fence lifted (ingress:TestWebSiteFailureIsRecordedAsFailedWhileTheClientSeesThePinsFrame, ingress:TestWebRefusedSessionIsThePinsErrorDocumentWithTheStatusKept)"}
 	}
 	return cell{kindS, ref(genericErrors, cooldownTest), "shared status/body classification; the pin's executor has no provider-specific parseError"}
 }
@@ -592,7 +592,7 @@ func tokensCell(spec registry.Spec) cell {
 		return c
 	}
 	if spec.Readiness.Status == registry.ProviderUnavailable {
-		return cell{kindU, ref(readinessTest), "refused by its immutable readiness; no usage codec to test"}
+		return cell{kindU, ref(readinessTest), "refused by its immutable readiness; the site reports no usage, so accounting is unobserved and the pin's length/4 estimate stays client-visible (ingress:TestGrokWebIsServedToEveryClientWire)"}
 	}
 	return cell{kindS, ref("providers/shared:TestParseUsagePerProtocolFamily", "ingress:TestNativeNonStreamEmitsExactlyOneReportedRecord", "ingress:TestNativeStreamEmitsOneRecordFromFinalChunk"), "shared OpenAI-shape accounting (prompt_tokens_details.cached_tokens); nothing names this provider"}
 }

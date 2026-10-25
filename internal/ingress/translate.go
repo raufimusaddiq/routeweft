@@ -17,6 +17,7 @@ import (
 	kiroadapter "github.com/raufimusaddiq/routeweft/internal/protocol/kiro"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
@@ -36,6 +37,9 @@ import (
 // A provider leaves this list in the PR that binds its wire.
 var unwired = map[string]bool{
 	cursor.Protocol: true,
+	// grok-web and perplexity-web have hook Codecs that convert (#195), but nothing
+	// routes to them until the owner approves it after a supervised live check.
+	"grok-web": true, "perplexity-web": true,
 }
 
 // geminiSignatures keeps the thought signatures Gemini attached to its function
@@ -147,16 +151,27 @@ func takesProviderHeaders(target string) bool {
 		geminiwire.VertexProtocol, geminiwire.GeminiCLIProtocol, geminiwire.AntigravityProtocol:
 		return true
 	}
-	return false
+	return wire.HasCodec(target)
 }
 
 // CanTranslate declares the implemented protocol pairs, independent of providers.
 func CanTranslate(source, target string) bool {
-	return source != target && !unwired[target] && hub.CanTranslate(source, target)
+	return source != target && !unwired[target] && (hub.CanTranslate(source, target) || codecServes(source, target))
+}
+
+// codecServes reports whether a hook Codec converts for target: the executor-level
+// providers (grok-web, perplexity-web) that have no hub leg because the pin has none.
+// A Codec takes the Chat body, so the three client wires reach it, Responses and
+// Messages through Chat; Responses Compact has no codec.
+func codecServes(source, target string) bool {
+	if !wire.HasCodec(target) {
+		return false
+	}
+	return source == openai.ChatProtocol || source == openai.ResponsesProtocol || source == anthropic.MessagesProtocol
 }
 
 func (h *Handler) translationAvailable(source, target string, compact bool) bool {
-	if !CanTranslate(source, target) {
+	if !CanTranslate(source, target) || (compact && wire.HasCodec(target)) {
 		return false
 	}
 	switch source {
@@ -501,4 +516,61 @@ func endsOnAssistant(value any) bool {
 		return false
 	}
 	return concerns.Text(concerns.Object(list[len(list)-1])["role"]) == "assistant"
+}
+
+// codecTranslation builds the attempt for a provider whose hook Codec converts: the
+// client's request becomes a Chat body (a Chat client's as it is, Responses and
+// Messages through their Chat legs), the codec turns that into the site's request,
+// and its answer is read back as Chat and, for the other two wires, converted on to
+// the client's (the CommandCode pivot). model is the one the site is asked for.
+func (h *Handler) codecTranslation(provider routing.ProviderRef, chat *openai.ChatRequest, responses *openai.ResponsesRequest, messages *anthropic.MessagesRequest, compact bool, model string) (ChatTranslation, error) {
+	var (
+		parsed       map[string]any
+		err          error
+		toClient     func([]byte) ([]byte, error)
+		toClientFlow streamFunc
+	)
+	switch {
+	case compact:
+		return ChatTranslation{}, fmt.Errorf("no Responses Compact codec for %q", provider.ProviderID)
+	case chat != nil:
+		parsed, err = concerns.WireObject(chat.Raw)
+	case responses != nil:
+		attempt := *responses
+		attempt.Model = model
+		var body []byte
+		if body, err = openai.ResponsesToChat(&attempt); err != nil {
+			return ChatTranslation{}, err
+		}
+		if parsed, err = concerns.WireObject(body); err == nil {
+			custom := openai.CustomToolNames(&attempt)
+			toClient = func(body []byte) ([]byte, error) { return openai.ChatResponseToResponses(body, custom) }
+			toClientFlow = func(ctx context.Context, src io.Reader, dst io.Writer) error {
+				return openai.ChatStreamToResponses(ctx, src, dst, model, custom)
+			}
+		}
+	case messages != nil:
+		if parsed, err = anthropic.MessagesRequestToHubChat(messages.Raw, model, messages.Stream); err == nil {
+			toClient, toClientFlow = anthropic.ChatResponseToMessages, anthropic.ChatStreamToMessages
+		}
+	default:
+		err = errors.New("no request to convert")
+	}
+	if err != nil {
+		return ChatTranslation{}, err
+	}
+	var state *wire.CodecState
+	if h.opts.State != nil {
+		state = h.opts.State.CodecState()
+	}
+	codec, _, err := wire.CodecFor(provider, state, parsed, model)
+	if err != nil {
+		return ChatTranslation{}, err
+	}
+	translation := ChatTranslation{Endpoint: codec.Endpoint, Body: codec.Body, Response: codec.Response, Stream: codec.Stream}
+	if toClient != nil {
+		translation.Response = chainBodies(codec.Response, toClient)
+		translation.Stream = chainStreams(codec.Stream, toClientFlow)
+	}
+	return translation, nil
 }

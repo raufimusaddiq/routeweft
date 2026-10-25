@@ -342,6 +342,16 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 			}
 			translated.Body, err = request.MarshalBody(provider.UpstreamModel)
 			translated.Headers = anthropicHeaders(r, provider)
+		} else if wire.HasCodec(plan.TargetProtocol) {
+			model := provider.UpstreamModel
+			if model == "" {
+				model = request.Model
+			}
+			translated, err = h.codecTranslation(provider, nil, nil, request, false, model)
+			translated.Headers = openAIProviderHeaders(provider)
+			if provider.Endpoint != "" {
+				translated.Endpoint = provider.Endpoint
+			}
 		} else if h.opts.TranslateMessages != nil {
 			attempt := *request
 			attempt.Model = provider.UpstreamModel

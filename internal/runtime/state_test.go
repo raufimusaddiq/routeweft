@@ -41,3 +41,15 @@ func TestPreferredWireIsPerProviderAndModelAndPermanent(t *testing.T) {
 		t.Fatal("the record was lost")
 	}
 }
+
+// The codec state is owned here beside PreferWire: one per RuntimeState, stable for
+// the life of the process, and not shared between states.
+func TestCodecStateIsOwnedByTheRuntimeState(t *testing.T) {
+	a, b := NewState(), NewState()
+	if a.CodecState() == nil || a.CodecState().Perplexity == nil || a.CodecState() != a.CodecState() {
+		t.Fatal("the codec state is missing or unstable")
+	}
+	if a.CodecState() == b.CodecState() || a.CodecState().Perplexity == b.CodecState().Perplexity {
+		t.Fatal("two runtime states share a thread cache")
+	}
+}
