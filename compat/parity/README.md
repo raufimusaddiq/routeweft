@@ -26,6 +26,11 @@ entry; a visible one may not.
 from the pinned registry. Seeds are never hand-edited: running it with a new pin
 is the only way that file changes.
 
+`compat/parity/generate-antigravity-retry.mjs` evaluates the pinned `base.js` and
+`antigravity.js` retry path, `computeRetryDelay` and the system-prompt rewrites with a
+scripted network, clock and timers, and writes `internal/providers/wire/testdata/antigravity_pin.json`
+(PARITY 6.21). It needs `ORACLE_DIR` and `TZ=UTC`; the Go tests only read the file.
+
 CI runs this as the `parity` PR job, alongside existing Go/UI/container jobs.
 No test may update golden files from its actual output or turn a missing oracle
 into a passing dedicated gate. Ordinary unit tests remain usable without v1.
