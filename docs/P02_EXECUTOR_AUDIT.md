@@ -62,8 +62,8 @@ and what follows from it:
    their own name. A Chat-shaped or non-stream client could not have been served at all.
 5. **Antigravity's tool cloaking is dead code at the pin.** `AntigravityExecutor.cloakTools`
    is a static method nothing calls; the call in `translator/index.js:180` is a
-   comment. The prompt-branding rewrite (`E/antigravity.js:265-274`) is applied. Neither
-   is ported: both exist to keep the provider from recognizing the client.
+   comment. The prompt-branding rewrite (`E/antigravity.js:265-274`) is applied at the pin.
+   Cloaking is not ported; the rewrite is (#202, PARITY 6.21).
 6. **Cookie sessions are three executors, and the cookie is the small part.** Grok Web
    (`E/grok-web.js:285-290`) and Perplexity Web (`E/perplexity-web.js:446-449`) send a
    cookie together with a browser identity (`E/grok-web.js:263-283`: sec-ch-ua,
@@ -96,7 +96,7 @@ protocol legs are under `internal/protocol/`; gating is in
 
 | Provider | Pin behavior and source | Routeweft disposition after this slice |
 |---|---|---|
-| antigravity | Multi-host `/v1internal:{action}?alt=sse`, OAuth/UA (`E/antigravity.js:118-135`); project/model/request envelope, numeric session, thought signatures, tool-schema/name repair, output cap, prompt rewrite and requestType removal (`:137-311`); header/body reset hints, transient retry/backoff (`:356-447`). | PARTIAL: Gemini conversion/signature cache exists; transport/project/client binding and retry policy absent. Pin's branding rewrite is not ported. Remains unwired. Standalone image path is outside PRD §4.2. | **Update (#194): URL, bearer, user agent and project id are bound and the wire is served; retry/backoff and image models remain open; cloaking is dead code at the pin (note 5) (PARITY 6.19, fourth slice).**
+| antigravity | Multi-host `/v1internal:{action}?alt=sse`, OAuth/UA (`E/antigravity.js:118-135`); project/model/request envelope, numeric session, thought signatures, tool-schema/name repair, output cap, prompt rewrite and requestType removal (`:137-311`); header/body reset hints, transient retry/backoff (`:356-447`). | PARTIAL: Gemini conversion/signature cache exists; transport/project/client binding and retry policy absent. Pin's branding rewrite is not ported. Remains unwired. Standalone image path is outside PRD §4.2. | **Update (#194): URL, bearer, user agent and project id are bound and the wire is served; image models remain open; cloaking is dead code at the pin (note 5) (PARITY 6.19, fourth slice). Update (#202): retry/backoff, the branding rewrite and the `requestType` rule are done (PARITY 6.21).**
 | gemini-cli | Cloud Code `:{action}?alt=sse`, bearer, model-sensitive UA/API-client headers, `{project,model,request}` (`E/gemini-cli.js:10-35`); 429 Google RetryInfo (`:38-52`). | PARTIAL: conversion legs exist; **RetryInfo body hint implemented here**; target/project/client binding remains absent and wire stays unwired. | **Update (#194): target, headers and project are bound and the wire is served.**
 | cursor | Custom Connect-RPC bidirectional protobuf exchange, not OpenAI HTTP (`E/cursor.js:384-410,490-955`, selected at `E/index.js:42`). | PARTIAL: existing `wire/cursor.go` and `protocol/cursor` transport/codec remain; public dispatch stays unwired. No repeat of #174 import/onboarding. |
 | qoder | Target query (`E/qoder.js:604-606`), PAT preflight/local credential guards (`:613-659`), agent envelope plus encoded body and COSY signing (`:661-703`), strict proxy/no replay and proprietary SSE wrapper (`:706-735`). | PARTIAL: final-byte COSY hook exists (`wire/qoder.go`); full envelope/encoding, PAT exchange and proprietary stream leg absent. Signing arbitrary Chat bytes is not a complete executor. Local config failures must remain local; pin's synthetic auth failures are not a requirement to cool an account. |
@@ -198,7 +198,7 @@ served provider.
 
 | Provider | Envelope / body | Signing, token | Cookie session | Forced stream | In-band inspection, retry | Error body | Headers | Target URL |
 |---|---|---|---|---|---|---|---|---|
-| antigravity | differs: legs, unwired (`E/antigravity.js:137-311`) | - | - | - | not (`:356-446`) | not (`:356-401`) | not (`:129-135`) | not (`:118-125`) |
+| antigravity | differs: legs, unwired (`E/antigravity.js:137-311`) | - | - | - | does (#202, `:356-446`) | does (#202, `:356-401`) | not (`:129-135`) | not (`:118-125`) |
 | gemini-cli | differs: legs, unwired (`E/gemini-cli.js:25-35`) | - | - | - | - | does (#177, `:37-54`) | not (`:15-23`) | not (`:10-13`) |
 | vertex | - | not: SA JWT, ADC (`E/vertex.js:125-160`) | - | - | - | - | not (`:112-123`) | not (`:66-110`) |
 | vertex-partner | - | not (same mint) | - | - | - | - | does | differs: project path only; no raw key, no probe (`:76-81`) |
