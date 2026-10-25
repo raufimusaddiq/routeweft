@@ -633,6 +633,21 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 		result.Error = "upstream rejected the model test"
 		return result
 	}
+	// A provider can answer an account failure as a 2xx whose text the client is
+	// shown as it is (Zed's failed status). That is not a reachable model: the
+	// failure is the result, and the account is cooled as serving would cool it.
+	if failure, failed := wire.AcceptedFailure(route, response); failed {
+		now := time.Now()
+		if h.opts.Runtime != nil {
+			if deadline := routing.CooldownDeadline(failure.Classification, now, routing.DefaultFallbackBackoff); !deadline.IsZero() {
+				h.opts.Runtime.State().Cooldown(connection.ID, deadline)
+			}
+		}
+		result.OK, result.ServedModelID = false, ""
+		result.Status, result.Classification = http.StatusBadGateway, "failed"
+		result.Error = "upstream reported a failure: " + probeErrorText(failure.Message)
+		return result
+	}
 	result.OK, err = readProbe(response, transportName, &result.ServedModelID)
 	if err != nil {
 		result.probeFailure(ctx, err)
@@ -1217,4 +1232,19 @@ func authKindPermitted(spec registry.Spec, kind credentials.AuthKind) bool {
 		}
 	}
 	return false
+}
+
+// probeErrorText bounds and cleans a message an upstream wrote before it is shown
+// as a probe result.
+func probeErrorText(message string) string {
+	message = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, message)
+	if runes := []rune(message); len(runes) > 200 {
+		message = string(runes[:200]) + "…"
+	}
+	return strings.TrimSpace(message)
 }

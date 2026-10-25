@@ -288,7 +288,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				// the client gets if none does.
 				if failure, failed := wire.AcceptedFailure(provider, response); failed {
 					now := time.Now()
-					h.recordClassification(provider.ConnectionID, failure, now)
+					h.recordClassification(provider.ConnectionID, failure.Classification, now)
 					if failure.AllowsFallback() && index+1 < len(candidates) && used < maxAccountAttempts {
 						failedAttempt(nil, response, provider)
 						break

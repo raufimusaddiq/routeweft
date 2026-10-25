@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
+	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
 // A probe, a model listing and a route listing take the base, target, query and
@@ -410,5 +412,55 @@ func TestMimoFreeProbeTakesTheBootstrap(t *testing.T) {
 	}
 	if calls[1].Header.Get("Authorization") != "Bearer probe.jwt.fixture" || !strings.Contains(calls[1].Body, "You are MiMoCode") {
 		t.Errorf("chat call %v %s", calls[1].Header, calls[1].Body)
+	}
+}
+
+type probeRuntime struct{ state *runtime.RuntimeState }
+
+func (r probeRuntime) Load() (*runtime.RuntimeSnapshot, error) {
+	return &runtime.RuntimeSnapshot{}, nil
+}
+func (r probeRuntime) State() *runtime.RuntimeState { return r.state }
+
+// A Zed account that answers a failed status is not a reachable model: the probe
+// reports the failure with the upstream's message and cools the account, as serving
+// does.
+func TestZedProbeOfAFailedAccountIsNotReachableAndCoolsIt(t *testing.T) {
+	catalog, _ := registry.NewBuiltinCatalog()
+	spec, _ := catalog.Lookup("zed")
+	for _, tc := range []struct {
+		message string
+		cooled  time.Duration
+	}{
+		{"monthly quota exhausted", 5 * time.Minute},
+		{"rate limit exceeded", routing.DefaultFallbackBackoff},
+	} {
+		t.Run(tc.message, func(t *testing.T) {
+			h, _ := recordingHandler(t)
+			state := runtime.NewState()
+			h.opts.Runtime = probeRuntime{state}
+			h.opts.DiscoveryClient.HTTP = probeHTTPFunc(func(r *http.Request) (*http.Response, error) {
+				reply := func(contentType, body string) (*http.Response, error) {
+					return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{contentType}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+				}
+				switch r.URL.Path {
+				case "/client/llm_tokens":
+					return reply("application/json", `{"token":"llm-fixture"}`)
+				case "/models":
+					return reply("application/json", `{"models":[{"id":"claude-sonnet-4.5","provider":"anthropic"}]}`)
+				}
+				return reply("application/x-ndjson", fmt.Sprintf(`{"status":{"failed":{"message":%q}}}`+"\n", tc.message))
+			})
+			node, connection := builtinConnection("zed", routing.ProviderSettings{UserID: "user-1", OrganizationID: "org-1"}, credentials.AuthOAuth)
+			result := h.testProviderModel(context.Background(), connection, node, spec, "openai-chat", "claude-sonnet-4.5", 5*time.Second)
+			if result.OK || result.Classification == "reachable" || result.ServedModelID != "" || result.Status != http.StatusBadGateway ||
+				!strings.Contains(result.Error, tc.message) {
+				t.Fatalf("a failed account probed as healthy: %+v", result)
+			}
+			until, cooling := state.CooldownUntil(connection.ID, time.Now())
+			if !cooling || until.Sub(time.Now()) < tc.cooled-5*time.Second || until.Sub(time.Now()) > tc.cooled+5*time.Second {
+				t.Errorf("cooled until %v (cooling=%v), want about %v", until, cooling, tc.cooled)
+			}
+		})
 	}
 }

@@ -441,3 +441,25 @@ func TestMimoFreeRefusesAChatURLItCannotDeriveTheBootstrapFrom(t *testing.T) {
 		t.Errorf("calls %v", u.calls)
 	}
 }
+
+// One JWT per bootstrap host, and no more than mimoJWTEntries of them.
+func TestMimoFreeJWTCacheIsBounded(t *testing.T) {
+	mimoReset()
+	t.Cleanup(mimoReset)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintf(w, `{"jwt":%q}`, jwtWithExp(time.Now().Add(time.Hour).Unix()))
+	}))
+	defer server.Close()
+	for i := 0; i < mimoJWTEntries+50; i++ {
+		request, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/p%d/%s", server.URL, i, mimoChatEndpoint), strings.NewReader(`{}`))
+		if response, err := MimoFreeDo(routing.ProviderRef{ProviderID: "mimo-free"}, server.Client(), request); err == nil {
+			response.Body.Close()
+		}
+	}
+	mimoJWTs.mu.Lock()
+	n := len(mimoJWTs.byURL)
+	mimoJWTs.mu.Unlock()
+	if n == 0 || n > mimoJWTEntries {
+		t.Errorf("JWT cache holds %d entries, bound %d", n, mimoJWTEntries)
+	}
+}

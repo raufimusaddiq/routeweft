@@ -55,6 +55,8 @@ const (
 	mimoRequestLimit = 64 << 20
 	// mimoJWTLimit bounds a minted token: a real one is a few hundred bytes.
 	mimoJWTLimit = 8 << 10
+	// mimoJWTEntries bounds the JWT cache, as zedCacheEntries bounds Zed's.
+	mimoJWTEntries = 256
 )
 
 // mimoUserAgents are USER_AGENTS (:16-20).
@@ -245,6 +247,20 @@ func mimoBootstrap(client *http.Client, request *http.Request, endpoint string) 
 		return "", errors.New("MiMo bootstrap returned a JWT that is not a valid bearer")
 	}
 	mimoJWTs.mu.Lock()
+	if len(mimoJWTs.byURL) >= mimoJWTEntries {
+		// One entry per bootstrap host: bounded like Zed's caches, expired first.
+		for key, entry := range mimoJWTs.byURL {
+			if !entry.expires.After(mimoJWTs.now()) {
+				delete(mimoJWTs.byURL, key)
+			}
+		}
+		for key := range mimoJWTs.byURL {
+			if len(mimoJWTs.byURL) < mimoJWTEntries {
+				break
+			}
+			delete(mimoJWTs.byURL, key)
+		}
+	}
 	mimoJWTs.byURL[endpoint] = mimoJWT{value: jwt, expires: mimoJWTExpiry(jwt, mimoJWTs.now())}
 	mimoJWTs.mu.Unlock()
 	return jwt, nil

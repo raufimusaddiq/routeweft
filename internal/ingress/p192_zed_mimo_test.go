@@ -508,3 +508,38 @@ func TestFailedAttemptKeptForFallbackIsReleasedWhenTheNextCandidateServes(t *tes
 		t.Fatalf("the failed attempt's relay goroutine is still running:\n%s", stacks)
 	}
 }
+
+// An account whose quota is out stays excluded for the lock, not the 30 s default; a
+// rate limit does not.
+func TestZedQuotaLockOutlastsTheDefaultBackoffAndARateLimitDoesNot(t *testing.T) {
+	for _, tc := range []struct {
+		message        string
+		lockedAfter1m  bool
+		lockedAfter4m  bool
+		lockedAfterEnd bool
+	}{
+		{"monthly quota exhausted", true, true, false},
+		{"rate limit exceeded", false, false, false},
+	} {
+		t.Run(tc.message, func(t *testing.T) {
+			rig, completions := zedTwoAccountRig(t, "quota", fmt.Sprintf(`{"status":{"failed":{"message":%q}}}`+"\n", tc.message), zedNDJSON)
+			rig.accounts = []string{"quota"}
+			rig.post("/v1/chat/completions", `{"model":"x","messages":[{"role":"user","content":"ping"}]}`)
+			// Inside the window the account is not retried on the next request.
+			if again := rig.post("/v1/chat/completions", `{"model":"x","messages":[{"role":"user","content":"ping"}]}`); again.Code != 503 || completions("quota") != 1 {
+				t.Errorf("a locked account was retried: %d (%d attempts)", again.Code, completions("quota"))
+			}
+			// Reading a cooldown past its deadline clears it, so the probes go in
+			// ascending order of time.
+			now := time.Now()
+			for _, probe := range []struct {
+				after time.Duration
+				want  bool
+			}{{20 * time.Second, true}, {time.Minute, tc.lockedAfter1m}, {4 * time.Minute, tc.lockedAfter4m}, {6 * time.Minute, tc.lockedAfterEnd}} {
+				if _, cooling := rig.state.CooldownUntil("quota", now.Add(probe.after)); cooling != probe.want {
+					t.Errorf("after %v: cooling=%v, want %v", probe.after, cooling, probe.want)
+				}
+			}
+		})
+	}
+}

@@ -124,7 +124,7 @@ type Hook struct {
 	// text, as the pin does). It reports how the account is to be accounted for, so
 	// the dispatcher cools it and may try the next candidate, and it removes
 	// whatever marker Do left on the response.
-	AcceptedFailure func(*http.Response) (routing.Classification, bool)
+	AcceptedFailure func(*http.Response) (FailedAnswer, bool)
 }
 
 var hooks = map[string]Hook{
@@ -291,13 +291,21 @@ func Send(provider routing.ProviderRef, client *http.Client, request *http.Reque
 // Exchanges reports whether the provider's Do exchanges a credential (Hook.Exchange).
 func Exchanges(providerID string) bool { return For(providerID).Exchange }
 
+// FailedAnswer is an account failure carried by a 2xx response: how the account is
+// to be accounted for, and the message the upstream gave.
+type FailedAnswer struct {
+	routing.Classification
+	Message string
+}
+
 // AcceptedFailure reports the failure a 2xx response carries for the account that
-// served it, if the provider has such a response.
-func AcceptedFailure(provider routing.ProviderRef, response *http.Response) (routing.Classification, bool) {
+// served it, if the provider has such a response. Serving and the connection probe
+// both read it.
+func AcceptedFailure(provider routing.ProviderRef, response *http.Response) (FailedAnswer, bool) {
 	if read := For(provider.ProviderID).AcceptedFailure; read != nil {
 		return read(response)
 	}
-	return routing.Classification{}, false
+	return FailedAnswer{}, false
 }
 
 // ForcesStream reports whether the selected provider/model route only answers streams.

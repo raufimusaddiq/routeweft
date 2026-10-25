@@ -746,13 +746,16 @@ func zedStatus(status any) (ended bool, failure string, failed bool) {
 	case map[string]any:
 		detail = typed
 		name, _ = typed["type"].(string)
-		for key, value := range typed {
-			if key == "failed" || key == "stream_ended" {
-				name = key
-				if nested, ok := value.(map[string]any); ok {
-					detail = nested
-				}
+		// A status holding both keys is read as the failure: Go's maps keep no key
+		// order, and the pin's reading depends on which the line names first, so
+		// the one that cannot hide a failure is taken (PARITY 6.19).
+		if value, ok := typed["failed"]; ok {
+			name = "failed"
+			if nested, ok := value.(map[string]any); ok {
+				detail = nested
 			}
+		} else if _, ok := typed["stream_ended"]; ok {
+			name = "stream_ended"
 		}
 	}
 	switch name {
@@ -1026,22 +1029,44 @@ func zedPeekHead(body io.ReadCloser) (io.ReadCloser, *string) {
 }
 
 // zedAcceptedFailure is Hook.AcceptedFailure: how a failed status the client is
-// shown as text counts against the account. The pin has no account accounting for
-// it; Routeweft reads the message the way it reads an upstream error body: quota,
-// billing and rate-limit phrases lock the account, authentication words ask for a refresh,
-// anything else is a failed attempt that falls back and cools for the default
-// backoff.
-func zedAcceptedFailure(response *http.Response) (routing.Classification, bool) {
+// shown as text counts against the account, with the message the upstream gave. The
+// pin has no account accounting for it; zedClassify says how the message is read.
+func zedAcceptedFailure(response *http.Response) (FailedAnswer, bool) {
 	encoded := response.Header.Get(zedFailureHeader)
 	response.Header.Del(zedFailureHeader)
 	if encoded == "" {
-		return routing.Classification{}, false
+		return FailedAnswer{}, false
 	}
-	message, err := base64.StdEncoding.DecodeString(encoded)
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return routing.Classification{}, false
+		return FailedAnswer{}, false
 	}
-	lower := strings.ToLower(string(message))
+	message := string(decoded)
+	return FailedAnswer{Classification: zedClassify(message), Message: message}, true
+}
+
+// zedQuotaLock is how long an account whose quota is out stays excluded when
+// Zed names no reset: the ceiling of the pin's rate-limit backoff
+// (BACKOFF_CONFIG.max, config/errorConfig.js), since an account that reports its
+// quota exhausted has failed consecutively by definition and Routeweft keeps no
+// backoff level to climb. Retry-After and a reset timestamp would win first; Zed's
+// failed status carries neither.
+const zedQuotaLock = 5 * time.Minute
+
+// zedClassify reads a failed status the way the pin reads an error message, text
+// first (accountFallback.js:27-47, errorConfig.js ERROR_RULES: "rate limit" and
+// "too many requests" back off, "no credentials" cools for two minutes; the pin has
+// no authentication wording and no HTTP status here, so the order below is the
+// pin's: a message that names a rate limit is a rate limit however else it reads).
+//
+//   - exhausted quota, billing or credit: locked for zedQuotaLock, which keeps the
+//     account excluded while the quota is out;
+//   - a rate limit or too many requests: the quota-lock outcome with the default
+//     backoff, because a rate limit clears in seconds;
+//   - authentication wording: a credential refresh, cooled for two minutes;
+//   - anything else: a failed attempt that falls back, cooled for the default backoff.
+func zedClassify(message string) routing.Classification {
+	lower := strings.ToLower(message)
 	has := func(words ...string) bool {
 		for _, word := range words {
 			if strings.Contains(lower, word) {
@@ -1051,10 +1076,12 @@ func zedAcceptedFailure(response *http.Response) (routing.Classification, bool) 
 		return false
 	}
 	switch {
-	case has("quota", "billing", "credit", "exhaust", "rate limit", "rate_limit", "rate-limit", "ratelimit", "usage limit", "limit exceeded", "limit reached", "too many requests"):
-		return routing.Classification{Outcome: routing.OutcomeQuotaLock}, true
-	case has("unauthorized", "authentication", "permission", "forbidden", "expired token", "invalid token"):
-		return routing.Classification{Outcome: routing.OutcomeAuthRefreshRequired}, true
+	case has("rate limit", "rate_limit", "rate-limit", "ratelimit", "too many requests"):
+		return routing.Classification{Outcome: routing.OutcomeQuotaLock}
+	case has("quota", "billing", "credit", "exhaust", "usage limit", "limit exceeded", "limit reached"):
+		return routing.Classification{Outcome: routing.OutcomeQuotaLock, RetryAfterSeconds: int(zedQuotaLock / time.Second)}
+	case has("no credentials", "unauthorized", "authentication", "permission", "forbidden", "expired token", "invalid token", "token invalid"):
+		return routing.Classification{Outcome: routing.OutcomeAuthRefreshRequired}
 	}
-	return routing.Classification{Outcome: routing.OutcomeFallbackAccount}, true
+	return routing.Classification{Outcome: routing.OutcomeFallbackAccount}
 }

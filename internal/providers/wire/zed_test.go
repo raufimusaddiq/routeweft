@@ -1228,3 +1228,67 @@ func TestZedDoNeverModifiesTheTransportsResponse(t *testing.T) {
 		})
 	}
 }
+
+// How long a failed status keeps the account out. The pin's text rules come first
+// and have no authentication wording (a rate limit is a rate limit however else the
+// message reads); an exhausted quota stays locked past the 30 s default, and a rate
+// limit does not.
+func TestZedAcceptedFailureLockDurations(t *testing.T) {
+	now := time.Unix(2_000_000, 0)
+	for _, tc := range []struct {
+		message string
+		outcome routing.Outcome
+		lock    time.Duration
+	}{
+		{"monthly quota exhausted", routing.OutcomeQuotaLock, zedQuotaLock},
+		{"billing problem on the account", routing.OutcomeQuotaLock, zedQuotaLock},
+		{"usage limit reached", routing.OutcomeQuotaLock, zedQuotaLock},
+		{"rate limit exceeded", routing.OutcomeQuotaLock, routing.DefaultFallbackBackoff},
+		{"too many requests", routing.OutcomeQuotaLock, routing.DefaultFallbackBackoff},
+		// Both: the pin's text rule for a rate limit matches first, and it has no
+		// rule for authentication wording.
+		{"rate limit reached, token invalid", routing.OutcomeQuotaLock, routing.DefaultFallbackBackoff},
+		{"token invalid, rate limit reached", routing.OutcomeQuotaLock, routing.DefaultFallbackBackoff},
+		{"quota exhausted: invalid token", routing.OutcomeQuotaLock, zedQuotaLock},
+		{"no credentials", routing.OutcomeAuthRefreshRequired, 2 * time.Minute},
+		{"invalid token", routing.OutcomeAuthRefreshRequired, 2 * time.Minute},
+		{"upstream went away", routing.OutcomeFallbackAccount, routing.DefaultFallbackBackoff},
+	} {
+		response := &http.Response{Header: http.Header{zedFailureHeader: {base64.StdEncoding.EncodeToString([]byte(tc.message))}}}
+		got, ok := zedAcceptedFailure(response)
+		if !ok || got.Outcome != tc.outcome || got.Message != tc.message {
+			t.Errorf("%q: %+v ok=%v", tc.message, got, ok)
+			continue
+		}
+		if deadline := routing.CooldownDeadline(got.Classification, now, routing.DefaultFallbackBackoff); deadline.Sub(now) != tc.lock {
+			t.Errorf("%q locks for %v, want %v", tc.message, deadline.Sub(now), tc.lock)
+		}
+	}
+	// A reset the provider reports would still win over the lock.
+	reset := now.Add(time.Hour)
+	answer := zedClassify("quota exhausted")
+	answer.ResetAt = reset.UTC().Format(time.RFC3339)
+	if got := routing.CooldownDeadline(answer, now, routing.DefaultFallbackBackoff); !got.Equal(reset) {
+		t.Errorf("a trusted reset did not win: %v", got)
+	}
+}
+
+// A status object that holds both keys is one reading however many times it is
+// read: the failure.
+func TestZedStatusWithBothKeysIsAlwaysTheFailure(t *testing.T) {
+	var status any
+	if err := json.Unmarshal([]byte(`{"stream_ended":{},"failed":{"message":"boom"}}`), &status); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 500; i++ {
+		ended, message, failed := zedStatus(status)
+		if ended || !failed || message != "boom" {
+			t.Fatalf("read %d: ended=%v failed=%v %q", i, ended, failed, message)
+		}
+	}
+	var typed any
+	_ = json.Unmarshal([]byte(`{"type":"stream_ended","failed":{"message":"x"}}`), &typed)
+	if ended, _, failed := zedStatus(typed); ended || !failed {
+		t.Errorf("a failed key beside a stream_ended type: ended=%v failed=%v", ended, failed)
+	}
+}
