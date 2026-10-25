@@ -254,14 +254,14 @@ func unavailableCell(spec registry.Spec) cell {
 		"kenari":            {kindP, ref("providers/usage:TestKenariPinnedZeroCapacity"), "zero capacity is exhausted; absent amounts are unknown (U/kenari.js)"},
 		"opencode-go":       {kindP, ref("providers/usage:TestOpenCodeGoUsageUsedPercentAndAbsentPeriods", "providers/usage:TestOpenCodeGoUsageFailuresAreErrorsNotHealthyAccounts"), "100% used reads as nothing left; a 403 EntitlementError is a subscription hint (opencode-go.js:54-76)"},
 		"ollama":            {kindP, ref("providers/usage:TestOllamaUsageRatioIsUsedFractionAndNullWindowsAreSkipped"), "usage 1.0 reads as nothing left; a null window is skipped"},
-		"commandcode":       {kindP, ref("providers/usage:TestCommandCodeUsageCarriesOrgAndPlanCap", "providers/wire:TestParseCommandCodeError"), "cap reached reads as nothing left; provider unavailable for serving"},
+		"commandcode":       {kindP, ref("providers/usage:TestCommandCodeUsageCarriesOrgAndPlanCap", "providers/wire:TestParseCommandCodeError"), "cap reached reads as nothing left"},
 		"zed":               {kindP, ref("providers/usage:TestZedUsageLimitedUnlimitedAndExhausted", "ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin"), "500/500 reads as nothing left; trial_blocked 403 cools the account (the pin's message rewrite, zed.js:284-310, is not done)"},
 		"qoder":             {kindP, ref("providers/usage:TestQoderUsageUserAndOrganizationPools"), "a spent organization pool reads as nothing left; provider unavailable for serving"},
 		"xiaomi-mimo":       {kindP, ref("providers/usage:TestXiaomiMimoUsagePercentIsRemaining"), "a 401 (key cannot read the account quota) is an error, not an empty or full window"},
 		"github":            {kindP, ref("providers/usage:TestGitHubPaidAndFreeShapes"), "free-plan limited quotas versus paid entitlements"},
 		"kimi":              {kindP, ref("providers/usage:TestKimiEntitlementIsNotExpiry"), "an entitlement date is not a credential expiry"},
-		"kiro":              {kindP, ref("providers/usage:TestKiroFreeTrialIsSeparateWindow"), "free trial is its own window; provider unavailable for serving"},
-		"antigravity":       {kindP, ref("providers/usage:TestAntigravityFreeTierSkipsPerModelQuota"), "free tier has no per-model quota; provider unavailable for serving"},
+		"kiro":              {kindP, ref("providers/usage:TestKiroFreeTrialIsSeparateWindow"), "free trial is its own window"},
+		"antigravity":       {kindP, ref("providers/usage:TestAntigravityFreeTierSkipsPerModelQuota"), "free tier has no per-model quota"},
 		"vercel-ai-gateway": {kindP, ref("providers/usage:TestVercelBalanceIsNotAUsagePercentage"), "a credit balance is not a usage percentage"},
 		"codebuddy-cn":      {kindP, ref("ingress:TestCodeBuddyFrequencyLimitCoolsTheAccountAndRelaysTheGatewayError", "providers/wire:TestCodeBuddyFrequencyLimit", "ingress:TestCodeBuddyOtherUpstreamErrorsAreNotReadAsALimit"), "the gateway's frequency-limit body cools the account until its reset (codebuddy-error.js)"},
 		"codebuddy-intl":    {kindP, ref("ingress:TestCodeBuddyFrequencyLimitCoolsTheAccountAndRelaysTheGatewayError", "providers/wire:TestCodeBuddyFrequencyLimit", "ingress:TestCodeBuddyOtherUpstreamErrorsAreNotReadAsALimit"), "same hook as codebuddy-cn"},
@@ -322,7 +322,7 @@ func importCell(spec registry.Spec) cell {
 		"kimchi":         {kindP, ref("providers/onboarding:TestKimchiRejectsInvalidToken"), "token validated on import"},
 		"grok-web":       {kindG, nil, "cookie/session import has no implementation or test; the provider is unavailable"},
 		"perplexity-web": {kindG, nil, "cookie/session import has no implementation or test; the provider is unavailable"},
-		"vertex":         {kindG, nil, "service-account / ADC credential import is not built (readiness note); no test"},
+		"vertex":         {kindG, nil, "the service account or ADC JSON is typed in as the connection key and used at serving (TestVertexMintsAndCachesAServiceAccountToken); no import flow exists or is needed at the pin (vertex.js:62-72)"},
 		"gemini":         {kindN, nil, fmt.Sprintf("%s: the pin's oauth key is only the header scheme for the OAuth form of the API credential; Routeweft serves the API-key flow (PROVIDER_BASELINE)", pinFile(id))},
 	}
 	if c, ok := cells[id]; ok {
@@ -418,23 +418,26 @@ func modeCell(t *testing.T, spec registry.Spec, stream bool, chat, skips map[str
 		}
 		return cell{kindC, ref("protocol/cursor:TestBufferedBody"), "buffered body codec; the provider is unavailable"}
 	case "commandcode":
-		if stream {
-			return cell{kindC, ref("protocol/commandcode:TestStreamIsConvertedLineByLine", "providers/wire:TestCommandCodeForcesStreamOnTheEnvelope", "providers/wire:TestCommandCodeDoRecoversOnRetryAndReplaysTheStreamExactly"), "stream codec, forced stream envelope, replay; the Chat translation arm is not built"}
-		}
-		return cell{kindC, ref("protocol/commandcode:TestBufferedBodyIsAggregated"), "buffered aggregate codec; the provider is unavailable"}
+		return pair(
+			ref("ingress:TestCommandCodeIsServedToEveryClientWire", "protocol/commandcode:TestStreamIsConvertedLineByLine", "providers/wire:TestCommandCodeForcesStreamOnTheEnvelope", "providers/wire:TestCommandCodeDoRecoversOnRetryAndReplaysTheStreamExactly"),
+			ref("ingress:TestCommandCodeIsServedToEveryClientWire", "protocol/commandcode:TestBufferedBodyIsAggregated"),
+			"every client wire, NDJSON converted line by line, the stream forced on the envelope, a retried error event replayed",
+			"every client wire, the forced NDJSON aggregated into one body")
 	case "kiro":
-		if stream {
-			return cell{kindC, ref("protocol/kiro:TestStreamText", "protocol/kiro:TestMessagesStreamText"), "event-stream codec; the provider is unavailable"}
-		}
-		return cell{kindC, ref("protocol/kiro:TestBufferedMatchesStreamed", "protocol/kiro:TestMessagesBufferedMatchesStream"), "buffered codec; the provider is unavailable"}
-	case "antigravity", "gemini-cli":
-		if stream {
-			return cell{kindC, ref("protocol/gemini:TestAntigravityStreamText", "protocol/gemini:TestCloudCodeResponseLegsServeBothWires"), "Cloud Code stream codec; the provider is unavailable (URL, client headers and project id are not bound)"}
-		}
-		return cell{kindC, ref("protocol/gemini:TestAntigravityBufferedResponse", "protocol/gemini:TestCloudCodeResponseLegsServeBothWires"), "Cloud Code buffered codec; the provider is unavailable"}
+		return pair(
+			ref("ingress:TestKiroIsServedToEveryClientWire", "protocol/kiro:TestStreamText", "protocol/kiro:TestMessagesStreamText"),
+			ref("ingress:TestKiroIsServedToEveryClientWire", "protocol/kiro:TestBufferedMatchesStreamed", "protocol/kiro:TestMessagesBufferedMatchesStream"),
+			"every client wire through the 403 to second-host fallback, event stream converted",
+			"every client wire through the 403 to second-host fallback, event stream aggregated")
+	case "antigravity", "gemini-cli", "vertex":
+		return pair(
+			ref("ingress:TestGeminiFamilyIsServedToEveryClientWire", "protocol/gemini:TestCloudCodeResponseLegsServeBothWires", "providers/wire:TestCloudCodeURLs", "providers/wire:TestVertexURLs"),
+			ref("ingress:TestGeminiFamilyIsServedToEveryClientWire", "protocol/gemini:TestAntigravityBufferedResponse", "providers/wire:TestCloudCodeURLs", "providers/wire:TestVertexURLs"),
+			"every client wire over streamGenerateContent?alt=sse, the Cloud Code envelope and its response unwrapped (executors/gemini-cli.js:10-35, antigravity.js:118-135, vertex.js:83-123)",
+			"every client wire over generateContent, the Cloud Code envelope and its response unwrapped")
 	case "qoder":
-		return cell{kindG, ref("ingress:TestQoderDispatchSeamSignsFinalRequest"), "only the request signing seam is tested; no response codec exists at the pin for dispatch (registry/qoder.js:19-26), so streamed and buffered bodies are untested"}
-	case "vertex", "grok-web", "perplexity-web":
+		return cell{kindG, ref("ingress:TestQoderDispatchSeamSignsFinalRequest"), "only the request signing seam is tested; the pin converts in its executor, not a translator leg (registry/qoder.js:19-26, executors/qoder.js:210-335,426-597), and that envelope and SSE unwrap are not built, so streamed and buffered bodies are untested"}
+	case "grok-web", "perplexity-web":
 		return cell{kindU, ref(readinessTest), "refused by its immutable readiness; no codec exists to test"}
 	case "iflow":
 		return cell{kindT, ref("ingress:TestRegistryNativeTransportWires", "ingress:TestIflowRequestIsSigned"), "Chat both modes through the table; the signature over the final body is asserted by TestIflowRequestIsSigned"}
@@ -524,12 +527,13 @@ func errorsCell(spec registry.Spec) cell {
 		"codex":            {kindP, ref("ingress:TestProviderErrorBodiesReachTheClientByteForByte"), "usage_limit_reached body reaches the client unchanged"},
 		"grok-cli":         {kindP, ref("ingress:TestProviderErrorBodiesReachTheClientByteForByte"), "{code,error} body of the 402 spending-limit reaches the client unchanged"},
 		"zed":              {kindP, ref("ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin"), "trial_blocked 403 cools the account; the pin's message rewrite (zed.js:284-310) is not done, the client sees the upstream body"},
-		"commandcode":      {kindC, ref("providers/wire:TestParseCommandCodeError", "providers/wire:TestCommandCodeDoRetriesAnErrorEventThenReturnsItAsHTTP", "providers/wire:TestCommandCodeDoNeverRetriesAnHTTPError"), "in-band error events (executors/commandcode.js:60-100); the provider is unavailable"},
+		"commandcode":      {kindP, ref("ingress:TestCommandCodeErrorEventReachesEveryClientAsAnHTTPError", "providers/wire:TestParseCommandCodeError", "providers/wire:TestCommandCodeDoRetriesAnErrorEventThenReturnsItAsHTTP", "providers/wire:TestCommandCodeDoNeverRetriesAnHTTPError"), "an in-band error event reaches every client wire as its HTTP status (executors/commandcode.js:60-100); the pin's non-2xx parseError classification (:63-78) is open"},
 		"cursor":           {kindC, ref("providers/wire:TestCursorDoReportsAFailureInBandNotAsSuccess", "providers/wire:TestCursorDoPassesUpstreamRejectionsThrough", "protocol/cursor:TestStreamFailures"), "in-band failures and upstream rejections; the provider is unavailable"},
-		"kiro":             {kindC, ref("protocol/kiro:TestUpstreamExceptionFrames", "ingress:TestKiroWithoutCredentialDoesNotDispatch"), "exception frames; the provider is unavailable"},
-		"antigravity":      {kindC, ref("protocol/gemini:TestAntigravityStreamFailures", "protocol/gemini:TestAntigravityRefusalIsTyped"), "typed refusal and stream failures; the provider is unavailable"},
-		"gemini-cli":       {kindC, ref("protocol/gemini:TestAntigravityStreamFailures", "protocol/gemini:TestCloudCodeResponseLegsServeBothWires"), "shares the Cloud Code response legs; the pin's RetryInfo retryDelay hint (gemini-cli.js:38-52) is not read; the provider is unavailable"},
-		"qoder":            {kindC, ref("ingress:TestQoderMissingIdentityFailsBeforeNetwork"), "refuses before the network without an identity; no response error codec; the provider is unavailable"},
+		"kiro":             {kindP, ref("ingress:TestKiroExhaustedHostsAnswerTheClientWithTheUpstreamStatus", "ingress:TestDispatchEndpointFallback", "protocol/kiro:TestUpstreamExceptionFrames", "ingress:TestKiroWithoutCredentialDoesNotDispatch"), "three hosts then the last host's status to every client wire; 401/403/404 fall through, other statuses do not; exception frames"},
+		"vertex":           {kindP, ref("providers/wire:TestVertexRefusesWhatItCannotBind", "providers/wire:TestVertexSendsNothingWhenTheTokenCannotBeMinted"), "an unsafe project or location, a missing project for an OAuth credential, or a token that cannot be minted sends nothing"},
+		"antigravity":      {kindP, ref("ingress:TestCloudCodeWithoutAProjectSendsNothing", "protocol/gemini:TestAntigravityStreamFailures", "protocol/gemini:TestAntigravityRefusalIsTyped"), "a connection with no project is refused before anything is sent; typed refusal and stream failures. The pin's retry with backoff (antigravity.js:356-447) is not done"},
+		"gemini-cli":       {kindP, ref("ingress:TestCloudCodeWithoutAProjectSendsNothing", "providers/wire:TestPinnedErrorBodyResets", "protocol/gemini:TestAntigravityStreamFailures", "protocol/gemini:TestCloudCodeResponseLegsServeBothWires"), "shares the Cloud Code response legs; the RetryInfo retryDelay hint (gemini-cli.js:38-52) sets the cooldown; a connection with no project is refused before anything is sent"},
+		"qoder":            {kindC, ref("ingress:TestQoderMissingIdentityFailsBeforeNetwork"), "refuses before the network without an identity; the pin unwraps first-frame error envelopes in its executor (qoder.js:362-444), which is not built; the provider is unavailable"},
 		"typesafe":         {kindP, ref("app:TestConfiguredSystemOneValidationAndOpaqueErrorWithoutDatabase", "ingress:TestSystemOneRelayDistinguishesReadFailureFromEOF"), "validation errors and an opaque upstream error"},
 		"cloudflare-ai":    {kindP, ref("providers/wire:TestCloudflareTargetFailsClosed", "app:TestConfiguredSystemOneCloudflareFallback"), "an unsafe or missing account id is refused; System One fallback"},
 		"azure":            {kindP, ref("ingress:TestAzureWithoutAnEndpointOrAValidDeploymentSendsNothing", "ingress:TestTargetRefusalMessageReachesTheClient"), "no endpoint or an unsafe deployment sends nothing and says why"},
@@ -576,12 +580,13 @@ func tokensCell(spec registry.Spec) cell {
 		"cline":          {kindP, ref("ingress:TestClineEnvelopeFixtureIsUnwrappedAndAccounted"), "usage inside the unwrapped envelope is accounted"},
 		"api-airforce":   {kindP, ref("ingress:TestAirforceForcedStreamAcrossClientProtocols"), "usage from the forced stream, both client modes"},
 		"clinepass":      {kindP, ref("ingress:TestClineEnvelopeFixtureIsUnwrappedAndAccounted"), "usage inside the unwrapped envelope is accounted"},
-		"kiro":           {kindC, ref("protocol/kiro:TestCacheCountsAreSeparate", "protocol/kiro:TestUsageOnlyWhenMeasured", "protocol/kiro:TestKiroUsage"), "cacheReadInputTokens kept apart (kiro.js:917); the provider is unavailable"},
-		"commandcode":    {kindC, ref("protocol/commandcode:TestUsage"), "finish usage; the provider is unavailable"},
+		"kiro":           {kindP, ref("ingress:TestKiroIsServedToEveryClientWire", "providers/shared:TestKiroUsageScannerReadsMetricsEvents", "protocol/kiro:TestCacheCountsAreSeparate", "protocol/kiro:TestUsageOnlyWhenMeasured", "protocol/kiro:TestKiroUsage"), "the metricsEvent's counts, cache apart from the prompt (kiro.js:917), streamed and buffered, for every client wire"},
+		"commandcode":    {kindP, ref("ingress:TestCommandCodeIsServedToEveryClientWire", "providers/shared:TestCommandCodeUsageIsReplacedWholesaleAndAgreesWithTheLeg", "protocol/commandcode:TestUsage"), "the finish event's prompt and output as the pin reads them (commandcode-to-openai.js:155-163); cachedInputTokens is an observation, not a cache read (PARITY V37)"},
 		"cursor":         {kindC, ref("protocol/cursor:TestStreamIsPassedThroughWithoutUsage"), "no usage on the Connect stream stays unobserved; the provider is unavailable"},
-		"antigravity":    {kindC, ref("protocol/gemini:TestAntigravityUsage"), "Cloud Code usage metadata; the provider is unavailable"},
-		"gemini-cli":     {kindC, ref("protocol/gemini:TestAntigravityUsage", "protocol/gemini:TestCloudCodeResponseLegsServeBothWires"), "shares the Cloud Code usage metadata; the provider is unavailable"},
-		"qoder":          {kindG, nil, "the pin maps cached counts from several spellings (shared/qoder/sse.js:21-54); no response codec exists, so none is tested; the provider is unavailable"},
+		"antigravity":    {kindP, ref("ingress:TestGeminiFamilyIsServedToEveryClientWire", "providers/shared:TestGeminiFamilyUsageIsReadInsideTheCloudCodeEnvelope", "protocol/gemini:TestAntigravityUsage"), "usageMetadata inside the response envelope, cache read apart"},
+		"gemini-cli":     {kindP, ref("ingress:TestGeminiFamilyIsServedToEveryClientWire", "providers/shared:TestGeminiFamilyUsageIsReadInsideTheCloudCodeEnvelope", "protocol/gemini:TestAntigravityUsage"), "usageMetadata inside the response envelope, cache read apart"},
+		"vertex":         {kindP, ref("ingress:TestGeminiFamilyIsServedToEveryClientWire", "providers/shared:TestGeminiFamilyUsageIsReadInsideTheCloudCodeEnvelope"), "usageMetadata of the Gemini body, cache read apart"},
+		"qoder":          {kindG, nil, "the pin maps cached counts from several spellings (shared/qoder/sse.js:21-54); the pin coalesces the finish and usage frames in its executor (qoder.js:416-419), which is not built, so none is tested; the provider is unavailable"},
 	}
 	if c, ok := cells[id]; ok {
 		return c

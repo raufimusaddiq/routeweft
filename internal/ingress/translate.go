@@ -23,26 +23,19 @@ import (
 // unwired are provider wires whose conversion legs exist (internal/protocol/hub)
 // but whose transport does not: nothing here can send to them yet, so a request
 // must not be routed to one. Cursor needs a Connect-RPC protobuf transport over
-// HTTP/2 (executors/cursor.js); CommandCode's headers, forced stream and
-// pre-stream error handling are bound in internal/providers/wire (#76 P02, PARITY
-// 6.13), but TranslateChat and its siblings have no CommandCode arm yet.
+// HTTP/2 (executors/cursor.js); its public enablement is a separate decision.
 // Vertex needs the project-scoped URL and the service-account or key
 // authentication that #115 PR-C's target hook supplies (executors/vertex.js:66-123);
 // until it does, a request routed there would fail at the last hop.
-// Kiro's legs and endpoint binding exist; public enablement remains a separate
-// decision (#119; PARITY 6.10-6.12). PR-C removes
-// the vertex entry together with TranslateChat's vertex arm, which is not built
-// here because the endpoint it would name is that hook's to compute.
+// PR-C removes the vertex entry together with TranslateChat's vertex arm, which
+// is not built here because the endpoint it would name is that hook's to compute.
 // Gemini CLI and Antigravity need the same hook: the Cloud Code URL and its
 // ?alt=sse query, the OAuth bearer and client headers, and the project id the
 // envelope names, which the legs refuse to invent (executors/gemini-cli.js,
 // executors/antigravity.js).
 // A provider leaves this list in the PR that binds its wire.
 var unwired = map[string]bool{
-	cursor.Protocol: true, commandcode.Protocol: true, geminiwire.VertexProtocol: true,
-	kiroadapter.Protocol:           true,
-	geminiwire.GeminiCLIProtocol:   true,
-	geminiwire.AntigravityProtocol: true,
+	cursor.Protocol: true,
 }
 
 // geminiSignatures keeps the thought signatures Gemini attached to its function
@@ -68,16 +61,34 @@ func translationScope(r *http.Request, provider routing.ProviderRef) string {
 	return fmt.Sprintf("%d:%s%s", len(key), key, provider.ConnectionID)
 }
 
-// geminiEndpoint is the generateContent path of a model under the provider's
-// base URL (compat.go's native route builds the same one). The model is a path
-// segment: one that could end it, or start a query, is not sent.
-func geminiEndpoint(model string, stream bool) (string, error) {
+// isGeminiFamily reports the wires that speak the Gemini GenerateContent body:
+// Gemini itself, Vertex, and the two Cloud Code envelopes.
+func isGeminiFamily(target string) bool {
+	switch target {
+	case geminiwire.Protocol, geminiwire.VertexProtocol, geminiwire.GeminiCLIProtocol, geminiwire.AntigravityProtocol:
+		return true
+	}
+	return false
+}
+
+// geminiEndpoint is the generateContent path of a model on a Gemini-family wire:
+// under the provider's base URL for Gemini (compat.go's native route builds the
+// same one), under the publisher for Vertex (whose project and location the wire
+// hook adds), and the Cloud Code action, which names no model. The model is a
+// path segment: one that could end it, or start a query, is not sent.
+func geminiEndpoint(wire, model string, stream bool) (string, error) {
 	if model == "" || strings.ContainsAny(model, "/?#:\\ ") {
 		return "", fmt.Errorf("model %q cannot be named in a Gemini path", model)
 	}
 	method := "generateContent"
 	if stream {
 		method = "streamGenerateContent"
+	}
+	switch wire {
+	case geminiwire.GeminiCLIProtocol, geminiwire.AntigravityProtocol:
+		return "v1internal:" + method, nil
+	case geminiwire.VertexProtocol:
+		return "publishers/google/models/" + model + ":" + method, nil
 	}
 	return "v1beta/models/" + model + ":" + method, nil
 }
@@ -87,20 +98,32 @@ func geminiRequestOptions(model, scope string, repair bool) geminiwire.RequestOp
 	return geminiwire.RequestOptions{Model: model, Repair: repair, Signatures: geminiSignatures, Scope: scope}
 }
 
-// geminiTranslation turns a Chat body into the whole Gemini attempt; wrap adapts
-// the Chat response legs to the client's wire (nil for a Chat client).
-func geminiTranslation(chat map[string]any, model, scope string, stream, repair bool,
+// geminiTranslation turns a Chat body into the whole attempt on a Gemini-family
+// wire; project is the Code Assist project a Cloud Code envelope names. wrap
+// adapts the Chat response legs to the client's wire (nil for a Chat client).
+func geminiTranslation(wire string, chat map[string]any, model, scope, project string, stream, repair bool,
 	wrapBody func(func([]byte) ([]byte, error)) func([]byte) ([]byte, error),
 	wrapStream func(streamFunc) streamFunc) (ChatTranslation, error) {
-	endpoint, err := geminiEndpoint(model, stream)
+	endpoint, err := geminiEndpoint(wire, model, stream)
 	if err != nil {
 		return ChatTranslation{}, err
 	}
-	body, names, err := geminiwire.ChatRequestToGemini(chat, geminiRequestOptions(model, scope, repair))
+	requestOptions := geminiRequestOptions(model, scope, repair)
+	var body []byte
+	var names *concerns.ToolNames
+	switch wire {
+	case geminiwire.GeminiCLIProtocol:
+		body, names, err = geminiwire.ChatRequestToGeminiCLI(chat, requestOptions, geminiwire.CloudCodeOptions{Project: project})
+	case geminiwire.AntigravityProtocol:
+		body, names, err = geminiwire.ChatRequestToAntigravity(chat, requestOptions, geminiwire.CloudCodeOptions{Project: project})
+	default:
+		requestOptions.Vertex = wire == geminiwire.VertexProtocol
+		body, names, err = geminiwire.ChatRequestToGemini(chat, requestOptions)
+	}
 	if err != nil {
 		return ChatTranslation{}, err
 	}
-	options := geminiwire.ResponseOptions{Model: model, Names: names, Signatures: geminiSignatures, Scope: scope, Wire: geminiwire.Protocol}
+	options := geminiwire.ResponseOptions{Model: model, Names: names, Signatures: geminiSignatures, Scope: scope, Wire: wire}
 	response := func(body []byte) ([]byte, error) { return geminiwire.GeminiResponseToChat(body, options) }
 	streamer := func(ctx context.Context, src io.Reader, dst io.Writer) error {
 		return geminiwire.GeminiStreamToChat(ctx, src, dst, options)
@@ -112,6 +135,19 @@ func geminiTranslation(chat map[string]any, model, scope string, stream, repair 
 		streamer = wrapStream(streamer)
 	}
 	return ChatTranslation{Endpoint: endpoint, Body: body, Response: response, Stream: streamer}, nil
+}
+
+// takesProviderHeaders reports the translated targets whose credential and
+// identity headers come from the provider's hook (wire.OpenAIHeaders), as on the
+// Messages path (ingress.go). Gemini authenticates with its own header and
+// Messages with its own.
+func takesProviderHeaders(target string) bool {
+	switch target {
+	case openai.ChatProtocol, openai.ResponsesProtocol, ollama.Protocol, kiroadapter.Protocol, commandcode.Protocol,
+		geminiwire.VertexProtocol, geminiwire.GeminiCLIProtocol, geminiwire.AntigravityProtocol:
+		return true
+	}
+	return false
 }
 
 // CanTranslate declares the implemented protocol pairs, independent of providers.
@@ -199,6 +235,25 @@ const kiroEndpoint = "generateAssistantResponse"
 // ollamaEndpoint is Ollama's chat path under the provider's base URL.
 const ollamaEndpoint = "api/chat"
 
+// commandCodeEndpoint is CommandCode's generate path under the provider's base URL
+// (registry/commandcode.js:21-28); the wire's Target hook names the same one.
+const commandCodeEndpoint = "generate"
+
+// commandCodeTranslation turns a Chat body into the whole CommandCode attempt, its
+// responses read back as Chat. The upstream always streams (executors/commandcode.js:24),
+// so a buffered answer is the aggregate of the complete NDJSON.
+func commandCodeTranslation(chat map[string]any, model string, stream, repair bool) (ChatTranslation, error) {
+	body, err := commandcode.ChatRequestToCommandCode(chat, model, stream, repair)
+	if err != nil {
+		return ChatTranslation{}, err
+	}
+	return ChatTranslation{Endpoint: commandCodeEndpoint, Body: body,
+		Response: func(body []byte) ([]byte, error) { return commandcode.CommandCodeResponseToChat(body, model, nil) },
+		Stream: func(ctx context.Context, src io.Reader, dst io.Writer) error {
+			return commandcode.CommandCodeStreamToChat(ctx, src, dst, model, nil)
+		}}, nil
+}
+
 func ollamaStream(model string) streamFunc {
 	return func(ctx context.Context, src io.Reader, dst io.Writer) error {
 		return ollama.OllamaStreamToChat(ctx, src, dst, model)
@@ -239,12 +294,18 @@ func TranslateChat(request *openai.ChatRequest, target string) (ChatTranslation,
 			return ChatTranslation{}, err
 		}
 		return ChatTranslation{Endpoint: ollamaEndpoint, Body: body, Response: ollama.OllamaResponseToChat, Stream: ollamaStream(request.Model)}, nil
-	case geminiwire.Protocol:
+	case geminiwire.Protocol, geminiwire.VertexProtocol, geminiwire.GeminiCLIProtocol, geminiwire.AntigravityProtocol:
 		parsed, err := concerns.WireObject(request.Raw)
 		if err != nil {
 			return ChatTranslation{}, err
 		}
-		return geminiTranslation(parsed, request.Model, request.Scope, request.Stream, true, nil, nil)
+		return geminiTranslation(target, parsed, request.Model, request.Scope, request.Project, request.Stream, true, nil, nil)
+	case commandcode.Protocol:
+		parsed, err := concerns.WireObject(request.Raw)
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		return commandCodeTranslation(parsed, request.Model, request.Stream, true)
 	case kiroadapter.Protocol:
 		parsed, err := concerns.WireObject(request.Raw)
 		if err != nil {
@@ -266,7 +327,7 @@ func TranslateChat(request *openai.ChatRequest, target string) (ChatTranslation,
 
 // TranslateResponses keeps custom-tool response metadata local to this request.
 func TranslateResponses(request *openai.ResponsesRequest, target string) (ChatTranslation, error) {
-	if request.Compact || (target != openai.ChatProtocol && target != anthropic.MessagesProtocol && target != ollama.Protocol && target != geminiwire.Protocol && target != kiroadapter.Protocol) {
+	if request.Compact || (target != openai.ChatProtocol && target != anthropic.MessagesProtocol && target != ollama.Protocol && !isGeminiFamily(target) && target != kiroadapter.Protocol && target != commandcode.Protocol) {
 		return ChatTranslation{}, fmt.Errorf("no Responses translator for %q", target)
 	}
 	body, err := openai.ResponsesToChat(request)
@@ -285,8 +346,8 @@ func TranslateResponses(request *openai.ResponsesRequest, target string) (ChatTr
 	if err != nil {
 		return ChatTranslation{}, err
 	}
-	if target == geminiwire.Protocol {
-		return geminiTranslation(chat, request.Model, request.Scope, request.Stream, false,
+	if isGeminiFamily(target) {
+		return geminiTranslation(target, chat, request.Model, request.Scope, request.Project, request.Stream, false,
 			func(first func([]byte) ([]byte, error)) func([]byte) ([]byte, error) {
 				return chainBodies(first, toResponses)
 			},
@@ -300,6 +361,17 @@ func TranslateResponses(request *openai.ResponsesRequest, target string) (ChatTr
 		return ChatTranslation{Endpoint: ollamaEndpoint, Body: ollamaBody,
 			Response: chainBodies(ollama.OllamaResponseToChat, toResponses),
 			Stream:   chainStreams(ollamaStream(request.Model), toResponsesStream)}, nil
+	}
+	if target == commandcode.Protocol {
+		// Responses>Chat>CommandCode; the Chat body is this gateway's own, so its
+		// tool ids are not repaired a second time.
+		translation, err := commandCodeTranslation(chat, request.Model, request.Stream, false)
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		translation.Response = chainBodies(translation.Response, toResponses)
+		translation.Stream = chainStreams(translation.Stream, toResponsesStream)
+		return translation, nil
 	}
 	if target == kiroadapter.Protocol {
 		// Responses>Chat>Kiro through the registry functions (translator/index.js:116-125).
@@ -334,7 +406,7 @@ func TranslateResponses(request *openai.ResponsesRequest, target string) (ChatTr
 // TranslateMessages wires both halves of a Messages request served by a
 // provider that speaks Chat or Responses.
 func TranslateMessages(request *anthropic.MessagesRequest, target string) (ChatTranslation, error) {
-	if target != openai.ChatProtocol && target != openai.ResponsesProtocol && target != ollama.Protocol && target != geminiwire.Protocol && target != kiroadapter.Protocol {
+	if target != openai.ChatProtocol && target != openai.ResponsesProtocol && target != ollama.Protocol && !isGeminiFamily(target) && target != kiroadapter.Protocol && target != commandcode.Protocol {
 		return ChatTranslation{}, fmt.Errorf("no Messages translator for %q", target)
 	}
 	if target == kiroadapter.Protocol {
@@ -355,14 +427,27 @@ func TranslateMessages(request *anthropic.MessagesRequest, target string) (ChatT
 				return kiroadapter.KiroStreamToMessages(ctx, src, dst, options)
 			}}, nil
 	}
-	if target == geminiwire.Protocol {
+	if target == commandcode.Protocol {
+		chat, err := anthropic.MessagesRequestToHubChat(request.Raw, request.Model, request.Stream)
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		translation, err := commandCodeTranslation(chat, request.Model, request.Stream, false)
+		if err != nil {
+			return ChatTranslation{}, err
+		}
+		translation.Response = chainBodies(translation.Response, anthropic.ChatResponseToMessages)
+		translation.Stream = chainStreams(translation.Stream, anthropic.ChatStreamToMessages)
+		return translation, nil
+	}
+	if isGeminiFamily(target) {
 		// Messages>Chat>Gemini through the registry functions alone, as for
 		// Ollama (translator/index.js:116-125).
 		chat, err := anthropic.MessagesRequestToHubChat(request.Raw, request.Model, request.Stream)
 		if err != nil {
 			return ChatTranslation{}, err
 		}
-		return geminiTranslation(chat, request.Model, request.Scope, request.Stream, false,
+		return geminiTranslation(target, chat, request.Model, request.Scope, request.Project, request.Stream, false,
 			func(first func([]byte) ([]byte, error)) func([]byte) ([]byte, error) {
 				return chainBodies(first, anthropic.ChatResponseToMessages)
 			},

@@ -21,7 +21,7 @@ func ref(id, protocol, base string, settings routing.ProviderSettings) routing.P
 // Without a hook a request goes exactly where its route said.
 func TestResolveTargetWithoutHookIsTheRoute(t *testing.T) {
 	for _, id := range providerIDs() {
-		if For(id).Target != nil {
+		if For(id).Target != nil || For(id).Route != nil {
 			continue
 		}
 		got, err := ResolveTarget(ref(id, chat, "https://x.example/v1", routing.ProviderSettings{}), "chat/completions")
@@ -36,7 +36,7 @@ func TestResolveTargetWithoutHookIsTheRoute(t *testing.T) {
 func TestBetaQueryIsMessagesOnlyAndOnlyForTheDeclaringProviders(t *testing.T) {
 	declaring := map[string]bool{"claude": true, "glm": true, "kimi": true, "minimax": true, "minimax-cn": true}
 	for _, id := range providerIDs() {
-		if id == "azure" || id == "vertex-partner" || id == "kiro" || id == "cloudflare-ai" {
+		if id == "azure" || id == "vertex-partner" || id == "kiro" || id == "cloudflare-ai" || For(id).Route != nil {
 			continue // These providers require settings covered by their own target tests.
 		}
 		for _, protocol := range []string{chat, responses, messages} {
@@ -316,7 +316,7 @@ func TestRequestHeaderHooksAreExactlyTheDeclaredProviders(t *testing.T) {
 		}
 	}
 	sort.Strings(got)
-	if want := []string{"codex", "cursor", "grok-cli", "opencode-go", "qoder", "zed"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"antigravity", "codex", "cursor", "gemini-cli", "grok-cli", "opencode-go", "qoder", "vertex", "zed"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("request header hooks %v, want %v", got, want)
 	}
 }

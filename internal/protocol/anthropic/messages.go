@@ -27,6 +27,8 @@ type MessagesRequest struct {
 	// provider connection), set by ingress for a translated attempt. A leg that
 	// keeps state between requests keys it by Scope; empty means keep none.
 	Scope string
+	// Project: see openai.ChatRequest.Project.
+	Project string
 	// AnthropicBeta is the client's anthropic-beta header value (every header line,
 	// comma-joined), set by ingress on a translated attempt. A translating leg may
 	// read it as an input (the Kiro leg reads interleaved-thinking from it); nothing

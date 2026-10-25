@@ -40,12 +40,12 @@ known good view (#173); the quota and token cells are written against that rule.
 
 Of the 81 active providers:
 
-- **46** have at least one provider-specific test (a `P` cell).
+- **47** have at least one provider-specific test (a `P` cell).
 - **0** have no `P` cell but a codec-level test (`C`) for a provider the build refuses: none.
 - **32** are shared-path only: every evidenced cell is a table row (`T`) or the shared path (`S`), and the rest are not applicable, refused or gaps: `alicode-intl`, `alitp-intl`, `alicode`, `alims-intl`, `baidu`, `bazaarlink`, `blackbox`, `bluesminds`, `byteplus`, `cerebras`, `chutes`, `cohere`, `featherless`, `fireworks`, `hyperbolic`, `kilo-gateway`, `llm7`, `morph`, `nebius`, `nvidia`, `poolside`, `sambanova`, `siliconflow`, `tencent`, `together`, `venice`, `volcengine-ark`, `openai`, `ollama-local`, `tokenrouter`, `muse`, `xai`.
-- **3** have no test of any kind: every cell is `N`, `U` or `G`: `vertex`, `grok-web`, `perplexity-web`.
+- **2** have no test of any kind: every cell is `N`, `U` or `G`: `grok-web`, `perplexity-web`.
 
-Counting only the serving path (a `P` in streaming, non-streaming, error shapes or tokens), **28** providers have a provider-specific test: `api-airforce`, `groq`, `mistral`, `openrouter`, `codex`, `anthropic`, `gemini`, `deepseek`, `minimax`, `xiaomi-tokenplan`, `mimo-free`, `mmf`, `opencode`, `ollama`, `typesafe`, `vertex-partner`, `cloudflare-ai`, `iflow`, `kimi`, `xiaomi-mimo`, `cline`, `clinepass`, `codebuddy-cn`, `codebuddy-intl`, `grok-cli`, `kenari`, `zed`, `azure`. The other 53 have one only for listing, quota or import, or none.
+Counting only the serving path (a `P` in streaming, non-streaming, error shapes or tokens), **33** providers have a provider-specific test: `api-airforce`, `groq`, `mistral`, `openrouter`, `codex`, `anthropic`, `gemini`, `deepseek`, `minimax`, `xiaomi-tokenplan`, `mimo-free`, `mmf`, `opencode`, `ollama`, `typesafe`, `vertex-partner`, `cloudflare-ai`, `iflow`, `kimi`, `xiaomi-mimo`, `cline`, `clinepass`, `codebuddy-cn`, `codebuddy-intl`, `antigravity`, `gemini-cli`, `kiro`, `vertex`, `commandcode`, `grok-cli`, `kenari`, `zed`, `azure`. The other 48 have one only for listing, quota or import, or none.
 
 Kinds count cells, not providers: a `P` row can still have `T`, `S` and `G` cells, and the per-column tables below say which.
 
@@ -55,13 +55,13 @@ Cells by kind and column:
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Authenticated listing | 22 | 0 | 20 | 2 | 0 | 3 | 34 |
 | Quota / usage read | 23 | 0 | 0 | 0 | 0 | 1 | 57 |
-| Applicable unavailability | 20 | 1 | 0 | 52 | 5 | 3 | 0 |
+| Applicable unavailability | 20 | 1 | 0 | 54 | 3 | 3 | 0 |
 | Import / refresh | 18 | 0 | 3 | 0 | 0 | 3 | 57 |
-| Streaming | 17 | 5 | 51 | 1 | 3 | 4 | 0 |
-| Non-streaming | 18 | 5 | 50 | 1 | 3 | 4 | 0 |
-| Error shapes | 24 | 6 | 1 | 47 | 3 | 0 | 0 |
-| Cached vs ordinary tokens | 13 | 5 | 5 | 54 | 3 | 1 | 0 |
-| **All cells** | **155** | **22** | **130** | **157** | **17** | **19** | **148** |
+| Streaming | 22 | 1 | 51 | 1 | 2 | 4 | 0 |
+| Non-streaming | 23 | 1 | 50 | 1 | 2 | 4 | 0 |
+| Error shapes | 29 | 2 | 1 | 47 | 2 | 0 | 0 |
+| Cached vs ordinary tokens | 18 | 1 | 5 | 54 | 2 | 1 | 0 |
+| **All cells** | **175** | **6** | **130** | **159** | **11** | **19** | **148** |
 
 648 cells in all (81 providers x 8 behaviours). `N` cells carry a pin citation in the evidence tables below.
 
@@ -136,13 +136,13 @@ Cells by kind and column:
 | `kilocode` | ready | P | N | S | P | T | T | S | S |
 | `codebuddy-cn` | ready | N | P | P | P | P | P | P | P |
 | `codebuddy-intl` | ready | N | P | P | P | P | P | P | P |
-| `antigravity` | unavailable | P | P | P | P | C | C | C | C |
-| `gemini-cli` | unavailable | P | P | U | P | C | C | C | C |
+| `antigravity` | ready | P | P | P | P | P | P | P | P |
+| `gemini-cli` | ready | P | P | S | P | P | P | P | P |
 | `cursor` | unavailable | P | N | C | P | C | C | C | C |
 | `qoder` | unavailable | P | P | P | T | G | G | C | G |
-| `kiro` | unavailable | P | P | P | P | C | C | C | C |
-| `vertex` | unavailable | N | N | U | G | U | U | U | U |
-| `commandcode` | unavailable | N | P | P | N | C | C | C | C |
+| `kiro` | ready | P | P | P | P | P | P | P | P |
+| `vertex` | ready | N | N | S | G | P | P | P | P |
+| `commandcode` | ready | N | P | P | N | P | P | P | P |
 | `grok-cli` | ready | P | P | P | P | G | G | P | T |
 | `grok-web` | unavailable | N | N | U | G | U | U | U | U |
 | `perplexity-web` | unavailable | N | N | U | G | U | U | U | U |
@@ -286,16 +286,16 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `xiaomi-mimo` — a 401 (key cannot read the account quota) is an error, not an empty or full window Tests: `providers/usage:TestXiaomiMimoUsagePercentIsRemaining`.
 - **P** `codebuddy-cn` — the gateway's frequency-limit body cools the account until its reset (codebuddy-error.js) Tests: `ingress:TestCodeBuddyFrequencyLimitCoolsTheAccountAndRelaysTheGatewayError`, `providers/wire:TestCodeBuddyFrequencyLimit`, `ingress:TestCodeBuddyOtherUpstreamErrorsAreNotReadAsALimit`.
 - **P** `codebuddy-intl` — same hook as codebuddy-cn Tests: `ingress:TestCodeBuddyFrequencyLimitCoolsTheAccountAndRelaysTheGatewayError`, `providers/wire:TestCodeBuddyFrequencyLimit`, `ingress:TestCodeBuddyOtherUpstreamErrorsAreNotReadAsALimit`.
-- **P** `antigravity` — free tier has no per-model quota; provider unavailable for serving Tests: `providers/usage:TestAntigravityFreeTierSkipsPerModelQuota`.
+- **P** `antigravity` — free tier has no per-model quota Tests: `providers/usage:TestAntigravityFreeTierSkipsPerModelQuota`.
 - **P** `qoder` — a spent organization pool reads as nothing left; provider unavailable for serving Tests: `providers/usage:TestQoderUsageUserAndOrganizationPools`.
-- **P** `kiro` — free trial is its own window; provider unavailable for serving Tests: `providers/usage:TestKiroFreeTrialIsSeparateWindow`.
-- **P** `commandcode` — cap reached reads as nothing left; provider unavailable for serving Tests: `providers/usage:TestCommandCodeUsageCarriesOrgAndPlanCap`, `providers/wire:TestParseCommandCodeError`.
+- **P** `kiro` — free trial is its own window Tests: `providers/usage:TestKiroFreeTrialIsSeparateWindow`.
+- **P** `commandcode` — cap reached reads as nothing left Tests: `providers/usage:TestCommandCodeUsageCarriesOrgAndPlanCap`, `providers/wire:TestParseCommandCodeError`.
 - **P** `grok-cli` — 402 spending-limit cools the account for two minutes and falls back (executors/grok-cli.js:400-416, errorConfig.js:77), landed in #184 Tests: `ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin`, `providers/wire:TestGrokCLISpendingLimitFallsBackAndCoolsTheAccountForTwoMinutes`.
 - **P** `kenari` — zero capacity is exhausted; absent amounts are unknown (U/kenari.js) Tests: `providers/usage:TestKenariPinnedZeroCapacity`.
 - **P** `zed` — 500/500 reads as nothing left; trial_blocked 403 cools the account (the pin's message rewrite, zed.js:284-310, is not done) Tests: `providers/usage:TestZedUsageLimitedUnlimitedAndExhausted`, `ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin`.
 - **C** `cursor` — the resource_exhausted in-band failure (cursor.js:365-374); provider unavailable for serving Tests: `providers/wire:TestCursorDoReportsAFailureInBandNotAsSuccess`, `providers/wire:TestCursorDoPassesUpstreamRejectionsThrough`.
-- **S** `alicode-intl`, `alitp-intl`, `alicode`, `alims-intl`, `api-airforce`, `baidu`, `bazaarlink`, `blackbox`, `bluesminds`, `byteplus`, `cerebras`, `chutes`, `cohere`, `featherless`, `fireworks`, `hyperbolic`, `kilo-gateway`, `llm7`, `mistral`, `morph`, `nebius`, `nvidia`, `perplexity`, `poolside`, `sambanova`, `siliconflow`, `tencent`, `together`, `venice`, `volcengine-ark`, `openai`, `anthropic`, `gemini`, `glm-cn`, `xiaomi-tokenplan`, `mimo-free`, `mmf`, `opencode`, `ollama-local`, `vertex-partner`, `tokenrouter`, `perplexity-agent`, `cloudflare-ai`, `muse`, `xai`, `gitlab`, `iflow`, `cline`, `clinepass`, `kilocode`, `kimchi`, `azure` — generic 429/5xx/401 classification; the pin has no provider-specific capacity contract for it Tests: `ingress:TestRecordUpstreamFailureMapsProviderErrToCooldown`, `ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin`.
-- **U** `typesafe`, `gemini-cli`, `vertex`, `grok-web`, `perplexity-web` — refused by its immutable readiness; no capacity behaviour is reachable Tests: `ingress:TestReadinessMatchesIngressReachability`.
+- **S** `alicode-intl`, `alitp-intl`, `alicode`, `alims-intl`, `api-airforce`, `baidu`, `bazaarlink`, `blackbox`, `bluesminds`, `byteplus`, `cerebras`, `chutes`, `cohere`, `featherless`, `fireworks`, `hyperbolic`, `kilo-gateway`, `llm7`, `mistral`, `morph`, `nebius`, `nvidia`, `perplexity`, `poolside`, `sambanova`, `siliconflow`, `tencent`, `together`, `venice`, `volcengine-ark`, `openai`, `anthropic`, `gemini`, `glm-cn`, `xiaomi-tokenplan`, `mimo-free`, `mmf`, `opencode`, `ollama-local`, `vertex-partner`, `tokenrouter`, `perplexity-agent`, `cloudflare-ai`, `muse`, `xai`, `gitlab`, `iflow`, `cline`, `clinepass`, `kilocode`, `gemini-cli`, `vertex`, `kimchi`, `azure` — generic 429/5xx/401 classification; the pin has no provider-specific capacity contract for it Tests: `ingress:TestRecordUpstreamFailureMapsProviderErrToCooldown`, `ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin`.
+- **U** `typesafe`, `grok-web`, `perplexity-web` — refused by its immutable readiness; no capacity behaviour is reachable Tests: `ingress:TestReadinessMatchesIngressReachability`.
 - **G** `groq` — the quota reader returns an error for every key (see the quota column), so no exhausted-key state is ever observed Tests: `ingress:TestOpenP08ErrorClassificationGaps`.
 - **G** `openrouter` — pin: 402 cools the account for two minutes and falls back (errorConfig.js:77). Routeweft treats 402 as a terminal client error Tests: `ingress:TestOpenP08ErrorClassificationGaps`.
 - **G** `deepseek` — pin: 402 Insufficient Balance cools the account for two minutes and falls back (errorConfig.js:77, accountFallback.js:35-46), and the balance endpoint reports is_available:false. Routeweft treats 402 as a terminal client error (no cooldown, no fallback) and reads a zero balance as unlimited Tests: `ingress:TestOpenP08ErrorClassificationGaps`, `providers/usage:TestDeepSeekReportsBalance`.
@@ -320,7 +320,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **T** `xai` — shares the xAI refresh grant with grok-cli; no xai-specific import test Tests: `providers/onboarding:TestRefreshCoversReferenceTable`, `providers/onboarding:TestRedirectURIsMatchRegisteredValues`.
 - **T** `kimi` — device flow type and refresh grant checked in tables; no kimi-specific import test Tests: `providers/onboarding:TestRefreshCoversReferenceTable`, `providers/onboarding:TestFlowTypesMatchReference`.
 - **T** `qoder` — flow type is checked against the pin; the PAT-to-job-token exchange is not implemented (PARITY 6.15) Tests: `providers/onboarding:TestFlowTypesMatchReference`, `providers/onboarding:TestEveryOracleFlowIsImplemented`.
-- **G** `vertex` — service-account / ADC credential import is not built (readiness note); no test
+- **G** `vertex` — the service account or ADC JSON is typed in as the connection key and used at serving (TestVertexMintsAndCachesAServiceAccountToken); no import flow exists or is needed at the pin (vertex.js:62-72)
 - **G** `grok-web`, `perplexity-web` — cookie/session import has no implementation or test; the provider is unavailable
 - **N** `alicode-intl` — open-sse/providers/registry/alicode-intl.js:1-30 declares no oauth block and no refresh handler: the credential is a key typed in, never imported or refreshed (open-sse/services/tokenRefresh/providers.js lists none)
 - **N** `alitp-intl` — open-sse/providers/registry/alitp-intl.js:1-35 declares no oauth block and no refresh handler: the credential is a key typed in, never imported or refreshed (open-sse/services/tokenRefresh/providers.js lists none)
@@ -393,13 +393,13 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `cloudflare-ai` — the System One leg; the Chat leg is verified at the URL seam only (wire:TestCloudflareTargetURLs) Tests: `app:TestConfiguredSystemOneWireAndAccounting`, `app:TestConfiguredSystemOneCloudflareFallback`.
 - **P** `cline`, `clinepass` — an SSE body is not unwrapped Tests: `ingress:TestClineEnvelopeOnlyUnwrapsNonStreamSuccess`.
 - **P** `codebuddy-cn`, `codebuddy-intl` — gateway answers only streams; empty tool_calls stripped, cancellation reaches the upstream Tests: `ingress:TestCodeBuddyStreamingClientKeepsItsStreamMinusEmptyToolCalls`, `ingress:TestCodeBuddyForcedStreamCancellationReachesUpstream`, `ingress:TestCodeBuddyInbandStreamErrorRelaysParsedMessage`.
+- **P** `antigravity`, `gemini-cli`, `vertex` — every client wire over streamGenerateContent?alt=sse, the Cloud Code envelope and its response unwrapped (executors/gemini-cli.js:10-35, antigravity.js:118-135, vertex.js:83-123) Tests: `ingress:TestGeminiFamilyIsServedToEveryClientWire`, `protocol/gemini:TestCloudCodeResponseLegsServeBothWires`, `providers/wire:TestCloudCodeURLs`, `providers/wire:TestVertexURLs`.
+- **P** `kiro` — every client wire through the 403 to second-host fallback, event stream converted Tests: `ingress:TestKiroIsServedToEveryClientWire`, `protocol/kiro:TestStreamText`, `protocol/kiro:TestMessagesStreamText`.
+- **P** `commandcode` — every client wire, NDJSON converted line by line, the stream forced on the envelope, a retried error event replayed Tests: `ingress:TestCommandCodeIsServedToEveryClientWire`, `protocol/commandcode:TestStreamIsConvertedLineByLine`, `providers/wire:TestCommandCodeForcesStreamOnTheEnvelope`, `providers/wire:TestCommandCodeDoRecoversOnRetryAndReplaysTheStreamExactly`.
 - **P** `kenari` — Chat, Responses and Messages natively, both modes; Responses custom-tool rewrite on the stream Tests: `app:TestConfiguredKenariNativeWire`, `providers/wire:TestResponsesStreamRewritesConvertedCalls`.
 - **P** `zed` — LLM-token exchange, thread envelope, per-vendor request and NDJSON frames for Anthropic, OpenAI Responses, Google and xAI (executors/zed.js:60-282, shared/zedAuth.js:258-324); a failed status, a cut-off stream and a non-JSON line end as the pin ends them. Open: the listing still sends the shared bearer (see Authenticated listing); the thread id resolves the pin's client session from headers and the client's body, but not after the pin's token savers (PARITY 6.19) Tests: `providers/wire:TestZedExchangesTheTokenAndSendsTheEnvelope`, `providers/wire:TestZedServesEveryVendorShape`, `providers/wire:TestZedStreamEndsAsThePinEndsIt`, `providers/wire:TestZedBrokenUpstreamIsAnErrorOnEveryLeg`, `providers/wire:TestZedErrorChunkNamesTheRequestedModel`, `providers/wire:TestZedStopsUpstreamWhenTheClientLeaves`, `ingress:TestZedIsServedThroughItsExchangeAndEnvelope`.
 - **P** `azure` — deployment path, api-version and Api-Key header, streamed Tests: `ingress:TestConnectionScopedTargetsStreamAndNonStream`.
-- **C** `antigravity`, `gemini-cli` — Cloud Code stream codec; the provider is unavailable (URL, client headers and project id are not bound) Tests: `protocol/gemini:TestAntigravityStreamText`, `protocol/gemini:TestCloudCodeResponseLegsServeBothWires`.
 - **C** `cursor` — Connect stream codec and cancellation; the provider is unavailable Tests: `providers/wire:TestCursorConsumeStreamsTextAndStops`, `providers/wire:TestCursorDoStopsUpstreamWhenTheClientLeaves`.
-- **C** `kiro` — event-stream codec; the provider is unavailable Tests: `protocol/kiro:TestStreamText`, `protocol/kiro:TestMessagesStreamText`.
-- **C** `commandcode` — stream codec, forced stream envelope, replay; the Chat translation arm is not built Tests: `protocol/commandcode:TestStreamIsConvertedLineByLine`, `providers/wire:TestCommandCodeForcesStreamOnTheEnvelope`, `providers/wire:TestCommandCodeDoRecoversOnRetryAndReplaysTheStreamExactly`.
 - **T** `alicode-intl`, `alitp-intl`, `alicode`, `alims-intl`, `baidu`, `bazaarlink`, `blackbox`, `bluesminds`, `byteplus`, `cerebras`, `chutes`, `cohere`, `featherless`, `fireworks`, `groq`, `hyperbolic`, `kilo-gateway`, `llm7`, `mistral`, `morph`, `nebius`, `nvidia`, `perplexity`, `poolside`, `sambanova`, `siliconflow`, `tencent`, `together`, `venice`, `vercel-ai-gateway`, `volcengine-ark`, `glm-cn`, `tokenrouter`, `gitlab` — shared path, this provider's own URL and credential: Chat Tests: `ingress:TestRegistryChatWires`.
 - **T** `openai` — shared path, this provider's own URL and credential: openai-chat, openai-responses Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `anthropic`, `claude` — shared path, this provider's own URL and credential: anthropic-messages Tests: `ingress:TestRegistryNativeTransportWires`.
@@ -414,10 +414,10 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **T** `xiaomi-mimo` — shared path, this provider's own URL and credential: openai-chat, anthropic-messages. Open: the Preview models served through the account-session route (executors/xiaomi-mimo.js:21-99) are not replicated; Cloud API models are the shared path Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `kilocode`, `kimchi` — shared path, this provider's own URL and credential: openai-chat Tests: `ingress:TestRegistryNativeTransportWires`.
 - **S** `ollama-local` — the shared Ollama codec; no test names ollama-local (experimental) Tests: `ingress:TestTruncatedOllamaStreamIsAFailure`, `protocol/ollama:TestBufferedBodyIsConverted`.
-- **U** `vertex`, `grok-web`, `perplexity-web` — refused by its immutable readiness; no codec exists to test Tests: `ingress:TestReadinessMatchesIngressReachability`.
+- **U** `grok-web`, `perplexity-web` — refused by its immutable readiness; no codec exists to test Tests: `ingress:TestReadinessMatchesIngressReachability`.
 - **G** `codex` — the table row proves the URL, bearer and CLI headers only. The pin's executor also forces stream:true and store:false, injects default instructions, maps review models, drops unsupported fields and filters to an allowlist (executors/codex.js:415-515); Routeweft forwards the client's body (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`, `ingress:TestCodexProviderHeadersCarryCLIFingerprint`.
 - **G** `vertex-partner` — only the URL seam is tested; the target is an absolute Google host, so no request is dispatched in a test (provider is experimental) Tests: `providers/wire:TestVertexPartnerTargetUsesTheConnectionProject`.
-- **G** `qoder` — only the request signing seam is tested; no response codec exists at the pin for dispatch (registry/qoder.js:19-26), so streamed and buffered bodies are untested Tests: `ingress:TestQoderDispatchSeamSignsFinalRequest`.
+- **G** `qoder` — only the request signing seam is tested; the pin converts in its executor, not a translator leg (registry/qoder.js:19-26, executors/qoder.js:210-335,426-597), and that envelope and SSE unwrap are not built, so streamed and buffered bodies are untested Tests: `ingress:TestQoderDispatchSeamSignsFinalRequest`.
 - **G** `grok-cli` — the table row proves the URL and bearer only. The pin's executor sends the grok-shell identity (x-grok-session-id, conv-id, req-id, turn-idx, model-override, email, userid), forces stream:true and store:false and normalizes input and tools (executors/grok-cli.js:362-470); Routeweft sends none of that at inference, though its listing needs the identity (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`.
 
 ### Non-streaming
@@ -434,13 +434,13 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `xiaomi-mimo` — Messages fixture posts to the provider path; Chat through the table. Open: Preview models served through the account-session route (executors/xiaomi-mimo.js:21-99) are not replicated Tests: `ingress:TestProviderXiaomiMimoMessagesNativeUsesProviderPath`, `ingress:TestRegistryNativeTransportWires`.
 - **P** `cline`, `clinepass` — the {success,data} envelope is unwrapped and accounted Tests: `ingress:TestClineEnvelopeFixtureIsUnwrappedAndAccounted`, `ingress:TestClineEnvelopeIsUnwrappedBeforeResponsesTranslation`, `ingress:TestClineAuthorizationPrefixReachesUpstream`.
 - **P** `codebuddy-cn`, `codebuddy-intl` — a non-stream client gets one JSON body folded from the forced stream Tests: `ingress:TestCodeBuddyNonStreamClientsGetOneJSONBodyFromAForcedStream`, `ingress:TestCodeBuddyJSONAnswerToANonStreamRequestPassesThrough`, `ingress:TestCodeBuddyForcedStreamFailuresAreErrorsNotPartialAnswers`.
+- **P** `antigravity`, `gemini-cli`, `vertex` — every client wire over generateContent, the Cloud Code envelope and its response unwrapped Tests: `ingress:TestGeminiFamilyIsServedToEveryClientWire`, `protocol/gemini:TestAntigravityBufferedResponse`, `providers/wire:TestCloudCodeURLs`, `providers/wire:TestVertexURLs`.
+- **P** `kiro` — every client wire through the 403 to second-host fallback, event stream aggregated Tests: `ingress:TestKiroIsServedToEveryClientWire`, `protocol/kiro:TestBufferedMatchesStreamed`, `protocol/kiro:TestMessagesBufferedMatchesStream`.
+- **P** `commandcode` — every client wire, the forced NDJSON aggregated into one body Tests: `ingress:TestCommandCodeIsServedToEveryClientWire`, `protocol/commandcode:TestBufferedBodyIsAggregated`.
 - **P** `kenari` — native wires and the Responses body rewrite Tests: `app:TestConfiguredKenariNativeWire`, `providers/wire:TestRewriteResponsesBody`.
 - **P** `zed` — the forced stream folded to one body for the Chat, Responses and Messages clients (executors/zed.js:60-282); a failed status is the assistant's text with a clean stop and still cools the account and lets the next candidate serve, a cut-off stream is finished, as the pin does Tests: `ingress:TestZedIsServedThroughItsExchangeAndEnvelope`, `ingress:TestZedFailedStatusIsTheAssistantsTextWithACleanStop`, `ingress:TestZedFailedStatusCoolsTheAccountAndTheNextCandidateServes`, `ingress:TestZedQuotaLockOutlastsTheDefaultBackoffAndARateLimitDoesNot`, `ingress:TestZedCutOffStreamIsFinishedAsThePinDoes`.
 - **P** `azure` — deployment path, api-version and Api-Key header Tests: `ingress:TestAzureRequestShape`, `ingress:TestConnectionScopedTargetsStreamAndNonStream`.
-- **C** `antigravity`, `gemini-cli` — Cloud Code buffered codec; the provider is unavailable Tests: `protocol/gemini:TestAntigravityBufferedResponse`, `protocol/gemini:TestCloudCodeResponseLegsServeBothWires`.
 - **C** `cursor` — buffered body codec; the provider is unavailable Tests: `protocol/cursor:TestBufferedBody`.
-- **C** `kiro` — buffered codec; the provider is unavailable Tests: `protocol/kiro:TestBufferedMatchesStreamed`, `protocol/kiro:TestMessagesBufferedMatchesStream`.
-- **C** `commandcode` — buffered aggregate codec; the provider is unavailable Tests: `protocol/commandcode:TestBufferedBodyIsAggregated`.
 - **T** `alicode-intl`, `alitp-intl`, `alicode`, `alims-intl`, `baidu`, `bazaarlink`, `blackbox`, `bluesminds`, `byteplus`, `cerebras`, `chutes`, `cohere`, `featherless`, `fireworks`, `groq`, `hyperbolic`, `kilo-gateway`, `llm7`, `mistral`, `morph`, `nebius`, `nvidia`, `perplexity`, `poolside`, `sambanova`, `siliconflow`, `tencent`, `together`, `venice`, `vercel-ai-gateway`, `volcengine-ark`, `glm-cn`, `tokenrouter`, `gitlab` — shared path, this provider's own URL and credential: Chat Tests: `ingress:TestRegistryChatWires`.
 - **T** `openrouter`, `kilocode`, `kimchi` — shared path, this provider's own URL and credential: openai-chat Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `openai` — shared path, this provider's own URL and credential: openai-chat, openai-responses Tests: `ingress:TestRegistryNativeTransportWires`.
@@ -453,10 +453,10 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **T** `github` — shared path, this provider's own URL and credential: openai-chat, openai-responses, anthropic-messages. Open: Claude models via /v1/messages and the forced stream on Responses (executors/github.js:250-275) are not replicated (experimental) Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `iflow` — Chat both modes through the table; the signature over the final body is asserted by TestIflowRequestIsSigned Tests: `ingress:TestRegistryNativeTransportWires`, `ingress:TestIflowRequestIsSigned`.
 - **S** `ollama-local` — the shared Ollama codec; no test names ollama-local (experimental) Tests: `ingress:TestTruncatedOllamaStreamIsAFailure`, `protocol/ollama:TestBufferedBodyIsConverted`.
-- **U** `vertex`, `grok-web`, `perplexity-web` — refused by its immutable readiness; no codec exists to test Tests: `ingress:TestReadinessMatchesIngressReachability`.
+- **U** `grok-web`, `perplexity-web` — refused by its immutable readiness; no codec exists to test Tests: `ingress:TestReadinessMatchesIngressReachability`.
 - **G** `codex` — the table row proves the URL, bearer and CLI headers only. The pin's executor also forces stream:true and store:false, injects default instructions, maps review models, drops unsupported fields and filters to an allowlist (executors/codex.js:415-515); Routeweft forwards the client's body (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`, `ingress:TestCodexProviderHeadersCarryCLIFingerprint`.
 - **G** `vertex-partner` — only the URL seam is tested; the target is an absolute Google host, so no request is dispatched in a test (provider is experimental) Tests: `providers/wire:TestVertexPartnerTargetUsesTheConnectionProject`.
-- **G** `qoder` — only the request signing seam is tested; no response codec exists at the pin for dispatch (registry/qoder.js:19-26), so streamed and buffered bodies are untested Tests: `ingress:TestQoderDispatchSeamSignsFinalRequest`.
+- **G** `qoder` — only the request signing seam is tested; the pin converts in its executor, not a translator leg (registry/qoder.js:19-26, executors/qoder.js:210-335,426-597), and that envelope and SSE unwrap are not built, so streamed and buffered bodies are untested Tests: `ingress:TestQoderDispatchSeamSignsFinalRequest`.
 - **G** `grok-cli` — the table row proves the URL and bearer only. The pin's executor sends the grok-shell identity (x-grok-session-id, conv-id, req-id, turn-idx, model-override, email, userid), forces stream:true and store:false and normalizes input and tools (executors/grok-cli.js:362-470); Routeweft sends none of that at inference, though its listing needs the identity (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`.
 
 ### Error shapes
@@ -480,19 +480,20 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `cline`, `clinepass` — a failure envelope (HTTP 500) is not unwrapped Tests: `ingress:TestClineEnvelopeOnlyUnwrapsNonStreamSuccess`.
 - **P** `codebuddy-cn` — gateway frequency-limit body, in-band stream error, long error bodies Tests: `providers/wire:TestCodeBuddyFrequencyLimitMessageOfEveryType`, `ingress:TestCodeBuddyErrorBodySurvivesFailedFallbackBeyondPeekLimit`, `ingress:TestCodeBuddyInbandStreamErrorRelaysParsedMessage`.
 - **P** `codebuddy-intl` — same hook as codebuddy-cn Tests: `providers/wire:TestCodeBuddyFrequencyLimitMessageOfEveryType`, `ingress:TestCodeBuddyErrorBodySurvivesFailedFallbackBeyondPeekLimit`, `ingress:TestCodeBuddyInbandStreamErrorRelaysParsedMessage`.
+- **P** `antigravity` — a connection with no project is refused before anything is sent; typed refusal and stream failures. The pin's retry with backoff (antigravity.js:356-447) is not done Tests: `ingress:TestCloudCodeWithoutAProjectSendsNothing`, `protocol/gemini:TestAntigravityStreamFailures`, `protocol/gemini:TestAntigravityRefusalIsTyped`.
+- **P** `gemini-cli` — shares the Cloud Code response legs; the RetryInfo retryDelay hint (gemini-cli.js:38-52) sets the cooldown; a connection with no project is refused before anything is sent Tests: `ingress:TestCloudCodeWithoutAProjectSendsNothing`, `providers/wire:TestPinnedErrorBodyResets`, `protocol/gemini:TestAntigravityStreamFailures`, `protocol/gemini:TestCloudCodeResponseLegsServeBothWires`.
+- **P** `kiro` — three hosts then the last host's status to every client wire; 401/403/404 fall through, other statuses do not; exception frames Tests: `ingress:TestKiroExhaustedHostsAnswerTheClientWithTheUpstreamStatus`, `ingress:TestDispatchEndpointFallback`, `protocol/kiro:TestUpstreamExceptionFrames`, `ingress:TestKiroWithoutCredentialDoesNotDispatch`.
+- **P** `vertex` — an unsafe project or location, a missing project for an OAuth credential, or a token that cannot be minted sends nothing Tests: `providers/wire:TestVertexRefusesWhatItCannotBind`, `providers/wire:TestVertexSendsNothingWhenTheTokenCannotBeMinted`.
+- **P** `commandcode` — an in-band error event reaches every client wire as its HTTP status (executors/commandcode.js:60-100); the pin's non-2xx parseError classification (:63-78) is open Tests: `ingress:TestCommandCodeErrorEventReachesEveryClientAsAnHTTPError`, `providers/wire:TestParseCommandCodeError`, `providers/wire:TestCommandCodeDoRetriesAnErrorEventThenReturnsItAsHTTP`, `providers/wire:TestCommandCodeDoNeverRetriesAnHTTPError`.
 - **P** `grok-cli` — {code,error} body of the 402 spending-limit reaches the client unchanged Tests: `ingress:TestProviderErrorBodiesReachTheClientByteForByte`.
 - **P** `kenari` — failed terminal and refusal events keep their sequence; unreadable arguments are refused Tests: `providers/wire:TestResponsesStreamRewritesAFailedTerminal`, `providers/wire:TestResponsesStreamRefusalContinuesTheSequence`, `providers/wire:TestRewriteResponsesBodyRefusesArgumentsItCannotRead`.
 - **P** `zed` — trial_blocked 403 cools the account; the pin's message rewrite (zed.js:284-310) is not done, the client sees the upstream body Tests: `ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin`.
 - **P** `azure` — no endpoint or an unsafe deployment sends nothing and says why Tests: `ingress:TestAzureWithoutAnEndpointOrAValidDeploymentSendsNothing`, `ingress:TestTargetRefusalMessageReachesTheClient`.
-- **C** `antigravity` — typed refusal and stream failures; the provider is unavailable Tests: `protocol/gemini:TestAntigravityStreamFailures`, `protocol/gemini:TestAntigravityRefusalIsTyped`.
-- **C** `gemini-cli` — shares the Cloud Code response legs; the pin's RetryInfo retryDelay hint (gemini-cli.js:38-52) is not read; the provider is unavailable Tests: `protocol/gemini:TestAntigravityStreamFailures`, `protocol/gemini:TestCloudCodeResponseLegsServeBothWires`.
 - **C** `cursor` — in-band failures and upstream rejections; the provider is unavailable Tests: `providers/wire:TestCursorDoReportsAFailureInBandNotAsSuccess`, `providers/wire:TestCursorDoPassesUpstreamRejectionsThrough`, `protocol/cursor:TestStreamFailures`.
-- **C** `qoder` — refuses before the network without an identity; no response error codec; the provider is unavailable Tests: `ingress:TestQoderMissingIdentityFailsBeforeNetwork`.
-- **C** `kiro` — exception frames; the provider is unavailable Tests: `protocol/kiro:TestUpstreamExceptionFrames`, `ingress:TestKiroWithoutCredentialDoesNotDispatch`.
-- **C** `commandcode` — in-band error events (executors/commandcode.js:60-100); the provider is unavailable Tests: `providers/wire:TestParseCommandCodeError`, `providers/wire:TestCommandCodeDoRetriesAnErrorEventThenReturnsItAsHTTP`, `providers/wire:TestCommandCodeDoNeverRetriesAnHTTPError`.
+- **C** `qoder` — refuses before the network without an identity; the pin unwraps first-frame error envelopes in its executor (qoder.js:362-444), which is not built; the provider is unavailable Tests: `ingress:TestQoderMissingIdentityFailsBeforeNetwork`.
 - **T** `github` — no provider-specific error shape; the pin's Copilot executor has none either Tests: `providers/shared:TestParseErrorNormalizesProviderErrBodies`, `ingress:TestRecordUpstreamFailureMapsProviderErrToCooldown`.
 - **S** `alicode-intl`, `alitp-intl`, `alicode`, `alims-intl`, `baidu`, `bazaarlink`, `blackbox`, `bluesminds`, `byteplus`, `cerebras`, `chutes`, `cohere`, `featherless`, `fireworks`, `hyperbolic`, `kilo-gateway`, `llm7`, `morph`, `nebius`, `nvidia`, `openrouter`, `perplexity`, `poolside`, `sambanova`, `siliconflow`, `tencent`, `together`, `venice`, `vercel-ai-gateway`, `volcengine-ark`, `openai`, `claude`, `glm`, `glm-cn`, `minimax-cn`, `mimo-free`, `mmf`, `ollama-local`, `tokenrouter`, `perplexity-agent`, `opencode-go`, `muse`, `xai`, `gitlab`, `xiaomi-mimo`, `kilocode`, `kimchi` — shared status/body classification; the pin's executor has no provider-specific parseError Tests: `providers/shared:TestParseErrorNormalizesProviderErrBodies`, `ingress:TestRecordUpstreamFailureMapsProviderErrToCooldown`.
-- **U** `vertex`, `grok-web`, `perplexity-web` — refused by its immutable readiness; no error codec to test Tests: `ingress:TestReadinessMatchesIngressReachability`.
+- **U** `grok-web`, `perplexity-web` — refused by its immutable readiness; no error codec to test Tests: `ingress:TestReadinessMatchesIngressReachability`.
 
 ### Cached vs ordinary tokens
 
@@ -508,17 +509,17 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `cline`, `clinepass` — usage inside the unwrapped envelope is accounted Tests: `ingress:TestClineEnvelopeFixtureIsUnwrappedAndAccounted`.
 - **P** `codebuddy-cn` — usage fixture replayed; missing usage stays unobserved, not zero Tests: `ingress:TestCodeBuddyCNUsageFixtureReplays`, `ingress:TestCodeBuddyMissingUsageStaysUnobserved`, `ingress:TestCodeBuddyTranslatedStreamsKeepUsageOptIn`.
 - **P** `codebuddy-intl` — same hook as codebuddy-cn Tests: `ingress:TestCodeBuddyMissingUsageStaysUnobserved`, `ingress:TestCodeBuddyTranslatedStreamsKeepUsageOptIn`.
-- **C** `antigravity` — Cloud Code usage metadata; the provider is unavailable Tests: `protocol/gemini:TestAntigravityUsage`.
-- **C** `gemini-cli` — shares the Cloud Code usage metadata; the provider is unavailable Tests: `protocol/gemini:TestAntigravityUsage`, `protocol/gemini:TestCloudCodeResponseLegsServeBothWires`.
+- **P** `antigravity`, `gemini-cli` — usageMetadata inside the response envelope, cache read apart Tests: `ingress:TestGeminiFamilyIsServedToEveryClientWire`, `providers/shared:TestGeminiFamilyUsageIsReadInsideTheCloudCodeEnvelope`, `protocol/gemini:TestAntigravityUsage`.
+- **P** `kiro` — the metricsEvent's counts, cache apart from the prompt (kiro.js:917), streamed and buffered, for every client wire Tests: `ingress:TestKiroIsServedToEveryClientWire`, `providers/shared:TestKiroUsageScannerReadsMetricsEvents`, `protocol/kiro:TestCacheCountsAreSeparate`, `protocol/kiro:TestUsageOnlyWhenMeasured`, `protocol/kiro:TestKiroUsage`.
+- **P** `vertex` — usageMetadata of the Gemini body, cache read apart Tests: `ingress:TestGeminiFamilyIsServedToEveryClientWire`, `providers/shared:TestGeminiFamilyUsageIsReadInsideTheCloudCodeEnvelope`.
+- **P** `commandcode` — the finish event's prompt and output as the pin reads them (commandcode-to-openai.js:155-163); cachedInputTokens is an observation, not a cache read (PARITY V37) Tests: `ingress:TestCommandCodeIsServedToEveryClientWire`, `providers/shared:TestCommandCodeUsageIsReplacedWholesaleAndAgreesWithTheLeg`, `protocol/commandcode:TestUsage`.
 - **C** `cursor` — no usage on the Connect stream stays unobserved; the provider is unavailable Tests: `protocol/cursor:TestStreamIsPassedThroughWithoutUsage`.
-- **C** `kiro` — cacheReadInputTokens kept apart (kiro.js:917); the provider is unavailable Tests: `protocol/kiro:TestCacheCountsAreSeparate`, `protocol/kiro:TestUsageOnlyWhenMeasured`, `protocol/kiro:TestKiroUsage`.
-- **C** `commandcode` — finish usage; the provider is unavailable Tests: `protocol/commandcode:TestUsage`.
 - **T** `mistral` — prompt_tokens_details.cached_tokens, both modes Tests: `ingress:TestProviderCachedAndOrdinaryTokensAreSeparateInTheAccountingRecord`.
 - **T** `codex` — Responses input_tokens_details.cached_tokens, both modes Tests: `ingress:TestProviderCachedAndOrdinaryTokensAreSeparateInTheAccountingRecord`, `providers/shared:TestParseUsageNestedResponsesReadsCachedTokens`.
 - **T** `muse`, `xai`, `grok-cli` — Responses input_tokens_details.cached_tokens, both modes Tests: `ingress:TestProviderCachedAndOrdinaryTokensAreSeparateInTheAccountingRecord`.
 - **S** `alicode-intl`, `alitp-intl`, `alicode`, `alims-intl`, `baidu`, `bazaarlink`, `blackbox`, `bluesminds`, `byteplus`, `cerebras`, `chutes`, `cohere`, `featherless`, `fireworks`, `groq`, `hyperbolic`, `kilo-gateway`, `llm7`, `morph`, `nebius`, `nvidia`, `openrouter`, `perplexity`, `poolside`, `sambanova`, `siliconflow`, `tencent`, `together`, `venice`, `vercel-ai-gateway`, `volcengine-ark`, `openai`, `claude`, `glm`, `glm-cn`, `minimax-cn`, `xiaomi-tokenplan`, `mimo-free`, `mmf`, `opencode`, `ollama-local`, `vertex-partner`, `tokenrouter`, `perplexity-agent`, `opencode-go`, `github`, `gitlab`, `iflow`, `xiaomi-mimo`, `kilocode`, `kenari`, `zed`, `kimchi`, `azure` — shared OpenAI-shape accounting (prompt_tokens_details.cached_tokens); nothing names this provider Tests: `providers/shared:TestParseUsagePerProtocolFamily`, `ingress:TestNativeNonStreamEmitsExactlyOneReportedRecord`, `ingress:TestNativeStreamEmitsOneRecordFromFinalChunk`.
-- **U** `vertex`, `grok-web`, `perplexity-web` — refused by its immutable readiness; no usage codec to test Tests: `ingress:TestReadinessMatchesIngressReachability`.
-- **G** `qoder` — the pin maps cached counts from several spellings (shared/qoder/sse.js:21-54); no response codec exists, so none is tested; the provider is unavailable
+- **U** `grok-web`, `perplexity-web` — refused by its immutable readiness; no usage codec to test Tests: `ingress:TestReadinessMatchesIngressReachability`.
+- **G** `qoder` — the pin maps cached counts from several spellings (shared/qoder/sse.js:21-54); the pin coalesces the finish and usage frames in its executor (qoder.js:416-419), which is not built, so none is tested; the provider is unavailable
 
 ## What P08 added
 

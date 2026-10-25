@@ -74,14 +74,9 @@ func experimental(reason string) Readiness { return Readiness{ProviderExperiment
 // provider carries none. The unavailable set must equal the ingress unwired /
 // unreachable list (internal/ingress/readiness_test.go).
 var notReady = map[string]Readiness{
-	"antigravity":    unavailable("Cloud Code URL, OAuth client headers and project id are not bound (PARITY 6.9, #119)"),
-	"gemini-cli":     unavailable("Cloud Code URL, OAuth client headers and project id are not bound (PARITY 6.9, #119)"),
-	"vertex":         unavailable("project-scoped URL and service-account authentication are not bound (#115 PR-C, #119)"),
-	"kiro":           unavailable("three-host order, region rewrite and 401/403/404 endpoint fallback are not built (PARITY 6.10-6.12, #119)"),
 	"cursor":         unavailable("public enablement of the Connect-RPC transport is a separate decision (#115 PR-L)"),
-	"commandcode":    unavailable("wire hook landed, the Chat translation arm is not built (#76 P02, PARITY 6.13)"),
 	"typesafe":       unavailable("no conversion leg exists at the pin for the systemone format (registry/typesafe.js:22)"),
-	"qoder":          unavailable("no conversion leg exists at the pin; signing is wired but dispatch cannot reach it (registry/qoder.js:19-26)"),
+	"qoder":          unavailable("the pin converts in the executor, not a translator leg (executors/qoder.js:210-335,426-597): signing is wired, the envelope and response codec are not (PARITY 6.19, #194)"),
 	"perplexity-web": unavailable("no conversion leg exists at the pin for the perplexity-web format (registry/perplexity-web.js:21)"),
 	"grok-web":       unavailable("no conversion leg exists at the pin for the grok-web format (registry/grok-web.js:21)"),
 

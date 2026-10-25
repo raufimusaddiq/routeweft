@@ -13,17 +13,13 @@ import (
 // unreachableProviders are the providers a Chat, Responses or Messages client
 // cannot reach, because the only wire they speak has no conversion leg yet. It
 // is tracked work for #119, not an exclusion: the list only shrinks, and each
-// provider leaves it in the PR that lands its wire's legs. The last four have no
-// leg at the oracle either, so closing them is an adapter decision, not a leg.
+// provider leaves it in the PR that lands its wire's legs. The last four have no translator
+// leg at the oracle either, so closing them is an adapter decision, not a leg. (Qoder's
+// conversion is in the pin's executor, not absent; the entry says where.)
 var unreachableProviders = map[string]string{
-	"antigravity":    "#119 Antigravity: legs landed, URL, auth and project id are the wire hook's (ingress.unwired)",
-	"gemini-cli":     "#119 Gemini CLI: legs landed, URL, auth and project id are the wire hook's (ingress.unwired)",
-	"vertex":         "#119 Gemini family: legs landed, URL and auth are #115 PR-C's (ingress.unwired)",
-	"kiro":           "#119 Kiro: legs landed, three-host order, region rewrite and 401/403/404 endpoint fallback not built (ingress.unwired)",
 	"cursor":         "#115 PR-L Cursor: legs and Connect-RPC transport (wire.CursorDo) landed; public enablement is a separate decision (ingress.unwired)",
-	"commandcode":    "#76 P02 CommandCode: legs and wire hook landed, no TranslateChat arm (ingress.unwired)",
 	"typesafe":       "no conversion leg exists at the pin: registry/typesafe.js:22 format \"systemone\" is not in translator/formats.js:2-15",
-	"qoder":          "no conversion leg exists at the pin: registry/qoder.js:19-26 declares no format; its wire is executor-level (shared/qoder/sse.js)",
+	"qoder":          "no translator leg at the pin: registry/qoder.js:19-26 declares no format, so the target format is \"openai\" (services/provider.js:142-151) and executors/qoder.js:210-335 builds the agent envelope from the Chat body, :426-597 unwraps its SSE (PARITY 6.19, fourth slice)",
 	"perplexity-web": "no conversion leg exists at the pin: registry/perplexity-web.js:21 format \"perplexity-web\" is not in translator/formats.js:2-15",
 	"grok-web":       "no conversion leg exists at the pin: registry/grok-web.js:21 format \"grok-web\" is not in translator/formats.js:2-15",
 }

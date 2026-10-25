@@ -270,10 +270,10 @@ func TestConfiguredServingSkipsTransportMismatchBeforeRotationAndCap(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Antigravity has no conversion leg yet (#119 PR 5b), so neither Responses
-	// nor Messages can reach it; a Chat-only node would be reachable from
-	// Messages. Whoever lands its legs picks the next wire that has none.
-	node.Transports = []string{"antigravity"}
+	// Cursor is fenced (ingress.unwired), so no client wire can reach it; a
+	// Chat-only node would be reachable from Messages. Whoever enables it picks
+	// the next wire that has no way in.
+	node.Transports = []string{"cursor"}
 	if _, err := a.creds.PutNode(ctx, node); err != nil {
 		t.Fatal(err)
 	}

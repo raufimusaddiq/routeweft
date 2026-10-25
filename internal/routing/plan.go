@@ -15,7 +15,8 @@ type ProviderSettings struct {
 	Region, WorkspaceID, DeviceID, MachineID, AgentID                   string
 	Email, UserID, SystemID, OrganizationID, DefaultOrganizationID, UID string
 	OrgID                                                               string // Kilo Code organization (stored as orgId)
-	ProjectID                                                           string // Vertex partner GCP project (stored as projectId)
+	ProjectID                                                           string // GCP project of Vertex, Vertex partner, Gemini CLI and Antigravity (stored as projectId)
+	Location                                                            string // Vertex location (stored as location)
 	ChatGPTAccountID                                                    string // Codex ChatGPT account (stored as chatgptAccountId)
 }
 

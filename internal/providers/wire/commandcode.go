@@ -56,6 +56,7 @@ var commandCodeHook = Hook{
 	Target:        func(routing.ProviderRef) (Target, error) { return Target{Endpoint: commandCodeEndpoint}, nil },
 	Finalize:      commandCodeStream,
 	Do:            accountless(CommandCodeDo),
+	ClassifyError: commandCodeClassify,
 	// Every request needs the bearer; an empty one is an account problem, not an upstream 401.
 	RequireCredential: true,
 }
@@ -177,6 +178,31 @@ func ParseCommandCodeError(event map[string]any) CommandCodeError {
 func commandCodeText(value any) string {
 	text, _ := value.(string)
 	return text
+}
+
+// commandCodeClassify is parseError (executors/commandcode.js:63-78) for a non-2xx
+// answer: the status the pin acts on is the body's own code, else statusCode, else
+// the HTTP status, so a gateway that answers 502 for a rate limit it names 429 is
+// accounted as a rate limit. Only the account's accounting follows it: the status
+// and body the client sees are the upstream's (providerClassification).
+func commandCodeClassify(status int, body []byte, _ time.Time) (routing.Classification, bool) {
+	var document map[string]any
+	if json.Unmarshal(body, &document) != nil || document == nil {
+		return routing.Classification{}, false
+	}
+	named := document
+	if inner, ok := document["error"].(map[string]any); ok {
+		named = inner
+	}
+	effective, ok := commandCodeInteger(named["code"])
+	if !ok {
+		effective, ok = commandCodeInteger(named["statusCode"])
+	}
+	if !ok || effective == status || effective < 100 || effective > 599 {
+		return routing.Classification{}, false
+	}
+	classification := routing.ClassifyStatus(effective, nil)
+	return classification, classification.Outcome != ""
 }
 
 // commandCodeInteger is `value && Number.isInteger(Number(value))`.

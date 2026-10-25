@@ -113,7 +113,7 @@ func unionSeeds(oracle []SeedModel, compat []string) []SeedModel {
 // endpoint is resolved from provider-specific data at request time.
 func SpecializedWire() []Spec {
 	return []Spec{
-		{ID: "antigravity", Transports: []Protocol{TransportAntigravity}, Auth: AuthOAuth, DefaultBaseURL: "https://cloudcode-pa.googleapis.com", ModelCatalog: CatalogStatic, ReportsUsage: true},
+		{ID: "antigravity", Transports: []Protocol{TransportAntigravity}, Auth: AuthOAuth, DefaultBaseURL: "https://daily-cloudcode-pa.googleapis.com", ModelCatalog: CatalogStatic, ReportsUsage: true},
 		{ID: "gemini-cli", Transports: []Protocol{TransportGeminiCLI}, Auth: AuthOAuth, DefaultBaseURL: "https://cloudcode-pa.googleapis.com/v1internal", ModelCatalog: CatalogStatic, ReportsUsage: true},
 		{ID: "cursor", Transports: []Protocol{TransportCursor}, Auth: AuthOAuth, DefaultBaseURL: "https://api2.cursor.sh", ModelCatalog: CatalogStatic},
 		{ID: "qoder", Transports: []Protocol{TransportQoder}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://api3.qoder.sh", ModelCatalog: CatalogStatic, ReportsUsage: true},
