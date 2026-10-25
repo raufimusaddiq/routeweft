@@ -18,11 +18,12 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
-// Kiro's four legs exist and the pin dispatches the Messages pair directly, but
-// the endpoint binding (three-host order, region rewrite, 401/403/404 fallback)
-// is not built, so nothing may route to Kiro yet. A Messages client must not
-// pivot through Chat where the pin has a direct pair.
-func TestKiroLegsAreDeclaredButKiroStaysUnwired(t *testing.T) {
+// Kiro's four legs exist and the pin dispatches the Messages pair directly. A
+// Messages client must not pivot through Chat where the pin has a direct pair.
+// The endpoint binding (three-host order, region rewrite, 401/403/404 fallback)
+// is built and proven end to end in TestKiroIsServedToEveryClientWire, so every
+// client wire reaches Kiro.
+func TestKiroLegsAreDeclaredAndKiroIsRoutable(t *testing.T) {
 	for _, leg := range []hub.Leg{
 		{From: openai.ChatProtocol, To: kiroadapter.Protocol, Kind: hub.Request},
 		{From: kiroadapter.Protocol, To: openai.ChatProtocol, Kind: hub.Response},
@@ -46,8 +47,8 @@ func TestKiroLegsAreDeclaredButKiroStaysUnwired(t *testing.T) {
 		if !hub.CanTranslate(client, kiroadapter.Protocol) {
 			t.Errorf("%s client has no legs to Kiro", client)
 		}
-		if CanTranslate(client, kiroadapter.Protocol) {
-			t.Errorf("%s client can reach Kiro before its endpoint binding exists", client)
+		if !CanTranslate(client, kiroadapter.Protocol) {
+			t.Errorf("%s client cannot reach Kiro", client)
 		}
 	}
 }
@@ -149,10 +150,10 @@ func TestMessagesBetaHeaderSelectsThinkingAndIsNotForwarded(t *testing.T) {
 		_, _ = w.Write(append(kiroFrame("assistantResponseEvent", `{"content":"<thinking>plan</thinking>\nanswer"}`), kiroFrame("messageStopEvent", `{}`)...))
 	}))
 	defer upstream.Close()
-	// Kiro is unwired, so the handler would not plan a Kiro attempt. The handler's
-	// own seam is Options.TranslateMessages: the provider speaks Chat, and the
-	// translator it is given is the Kiro one, so the real header plumbing, request
-	// leg and response leg run without touching the package-level guard.
+	// The handler's own seam is Options.TranslateMessages: the provider speaks
+	// Chat, and the translator it is given is the Kiro one, so the real header
+	// plumbing, request leg and response leg run against a local upstream (the
+	// real Kiro hosts are not reachable from a test).
 	ref := routing.ProviderRef{ProviderID: "seam", Protocol: openai.ChatProtocol, BaseURL: upstream.URL, APIToken: "fixture-token"}
 	toKiro := func(request *anthropic.MessagesRequest, _ string) (ChatTranslation, error) {
 		return TranslateMessages(request, kiroadapter.Protocol)

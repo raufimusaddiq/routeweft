@@ -20,7 +20,7 @@ var pinForcedStream = map[string]string{
 	"codex":          "",
 	"grok-cli":       "",
 	"opencode":       "",
-	"commandcode":    "its stream is forced and inspected by CommandCodeDo on the commandcode wire, which is unwired",
+	"commandcode":    "its stream is forced and inspected by CommandCodeDo on the commandcode wire",
 	"openai": "the fold refuses a stream field it cannot carry (logprobs, annotations), which api.openai.com " +
 		"answers on a non-stream request; forcing it would turn a request that works into a 502",
 	"zed":         "",

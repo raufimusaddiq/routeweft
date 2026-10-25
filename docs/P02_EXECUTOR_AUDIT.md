@@ -206,10 +206,10 @@ served provider.
 | iflow | - | does: HMAC (`E/iflow.js:29-55`) | - (none at the pin) | - | - | - | does | does |
 | codebuddy-cn | differs: no prompt substitution, by decision (`E/codebuddy-cn.js:18-65`) | - | - | does | - | does (`:68-70`) | differs: no CLI identity, by decision | does |
 | codebuddy-intl | differs (`E/codebuddy-intl.js:17-40`) | - | - | does | - | does (`:43-45`) | differs | does |
-| commandcode | does: legs, unwired | - | - | does: its own wire | does (#170, `E/commandcode.js:42-61,140-241`) | not: non-2xx parse | does (`:28-40`) | does |
+| commandcode | does: legs and Chat/Responses/Messages arms, served (#194) | - | - | does: its own wire | does (#170, `E/commandcode.js:42-61,140-241`) | not: non-2xx parse | does (`:28-40`) | does |
 | cursor | does: Connect legs, unwired | - | - | - | - | - | does | does |
 | qoder | not: agent envelope, encoding (`E/qoder.js:661-703`) | differs: COSY hook only (`:668-690`) | - | - | not: first-frame peek (`:357-448`) | not: billing codes (`:339`) | does | not (`:604-606`) |
-| kiro | differs: legs, unwired | - | - | - | not: inspect, repair (`E/kiro.js:208-224`) | - | does | differs |
+| kiro | differs: legs, served (#194) | - | - | - | not: inspect, repair (`E/kiro.js:208-224`) | - | does | differs |
 | codex | **does (second slice)** (`E/codex.js:417-519`) | - | - | **does (second slice)** (`R/codex.js:40`) | **does (second slice)** (`E/codex.js:280-386`) | does (#177, `:389-411`) | differs: session_id, beta, account, originator do; remote images not (`:219-247,263-278`) | does: compact (`:244-247`) |
 | grok-cli | **does (second slice)** (`E/grok-cli.js:419-526`) | - | - | **does (second slice)** (`R/grok-cli.js:46`) | does (#184) (`R/grok-cli.js:63-67`) | does (#184) (`E/grok-cli.js:400-417`) | does (#184): identity, session, turn, model, account; the machine agent id is unreachable in the pin (`:424-427,528-550`) | does |
 | grok-web | not (`E/grok-web.js:226-283`) | - | not: sso cookie (`:285-290`) | - | - | not (`:307-317`) | not: browser identity (`:263-283`) | not |
@@ -235,7 +235,7 @@ served provider.
 | api-airforce | `R/api-airforce.js:32` | does (#171) |
 | codebuddy-cn, codebuddy-intl | `R/codebuddy-cn.js:23`, `R/codebuddy-intl.js:25` | does |
 | opencode | `R/opencode.js:20` | does (Chat models) |
-| commandcode | `R/commandcode.js:24` | does, on its own unwired wire (#170) |
+| commandcode | `R/commandcode.js:24` | does, on its own wire (#170); served since #194 |
 | **codex** | `R/codex.js:40` | **does (second slice)** |
 | **grok-cli** | `R/grok-cli.js:46` | **does (second slice)** |
 | openai | `R/openai.js:28` | **not, by decision**: the fold refuses `logprobs` and annotations, which api.openai.com answers on a non-stream request, so forcing would turn a working request into a 502. A usage-preserving fold of those fields is the precondition, and is open. |

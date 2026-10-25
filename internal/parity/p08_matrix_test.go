@@ -254,13 +254,13 @@ func unavailableCell(spec registry.Spec) cell {
 		"kenari":            {kindP, ref("providers/usage:TestKenariPinnedZeroCapacity"), "zero capacity is exhausted; absent amounts are unknown (U/kenari.js)"},
 		"opencode-go":       {kindP, ref("providers/usage:TestOpenCodeGoUsageUsedPercentAndAbsentPeriods", "providers/usage:TestOpenCodeGoUsageFailuresAreErrorsNotHealthyAccounts"), "100% used reads as nothing left; a 403 EntitlementError is a subscription hint (opencode-go.js:54-76)"},
 		"ollama":            {kindP, ref("providers/usage:TestOllamaUsageRatioIsUsedFractionAndNullWindowsAreSkipped"), "usage 1.0 reads as nothing left; a null window is skipped"},
-		"commandcode":       {kindP, ref("providers/usage:TestCommandCodeUsageCarriesOrgAndPlanCap", "providers/wire:TestParseCommandCodeError"), "cap reached reads as nothing left; provider unavailable for serving"},
+		"commandcode":       {kindP, ref("providers/usage:TestCommandCodeUsageCarriesOrgAndPlanCap", "providers/wire:TestParseCommandCodeError"), "cap reached reads as nothing left"},
 		"zed":               {kindP, ref("providers/usage:TestZedUsageLimitedUnlimitedAndExhausted", "ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin"), "500/500 reads as nothing left; trial_blocked 403 cools the account (the pin's message rewrite, zed.js:284-310, is not done)"},
 		"qoder":             {kindP, ref("providers/usage:TestQoderUsageUserAndOrganizationPools"), "a spent organization pool reads as nothing left; provider unavailable for serving"},
 		"xiaomi-mimo":       {kindP, ref("providers/usage:TestXiaomiMimoUsagePercentIsRemaining"), "a 401 (key cannot read the account quota) is an error, not an empty or full window"},
 		"github":            {kindP, ref("providers/usage:TestGitHubPaidAndFreeShapes"), "free-plan limited quotas versus paid entitlements"},
 		"kimi":              {kindP, ref("providers/usage:TestKimiEntitlementIsNotExpiry"), "an entitlement date is not a credential expiry"},
-		"kiro":              {kindP, ref("providers/usage:TestKiroFreeTrialIsSeparateWindow"), "free trial is its own window; provider unavailable for serving"},
+		"kiro":              {kindP, ref("providers/usage:TestKiroFreeTrialIsSeparateWindow"), "free trial is its own window"},
 		"antigravity":       {kindP, ref("providers/usage:TestAntigravityFreeTierSkipsPerModelQuota"), "free tier has no per-model quota; provider unavailable for serving"},
 		"vercel-ai-gateway": {kindP, ref("providers/usage:TestVercelBalanceIsNotAUsagePercentage"), "a credit balance is not a usage percentage"},
 		"codebuddy-cn":      {kindP, ref("ingress:TestCodeBuddyFrequencyLimitCoolsTheAccountAndRelaysTheGatewayError", "providers/wire:TestCodeBuddyFrequencyLimit", "ingress:TestCodeBuddyOtherUpstreamErrorsAreNotReadAsALimit"), "the gateway's frequency-limit body cools the account until its reset (codebuddy-error.js)"},
@@ -418,15 +418,17 @@ func modeCell(t *testing.T, spec registry.Spec, stream bool, chat, skips map[str
 		}
 		return cell{kindC, ref("protocol/cursor:TestBufferedBody"), "buffered body codec; the provider is unavailable"}
 	case "commandcode":
-		if stream {
-			return cell{kindC, ref("protocol/commandcode:TestStreamIsConvertedLineByLine", "providers/wire:TestCommandCodeForcesStreamOnTheEnvelope", "providers/wire:TestCommandCodeDoRecoversOnRetryAndReplaysTheStreamExactly"), "stream codec, forced stream envelope, replay; the Chat translation arm is not built"}
-		}
-		return cell{kindC, ref("protocol/commandcode:TestBufferedBodyIsAggregated"), "buffered aggregate codec; the provider is unavailable"}
+		return pair(
+			ref("ingress:TestCommandCodeIsServedToEveryClientWire", "protocol/commandcode:TestStreamIsConvertedLineByLine", "providers/wire:TestCommandCodeForcesStreamOnTheEnvelope", "providers/wire:TestCommandCodeDoRecoversOnRetryAndReplaysTheStreamExactly"),
+			ref("ingress:TestCommandCodeIsServedToEveryClientWire", "protocol/commandcode:TestBufferedBodyIsAggregated"),
+			"every client wire, NDJSON converted line by line, the stream forced on the envelope, a retried error event replayed",
+			"every client wire, the forced NDJSON aggregated into one body")
 	case "kiro":
-		if stream {
-			return cell{kindC, ref("protocol/kiro:TestStreamText", "protocol/kiro:TestMessagesStreamText"), "event-stream codec; the provider is unavailable"}
-		}
-		return cell{kindC, ref("protocol/kiro:TestBufferedMatchesStreamed", "protocol/kiro:TestMessagesBufferedMatchesStream"), "buffered codec; the provider is unavailable"}
+		return pair(
+			ref("ingress:TestKiroIsServedToEveryClientWire", "protocol/kiro:TestStreamText", "protocol/kiro:TestMessagesStreamText"),
+			ref("ingress:TestKiroIsServedToEveryClientWire", "protocol/kiro:TestBufferedMatchesStreamed", "protocol/kiro:TestMessagesBufferedMatchesStream"),
+			"every client wire through the 403 to second-host fallback, event stream converted",
+			"every client wire through the 403 to second-host fallback, event stream aggregated")
 	case "antigravity", "gemini-cli":
 		if stream {
 			return cell{kindC, ref("protocol/gemini:TestAntigravityStreamText", "protocol/gemini:TestCloudCodeResponseLegsServeBothWires"), "Cloud Code stream codec; the provider is unavailable (URL, client headers and project id are not bound)"}
@@ -524,9 +526,9 @@ func errorsCell(spec registry.Spec) cell {
 		"codex":            {kindP, ref("ingress:TestProviderErrorBodiesReachTheClientByteForByte"), "usage_limit_reached body reaches the client unchanged"},
 		"grok-cli":         {kindP, ref("ingress:TestProviderErrorBodiesReachTheClientByteForByte"), "{code,error} body of the 402 spending-limit reaches the client unchanged"},
 		"zed":              {kindP, ref("ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin"), "trial_blocked 403 cools the account; the pin's message rewrite (zed.js:284-310) is not done, the client sees the upstream body"},
-		"commandcode":      {kindC, ref("providers/wire:TestParseCommandCodeError", "providers/wire:TestCommandCodeDoRetriesAnErrorEventThenReturnsItAsHTTP", "providers/wire:TestCommandCodeDoNeverRetriesAnHTTPError"), "in-band error events (executors/commandcode.js:60-100); the provider is unavailable"},
+		"commandcode":      {kindP, ref("ingress:TestCommandCodeErrorEventReachesEveryClientAsAnHTTPError", "providers/wire:TestParseCommandCodeError", "providers/wire:TestCommandCodeDoRetriesAnErrorEventThenReturnsItAsHTTP", "providers/wire:TestCommandCodeDoNeverRetriesAnHTTPError"), "an in-band error event reaches every client wire as its HTTP status (executors/commandcode.js:60-100); the pin's non-2xx parseError classification (:63-78) is open"},
 		"cursor":           {kindC, ref("providers/wire:TestCursorDoReportsAFailureInBandNotAsSuccess", "providers/wire:TestCursorDoPassesUpstreamRejectionsThrough", "protocol/cursor:TestStreamFailures"), "in-band failures and upstream rejections; the provider is unavailable"},
-		"kiro":             {kindC, ref("protocol/kiro:TestUpstreamExceptionFrames", "ingress:TestKiroWithoutCredentialDoesNotDispatch"), "exception frames; the provider is unavailable"},
+		"kiro":             {kindP, ref("ingress:TestKiroExhaustedHostsAnswerTheClientWithTheUpstreamStatus", "ingress:TestDispatchEndpointFallback", "protocol/kiro:TestUpstreamExceptionFrames", "ingress:TestKiroWithoutCredentialDoesNotDispatch"), "three hosts then the last host's status to every client wire; 401/403/404 fall through, other statuses do not; exception frames"},
 		"antigravity":      {kindC, ref("protocol/gemini:TestAntigravityStreamFailures", "protocol/gemini:TestAntigravityRefusalIsTyped"), "typed refusal and stream failures; the provider is unavailable"},
 		"gemini-cli":       {kindC, ref("protocol/gemini:TestAntigravityStreamFailures", "protocol/gemini:TestCloudCodeResponseLegsServeBothWires"), "shares the Cloud Code response legs; the pin's RetryInfo retryDelay hint (gemini-cli.js:38-52) is not read; the provider is unavailable"},
 		"qoder":            {kindC, ref("ingress:TestQoderMissingIdentityFailsBeforeNetwork"), "refuses before the network without an identity; no response error codec; the provider is unavailable"},
@@ -576,8 +578,8 @@ func tokensCell(spec registry.Spec) cell {
 		"cline":          {kindP, ref("ingress:TestClineEnvelopeFixtureIsUnwrappedAndAccounted"), "usage inside the unwrapped envelope is accounted"},
 		"api-airforce":   {kindP, ref("ingress:TestAirforceForcedStreamAcrossClientProtocols"), "usage from the forced stream, both client modes"},
 		"clinepass":      {kindP, ref("ingress:TestClineEnvelopeFixtureIsUnwrappedAndAccounted"), "usage inside the unwrapped envelope is accounted"},
-		"kiro":           {kindC, ref("protocol/kiro:TestCacheCountsAreSeparate", "protocol/kiro:TestUsageOnlyWhenMeasured", "protocol/kiro:TestKiroUsage"), "cacheReadInputTokens kept apart (kiro.js:917); the provider is unavailable"},
-		"commandcode":    {kindC, ref("protocol/commandcode:TestUsage"), "finish usage; the provider is unavailable"},
+		"kiro":           {kindG, ref("ingress:TestKiroIsServedToEveryClientWire", "protocol/kiro:TestCacheCountsAreSeparate", "protocol/kiro:TestUsageOnlyWhenMeasured", "protocol/kiro:TestKiroUsage"), "the client's response carries the counts (cacheReadInputTokens kept apart, kiro.js:917), but the usage scanner does not read the event stream, so the request is recorded with usage unobserved (PARITY 6.19)"},
+		"commandcode":    {kindG, ref("ingress:TestCommandCodeIsServedToEveryClientWire", "protocol/commandcode:TestUsage"), "the client's response carries the finish usage, but the usage scanner does not read the NDJSON, so the request is recorded with usage unobserved (PARITY 6.19)"},
 		"cursor":         {kindC, ref("protocol/cursor:TestStreamIsPassedThroughWithoutUsage"), "no usage on the Connect stream stays unobserved; the provider is unavailable"},
 		"antigravity":    {kindC, ref("protocol/gemini:TestAntigravityUsage"), "Cloud Code usage metadata; the provider is unavailable"},
 		"gemini-cli":     {kindC, ref("protocol/gemini:TestAntigravityUsage", "protocol/gemini:TestCloudCodeResponseLegsServeBothWires"), "shares the Cloud Code usage metadata; the provider is unavailable"},

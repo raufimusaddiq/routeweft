@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
-	"github.com/raufimusaddiq/routeweft/internal/protocol/commandcode"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/cursor"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/hub"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
@@ -148,11 +147,11 @@ func TestOllamaScannerBoundsAnUnterminatedLine(t *testing.T) {
 	}
 }
 
-// Cursor and CommandCode have conversion legs but no transport that can send to
-// them, so a request must not be routed to either. A provider leaves ingress.unwired
-// in the PR that binds its wire.
+// Cursor has conversion legs but its enablement is a separate decision, so a
+// request must not be routed to it. A provider leaves ingress.unwired in the PR
+// that binds its wire.
 func TestUnwiredProviderWiresAreNotTranslatable(t *testing.T) {
-	for _, target := range []string{cursor.Protocol, commandcode.Protocol} {
+	for _, target := range []string{cursor.Protocol} {
 		for _, source := range []string{openai.ChatProtocol, openai.ResponsesProtocol, anthropic.MessagesProtocol} {
 			if !hub.CanTranslate(source, target) {
 				t.Errorf("the legs for %s must be declared in the hub", target)
