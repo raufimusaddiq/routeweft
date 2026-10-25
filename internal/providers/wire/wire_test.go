@@ -95,7 +95,7 @@ var tokens = []string{
 // API.airforce adds its registry referer/title pair (airforce_wire_test.go).
 // github adds the pin's per-request x-request-id (github_test.go).
 // vertex sends no bearer: its credential is a JSON document or a key that VertexDo places (vertex_test.go).
-var headersChanged = map[string]bool{"azure": true, "api-airforce": true, "kimi": true, "kilocode": true, "iflow": true, "kiro": true, "commandcode": true, "opencode": true, "github": true, "vertex": true}
+var headersChanged = map[string]bool{"azure": true, "api-airforce": true, "kimi": true, "kilocode": true, "iflow": true, "kiro": true, "commandcode": true, "opencode": true, "github": true, "vertex": true, "grok-web": true, "perplexity-web": true}
 
 func TestOpenAIHeadersMatchLegacyForEveryProvider(t *testing.T) {
 	for _, id := range providerIDs() {
@@ -177,7 +177,7 @@ func TestPrepareMessagesMatchesLegacyForEveryProvider(t *testing.T) {
 func TestRegisteredHooksAreExactlyTheDeclaredProviders(t *testing.T) {
 	got := Registered()
 	sort.Strings(got)
-	want := []string{"anthropic", "antigravity", "api-airforce", "azure", "cerebras", "claude", "cline", "clinepass", "cloudflare-ai", "codebuddy-cn", "codebuddy-intl", "codex", "commandcode", "cursor", "deepseek", "gemini-cli", "github", "glm", "grok-cli", "iflow", "kenari", "kilocode", "kimchi", "kimi", "kiro", "mimo-free", "minimax", "minimax-cn", "mistral", "mmf", "opencode", "opencode-go", "qoder", "vertex", "vertex-partner", "xiaomi-tokenplan", "zed"}
+	want := []string{"anthropic", "antigravity", "api-airforce", "azure", "cerebras", "claude", "cline", "clinepass", "cloudflare-ai", "codebuddy-cn", "codebuddy-intl", "codex", "commandcode", "cursor", "deepseek", "gemini-cli", "github", "glm", "grok-cli", "grok-web", "iflow", "kenari", "kilocode", "kimchi", "kimi", "kiro", "mimo-free", "minimax", "minimax-cn", "mistral", "mmf", "opencode", "opencode-go", "perplexity-web", "qoder", "vertex", "vertex-partner", "xiaomi-tokenplan", "zed"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("registered hooks %v, want %v", got, want)
 	}

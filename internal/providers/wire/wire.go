@@ -176,6 +176,8 @@ var hooks = map[string]Hook{
 	"vertex":           vertexHook,
 	"cloudflare-ai":    {Target: cloudflareTarget},
 	"commandcode":      commandCodeHook,
+	"grok-web":         grokWebHook,
+	"perplexity-web":   perplexityWebHook,
 	"cursor":           {RequestHeaders: cursorHeaders, Target: cursorTarget, ForceStream: true, RequireCredential: true, Do: accountless(CursorDo)},
 }
 

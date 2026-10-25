@@ -77,8 +77,8 @@ var notReady = map[string]Readiness{
 	"cursor":         unavailable("public enablement of the Connect-RPC transport is a separate decision (#115 PR-L)"),
 	"typesafe":       unavailable("no conversion leg exists at the pin for the systemone format (registry/typesafe.js:22)"),
 	"qoder":          unavailable("the pin converts in the executor, not a translator leg (executors/qoder.js:210-335,426-597): signing is wired, the envelope and response codec are not (PARITY 6.19, #194)"),
-	"perplexity-web": unavailable("no conversion leg exists at the pin for the perplexity-web format (registry/perplexity-web.js:21)"),
-	"grok-web":       unavailable("no conversion leg exists at the pin for the grok-web format (registry/grok-web.js:21)"),
+	"perplexity-web": unavailable("session cookie, browser identity and codec are built (wire.PerplexityWeb*) but not routable: the pin converts in the executor (no hub leg, internal/parity), live acceptance is unproven, and routability awaits owner approval (PARITY 6.19, #195)"),
+	"grok-web":       unavailable("session cookie, browser identity and codec are built (wire.GrokWeb*) but not routable: the pin converts in the executor (no hub leg, internal/parity), live acceptance is unproven, and routability awaits owner approval (PARITY 6.19, #195)"),
 
 	"azure":          experimental("deployment, API-version and endpoint provider data and specialized URL rules are open (PARITY P02/C06)"),
 	"vertex-partner": experimental("project-id probe, service-account/ADC minting and raw-key auth are not built; unverified against a real gateway (PARITY #115 PR-E2)"),
