@@ -942,3 +942,25 @@ func TestGateBoundIgnoresThinkingTextAsThePinDoes(t *testing.T) {
 		t.Fatalf("%v %s", err, delivered)
 	}
 }
+
+// The same contract through the gate: a frame whose first entry is unusable is a turn with no
+// call (repaired once); an unusable entry after a valid one costs only what follows it.
+func TestGateFollowsThePinsToolArrayContract(t *testing.T) {
+	valid := func(id string) string { return `{"toolUseId":"` + id + `","name":"lookup","input":{}}` }
+	array := func(entries ...string) []byte { return event("toolUseEvent", "["+strings.Join(entries, ",")+"]") }
+	r := answers(join(array(valid("v")), stop("tool_use")))
+	if _, err := runGate(t, join(array(`null`, valid("v")), stop("tool_use")), GateConfig{Repair: true}, r); err != nil || len(r.kinds) != 1 || r.kinds[0] != "tool" {
+		t.Fatalf("err %v retries %v", err, r.kinds)
+	}
+	r = answers(good())
+	raw := join(text("hello"), array(valid("a"), `null`, valid("b")), stop("tool_use"))
+	if got, err := runGate(t, raw, GateConfig{Repair: true}, r); err != nil || got != string(raw) || len(r.kinds) != 0 {
+		t.Fatalf("err %v retries %v", err, r.kinds)
+	}
+	// With text alongside, an unusable-first array is not repaired: the text stands (:1053).
+	r = answers(good())
+	raw = join(text("hello"), array(`null`, valid("v")), stop("tool_use"))
+	if got, err := runGate(t, raw, GateConfig{Repair: true}, r); err != nil || got != string(raw) || len(r.kinds) != 0 {
+		t.Fatalf("err %v retries %v", err, r.kinds)
+	}
+}

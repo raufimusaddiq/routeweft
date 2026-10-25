@@ -1004,3 +1004,64 @@ func TestEmptyCodeEventIsOutputAsAtThePin(t *testing.T) {
 		t.Fatalf("%v %+v", err, out)
 	}
 }
+
+// A toolUseEvent array is read by the pin entry by entry, and the first entry it cannot use
+// throws out of the whole frame: the entries before it were already buffered and are kept, the
+// ones after it are never visited (executors/kiro.js:848-870; the throw is caught per frame,
+// :972-980). The outputs below are those of the pin's own transformEventStreamToSSE, run at
+// 1c3b9f47 on these exact frames (shared/routeweft201-pin-probe.mjs). Skipping the bad entry
+// and reading on would serve calls the pin does not, so this is the contract, not a gap.
+func TestToolArrayEntriesFollowThePinsFrameContract(t *testing.T) {
+	valid := func(id string) string { return `{"toolUseId":"` + id + `","name":"lookup","input":{}}` }
+	array := func(entries ...string) []byte { return event("toolUseEvent", "["+strings.Join(entries, ",")+"]") }
+	cases := []struct {
+		name   string
+		frames [][]byte
+		want   []string // call ids the pin serves
+		finish string   // "" means the turn fails as invalid_kiro_tool_call
+	}{
+		{"null before a valid call", [][]byte{array(`null`, valid("v"))}, nil, ""},
+		{"nameless before a valid call", [][]byte{array(`{"input":{}}`, valid("v"))}, nil, ""},
+		{"valid, null, valid", [][]byte{array(valid("a"), `null`, valid("b"))}, []string{"a"}, "tool_calls"},
+		{"valid, nameless, valid", [][]byte{array(valid("a"), `{"toolUseId":"x","input":{}}`, valid("b"))}, []string{"a"}, "tool_calls"},
+		{"valid, non-object, valid", [][]byte{array(valid("a"), `5`, valid("b"))}, []string{"a"}, "tool_calls"},
+		{"valid, bad id, valid", [][]byte{array(valid("a"), `{"toolUseId":7,"name":"lookup","input":{}}`, valid("b"))}, []string{"a"}, "tool_calls"},
+		{"the same entries in separate frames", [][]byte{event("toolUseEvent", `null`), event("toolUseEvent", valid("v"))}, []string{"v"}, "tool_calls"},
+		{"text, then null before a valid call", [][]byte{text("hello"), array(`null`, valid("v"))}, nil, "stop"},
+		{"text, then valid, null, valid", [][]byte{text("hello"), array(valid("a"), `null`, valid("b"))}, []string{"a"}, "tool_calls"},
+		{"all valid", [][]byte{array(valid("a"), valid("b"))}, []string{"a", "b"}, "tool_calls"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			body := join(append(append([][]byte{}, c.frames...), stop("tool_use"))...)
+			out, err := stream(t, body, ResponseOptions{})
+			got := []string{}
+			for _, call := range out.calls() {
+				got = append(got, call["id"].(string))
+			}
+			if c.finish == "" {
+				if err == nil || len(out.errors) != 1 || out.errors[0]["code"] != "invalid_kiro_tool_call" {
+					t.Fatalf("the pin fails this turn: %v %+v", err, out)
+				}
+			} else if err != nil || out.finish() != c.finish {
+				t.Fatalf("err %v finish %v", err, out.finish())
+			}
+			if strings.Join(got, ",") != strings.Join(c.want, ",") {
+				t.Fatalf("calls %v, the pin serves %v", got, c.want)
+			}
+			// The buffered leg reads the same bytes the same way.
+			buffered, err := KiroResponseToChat(body, ResponseOptions{})
+			for _, id := range c.want {
+				if err != nil || !strings.Contains(string(buffered), `"`+id+`"`) {
+					t.Fatalf("buffered: %v %s", err, buffered)
+				}
+			}
+			if c.want == nil && c.finish == "" && err == nil {
+				t.Fatalf("buffered leg served a turn the pin fails: %s", buffered)
+			}
+			if len(c.want) == 1 && strings.Contains(string(buffered), `"b"`) {
+				t.Fatalf("buffered leg served a call the pin never visits: %s", buffered)
+			}
+		})
+	}
+}

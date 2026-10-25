@@ -566,3 +566,21 @@ func TestKiroServesWhatThePinServes(t *testing.T) {
 		}
 	}
 }
+
+// The pin's tool array contract (executors/kiro.js:848-870), through every client wire: the call
+// before the first unusable entry is served, the ones after it are not, and the text stands.
+func TestKiroToolArrayContractOnEveryWire(t *testing.T) {
+	turn := kiroAnswer(kiroFrame("assistantResponseEvent", `{"content":"hello"}`),
+		kiroFrame("toolUseEvent", `[{"toolUseId":"first","name":"lookup","input":{}},null,{"toolUseId":"after","name":"lookup","input":{}}]`),
+		kiroFrame("messageStopEvent", `{"stopReason":"tool_use"}`))
+	for _, client := range clientWires {
+		for _, stream := range []bool{false, true} {
+			s, seen := kiroScripted(t, routing.ProviderSettings{}, answer(turn), answer(kiroGoodTurn))
+			w := s.call(client, stream)
+			body := w.Body.String()
+			if w.Code != 200 || !strings.Contains(body, "first") || strings.Contains(body, "after") || !strings.Contains(body, "hello") || len(seen.calls()) != 1 {
+				t.Errorf("%s stream=%v: %d, %d requests: %.300s", client, stream, w.Code, len(seen.calls()), body)
+			}
+		}
+	}
+}
