@@ -3,6 +3,8 @@ package runtime
 import (
 	"sync"
 	"time"
+
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 )
 
 // RuntimeState contains mutable process-local routing and health state. It is
@@ -13,6 +15,7 @@ type RuntimeState struct {
 	cooldowns map[string]time.Time
 	quotas    map[string]QuotaObservation
 	wires     map[string]string
+	codecs    *wire.CodecState
 }
 
 // QuotaObservation is a memory-first provider/account quota observation.
@@ -24,7 +27,7 @@ type QuotaObservation struct {
 }
 
 func NewState() *RuntimeState {
-	return &RuntimeState{cursors: make(map[string]uint64), cooldowns: make(map[string]time.Time), quotas: make(map[string]QuotaObservation), wires: make(map[string]string)}
+	return &RuntimeState{cursors: make(map[string]uint64), cooldowns: make(map[string]time.Time), quotas: make(map[string]QuotaObservation), wires: make(map[string]string), codecs: wire.NewCodecState()}
 }
 
 // NextCursor atomically returns a provider-local monotonically increasing RR
@@ -128,3 +131,8 @@ func (s *RuntimeState) PreferredWire(provider, model string) string {
 	defer s.mu.Unlock()
 	return s.wires[provider+"|"+model]
 }
+
+// CodecState is the state provider codecs keep between requests (Perplexity's
+// account-scoped thread cache, #195). Like PreferWire it is process-local, bounded
+// and never part of a snapshot.
+func (s *RuntimeState) CodecState() *wire.CodecState { return s.codecs }

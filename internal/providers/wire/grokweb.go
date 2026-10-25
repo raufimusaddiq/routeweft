@@ -56,6 +56,7 @@ var grokWebHook = Hook{
 	RequestHeaders:    grokWebHeaders,
 	Target:            func(routing.ProviderRef) (Target, error) { return Target{Endpoint: grokWebEndpoint}, nil },
 	NoOpenAIBearer:    true,
+	Codec:             grokCodec,
 	RequireCredential: true,
 	Do:                webDo(grokHTTPMessage),
 }

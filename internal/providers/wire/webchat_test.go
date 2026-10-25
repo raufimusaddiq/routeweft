@@ -8,7 +8,9 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -646,5 +648,67 @@ func TestPerplexitySessionsAreRaceFree(t *testing.T) {
 	wg.Wait()
 	if len(sessions.entries) > perplexitySessionCap {
 		t.Fatalf("%d entries over the cap", len(sessions.entries))
+	}
+}
+
+func TestCodecProvidersAreExactlyDeclared(t *testing.T) {
+	var got []string
+	for _, id := range Registered() {
+		if For(id).Codec != nil {
+			got = append(got, id)
+			if !HasCodec(id) {
+				t.Errorf("HasCodec(%q) is false", id)
+			}
+		}
+	}
+	sort.Strings(got)
+	if !reflect.DeepEqual(got, []string{"grok-web", "perplexity-web"}) {
+		t.Fatalf("codec providers %v", got)
+	}
+	for _, protocol := range []string{"openai-chat", "commandcode", "", "unknown"} {
+		if HasCodec(protocol) {
+			t.Errorf("HasCodec(%q)", protocol)
+		}
+	}
+	if _, ok, err := CodecFor(webRef("commandcode", "x"), nil, pplxChat, "m"); ok || err != nil {
+		t.Fatalf("a provider without a codec built one: %v %v", ok, err)
+	}
+}
+
+func TestCodecForBuildsTheWholeConversion(t *testing.T) {
+	codec, ok, err := CodecFor(webRef("grok-web", fixtureCookie), nil, pplxChat, "grok-4")
+	if !ok || err != nil || codec.Endpoint != "rest/app-chat/conversations/new" || !strings.Contains(string(codec.Body), `"message":"weather?"`) {
+		t.Fatalf("grok codec: %+v %v %v", codec, ok, err)
+	}
+	if answer, err := codec.Response([]byte(grokStream)); err != nil || !strings.Contains(string(answer), `"content":"Hello"`) {
+		t.Fatalf("grok response: %s %v", answer, err)
+	}
+
+	state := NewCodecState()
+	ref := func(connection string) routing.ProviderRef {
+		r := webRef("perplexity-web", fixtureCookie)
+		r.ConnectionID = connection
+		return r
+	}
+	first, ok, err := CodecFor(ref("a"), state, pplxChat, "pplx-sonar")
+	if !ok || err != nil || first.Endpoint != "rest/sse/perplexity_ask" {
+		t.Fatalf("perplexity codec: %+v %v %v", first, ok, err)
+	}
+	if _, err := first.Response([]byte(perplexityStream)); err != nil {
+		t.Fatal(err)
+	}
+	continued := func(connection string) bool {
+		c, _, err := CodecFor(ref(connection), state, pplxFollowUp, "pplx-sonar")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Contains(string(c.Body), `"last_backend_uuid":"b1"`)
+	}
+	if !continued("a") || continued("b") {
+		t.Fatal("the thread must continue on connection a only")
+	}
+	// No state, no continuation; the request is still built.
+	if c, _, err := CodecFor(ref("a"), nil, pplxFollowUp, "pplx-sonar"); err != nil || strings.Contains(string(c.Body), `"last_backend_uuid":"b1"`) {
+		t.Fatalf("a request with no state continued a thread: %v", err)
 	}
 }

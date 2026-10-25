@@ -66,6 +66,7 @@ var perplexityWebHook = Hook{
 	RequestHeaders:    perplexityWebHeaders,
 	Target:            func(routing.ProviderRef) (Target, error) { return Target{Endpoint: perplexityWebEndpoint}, nil },
 	NoOpenAIBearer:    true,
+	Codec:             perplexityCodec,
 	RequireCredential: true,
 	Do:                webDo(perplexityHTTPMessage),
 }

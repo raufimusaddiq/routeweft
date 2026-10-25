@@ -129,6 +129,10 @@ type Hook struct {
 	// the dispatcher cools it and may try the next candidate, and it removes
 	// whatever marker Do left on the response.
 	AcceptedFailure func(*http.Response) (FailedAnswer, bool)
+	// Codec converts the request and its answer for a provider whose pin converts
+	// in its executor and has no translator leg. It replaces the conversion legs,
+	// not the hook's headers, target or Do.
+	Codec func(provider routing.ProviderRef, state *CodecState, chat map[string]any, model string) (Codec, error)
 }
 
 var hooks = map[string]Hook{
