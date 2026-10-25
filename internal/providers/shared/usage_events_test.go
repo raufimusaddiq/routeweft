@@ -2,9 +2,13 @@ package shared
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"hash/crc32"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/raufimusaddiq/routeweft/internal/protocol/commandcode"
 )
 
 func kiroFrame(kind, payload string) []byte {
@@ -76,9 +80,10 @@ data: {"type":"finish","finishReason":"stop","totalUsage":{"inputTokens":130,"ou
 	if !found || usage.InputTokens != 130 || usage.OutputTokens != 42 || usage.CacheReadTokens != 0 {
 		t.Fatalf("%+v %v", usage, found)
 	}
+	// A finish-step is held for the finish event to report; alone it reports nothing.
 	stepOnly := strings.Split(body, "\n")[1]
-	if usage, found := ParseUsage(FamilyCommandCode, []byte(stepOnly)); !found || usage.InputTokens != 10 {
-		t.Errorf("finish-step alone: %+v %v", usage, found)
+	if usage, found := ParseUsage(FamilyCommandCode, []byte(stepOnly)); found {
+		t.Errorf("finish-step alone: %+v", usage)
 	}
 	if _, found := ParseUsage(FamilyCommandCode, []byte(`{"type":"finish","finishReason":"stop"}`+"\n"+`{"type":"finish","totalUsage":{"inputTokens":0,"outputTokens":0}}`)); found {
 		t.Error("a measured zero was recorded for counts the upstream did not report")
@@ -102,3 +107,67 @@ func TestGeminiFamilyUsageIsReadInsideTheCloudCodeEnvelope(t *testing.T) {
 		}
 	}
 }
+
+// The report is the finish event's, wholesale: a field the finish event leaves at
+// zero is zero, not the number an earlier finish-step carried. Each case is also
+// read by the conversion leg, and the two must agree on what was reported.
+func TestCommandCodeUsageIsReplacedWholesaleAndAgreesWithTheLeg(t *testing.T) {
+	step := func(in, out int) string {
+		return `{"type":"finish-step","finishReason":"stop","usage":{"inputTokens":` + itoa(in) + `,"outputTokens":` + itoa(out) + `}}` + "\n"
+	}
+	finish := func(total string) string {
+		return `{"type":"finish","finishReason":"stop"` + total + `}` + "\n"
+	}
+	totals := func(in, out int) string {
+		return `,"totalUsage":{"inputTokens":` + itoa(in) + `,"outputTokens":` + itoa(out) + `}`
+	}
+	for _, c := range []struct {
+		name     string
+		body     string
+		in, out  int64
+		reported bool
+	}{
+		{"a zero output in the total replaces the step's", step(10, 5) + finish(totals(130, 0)), 130, 0, true},
+		{"a zero input in the total replaces the step's", step(10, 5) + finish(totals(0, 42)), 0, 42, true},
+		{"the last of several steps is the report", step(10, 5) + step(20, 0) + step(30, 7) + finish(""), 30, 7, true},
+		{"a later step with a zero field replaces an earlier one", step(10, 5) + step(20, 0) + finish(""), 20, 0, true},
+		{"the total wins over every step", step(10, 5) + step(20, 6) + finish(totals(130, 0)), 130, 0, true},
+		{"an all-zero total is no usage, not the step's", step(10, 5) + finish(totals(0, 0)), 0, 0, false},
+		{"no usage anywhere", finish(""), 0, 0, false},
+		{"nothing is reported before the finish event", step(10, 5), 0, 0, false},
+		{"lines after the finish event are not read", step(10, 5) + finish(totals(130, 0)) + finish(totals(1, 1)) + step(2, 2), 130, 0, true},
+	} {
+		usage, found := ParseUsage(FamilyCommandCode, []byte(c.body))
+		if found != c.reported || usage.InputTokens != c.in || usage.OutputTokens != c.out || usage.CacheReadTokens != 0 {
+			t.Errorf("%s: recorded %+v found=%v, want %d/%d found=%v", c.name, usage, found, c.in, c.out, c.reported)
+		}
+		// Streamed in awkward chunks, through the reader the scanner uses.
+		var reader CommandCodeUsageReader
+		for _, line := range strings.SplitAfter(c.body, "\n") {
+			reader.Line([]byte(line))
+		}
+		if streamed, ok := reader.Usage(); ok != c.reported || streamed != usage {
+			t.Errorf("%s: streamed %+v %v differs from buffered %+v %v", c.name, streamed, ok, usage, found)
+		}
+		// The leg is the authority on what the client is told.
+		converted, err := commandcode.CommandCodeResponseToChat([]byte(c.body), "m", nil)
+		if err != nil {
+			continue // a stream the leg refuses (no finish) is not a served answer
+		}
+		var chat struct {
+			Usage *struct {
+				Prompt     int64 `json:"prompt_tokens"`
+				Completion int64 `json:"completion_tokens"`
+			} `json:"usage"`
+		}
+		if json.Unmarshal(converted, &chat) != nil {
+			t.Fatalf("%s: %s", c.name, converted)
+		}
+		told := chat.Usage != nil
+		if told != c.reported || (told && (chat.Usage.Prompt != c.in || chat.Usage.Completion != c.out)) {
+			t.Errorf("%s: the leg tells the client %+v, the record says %d/%d reported=%v", c.name, chat.Usage, c.in, c.out, c.reported)
+		}
+	}
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }

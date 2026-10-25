@@ -454,3 +454,37 @@ func TestCommandCodeBodyStatusDecidesTheFallback(t *testing.T) {
 		t.Fatalf("status %d after %v: %s", w.Code, credentials, w.Body)
 	}
 }
+
+// The record is the finish event's report wholesale, as the leg tells the client:
+// a total that leaves the output at zero is zero output, not the 5 a finish-step
+// carried, and of several finish-steps the last stands.
+func TestCommandCodeUsageRecordIsTheFinishReportNotAMerge(t *testing.T) {
+	body := `{"type":"text-delta","text":"pong"}
+{"type":"finish-step","finishReason":"stop","usage":{"inputTokens":10,"outputTokens":5}}
+{"type":"finish-step","finishReason":"stop","usage":{"inputTokens":20,"outputTokens":7}}
+{"type":"finish","finishReason":"stop","totalUsage":{"inputTokens":130,"outputTokens":0}}
+`
+	for _, client := range clientWires {
+		for _, stream := range []bool{false, true} {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				flusher, _ := w.(http.Flusher)
+				// A line at a time, so the scanner sees the stream in pieces.
+				for _, line := range strings.SplitAfter(body, "\n") {
+					_, _ = io.WriteString(w, line)
+					flusher.Flush()
+				}
+			}))
+			s := newServing(t, routing.ProviderRef{ProviderID: "commandcode", Protocol: "commandcode", BaseURL: upstream.URL + "/alpha", UpstreamModel: "vendor/m", APIToken: "secret"})
+			w := s.call(client, stream)
+			upstream.Close()
+			outcomes := s.outcomes()
+			if w.Code != http.StatusOK || len(outcomes) != 1 {
+				t.Fatalf("%s stream=%v: status %d, %d records: %s", client, stream, w.Code, len(outcomes), w.Body)
+			}
+			if got := outcomes[0]; got.UsageUnobserved || got.InputTokens != 130 || got.OutputTokens != 0 {
+				t.Errorf("%s stream=%v: record %+v, want 130/0", client, stream, got)
+			}
+		}
+	}
+}

@@ -637,6 +637,8 @@ type usageScanner struct {
 	skipping bool
 	// kiro reads Kiro's event stream, which has no lines.
 	kiro shared.KiroUsageScanner
+	// commandCode follows CommandCode's finish report, which replaces any other.
+	commandCode shared.CommandCodeUsageReader
 }
 
 // linesOf reports the families that stream bare JSON lines rather than SSE.
@@ -674,14 +676,8 @@ func (s *usageScanner) Write(chunk []byte) (int, error) {
 		}
 		var payload []byte
 		if s.family == shared.FamilyCommandCode {
-			// AI SDK events, one per line; finish ends the answer.
-			usage, found, complete := shared.CommandCodeLineUsage(line)
-			if complete {
-				s.complete = true
-			}
-			if found {
-				s.merged, s.found = s.merged.Merge(usage), true
-			}
+			// AI SDK events, one per line; the finish event reports, wholesale.
+			s.commandCode.Line(line)
 			continue
 		}
 		if s.family == shared.FamilyOllama {
@@ -729,6 +725,9 @@ func (s *usageScanner) usage() (promptcache.Usage, bool) {
 	if (s.family == shared.FamilySystemOne || linesOf(s.family)) && len(s.buffer) > 0 {
 		s.Write([]byte("\n"))
 	}
+	if s.family == shared.FamilyCommandCode {
+		return s.commandCode.Usage()
+	}
 	return s.merged, s.found
 }
 
@@ -737,6 +736,10 @@ func (s *usageScanner) reportsUsage(clean bool) bool {
 	if s.family == shared.FamilyKiro {
 		_, found := s.kiro.Usage()
 		return found && s.kiro.Complete()
+	}
+	if s.family == shared.FamilyCommandCode {
+		_, found := s.commandCode.Usage()
+		return found && s.commandCode.Complete()
 	}
 	if !s.found {
 		return false

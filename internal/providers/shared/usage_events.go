@@ -91,48 +91,63 @@ func parseKiroUsage(body []byte) (promptcache.Usage, bool) {
 	return scanner.Usage()
 }
 
-// CommandCodeLineUsage reads one AI SDK event: a finish-step's usage, or the
-// finish event's totalUsage (commandcode-to-openai.js:155-163), which wins when
-// both were seen because the later report replaces the earlier. complete is true
-// for the finish event. The pin reads the prompt and output only; cachedInputTokens
-// is an observation beside the counts, never taken out of them (PARITY V37).
-func CommandCodeLineUsage(line []byte) (usage promptcache.Usage, found, complete bool) {
+// CommandCodeUsageReader follows the usage the way the conversion leg reports it
+// (protocol/commandcode handle, commandcode-to-openai.js:155-163): a finish-step's
+// usage replaces the one before it, and the finish event reports its totalUsage,
+// else the last finish-step's, wholesale. The report is what that object says, zero
+// fields included: it is never folded into an earlier one, and a report with no
+// positive count is no usage at all. Nothing is reported before the finish event,
+// and nothing after the first one is read, as the leg stops there. The pin reads the
+// prompt and output only; cachedInputTokens is an observation beside the counts,
+// never a cache read (PARITY V37).
+type CommandCodeUsageReader struct {
+	step     map[string]any
+	usage    promptcache.Usage
+	found    bool
+	complete bool
+}
+
+// Line reads one NDJSON or `data:` line.
+func (r *CommandCodeUsageReader) Line(line []byte) {
+	if r.complete {
+		return
+	}
 	line = bytes.TrimSpace(line)
 	line = bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
 	if len(line) == 0 || line[0] != '{' {
-		return promptcache.Usage{}, false, false
+		return
 	}
 	event, err := concerns.WireObject(line)
 	if err != nil {
-		return promptcache.Usage{}, false, false
+		return
 	}
-	var raw map[string]any
 	switch concerns.Text(event["type"]) {
 	case "finish-step":
-		raw = concerns.Object(event["usage"])
+		if usage := concerns.Object(event["usage"]); usage != nil {
+			r.step = usage
+		}
 	case "finish":
-		complete = true
-		raw = concerns.Object(event["totalUsage"])
-	default:
-		return promptcache.Usage{}, false, false
-	}
-	if raw == nil {
-		return promptcache.Usage{}, false, complete
-	}
-	counted, _, observed := concerns.CommandCodeUsage(raw)
-	if !observed {
-		return promptcache.Usage{}, false, complete
-	}
-	return promptcache.Usage{InputTokens: counted.Prompt, OutputTokens: counted.Completion}, true, complete
-}
-
-func parseCommandCodeUsage(body []byte) (promptcache.Usage, bool) {
-	var merged promptcache.Usage
-	found := false
-	for _, line := range bytes.Split(body, []byte("\n")) {
-		if usage, ok, _ := CommandCodeLineUsage(line); ok {
-			merged, found = merged.Merge(usage), true
+		r.complete = true
+		raw := concerns.Object(event["totalUsage"])
+		if raw == nil {
+			raw = r.step
+		}
+		if counted, _, observed := concerns.CommandCodeUsage(raw); observed {
+			r.usage, r.found = promptcache.Usage{InputTokens: counted.Prompt, OutputTokens: counted.Completion}, true
 		}
 	}
-	return merged, found
+}
+
+// Usage is the finish event's report, and whether it made one.
+func (r *CommandCodeUsageReader) Usage() (promptcache.Usage, bool) { return r.usage, r.found }
+
+// Complete reports that the finish event went by.
+func (r *CommandCodeUsageReader) Complete() bool { return r.complete }
+
+func parseCommandCodeUsage(body []byte) (promptcache.Usage, bool) {
+	var reader CommandCodeUsageReader
+	for _, line := range bytes.Split(body, []byte("\n")) {
+		reader.Line(line)
+	}
+	return reader.Usage()
 }
