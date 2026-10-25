@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net/http"
 	"strings"
 
 	"github.com/google/uuid"
@@ -56,6 +57,18 @@ var grokWebHook = Hook{
 	Target:            func(routing.ProviderRef) (Target, error) { return Target{Endpoint: grokWebEndpoint}, nil },
 	NoOpenAIBearer:    true,
 	RequireCredential: true,
+	Do:                webDo(grokHTTPMessage),
+}
+
+// grokHTTPMessage is the pin's wording for a refused request (E/grok-web.js:309-311).
+func grokHTTPMessage(status int) string {
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "Grok auth failed — SSO cookie may be expired. Re-paste your sso cookie value from grok.com."
+	case http.StatusTooManyRequests:
+		return "Grok rate limited. Wait a moment and retry, or rotate cookies."
+	}
+	return fmt.Sprintf("Grok returned HTTP %d", status)
 }
 
 // grokWebHeaders is the browser identity the pin presents (E/grok-web.js:263-290).
@@ -199,24 +212,22 @@ func GrokWebRequest(chat map[string]any, model string) ([]byte, error) {
 }
 
 // grokReader reads Grok's NDJSON (E/grok-web.js:74-133). A line that is not JSON is
-// skipped, as the pin does; an `error` event ends the answer as a failure.
+// skipped, as the pin does.
 type grokReader struct {
 	fingerprint string
-	streamed    strings.Builder // tokens delivered so far
+	streamed    strings.Builder // tokens seen so far
 	full        string          // modelResponse.message, the whole answer when sent
 }
 
-// read handles one line and returns the token it carries.
+// read handles one line and returns the token it carries. An `error` event is the
+// site's failure (:109-112): its message, else "Grok error: <code>".
 func (g *grokReader) read(line string) (token string, err error) {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return "", nil
 	}
 	var event struct {
-		Error *struct {
-			Message string `json:"message"`
-			Code    any    `json:"code"`
-		} `json:"error"`
+		Error  json.RawMessage `json:"error"`
 		Result struct {
 			Response *struct {
 				LLMInfo       struct{ ModelHash string } `json:"llmInfo"`
@@ -235,11 +246,19 @@ func (g *grokReader) read(line string) (token string, err error) {
 	if json.Unmarshal([]byte(line), &event) != nil {
 		return "", nil
 	}
-	if event.Error != nil {
-		if event.Error.Message != "" {
-			return "", errors.New("grok error: " + event.Error.Message)
+	if jsTruthy(event.Error) {
+		var failure map[string]json.RawMessage
+		_ = json.Unmarshal(event.Error, &failure)
+		var message string
+		_ = json.Unmarshal(failure["message"], &message)
+		if message != "" {
+			return "", &WebAnswerError{message, "GROK_ERROR"}
 		}
-		return "", fmt.Errorf("grok error: %v", event.Error.Code)
+		code := "undefined"
+		if value, ok := failure["code"]; ok && string(value) != "null" {
+			code = rawText(value)
+		}
+		return "", &WebAnswerError{"Grok error: " + code, "GROK_ERROR"}
 	}
 	resp := event.Result.Response
 	if resp == nil {
@@ -264,6 +283,15 @@ func (g *grokReader) read(line string) (token string, err error) {
 	return "", nil
 }
 
+// rawText is a JSON value as a JavaScript template literal prints it.
+func rawText(raw json.RawMessage) string {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text
+	}
+	return strings.TrimSpace(string(raw))
+}
+
 // answer is the buffered answer: the whole message when the site sent one, else
 // the tokens (:204-206).
 func (g *grokReader) answer() string {
@@ -273,9 +301,9 @@ func (g *grokReader) answer() string {
 	return g.streamed.String()
 }
 
-var errGrokNoAnswer = errors.New("grok returned no answer")
-
-// GrokWebResponseToChat folds a complete NDJSON answer into one Chat body.
+// GrokWebResponseToChat folds a complete NDJSON answer into one Chat body
+// (E/grok-web.js:190-219). The site's own failure is a *WebAnswerError for the
+// caller to answer 502 with; an empty answer is an empty answer, as at the pin.
 func GrokWebResponseToChat(body []byte, model string) ([]byte, error) {
 	var g grokReader
 	err := webLines(context.Background(), strings.NewReader(string(body)), func(line string) (bool, error) {
@@ -285,44 +313,48 @@ func GrokWebResponseToChat(body []byte, model string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if g.answer() == "" {
-		return nil, errGrokNoAnswer
-	}
 	out := newWebChunkWriter(io.Discard, "grok", model)
 	out.fingerprint = g.fingerprint
-	return out.completion(g.answer(), "")
+	answer := g.answer()
+	// The pin's prompt estimate is the answer's length too (:211-212).
+	return out.completion(answer, "", estimateTokens(answer))
 }
 
-// GrokWebStreamToChat relays Grok's NDJSON as a Chat stream. Only tokens are
-// streamed, as in the pin (:164-169); an answer that arrived whole, or that
-// extends what was streamed, is completed at the end so that a client never
-// reads an empty reply for a non-empty one.
+// GrokWebStreamToChat relays Grok's NDJSON as a Chat stream (E/grok-web.js:135-188).
+// Only tokens are streamed. A site failure or a broken read ends the stream in the
+// pin's frames and is then returned, so the dispatcher can tell the attempt failed.
 func GrokWebStreamToChat(ctx context.Context, src io.Reader, dst io.Writer, model string) error {
 	out := newWebChunkWriter(dst, "grok", model)
 	if err := out.chunk(map[string]any{"role": "assistant"}, nil); err != nil {
 		return err
 	}
 	var g grokReader
+	var failure *WebAnswerError
 	err := webLines(ctx, src, func(line string) (bool, error) {
 		token, err := g.read(line)
+		if errors.As(err, &failure) {
+			return true, nil
+		}
 		if err != nil || token == "" {
 			return false, err
 		}
 		out.fingerprint = g.fingerprint
 		return false, out.chunk(map[string]any{"content": token}, nil)
 	})
-	if err != nil {
-		return err
-	}
-	streamed := g.streamed.String()
-	if tail, ok := strings.CutPrefix(g.full, streamed); ok && tail != "" {
-		out.fingerprint = g.fingerprint
-		if err := out.chunk(map[string]any{"content": tail}, nil); err != nil {
+	out.fingerprint = g.fingerprint
+	switch {
+	case failure != nil:
+		if err := out.failed(failure.Message); err != nil {
 			return err
 		}
-	} else if streamed == "" {
-		return errGrokNoAnswer
+		return failure
+	case ctx.Err() != nil:
+		return ctx.Err()
+	case err != nil:
+		if werr := out.broke(err); werr != nil {
+			return werr
+		}
+		return &WebAnswerError{err.Error(), "GROK_ERROR"}
 	}
-	out.fingerprint = g.fingerprint
 	return out.done()
 }

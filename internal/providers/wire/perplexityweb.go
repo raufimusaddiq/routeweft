@@ -2,11 +2,16 @@ package wire
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf16"
 
@@ -21,13 +26,16 @@ import (
 // these are that executor's builder, headers and reader. Not routable until the
 // owner approves it (registry.notReady, ingress.unwired).
 //
-// Two things the pin does are deliberately not carried:
-//   - the process-wide follow-up cache (:34-75, 421-423) maps a transcript hash to
-//     a backend_uuid with no account in the key, so after an account fallback it
-//     would continue account A's thread with account B's cookie. Every request
-//     sends the whole transcript instead (last_backend_uuid is null);
-//   - the Bearer branch (:445-446): nothing in the pin stores an access token for
-//     this provider, whose only credential is the pasted cookie.
+// The pin's Bearer branch (:445-446) is not carried: nothing at the pin can put an
+// access token on a perplexity-web connection. The call chain, at 1c3b9f47:
+// connections are created by POST /api/providers, which stores only `apiKey`
+// (src/app/api/providers/route.js:179-189); updated by PUT /api/providers/[id],
+// which writes `apiKey` only for authType apikey ([id]/route.js:96-122); and
+// accessToken is written by the OAuth routes, which exchange tokens against a
+// registered OAuth provider (src/app/api/oauth/[provider]/[action]/route.js) that
+// perplexity-web is not (no entry under src/lib/oauth). The executor reads it back
+// at src/sse/services/auth.js:198. A Routeweft connection of this provider is
+// AuthCookie only (registry builtins), so no producer exists here either.
 
 const (
 	perplexityWebEndpoint = "rest/sse/perplexity_ask"
@@ -59,6 +67,18 @@ var perplexityWebHook = Hook{
 	Target:            func(routing.ProviderRef) (Target, error) { return Target{Endpoint: perplexityWebEndpoint}, nil },
 	NoOpenAIBearer:    true,
 	RequireCredential: true,
+	Do:                webDo(perplexityHTTPMessage),
+}
+
+// perplexityHTTPMessage is the pin's wording for a refused request (E/perplexity-web.js:469-471).
+func perplexityHTTPMessage(status int) string {
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "Perplexity auth failed — session cookie may be expired. Re-paste your __Secure-next-auth.session-token."
+	case http.StatusTooManyRequests:
+		return "Perplexity rate limited. Wait a moment and retry."
+	}
+	return fmt.Sprintf("Perplexity returned HTTP %d", status)
 }
 
 // perplexityWebHeaders is the browser identity the pin presents (E/perplexity-web.js:435-449):
@@ -81,27 +101,133 @@ func perplexityWebHeaders(provider routing.ProviderRef, _ []byte, _ string) (map
 	}, nil
 }
 
-// PerplexityWebRequest builds the perplexity_ask envelope from a Chat body
-// (E/perplexity-web.js:396-433, 160-209). The transcript, system text and tool
-// list travel as one JSON document in query_str.
-func PerplexityWebRequest(chat map[string]any, model string) ([]byte, error) {
+// perplexitySessionTTL and perplexitySessionCap are the pin's follow-up cache bounds (:34-35).
+const (
+	perplexitySessionTTL = time.Hour
+	perplexitySessionCap = 200
+)
+
+// PerplexitySessions is the pin's follow-up cache (:34-75): a finished turn's
+// backend_uuid, found again by the transcript that led to it, so the next request
+// sends only its new message. The pin keys by a 32-bit FNV hash of the transcript
+// alone, in one process-wide map. Here the key is SHA-256 over the connection and
+// the length-prefixed transcript, so a thread is continued only on the account that
+// produced it (after an account fallback the lookup misses, which is the pin's own
+// cache-miss path: the whole transcript is sent) and two transcripts cannot collide
+// into one thread. It is process-local and bounded; nothing is persisted.
+type PerplexitySessions struct {
+	mu      sync.Mutex
+	entries map[[sha256.Size]byte]perplexitySession
+	now     func() time.Time
+}
+
+type perplexitySession struct {
+	backendUUID string
+	at          time.Time
+}
+
+// NewPerplexitySessions returns an empty cache.
+func NewPerplexitySessions() *PerplexitySessions {
+	return &PerplexitySessions{entries: map[[sha256.Size]byte]perplexitySession{}, now: time.Now}
+}
+
+type pplxTurn struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+func sessionKey(account string, turns []pplxTurn) [sha256.Size]byte {
+	hash := sha256.New()
+	field := func(text string) {
+		var size [8]byte
+		binary.BigEndian.PutUint64(size[:], uint64(len(text)))
+		hash.Write(size[:])
+		hash.Write([]byte(text))
+	}
+	field(account)
+	for _, turn := range turns {
+		field(turn.Role)
+		field(turn.Content)
+	}
+	var key [sha256.Size]byte
+	copy(key[:], hash.Sum(nil))
+	return key
+}
+
+// lookup is sessionLookup (:50-60). An empty account never continues a thread.
+func (s *PerplexitySessions) lookup(account string, history []pplxTurn) string {
+	if account == "" || len(history) == 0 {
+		return ""
+	}
+	key := sessionKey(account, history)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, ok := s.entries[key]
+	if !ok {
+		return ""
+	}
+	if s.now().Sub(entry.at) > perplexitySessionTTL {
+		delete(s.entries, key)
+		return ""
+	}
+	return entry.backendUUID
+}
+
+// store is sessionStore (:62-75): the key is the transcript including this turn.
+func (s *PerplexitySessions) store(account string, history []pplxTurn, current, answer, backendUUID string) {
+	if account == "" || backendUUID == "" {
+		return
+	}
+	full := append(append([]pplxTurn(nil), history...), pplxTurn{"user", current}, pplxTurn{"assistant", answer})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.entries[sessionKey(account, full)] = perplexitySession{backendUUID, s.now()}
+	if len(s.entries) > perplexitySessionCap {
+		var oldest [sha256.Size]byte
+		var oldestAt time.Time
+		first := true
+		for key, entry := range s.entries {
+			if first || entry.at.Before(oldestAt) {
+				oldest, oldestAt, first = key, entry.at, false
+			}
+		}
+		delete(s.entries, oldest)
+	}
+}
+
+// PerplexityExchange is one request and its answer. Begin builds the envelope; the
+// two readers return the answer as Chat and remember the thread for the next turn.
+type PerplexityExchange struct {
+	Body     []byte
+	model    string
+	account  string
+	history  []pplxTurn
+	current  string
+	sessions *PerplexitySessions
+}
+
+// Begin builds the perplexity_ask envelope from a Chat body (E/perplexity-web.js:396-433,
+// 160-209). account is the connection the request is sent as. The transcript, system text
+// and tool list travel as one JSON document in query_str, or, when the cache knows the
+// thread, only the new message.
+func (s *PerplexitySessions) Begin(account string, chat map[string]any, model string) (*PerplexityExchange, error) {
 	messages, err := webMessages(chat)
 	if err != nil {
 		return nil, err
 	}
 	var system strings.Builder
-	var history []map[string]string
+	var history []pplxTurn
 	for _, m := range messages {
 		switch m.role {
 		case "system":
 			system.WriteString(m.text + "\n")
 		case "user", "assistant":
-			history = append(history, map[string]string{"role": m.role, "content": m.text})
+			history = append(history, pplxTurn{m.role, m.text})
 		}
 	}
 	current := ""
-	if n := len(history); n > 0 && history[n-1]["role"] == "user" {
-		current = history[n-1]["content"]
+	if n := len(history); n > 0 && history[n-1].Role == "user" {
+		current = history[n-1].Content
 		history = history[:n-1]
 	}
 
@@ -115,26 +241,14 @@ func PerplexityWebRequest(chat map[string]any, model string) ([]byte, error) {
 		}
 	}
 
-	instructions := []string{}
-	if text := strings.TrimSpace(system.String()); text != "" {
-		instructions = append(instructions, text)
+	followUp := s.lookup(account, history)
+	query := current
+	if followUp == "" {
+		query, err = perplexityQuery(system.String(), chat["tools"], history, current)
+		if err != nil {
+			return nil, err
+		}
 	}
-	if hint := perplexityToolsHint(chat["tools"]); hint != "" {
-		instructions = append(instructions, hint)
-	}
-	instructions = append(instructions, "You have built-in web search. Answer questions directly using search results.")
-	document := map[string]any{"instructions": instructions}
-	if len(history) > 0 {
-		document["history"] = history
-	}
-	if current != "" || len(history) == 0 {
-		document["query"] = current
-	}
-	encoded, err := marshalPlain(document)
-	if err != nil {
-		return nil, err
-	}
-	query := lastUTF16(string(encoded), perplexityQueryLimit)
 	if strings.TrimSpace(query) == "" {
 		return nil, errors.New("query is empty after processing")
 	}
@@ -143,7 +257,11 @@ func PerplexityWebRequest(chat map[string]any, model string) ([]byte, error) {
 	if zone == "Local" {
 		zone = "UTC"
 	}
-	return json.Marshal(map[string]any{
+	var last any
+	if followUp != "" {
+		last = followUp
+	}
+	body, err := json.Marshal(map[string]any{
 		"query_str": query,
 		"params": map[string]any{
 			"query_str": query, "search_focus": "internet", "mode": mode, "model_preference": preference,
@@ -151,9 +269,38 @@ func PerplexityWebRequest(chat map[string]any, model string) ([]byte, error) {
 			"frontend_uuid": uuid.NewString(), "frontend_context_uuid": uuid.NewString(),
 			"version": perplexityAPIVersion, "language": "en-US", "timezone": zone,
 			"search_recency_filter": nil, "is_incognito": true, "use_schematized_api": true,
-			"last_backend_uuid": nil,
+			"last_backend_uuid": last,
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+	return &PerplexityExchange{Body: body, model: model, account: account, history: history, current: current, sessions: s}, nil
+}
+
+// perplexityQuery is buildQuery without a thread (:195-209), cut to its last 96000 units.
+func perplexityQuery(system string, tools any, history []pplxTurn, current string) (string, error) {
+	instructions := []string{}
+	if text := strings.TrimSpace(system); text != "" {
+		instructions = append(instructions, text)
+	}
+	if hint := perplexityToolsHint(tools); hint != "" {
+		instructions = append(instructions, hint)
+	}
+	instructions = append(instructions, "You have built-in web search. Answer questions directly using search results.")
+	document := struct {
+		Instructions []string   `json:"instructions"`
+		History      []pplxTurn `json:"history,omitempty"`
+		Query        *string    `json:"query,omitempty"`
+	}{Instructions: instructions, History: history}
+	if current != "" || len(history) == 0 {
+		document.Query = &current
+	}
+	encoded, err := marshalPlain(document)
+	if err != nil {
+		return "", err
+	}
+	return lastUTF16(string(encoded), perplexityQueryLimit), nil
 }
 
 func reasoningRequested(effort any) bool {
@@ -224,18 +371,20 @@ func cleanPerplexity(text string, whole bool) string {
 
 // perplexityReader reads the SSE events (E/perplexity-web.js:92-136, 211-292).
 type perplexityReader struct {
-	data     []string // data: lines of the event being read
-	answer   string
-	seen     int // runes of answer already delivered
-	thinking map[string]bool
+	backendUUID string
+	data        []string // data: lines of the event being read
+	answer      string
+	seen        int // runes of answer already delivered
+	thinking    map[string]bool
 }
 
 type pplxEvent struct {
-	ErrorCode    any    `json:"error_code"`
-	ErrorMessage string `json:"error_message"`
-	Text         string `json:"text"`
-	Final        bool   `json:"final"`
-	Status       string `json:"status"`
+	BackendUUID  string          `json:"backend_uuid"`
+	ErrorCode    json.RawMessage `json:"error_code"`
+	ErrorMessage string          `json:"error_message"`
+	Text         string          `json:"text"`
+	Final        bool            `json:"final"`
+	Status       string          `json:"status"`
 	Blocks       []struct {
 		Usage string `json:"intended_usage"`
 		Plan  *struct {
@@ -300,11 +449,15 @@ func (p *perplexityReader) flush() (pplxStep, error) {
 }
 
 func (p *perplexityReader) event(event pplxEvent) (pplxStep, error) {
-	if event.ErrorMessage != "" {
-		return pplxStep{}, errors.New("perplexity error: " + event.ErrorMessage)
+	if jsTruthy(event.ErrorCode) || event.ErrorMessage != "" {
+		message := event.ErrorMessage
+		if message == "" {
+			message = "Perplexity error: " + rawText(event.ErrorCode)
+		}
+		return pplxStep{}, &WebAnswerError{message, "PPLX_ERROR"}
 	}
-	if event.ErrorCode != nil && event.ErrorCode != "" && event.ErrorCode != float64(0) {
-		return pplxStep{}, errors.New("perplexity error: " + stringify(event.ErrorCode))
+	if event.BackendUUID != "" {
+		p.backendUUID = event.BackendUUID
 	}
 	if p.thinking == nil {
 		p.thinking = map[string]bool{}
@@ -362,17 +515,8 @@ func (p *perplexityReader) event(event pplxEvent) (pplxStep, error) {
 	return step, nil
 }
 
-func stringify(value any) string {
-	if text, ok := value.(string); ok {
-		return text
-	}
-	encoded, _ := json.Marshal(value)
-	return string(encoded)
-}
-
-var errPerplexityNoAnswer = errors.New("perplexity returned no answer")
-
-// run feeds every line of src to the reader and calls emit with each step.
+// run feeds every line of src to the reader and calls emit with each step. A
+// failure the site reports is returned as *WebAnswerError; so is a failed read.
 func (p *perplexityReader) run(ctx context.Context, src io.Reader, emit func(pplxStep) error) error {
 	stopped := false
 	err := webLines(ctx, src, func(line string) (bool, error) {
@@ -396,8 +540,9 @@ func (p *perplexityReader) run(ctx context.Context, src io.Reader, emit func(ppl
 	return emit(step)
 }
 
-// PerplexityWebResponseToChat folds a complete SSE answer into one Chat body.
-func PerplexityWebResponseToChat(body []byte, model string) ([]byte, error) {
+// ResponseToChat folds a complete SSE answer into one Chat body (E/perplexity-web.js:357-389).
+// The site's own failure is a *WebAnswerError for the caller to answer 502 with.
+func (x *PerplexityExchange) ResponseToChat(body []byte) ([]byte, error) {
 	var p perplexityReader
 	var reasoning []string
 	err := p.run(context.Background(), strings.NewReader(string(body)), func(step pplxStep) error {
@@ -408,45 +553,55 @@ func PerplexityWebResponseToChat(body []byte, model string) ([]byte, error) {
 		return nil, err
 	}
 	answer := cleanPerplexity(p.answer, true)
-	if answer == "" {
-		return nil, errPerplexityNoAnswer
-	}
-	return newWebChunkWriter(io.Discard, "pplx", model).completion(answer, strings.Join(reasoning, "\n"))
+	x.remember(answer, p.backendUUID)
+	return newWebChunkWriter(io.Discard, "pplx", x.model).completion(answer, strings.Join(reasoning, "\n"), estimateTokens(x.current))
 }
 
-// PerplexityWebStreamToChat relays Perplexity's SSE as a Chat stream. Answer text
-// is cleaned per delta, as in the pin (:324-327), so a citation marker split
-// across two deltas is not removed. An answer the site sent whole is completed at
-// the end so that a client never reads an empty reply for a non-empty one.
-func PerplexityWebStreamToChat(ctx context.Context, src io.Reader, dst io.Writer, model string) error {
-	out := newWebChunkWriter(dst, "pplx", model)
+// StreamToChat relays Perplexity's SSE as a Chat stream (E/perplexity-web.js:294-355).
+// Answer text is cleaned per delta, as in the pin (:324-327), so a citation marker
+// split across two deltas is not removed. A site failure or a broken read ends the
+// stream in the pin's frames and is then returned, so the dispatcher can tell the
+// attempt failed. As at the pin, the thread is remembered after a site failure too.
+func (x *PerplexityExchange) StreamToChat(ctx context.Context, src io.Reader, dst io.Writer) error {
+	out := newWebChunkWriter(dst, "pplx", x.model)
 	if err := out.chunk(map[string]any{"role": "assistant"}, nil); err != nil {
 		return err
 	}
 	var p perplexityReader
-	sent := false
-	emit := func(step pplxStep) error {
+	err := p.run(ctx, src, func(step pplxStep) error {
 		for _, line := range step.thinking {
 			if err := out.chunk(map[string]any{"reasoning_content": line + "\n"}, nil); err != nil {
 				return err
 			}
 		}
 		if text := cleanPerplexity(step.delta, false); text != "" {
-			sent = true
 			return out.chunk(map[string]any{"content": text}, nil)
 		}
 		return nil
-	}
-	if err := p.run(ctx, src, emit); err != nil {
-		return err
-	}
-	if runes := []rune(p.answer); len(runes) > p.seen {
-		if err := emit(pplxStep{delta: string(runes[p.seen:])}); err != nil {
+	})
+	var failure *WebAnswerError
+	switch {
+	case errors.As(err, &failure):
+		if err := out.failed(failure.Message); err != nil {
 			return err
 		}
+		x.remember(cleanPerplexity(p.answer, true), p.backendUUID)
+		return failure
+	case ctx.Err() != nil:
+		return ctx.Err()
+	case err != nil:
+		if werr := out.broke(err); werr != nil {
+			return werr
+		}
+		return &WebAnswerError{err.Error(), "PPLX_ERROR"}
 	}
-	if !sent {
-		return errPerplexityNoAnswer
+	if err := out.done(); err != nil {
+		return err
 	}
-	return out.done()
+	x.remember(cleanPerplexity(p.answer, true), p.backendUUID)
+	return nil
+}
+
+func (x *PerplexityExchange) remember(answer, backendUUID string) {
+	x.sessions.store(x.account, x.history, x.current, answer, backendUUID)
 }

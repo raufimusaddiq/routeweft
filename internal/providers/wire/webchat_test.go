@@ -7,9 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
@@ -186,40 +190,70 @@ func TestGrokWebStreamToChat(t *testing.T) {
 	}
 }
 
-func TestGrokWebStreamCompletesWhatTokensDidNotCarry(t *testing.T) {
-	for name, input := range map[string]string{
-		"whole message only": `{"result":{"response":{"modelResponse":{"message":"All of it"}}}}`,
-		"message extends":    `{"result":{"response":{"token":"All "}}}` + "\n" + `{"result":{"response":{"modelResponse":{"message":"All of it"}}}}`,
+// The pin streams tokens only, and an answer that arrives whole streams as nothing
+// (E/grok-web.js:164-169); the buffered answer is the whole message (:204-206).
+func TestGrokWebWholeAnswerIsNotInventedOnAStream(t *testing.T) {
+	input := `{"result":{"response":{"modelResponse":{"message":"All of it"}}}}`
+	chunks, done, err := streamChunks(t, func(w io.Writer) error {
+		return GrokWebStreamToChat(context.Background(), strings.NewReader(input), w, "grok-4")
+	})
+	if err != nil || !done || contents(chunks, "content") != "" {
+		t.Fatalf("content=%q done=%v err=%v", contents(chunks, "content"), done, err)
+	}
+	body, err := GrokWebResponseToChat([]byte(input), "grok-4")
+	if err != nil || !strings.Contains(string(body), `"content":"All of it"`) {
+		t.Fatalf("buffered = %s, %v", body, err)
+	}
+}
+
+func TestGrokWebEmptyAnswerIsEmptyAsAtThePin(t *testing.T) {
+	chunks, done, err := streamChunks(t, func(w io.Writer) error {
+		return GrokWebStreamToChat(context.Background(), strings.NewReader(""), w, "grok-4")
+	})
+	if err != nil || !done || contents(chunks, "content") != "" {
+		t.Fatalf("stream content=%q done=%v err=%v", contents(chunks, "content"), done, err)
+	}
+	body, err := GrokWebResponseToChat(nil, "grok-4")
+	if err != nil || !strings.Contains(string(body), `"content":""`) {
+		t.Fatalf("buffered = %s, %v", body, err)
+	}
+}
+
+func TestGrokWebStreamFailureIsThePinsFrameAndIsReported(t *testing.T) {
+	for input, message := range map[string]string{
+		`{"result":{"response":{"token":"par"}}}` + "\n" + `{"error":{"message":"rate limited","code":8}}`: "rate limited",
+		`{"error":{"code":8}}`:  "Grok error: 8",
+		`{"error":{}}`:          "Grok error: undefined",
+		`{"error":"just text"}`: "Grok error: undefined",
 	} {
 		chunks, done, err := streamChunks(t, func(w io.Writer) error {
 			return GrokWebStreamToChat(context.Background(), strings.NewReader(input), w, "grok-4")
 		})
-		if err != nil || !done || contents(chunks, "content") != "All of it" {
-			t.Errorf("%s: content=%q done=%v err=%v", name, contents(chunks, "content"), done, err)
+		var failure *WebAnswerError
+		if !errors.As(err, &failure) || failure.Message != message || failure.Code != "GROK_ERROR" {
+			t.Fatalf("err = %v, want %q", err, message)
+		}
+		if !done || !strings.Contains(contents(chunks, "content"), "[Error: "+message+"]") {
+			t.Fatalf("frames = %v done=%v", chunks, done)
+		}
+		last := chunks[len(chunks)-1]["choices"].([]any)[0].(map[string]any)
+		if last["finish_reason"] != "stop" {
+			t.Fatalf("terminal chunk = %v", last)
+		}
+		_, err = GrokWebResponseToChat([]byte(input), "grok-4")
+		if !errors.As(err, &failure) || string(failure.Body()) != `{"error":{"code":"GROK_ERROR","message":`+strconv.Quote(message)+`,"type":"upstream_error"}}` {
+			t.Fatalf("buffered failure = %v", err)
 		}
 	}
 }
 
-func TestGrokWebFailuresAreNotAnswers(t *testing.T) {
-	for name, input := range map[string]string{
-		"error event":  `{"result":{"response":{"token":"par"}}}` + "\n" + `{"error":{"message":"rate limited","code":8}}`,
-		"error code":   `{"error":{"code":8}}`,
-		"empty answer": `{"result":{"response":{"llmInfo":{"modelHash":"h"}}}}`,
-		"empty body":   ``,
-		"oversized":    strings.Repeat("x", webMaxLine+1),
-	} {
-		chunks, done, err := streamChunks(t, func(w io.Writer) error {
-			return GrokWebStreamToChat(context.Background(), strings.NewReader(input), w, "grok-4")
-		})
-		if err == nil || done {
-			t.Errorf("%s streamed as a success: done=%v err=%v", name, done, err)
-		}
-		if strings.Contains(contents(chunks, "content"), "[Error") {
-			t.Errorf("%s: error text was delivered as content", name)
-		}
-		if _, err := GrokWebResponseToChat([]byte(input), "grok-4"); err == nil {
-			t.Errorf("%s: buffered answer succeeded", name)
-		}
+func TestGrokWebBrokenReadIsThePinsStreamErrorFrame(t *testing.T) {
+	chunks, done, err := streamChunks(t, func(w io.Writer) error {
+		return GrokWebStreamToChat(context.Background(), strings.NewReader(`{"result":{"response":{"token":"a"}}}`+"\n"+strings.Repeat("x", webMaxLine+1)), w, "grok-4")
+	})
+	var failure *WebAnswerError
+	if !errors.As(err, &failure) || !done || !strings.Contains(contents(chunks, "content"), "a[Stream error: ") {
+		t.Fatalf("err=%v done=%v chunks=%v", err, done, chunks)
 	}
 }
 
@@ -233,8 +267,9 @@ func TestGrokWebBufferedAnswer(t *testing.T) {
 	if choice["message"].(map[string]any)["content"] != "Hello" || choice["finish_reason"] != "stop" || got["object"] != "chat.completion" || got["system_fingerprint"] != "hash-2" {
 		t.Fatalf("body = %s", body)
 	}
-	if _, ok := got["usage"]; ok {
-		t.Fatal("usage was invented; the site reports none")
+	// The pin's estimate: ceil(5/4)=2 for the answer, and the same figure for the prompt (:211-212).
+	if usage := got["usage"].(map[string]any); usage["prompt_tokens"] != 2.0 || usage["completion_tokens"] != 2.0 || usage["total_tokens"] != 4.0 {
+		t.Fatalf("usage = %v", usage)
 	}
 }
 
@@ -244,6 +279,46 @@ func TestGrokWebStreamStopsWhenTheClientDoes(t *testing.T) {
 	err := GrokWebStreamToChat(ctx, strings.NewReader(grokStream), io.Discard, "grok-4")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+type fakeDoer struct{ status int }
+
+func (f fakeDoer) RoundTrip(r *http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: f.status, Header: http.Header{"Content-Type": {"text/html"}, "Retry-After": {"7"}}, Body: io.NopCloser(strings.NewReader("<html>challenge SECRETMARK</html>")), Request: r}, nil
+}
+
+// A refused request becomes the pin's error document with the status kept, and the
+// site's own body (an HTML challenge page) is not relayed.
+func TestWebHTTPFailuresArePinsErrorDocuments(t *testing.T) {
+	for id, cases := range map[string]map[int]string{
+		"grok-web": {401: "Grok auth failed \u2014 SSO cookie may be expired. Re-paste your sso cookie value from grok.com.", 403: "Grok auth failed \u2014 SSO cookie may be expired. Re-paste your sso cookie value from grok.com.",
+			429: "Grok rate limited. Wait a moment and retry, or rotate cookies.", 500: "Grok returned HTTP 500"},
+		"perplexity-web": {401: "Perplexity auth failed \u2014 session cookie may be expired. Re-paste your __Secure-next-auth.session-token.",
+			429: "Perplexity rate limited. Wait a moment and retry.", 503: "Perplexity returned HTTP 503"},
+	} {
+		for status, message := range cases {
+			request, _ := http.NewRequest(http.MethodPost, "https://web.example/x", nil)
+			response, err := For(id).Do(webRef(id, fixtureCookie), &http.Client{Transport: fakeDoer{status}}, request)
+			if err != nil || response.StatusCode != status || response.Header.Get("Retry-After") != "7" || response.Header.Get("Content-Type") != "application/json" {
+				t.Fatalf("%s %d: %v %+v", id, status, err, response)
+			}
+			body, _ := io.ReadAll(response.Body)
+			var document struct {
+				Error struct{ Message, Type, Code string }
+			}
+			if json.Unmarshal(body, &document) != nil || document.Error.Message != strings.ReplaceAll(message, "\\u2014", "\u2014") || document.Error.Type != "upstream_error" || document.Error.Code != "HTTP_"+strconv.Itoa(status) {
+				t.Fatalf("%s %d: body %s", id, status, body)
+			}
+			if strings.Contains(string(body), "SECRETMARK") {
+				t.Fatal("site body relayed")
+			}
+		}
+	}
+	request, _ := http.NewRequest(http.MethodPost, "https://web.example/x", nil)
+	response, err := For("grok-web").Do(webRef("grok-web", fixtureCookie), &http.Client{Transport: fakeDoer{200}}, request)
+	if body, _ := io.ReadAll(response.Body); err != nil || response.StatusCode != 200 || !strings.Contains(string(body), "SECRETMARK") {
+		t.Fatal("a success was rewritten")
 	}
 }
 
@@ -266,18 +341,24 @@ func TestPerplexityWebHeadersAreTheDeclaredIdentity(t *testing.T) {
 	}
 }
 
-func pplxParams(t *testing.T, chat map[string]any, model string) (string, map[string]any) {
+func pplxBegin(t *testing.T, sessions *PerplexitySessions, account string, chat map[string]any, model string) (*PerplexityExchange, string, map[string]any) {
 	t.Helper()
-	body, err := PerplexityWebRequest(chat, model)
+	x, err := sessions.Begin(account, chat, model)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := webObject(t, body)
+	got := webObject(t, x.Body)
 	params := got["params"].(map[string]any)
 	if got["query_str"] != params["query_str"] {
 		t.Fatal("query_str differs between envelope and params")
 	}
-	return got["query_str"].(string), params
+	return x, got["query_str"].(string), params
+}
+
+func pplxParams(t *testing.T, chat map[string]any, model string) (string, map[string]any) {
+	t.Helper()
+	_, query, params := pplxBegin(t, NewPerplexitySessions(), "acct", chat, model)
+	return query, params
 }
 
 func TestPerplexityWebRequest(t *testing.T) {
@@ -291,8 +372,8 @@ func TestPerplexityWebRequest(t *testing.T) {
 		"tools": []any{map[string]any{"type": "function", "function": map[string]any{"name": "lookup", "description": "Find a thing.\nSecond line"}}, map[string]any{}},
 	}
 	query, params := pplxParams(t, chat, "pplx-sonnet")
-	want := `{"history":[{"content":"first <q> & more","role":"user"},{"content":"premier","role":"assistant"}],` +
-		`"instructions":["answer in French","Available tools (reference only, cannot invoke):\n- lookup: Find a thing.\n- unnamed: ","You have built-in web search. Answer questions directly using search results."],"query":"second"}`
+	want := `{"instructions":["answer in French","Available tools (reference only, cannot invoke):\n- lookup: Find a thing.\n- unnamed: ","You have built-in web search. Answer questions directly using search results."],` +
+		`"history":[{"role":"user","content":"first <q> & more"},{"role":"assistant","content":"premier"}],"query":"second"}`
 	if query != want {
 		t.Fatalf("query = %s\nwant    %s", query, want)
 	}
@@ -327,7 +408,7 @@ func TestPerplexityWebRequestKeepsTheTailOfALongQuery(t *testing.T) {
 	if len(query) != perplexityQueryLimit || !strings.HasSuffix(query, `TAIL"}`) {
 		t.Fatalf("query is %d bytes ending %q", len(query), query[len(query)-8:])
 	}
-	if _, err := PerplexityWebRequest(map[string]any{"messages": []any{}}, "pplx-auto"); err == nil {
+	if _, err := NewPerplexitySessions().Begin("acct", map[string]any{"messages": []any{}}, "pplx-auto"); err == nil {
 		t.Fatal("an empty transcript built an envelope")
 	}
 }
@@ -348,9 +429,12 @@ var perplexityStream = "data: {\"backend_uuid\":\"b1\",\"blocks\":[{\"intended_u
 	"data: {\"final\":true}\n\n" +
 	"data: {\"blocks\":" + markdown("IN_PROGRESS", `["never read"]`) + "}\n\n"
 
+var pplxChat = map[string]any{"messages": []any{map[string]any{"role": "user", "content": "weather?"}}}
+
 func TestPerplexityWebStreamToChat(t *testing.T) {
+	x, _, _ := pplxBegin(t, NewPerplexitySessions(), "acct", pplxChat, "pplx-sonar")
 	chunks, done, err := streamChunks(t, func(w io.Writer) error {
-		return PerplexityWebStreamToChat(context.Background(), strings.NewReader(perplexityStream), w, "pplx-sonar")
+		return x.StreamToChat(context.Background(), strings.NewReader(perplexityStream), w)
 	})
 	if err != nil || !done {
 		t.Fatalf("done=%v err=%v", done, err)
@@ -364,7 +448,8 @@ func TestPerplexityWebStreamToChat(t *testing.T) {
 }
 
 func TestPerplexityWebBufferedAnswer(t *testing.T) {
-	body, err := PerplexityWebResponseToChat([]byte(perplexityStream), "pplx-sonar")
+	x, _, _ := pplxBegin(t, NewPerplexitySessions(), "acct", pplxChat, "pplx-sonar")
+	body, err := x.ResponseToChat([]byte(perplexityStream))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,49 +458,69 @@ func TestPerplexityWebBufferedAnswer(t *testing.T) {
 	if message["content"] != "It is sunny. Bring a hat" || !strings.HasPrefix(message["reasoning_content"].(string), "Searching: weather\nReading: https://a") {
 		t.Fatalf("message = %v", message)
 	}
-	if _, ok := got["usage"]; ok {
-		t.Fatal("usage was invented; the site reports none")
+	// The pin's estimate: the prompt is the current message (8 -> 2), the completion the answer (24 -> 6).
+	if usage := got["usage"].(map[string]any); usage["prompt_tokens"] != 2.0 || usage["completion_tokens"] != 6.0 || usage["total_tokens"] != 8.0 {
+		t.Fatalf("usage = %v", usage)
 	}
 }
 
-func TestPerplexityWebStreamCompletesAWholeAnswer(t *testing.T) {
+// An answer that only arrives as a DONE block is read by the buffered path and
+// streams as nothing, as at the pin (:265-267, 323).
+func TestPerplexityWebWholeAnswerIsNotInventedOnAStream(t *testing.T) {
 	input := pplxBlocks(markdown("DONE", `["Whole ","answer[2]"]`))
+	x, _, _ := pplxBegin(t, NewPerplexitySessions(), "acct", pplxChat, "pplx-sonar")
 	chunks, done, err := streamChunks(t, func(w io.Writer) error {
-		return PerplexityWebStreamToChat(context.Background(), strings.NewReader(input), w, "pplx-sonar")
+		return x.StreamToChat(context.Background(), strings.NewReader(input), w)
 	})
-	if err != nil || !done || contents(chunks, "content") != "Whole answer" {
+	if err != nil || !done || contents(chunks, "content") != "" {
 		t.Fatalf("content=%q done=%v err=%v", contents(chunks, "content"), done, err)
+	}
+	body, err := x.ResponseToChat([]byte(input))
+	if err != nil || !strings.Contains(string(body), `"content":"Whole answer"`) {
+		t.Fatalf("buffered = %s, %v", body, err)
 	}
 	// An answer carried as plain text is read the same way (:279-287).
 	text := "data: {\"text\":\"Plain\"}\n\ndata: {\"text\":\"Plain text\"}\n\n"
 	chunks, _, err = streamChunks(t, func(w io.Writer) error {
-		return PerplexityWebStreamToChat(context.Background(), strings.NewReader(text), w, "pplx-sonar")
+		return x.StreamToChat(context.Background(), strings.NewReader(text), w)
 	})
 	if err != nil || contents(chunks, "content") != "Plain text" {
 		t.Fatalf("text content=%q err=%v", contents(chunks, "content"), err)
 	}
 }
 
-func TestPerplexityWebFailuresAreNotAnswers(t *testing.T) {
-	for name, input := range map[string]string{
-		"error message": pplxBlocks(markdown("IN_PROGRESS", `["par"]`)) + "data: {\"error_message\":\"blocked\"}\n\n",
-		"error code":    "data: {\"error_code\":\"RATE_LIMIT\"}\n\n",
-		"numeric code":  "data: {\"error_code\":429}\n\n",
-		"no answer":     "data: {\"backend_uuid\":\"b\"}\n\n",
-		"thinking only": "data: {\"blocks\":[{\"intended_usage\":\"plan\",\"plan_block\":{\"goals\":[{\"description\":\"g\"}]}}]}\n\n",
-		"empty":         "",
+func TestPerplexityWebEmptyAnswerIsEmptyAsAtThePin(t *testing.T) {
+	x, _, _ := pplxBegin(t, NewPerplexitySessions(), "acct", pplxChat, "pplx-sonar")
+	chunks, done, err := streamChunks(t, func(w io.Writer) error {
+		return x.StreamToChat(context.Background(), strings.NewReader(""), w)
+	})
+	if err != nil || !done || contents(chunks, "content") != "" {
+		t.Fatalf("stream content=%q done=%v err=%v", contents(chunks, "content"), done, err)
+	}
+	if body, err := x.ResponseToChat(nil); err != nil || !strings.Contains(string(body), `"content":""`) {
+		t.Fatalf("buffered = %s, %v", body, err)
+	}
+}
+
+func TestPerplexityWebFailureIsThePinsFrameAndIsReported(t *testing.T) {
+	for input, message := range map[string]string{
+		pplxBlocks(markdown("IN_PROGRESS", `["par"]`)) + "data: {\"error_message\":\"blocked\"}\n\n": "blocked",
+		"data: {\"error_code\":\"RATE_LIMIT\"}\n\n":                                                  "Perplexity error: RATE_LIMIT",
+		"data: {\"error_code\":429}\n\n":                                                             "Perplexity error: 429",
 	} {
+		x, _, _ := pplxBegin(t, NewPerplexitySessions(), "acct", pplxChat, "pplx-sonar")
 		chunks, done, err := streamChunks(t, func(w io.Writer) error {
-			return PerplexityWebStreamToChat(context.Background(), strings.NewReader(input), w, "pplx-sonar")
+			return x.StreamToChat(context.Background(), strings.NewReader(input), w)
 		})
-		if err == nil || done {
-			t.Errorf("%s streamed as a success: done=%v err=%v", name, done, err)
+		var failure *WebAnswerError
+		if !errors.As(err, &failure) || failure.Message != message || failure.Code != "PPLX_ERROR" {
+			t.Fatalf("err = %v, want %q", err, message)
 		}
-		if strings.Contains(contents(chunks, "content"), "[Error") {
-			t.Errorf("%s: error text was delivered as content", name)
+		if !done || !strings.Contains(contents(chunks, "content"), "[Error: "+message+"]") {
+			t.Fatalf("frames = %v done=%v", chunks, done)
 		}
-		if _, err := PerplexityWebResponseToChat([]byte(input), "pplx-sonar"); err == nil {
-			t.Errorf("%s: buffered answer succeeded", name)
+		if _, err := x.ResponseToChat([]byte(input)); !errors.As(err, &failure) || !strings.Contains(string(failure.Body()), `"code":"PPLX_ERROR"`) {
+			t.Fatalf("buffered failure = %v", err)
 		}
 	}
 }
@@ -423,16 +528,123 @@ func TestPerplexityWebFailuresAreNotAnswers(t *testing.T) {
 func TestPerplexityWebStreamStopsWhenTheClientDoes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := PerplexityWebStreamToChat(ctx, strings.NewReader(perplexityStream), io.Discard, "pplx-sonar")
-	if !errors.Is(err, context.Canceled) {
+	x, _, _ := pplxBegin(t, NewPerplexitySessions(), "acct", pplxChat, "pplx-sonar")
+	if err := x.StreamToChat(ctx, strings.NewReader(perplexityStream), io.Discard); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestPerplexityWebEndOfStreamEventEndsTheAnswer(t *testing.T) {
 	input := pplxBlocks(markdown("IN_PROGRESS", `["Done"]`)) + "event: end_of_stream\ndata: {\"blocks\":" + markdown("IN_PROGRESS", `["late"]`) + "}\n\n"
-	body, err := PerplexityWebResponseToChat([]byte(input), "pplx-sonar")
+	x, _, _ := pplxBegin(t, NewPerplexitySessions(), "acct", pplxChat, "pplx-sonar")
+	body, err := x.ResponseToChat([]byte(input))
 	if err != nil || !strings.Contains(string(body), `"content":"Done"`) {
 		t.Fatalf("body=%s err=%v", body, err)
+	}
+}
+
+// --- follow-up thread cache: scoped to the account ---
+
+var pplxFollowUp = map[string]any{"messages": []any{
+	map[string]any{"role": "user", "content": "weather?"},
+	map[string]any{"role": "assistant", "content": "It is sunny. Bring a hat"},
+	map[string]any{"role": "user", "content": "and tomorrow?"},
+}}
+
+// finish runs the first turn so the cache learns its thread.
+func finish(t *testing.T, sessions *PerplexitySessions, account string) {
+	t.Helper()
+	x, _, _ := pplxBegin(t, sessions, account, pplxChat, "pplx-sonar")
+	if _, err := x.ResponseToChat([]byte(perplexityStream)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPerplexityFollowUpContinuesTheThreadOnTheSameAccountOnly(t *testing.T) {
+	sessions := NewPerplexitySessions()
+	finish(t, sessions, "account-a")
+
+	_, query, params := pplxBegin(t, sessions, "account-a", pplxFollowUp, "pplx-sonar")
+	if query != "and tomorrow?" || params["last_backend_uuid"] != "b1" {
+		t.Fatalf("same account: query=%q last=%v", query, params["last_backend_uuid"])
+	}
+	// After a fallback to another account the thread is not continued: the whole
+	// transcript is sent and no backend_uuid of account-a's is presented.
+	_, query, params = pplxBegin(t, sessions, "account-b", pplxFollowUp, "pplx-sonar")
+	if !strings.HasPrefix(query, `{"instructions"`) || params["last_backend_uuid"] != nil {
+		t.Fatalf("other account: query=%q last=%v", query, params["last_backend_uuid"])
+	}
+	if _, _, params := pplxBegin(t, sessions, "", pplxFollowUp, "pplx-sonar"); params["last_backend_uuid"] != nil {
+		t.Fatal("a request with no account continued a thread")
+	}
+	// A different transcript is a different thread.
+	other := map[string]any{"messages": []any{
+		map[string]any{"role": "user", "content": "weather?"},
+		map[string]any{"role": "assistant", "content": "Rain"},
+		map[string]any{"role": "user", "content": "and tomorrow?"},
+	}}
+	if _, _, params := pplxBegin(t, sessions, "account-a", other, "pplx-sonar"); params["last_backend_uuid"] != nil {
+		t.Fatal("a different transcript continued the thread")
+	}
+}
+
+func TestPerplexitySessionKeyCannotBeForgedByMovingBoundaries(t *testing.T) {
+	a := sessionKey("acct", []pplxTurn{{"user", "a\nassistant:b"}})
+	b := sessionKey("acct", []pplxTurn{{"user", "a"}, {"assistant", "b"}})
+	c := sessionKey("acct1", []pplxTurn{{"user", "x"}})
+	d := sessionKey("acct", []pplxTurn{{"1user", "x"}})
+	if a == b || c == d {
+		t.Fatal("distinct inputs share a key")
+	}
+}
+
+func TestPerplexitySessionsExpireAndAreBounded(t *testing.T) {
+	sessions := NewPerplexitySessions()
+	now := time.Unix(1_000_000, 0)
+	sessions.now = func() time.Time { return now }
+	finish(t, sessions, "acct")
+	now = now.Add(perplexitySessionTTL)
+	if got := sessions.lookup("acct", []pplxTurn{{"user", "weather?"}, {"assistant", "It is sunny. Bring a hat"}}); got != "b1" {
+		t.Fatalf("an hour-old thread was dropped: %q", got)
+	}
+	now = now.Add(time.Second)
+	if got := sessions.lookup("acct", []pplxTurn{{"user", "weather?"}, {"assistant", "It is sunny. Bring a hat"}}); got != "" {
+		t.Fatalf("an expired thread continued: %q", got)
+	}
+	for i := 0; i < perplexitySessionCap+50; i++ {
+		now = now.Add(time.Millisecond)
+		sessions.store("acct", nil, "q"+strconv.Itoa(i), "a", "uuid")
+	}
+	if len(sessions.entries) != perplexitySessionCap {
+		t.Fatalf("%d entries, cap %d", len(sessions.entries), perplexitySessionCap)
+	}
+	// The oldest went first; the newest is still there.
+	if sessions.lookup("acct", []pplxTurn{{"user", "q0"}, {"assistant", "a"}}) != "" ||
+		sessions.lookup("acct", []pplxTurn{{"user", "q" + strconv.Itoa(perplexitySessionCap+49)}, {"assistant", "a"}}) != "uuid" {
+		t.Fatal("eviction did not remove the oldest entry")
+	}
+}
+
+func TestPerplexitySessionsAreRaceFree(t *testing.T) {
+	sessions := NewPerplexitySessions()
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func(account string) {
+			defer wg.Done()
+			for i := 0; i < 200; i++ {
+				x, err := sessions.Begin(account, pplxFollowUp, "pplx-sonar")
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				_, _ = x.ResponseToChat([]byte(perplexityStream))
+				sessions.store(account, nil, "q"+strconv.Itoa(i), "a", "uuid")
+			}
+		}("account-" + strconv.Itoa(g%3))
+	}
+	wg.Wait()
+	if len(sessions.entries) > perplexitySessionCap {
+		t.Fatalf("%d entries over the cap", len(sessions.entries))
 	}
 }
