@@ -8,6 +8,7 @@ import (
 	"time"
 
 	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/concerns"
 	geminiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/gemini"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
@@ -261,12 +262,22 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(response.StatusCode)
 		scanner := &usageScanner{family: provider.Protocol}
+		var answer io.Reader = response.Body
+		if translation.Integrity != nil {
+			// Held until it is known to be whole; the client is told it is waiting.
+			gated, err := h.gateAnswer(r.Context(), response, provider, translation.Integrity, kiroHeartbeat(w))
+			if err != nil {
+				h.abandon(r, provider, response.StatusCode, true, promptcache.Usage{}, started, true)
+				return
+			}
+			answer = gated
+		}
 		// The body stays closable so a chained conversion can stop a read that no
 		// context check could interrupt.
 		source := struct {
 			io.Reader
 			io.Closer
-		}{io.TeeReader(response.Body, scanner), response.Body}
+		}{io.TeeReader(answer, scanner), response.Body}
 		err := translation.Stream(r.Context(), source, w)
 		usage, _ := scanner.usage()
 		status := response.StatusCode
@@ -284,9 +295,28 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 		h.emitTranslated(r, provider, status, true, usage, observed, started)
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, openaiadapter.MaxTranslatedResponseBytes+1))
+	var answer io.Reader = response.Body
+	if translation.Integrity != nil {
+		gated, err := h.gateAnswer(r.Context(), response, provider, translation.Integrity, nil)
+		if err != nil {
+			h.abandon(r, provider, response.StatusCode, false, promptcache.Usage{}, started, true)
+			return
+		}
+		answer = gated
+	}
+	body, err := io.ReadAll(io.LimitReader(answer, openaiadapter.MaxTranslatedResponseBytes+1))
 	if r.Context().Err() != nil {
 		h.abandon(r, provider, response.StatusCode, false, promptcache.Usage{}, started, true)
+		return
+	}
+	var gateFailure *concerns.StreamFailure
+	if errors.As(err, &gateFailure) {
+		// The gate's verdict, in the code the pin gives it (executors/kiro.js:493-504).
+		h.writeError(w, 502, concerns.Text(gateFailure.Value["code"]), concerns.Text(gateFailure.Value["message"]))
+		// The account is penalized as it is when the same failure ends a stream (above); a
+		// client that left was handled before this point.
+		h.recordClassification(provider.ConnectionID, classifyResponse(http.StatusBadGateway, nil), time.Now())
+		h.emitTranslated(r, provider, 502, false, promptcache.Usage{}, false, started)
 		return
 	}
 	if err != nil || len(body) > openaiadapter.MaxTranslatedResponseBytes {
@@ -301,7 +331,12 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 	translated, err := translation.Response(body)
 	if err != nil {
 		var failure *wire.WebAnswerError
-		if errors.As(err, &failure) {
+		var kiroFailure *concerns.StreamFailure
+		if translation.Integrity != nil && errors.As(err, &kiroFailure) {
+			// A Kiro leg's failure keeps the pin's code (executors/kiro.js:690-700).
+			h.writeError(w, 502, concerns.Text(kiroFailure.Value["code"]), concerns.Text(kiroFailure.Value["message"]))
+			h.recordClassification(provider.ConnectionID, classifyResponse(http.StatusBadGateway, nil), time.Now())
+		} else if errors.As(err, &failure) {
 			// The site reported a failure inside its answer: the client gets the
 			// pin's 502 document, and the attempt is classified as failed.
 			w.Header().Set("Content-Type", "application/json")

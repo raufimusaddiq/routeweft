@@ -18,6 +18,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/auth"
 	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	geminiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/gemini"
+	kiroadapter "github.com/raufimusaddiq/routeweft/internal/protocol/kiro"
 	ollamaadapter "github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	systemoneadapter "github.com/raufimusaddiq/routeweft/internal/protocol/systemone"
@@ -144,6 +145,10 @@ type ChatTranslation struct {
 	Headers  http.Header
 	Response func([]byte) ([]byte, error)
 	Stream   func(context.Context, io.Reader, io.Writer) error
+	// Integrity holds a Kiro answer until it is known to be whole and usable, with
+	// one repair retry (kiroadapter.Gate; executors/kiro.js:370-627). Nil for every
+	// other wire.
+	Integrity *kiroadapter.ResponseOptions
 }
 
 // ChatTranslator selects the adapter for a different target protocol.
