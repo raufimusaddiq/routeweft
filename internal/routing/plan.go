@@ -18,6 +18,7 @@ type ProviderSettings struct {
 	ProjectID                                                           string // GCP project of Vertex, Vertex partner, Gemini CLI and Antigravity (stored as projectId)
 	Location                                                            string // Vertex location (stored as location)
 	ChatGPTAccountID                                                    string // Codex ChatGPT account (stored as chatgptAccountId)
+	KiroToolCallRepair                                                  string // "false" turns Kiro's integrity repair retry off (stored as kiroToolCallRepair)
 }
 
 // ConnectionMetadata contains immutable account configuration needed by provider wires.

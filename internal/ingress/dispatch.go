@@ -260,6 +260,16 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				}
 				return nil, provider, &dispatchError{502, "upstream_configuration_error", "provider URL or endpoint is not allowed"}
 			}
+			if outbound.Integrity != nil {
+				// The one repair request of the integrity gate is this attempt again with
+				// an instruction in its user turn (executors/kiro.js:459-463).
+				attemptProvider, endpoint, body, headers, resolved := provider, outbound.Endpoint, outbound.Body, outbound.Headers, target
+				request = withRepair(request, h.kiroRepairRequest(func(repaired []byte) (*http.Request, error) {
+					return h.newUpstreamRequest(r, snapshot, attemptProvider, endpoint, repaired, headers, resolved)
+				}, func(retry *http.Request) (*http.Response, error) {
+					return wire.Send(attemptProvider, h.clientFor(attemptProvider), retry)
+				}, body))
+			}
 			used++
 			response, err := wire.Send(provider, h.clientFor(provider), request)
 			if err != nil {
@@ -293,6 +303,11 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 						failedAttempt(nil, response, provider)
 						break
 					}
+				}
+				if outbound.Integrity != nil {
+					// A transport that builds its own response leaves Request unset; the
+					// relay finds the repair on the attempt's request.
+					response.Request = request
 				}
 				return response, provider, nil
 			}

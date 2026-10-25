@@ -331,7 +331,7 @@ func TranslateChat(request *openai.ChatRequest, target string) (ChatTranslation,
 			return ChatTranslation{}, err
 		}
 		options := kiroadapter.ResponseOptions{Model: request.Model, Names: names, ThinkingTags: info.ThinkingTags}
-		return ChatTranslation{Endpoint: kiroEndpoint, Body: body,
+		return ChatTranslation{Endpoint: kiroEndpoint, Body: body, Integrity: &options,
 			Response: func(body []byte) ([]byte, error) { return kiroadapter.KiroResponseToChat(body, options) },
 			Stream: func(ctx context.Context, src io.Reader, dst io.Writer) error {
 				return kiroadapter.KiroStreamToChat(ctx, src, dst, options)
@@ -397,7 +397,7 @@ func TranslateResponses(request *openai.ResponsesRequest, target string) (ChatTr
 			return ChatTranslation{}, err
 		}
 		options := kiroadapter.ResponseOptions{Model: request.Model, Names: names, ThinkingTags: info.ThinkingTags}
-		return ChatTranslation{Endpoint: kiroEndpoint, Body: kiroBody,
+		return ChatTranslation{Endpoint: kiroEndpoint, Body: kiroBody, Integrity: &options,
 			Response: chainBodies(func(body []byte) ([]byte, error) { return kiroadapter.KiroResponseToChat(body, options) }, toResponses),
 			Stream: chainStreams(func(ctx context.Context, src io.Reader, dst io.Writer) error {
 				return kiroadapter.KiroStreamToChat(ctx, src, dst, options)
@@ -436,7 +436,7 @@ func TranslateMessages(request *anthropic.MessagesRequest, target string) (ChatT
 			return ChatTranslation{}, err
 		}
 		options := kiroadapter.ResponseOptions{Model: request.Model, Names: names, ThinkingTags: info.ThinkingTags}
-		return ChatTranslation{Endpoint: kiroEndpoint, Body: body,
+		return ChatTranslation{Endpoint: kiroEndpoint, Body: body, Integrity: &options,
 			Response: func(body []byte) ([]byte, error) { return kiroadapter.KiroResponseToMessages(body, options) },
 			Stream: func(ctx context.Context, src io.Reader, dst io.Writer) error {
 				return kiroadapter.KiroStreamToMessages(ctx, src, dst, options)
