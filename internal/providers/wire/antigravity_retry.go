@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
@@ -453,6 +454,10 @@ func writeJS(b *strings.Builder, value any) {
 	case json.Number:
 		number, _ := strconv.ParseFloat(string(typed), 64)
 		b.WriteString(jsNumber(number))
+	case float64:
+		b.WriteString(jsNumber(typed))
+	case int:
+		b.WriteString(strconv.Itoa(typed))
 	case []any:
 		b.WriteByte('[')
 		for index, item := range typed {
@@ -497,7 +502,17 @@ func (o *jsObject) order() []string {
 
 func writeJSString(b *strings.Builder, text string) {
 	b.WriteByte('"')
-	for _, r := range text {
+	for i := 0; i < len(text); {
+		// A lone surrogate (a string cut inside a pair, kept as three WTF-8 bytes) is
+		// written as the escape JSON.stringify gives it.
+		if text[i] == 0xED && i+2 < len(text) && text[i+1] >= 0xA0 && text[i+1] <= 0xBF && text[i+2]&0xC0 == 0x80 {
+			unit := 0xD000 | int(text[i+1]&0x3F)<<6 | int(text[i+2]&0x3F)
+			b.WriteString(`\u` + strconv.FormatUint(uint64(unit), 16))
+			i += 3
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(text[i:])
+		i += size
 		switch {
 		case r == '"':
 			b.WriteString(`\"`)
