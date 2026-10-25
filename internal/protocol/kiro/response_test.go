@@ -984,3 +984,23 @@ func TestTerminalReasonsCannotHideFailures(t *testing.T) {
 		}
 	}
 }
+
+// An empty codeEvent is output: the pin sets hasCode before it looks at the length
+// (executors/kiro.js:842-845) and hasOutput counts it (:1065), so the answer completes. An
+// empty assistantResponseEvent is not: hasText needs content (:830).
+func TestEmptyCodeEventIsOutputAsAtThePin(t *testing.T) {
+	out, err := stream(t, join(event("codeEvent", `{"content":""}`)), ResponseOptions{})
+	if err != nil || out.finish() != "stop" {
+		t.Fatalf("%v %+v", err, out)
+	}
+	for name, frame := range map[string][]byte{"empty text": text(""), "no content": event("assistantResponseEvent", `{}`)} {
+		out, err := stream(t, join(frame), ResponseOptions{})
+		if err == nil || len(out.errors) != 1 || out.errors[0]["details"].(map[string]any)["terminal_provenance"] != "empty_response_eof" {
+			t.Errorf("%s: %v %+v", name, err, out)
+		}
+	}
+	// ... and with a tool_use stop and nothing else, an empty codeEvent is the "something else".
+	if out, err := stream(t, join(event("codeEvent", `{"content":""}`), stop("tool_use")), ResponseOptions{}); err != nil || out.finish() != "stop" {
+		t.Fatalf("%v %+v", err, out)
+	}
+}

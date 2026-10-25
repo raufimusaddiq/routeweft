@@ -13,8 +13,11 @@ import (
 	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/concerns"
+	kiroadapter "github.com/raufimusaddiq/routeweft/internal/protocol/kiro"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
+	rtstate "github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
 // The integrity gate of executors/kiro.js:370-627, end to end: the real
@@ -348,7 +351,7 @@ func TestKiroRepairRetriesInPlaceThenFallsThroughWhenTheHostKeepsFailing(t *test
 	}
 }
 
-func TestKiroRepairNetworkFailureIsTheGatesOwnFailure(t *testing.T) {
+func TestKiroRepairNetworkFailureStopsAtTheAttemptBudget(t *testing.T) {
 	slept := stubRepairSleep(t)
 	s, seen := kiroTransport(t, routing.ProviderSettings{}, func(n int, host, _ string) (int, io.ReadCloser, error) {
 		if n == 1 {
@@ -356,14 +359,96 @@ func TestKiroRepairNetworkFailureIsTheGatesOwnFailure(t *testing.T) {
 		}
 		return 0, nil, fmt.Errorf("dial refused by %s", host)
 	})
+	s.handler.opts.State = rtstate.NewState()
 	w := s.call(openai.ChatProtocol, true)
 	body := w.Body.String()
-	// Per host: the request and three in-place retries (a network error is a 502); then the next host.
-	if !strings.Contains(body, "kiro_integrity_gate_failed") || !strings.Contains(body, "dial refused") || len(seen.hosts) != 1+4*3 {
-		t.Fatalf("%d requests: %.300s", len(seen.hosts), body)
+	// Per host: the request and three in-place retries (a network error is a 502); the repair's
+	// requests are wire attempts of this request, so the walk ends at maxAccountAttempts in all.
+	if !strings.Contains(body, "kiro_integrity_gate_failed") || !strings.Contains(body, "dial refused") || len(seen.hosts) != maxAccountAttempts {
+		t.Fatalf("%d requests, want %d: %.300s", len(seen.hosts), maxAccountAttempts, body)
 	}
-	if len(*slept) != 9 {
+	if len(*slept) != 6 {
 		t.Fatalf("delays %v", *slept)
+	}
+	if _, cooling := s.handler.opts.State.CooldownUntil("a", time.Now()); !cooling {
+		t.Fatal("an account whose repair only fails on the network was not cooled")
+	}
+}
+
+// A repair refused by the host walk is an outcome of the connection like any other attempt's:
+// the account is cooled, so the next request does not pay a second doomed upstream call.
+func TestKiroRefusedRepairIsClassifiedForTheConnection(t *testing.T) {
+	stubRepairSleep(t)
+	for name, status := range map[string]int{"rate limited": 429, "unavailable": 503} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := kiroTransport(t, routing.ProviderSettings{}, func(n int, _ string, _ string) (int, io.ReadCloser, error) {
+				if n == 1 {
+					return 200, io.NopCloser(strings.NewReader(string(kiroEllipsisTurn))), nil
+				}
+				return status, io.NopCloser(strings.NewReader("refused")), nil
+			})
+			s.handler.opts.State = rtstate.NewState()
+			w := s.call(openai.ChatProtocol, false)
+			if !strings.Contains(w.Body.String(), "kiro_integrity_retry_upstream_error") {
+				t.Fatalf("%d %s", w.Code, w.Body)
+			}
+			if _, cooling := s.handler.opts.State.CooldownUntil("a", time.Now()); !cooling {
+				t.Fatal("the refusing account was not cooled")
+			}
+		})
+	}
+	// A repair that succeeds leaves the account alone.
+	s, _ := kiroScripted(t, routing.ProviderSettings{}, answer(kiroEllipsisTurn), answer(kiroGoodTurn))
+	s.handler.opts.State = rtstate.NewState()
+	if w := s.call(openai.ChatProtocol, false); !strings.Contains(w.Body.String(), "pong") {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if _, cooling := s.handler.opts.State.CooldownUntil("a", time.Now()); cooling {
+		t.Fatal("a repaired answer cooled the account")
+	}
+}
+
+// The gate and the response leg take one bound from one limit (kiroadapter.ToolBound): with the
+// buffer set above the default, a tool call the gate accepts is not then refused by the leg's
+// fixed 4 MiB, and one over half the bound is refused by the gate with the pin's code on every path.
+func TestKiroGateAndLegShareTheToolBound(t *testing.T) {
+	t.Setenv("ROUTEWEFT_KIRO_TOOL_CALL_REPAIR_BUFFER_MAX_BYTES", fmt.Sprint(32<<20))
+	huge := func(n int) []byte {
+		return kiroAnswer(kiroFrame("toolUseEvent", `{"toolUseId":"big","name":"write_file","input":{"path":"`+strings.Repeat("x", n)+`"}}`), kiroFrame("messageStopEvent", `{"stopReason":"tool_use"}`))
+	}
+	for _, stream := range []bool{false, true} {
+		for _, client := range clientWires {
+			if stream && client == openai.ResponsesProtocol {
+				continue // the shared Chat SSE line reader of that chain caps a line at 4 MiB (concerns/sse.go:22), for every provider
+			}
+			// 6 MiB: over the default 4 MiB, under half of 32 MiB.
+			s, seen := kiroScripted(t, routing.ProviderSettings{}, answer(huge(6<<20)))
+			w := s.call(client, stream)
+			if w.Code != 200 || !strings.Contains(w.Body.String(), "write_file") || strings.Contains(w.Body.String(), "buffer_exceeded") || strings.Contains(w.Body.String(), "upstream_response_invalid") || len(seen.calls()) != 1 {
+				t.Errorf("%s stream=%v: %d (%d bytes) head %.120s tail %s", client, stream, w.Code, w.Body.Len(), w.Body, w.Body.String()[max(0, w.Body.Len()-400):])
+			}
+		}
+		// 17 MiB: over half of 32 MiB.
+		s, _ := kiroScripted(t, routing.ProviderSettings{}, answer(huge(17<<20)))
+		w := s.call(openai.ChatProtocol, stream)
+		if !strings.Contains(w.Body.String(), "kiro_integrity_buffer_exceeded") || (!stream && w.Code != 502) {
+			t.Errorf("over the bound, stream=%v: %d %.200s", stream, w.Code, w.Body)
+		}
+	}
+}
+
+// A failure of a Kiro leg on the buffered path keeps the pin's code, not a generic one
+// (executors/kiro.js:690-700).
+func TestKiroBufferedLegFailureKeepsThePinCode(t *testing.T) {
+	s, _ := kiroScripted(t, routing.ProviderSettings{})
+	translation := ChatTranslation{Integrity: &kiroadapter.ResponseOptions{}, Response: func([]byte) ([]byte, error) {
+		return nil, &concerns.StreamFailure{Value: map[string]any{"type": "upstream_error", "code": "kiro_integrity_buffer_exceeded", "message": "Kiro buffered tool input exceeded the integrity memory bound"}}
+	}}
+	response := &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(string(kiroGoodTurn)))}
+	w := httptest.NewRecorder()
+	s.handler.writeOpenAITranslation(w, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil), response, routing.ProviderRef{ProviderID: "kiro", Protocol: "kiro", ConnectionID: "a"}, translation, false, time.Now())
+	if w.Code != 502 || !strings.Contains(w.Body.String(), "kiro_integrity_buffer_exceeded") || strings.Contains(w.Body.String(), "upstream_response_invalid") {
+		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }
 

@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -65,7 +66,14 @@ var repairSleep = func(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-func (h *Handler) kiroRepairRequest(resolve func(index int) (wire.Target, error), build func(body []byte, target wire.Target) (*http.Request, error), send func(*http.Request) (*http.Response, error), body []byte) repairFunc {
+// errRepairBudget ends a repair walk that has used the request's wire attempts (maxAccountAttempts).
+var errRepairBudget = errors.New("Kiro repair stopped: the request's upstream attempt budget is used")
+
+// kiroRepairRequest builds the repair. Its requests are wire attempts of the same request:
+// each one, in-place retries included, counts against *used and stops at maxAccountAttempts,
+// and the outcome it ends on is recorded for the connection like any other attempt's, so an
+// account that refuses the repair is cooled and not paid for twice on every later request.
+func (h *Handler) kiroRepairRequest(provider routing.ProviderRef, used *int, resolve func(index int) (wire.Target, error), build func(body []byte, target wire.Target) (*http.Request, error), send func(*http.Request) (*http.Response, error), body []byte) repairFunc {
 	return func(ctx context.Context, kind string) (io.ReadCloser, int, error) {
 		repaired, err := kiroadapter.RepairRequest(body, kind)
 		if err != nil {
@@ -74,7 +82,7 @@ func (h *Handler) kiroRepairRequest(resolve func(index int) (wire.Target, error)
 		inPlace := map[int]int{}
 		retry := func(index, status int) (bool, error) {
 			policy, set := repairBackoff[status]
-			if !set || inPlace[index] >= policy.attempts {
+			if !set || inPlace[index] >= policy.attempts || *used >= maxAccountAttempts {
 				return false, nil
 			}
 			inPlace[index]++
@@ -93,6 +101,13 @@ func (h *Handler) kiroRepairRequest(resolve func(index int) (wire.Target, error)
 			if err != nil {
 				return nil, 0, err
 			}
+			if *used >= maxAccountAttempts {
+				if lastErr != nil {
+					h.recordClassification(provider.ConnectionID, routing.Classification{Outcome: routing.OutcomeFallbackAccount}, time.Now())
+				}
+				return nil, 0, errRepairBudget
+			}
+			*used++
 			response, err := send(request.WithContext(ctx))
 			if err != nil {
 				if ctx.Err() != nil {
@@ -110,6 +125,7 @@ func (h *Handler) kiroRepairRequest(resolve func(index int) (wire.Target, error)
 				if index+1 < count {
 					continue
 				}
+				h.recordClassification(provider.ConnectionID, routing.Classification{Outcome: routing.OutcomeFallbackAccount}, time.Now())
 				return nil, 0, err
 			}
 			again, waitErr := retry(index, response.StatusCode)
@@ -126,6 +142,9 @@ func (h *Handler) kiroRepairRequest(resolve func(index int) (wire.Target, error)
 			if index+1 < count && (status == http.StatusTooManyRequests || status == 401 || status == 403 || status == 404) {
 				response.Body.Close()
 				continue
+			}
+			if status < 200 || status >= 300 {
+				h.recordUpstreamFailure(provider, status, response.Header, nil)
 			}
 			return response.Body, status, nil
 		}
@@ -187,12 +206,15 @@ func (r failedReader) Read([]byte) (int, error) { return 0, r.err }
 // gateAnswer runs the gate on a 2xx Kiro answer. beat may be nil. A failure is
 // returned as the reader the response leg will read, so each client wire reports
 // it in its own shape; only cancellation is returned as an error.
-func (h *Handler) gateAnswer(ctx context.Context, response *http.Response, provider routing.ProviderRef, options kiroadapter.ResponseOptions, beat func()) (io.Reader, error) {
+func (h *Handler) gateAnswer(ctx context.Context, response *http.Response, provider routing.ProviderRef, options *kiroadapter.ResponseOptions, beat func()) (io.Reader, error) {
 	var retry kiroadapter.Retry
 	if repair := repairOf(response); repair != nil {
 		retry = kiroadapter.Retry(repair)
 	}
-	gated, err := kiroadapter.Gate(ctx, response.Body, kiroGateConfig(provider), options, retry, beat)
+	config := kiroGateConfig(provider)
+	// The response leg reads the bytes the gate released, with the bound the gate used.
+	options.MaxToolBytes = kiroadapter.ToolBound(config.MaxBytes)
+	gated, err := kiroadapter.Gate(ctx, response.Body, config, *options, retry, beat)
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}

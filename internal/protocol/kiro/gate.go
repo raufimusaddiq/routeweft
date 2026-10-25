@@ -132,6 +132,16 @@ type GateConfig struct {
 // transport failure after the request's own fallbacks (executors/base.js:100-184).
 type Retry func(ctx context.Context, kind string) (body io.ReadCloser, status int, err error)
 
+// ToolBound is the most tool input held for a gate bound of maxBytes: half of it
+// (executors/kiro.js:546). The gate and every response leg that reads the gated
+// bytes take their bound from here, so they cannot disagree about one answer.
+func ToolBound(maxBytes int) int {
+	if maxBytes <= 0 {
+		maxBytes = DefaultGateMaxBytes
+	}
+	return max(1, maxBytes/2)
+}
+
 func (c GateConfig) bounds() (limit int, ttft, stall, beat time.Duration) {
 	limit, ttft, stall, beat = c.MaxBytes, c.TTFT, c.Stall, c.HeartbeatEvery
 	if limit <= 0 {
@@ -439,7 +449,7 @@ func (r *gateRun) read(ctx context.Context, src io.ReadCloser, label string) (at
 	}()
 
 	options := r.options
-	options.MaxToolBytes = max(1, r.limit/2)
+	options.MaxToolBytes = ToolBound(r.limit)
 	conv := &convertedSize{limit: r.limit, model: options.Model}
 	if conv.model == "" {
 		conv.model = fallbackModel

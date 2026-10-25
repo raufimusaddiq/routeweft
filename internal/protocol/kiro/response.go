@@ -63,7 +63,6 @@ type machine struct {
 	toolBytes    int
 	sawToolUse   bool
 	stopReason   string
-	terminal     bool
 	unmeasured   int // metricsEvents that carried no count
 	usage        map[string]any
 	delivered    bool // a content or reasoning delta has reached the caller
@@ -77,7 +76,6 @@ type machine struct {
 	pinDelta     func(map[string]any) error // sizes what the pin would have written
 	pinThinking  bool
 	pinReasoned  bool
-	hasCode      bool
 	hold         string
 	inThinking   bool
 	dropNewline  bool
@@ -278,7 +276,6 @@ func severity(reason string) int {
 }
 
 func (m *machine) stop(reason, provenance string) {
-	m.terminal = true
 	if reason == "" {
 		return
 	}
@@ -370,7 +367,9 @@ func (m *machine) handle(event concerns.EventStreamEvent) (bool, error) {
 		return false, m.reasoning(payload)
 	case "codeEvent":
 		if content, isText := object["content"].(string); isText {
-			m.hasCode = true
+			// Any string content makes this output, an empty one included: the pin sets
+			// hasCode before it looks at the length (executors/kiro.js:842-845), and
+			// hasOutput counts it (:1065), so an answer of one empty codeEvent completes.
 			m.delivered = true
 			if m.pinDelta != nil {
 				if err := m.pinDelta(map[string]any{"content": content}); err != nil {
@@ -651,7 +650,7 @@ func truncationReason(reason string) bool {
 // not finish is an error. The stop reason is judged before the tool calls are
 // validated, so an authoritative failure is never reported as a tool defect.
 func (m *machine) finish() (string, error) {
-	// m.terminal is not required: the pin completes an answer that ends cleanly
+	// A stop event is not required: the pin completes an answer that ends cleanly
 	// without a stop event (executors/kiro.js:1008-1075); it fails only one that
 	// produced nothing at all (below).
 	if err := m.flushText(); err != nil {

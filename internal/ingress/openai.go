@@ -265,7 +265,7 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 		var answer io.Reader = response.Body
 		if translation.Integrity != nil {
 			// Held until it is known to be whole; the client is told it is waiting.
-			gated, err := h.gateAnswer(r.Context(), response, provider, *translation.Integrity, kiroHeartbeat(w))
+			gated, err := h.gateAnswer(r.Context(), response, provider, translation.Integrity, kiroHeartbeat(w))
 			if err != nil {
 				h.abandon(r, provider, response.StatusCode, true, promptcache.Usage{}, started, true)
 				return
@@ -297,7 +297,7 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 	}
 	var answer io.Reader = response.Body
 	if translation.Integrity != nil {
-		gated, err := h.gateAnswer(r.Context(), response, provider, *translation.Integrity, nil)
+		gated, err := h.gateAnswer(r.Context(), response, provider, translation.Integrity, nil)
 		if err != nil {
 			h.abandon(r, provider, response.StatusCode, false, promptcache.Usage{}, started, true)
 			return
@@ -328,7 +328,11 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 	translated, err := translation.Response(body)
 	if err != nil {
 		var failure *wire.WebAnswerError
-		if errors.As(err, &failure) {
+		var kiroFailure *concerns.StreamFailure
+		if translation.Integrity != nil && errors.As(err, &kiroFailure) {
+			// A Kiro leg's failure keeps the pin's code (executors/kiro.js:690-700).
+			h.writeError(w, 502, concerns.Text(kiroFailure.Value["code"]), concerns.Text(kiroFailure.Value["message"]))
+		} else if errors.As(err, &failure) {
 			// The site reported a failure inside its answer: the client gets the
 			// pin's 502 document, and the attempt is classified as failed.
 			w.Header().Set("Content-Type", "application/json")
