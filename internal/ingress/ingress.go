@@ -349,6 +349,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 				attempt.Model = request.Model
 			}
 			attempt.Scope = translationScope(r, provider)
+			attempt.Project = provider.Connection.Settings.ProjectID
 			attempt.AnthropicBeta = strings.Join(r.Header.Values("Anthropic-Beta"), ",")
 			translated, err = h.opts.TranslateMessages(&attempt, plan.TargetProtocol)
 			if translated.Headers == nil {
@@ -634,9 +635,19 @@ type usageScanner struct {
 	found    bool
 	complete bool
 	skipping bool
+	// kiro reads Kiro's event stream, which has no lines.
+	kiro shared.KiroUsageScanner
+}
+
+// linesOf reports the families that stream bare JSON lines rather than SSE.
+func linesOf(family string) bool {
+	return family == shared.FamilyOllama || family == shared.FamilyCommandCode
 }
 
 func (s *usageScanner) Write(chunk []byte) (int, error) {
+	if s.family == shared.FamilyKiro {
+		return s.kiro.Write(chunk)
+	}
 	n := len(chunk)
 	if s.skipping {
 		index := bytes.IndexByte(chunk, '\n')
@@ -650,7 +661,7 @@ func (s *usageScanner) Write(chunk []byte) (int, error) {
 	for {
 		index := bytes.IndexByte(s.buffer, '\n')
 		if index < 0 {
-			if (s.family == shared.FamilySystemOne || s.family == shared.FamilyOllama) && len(s.buffer) > 4<<20 {
+			if (s.family == shared.FamilySystemOne || linesOf(s.family)) && len(s.buffer) > 4<<20 {
 				s.buffer = nil
 				s.skipping = true
 			}
@@ -658,10 +669,21 @@ func (s *usageScanner) Write(chunk []byte) (int, error) {
 		}
 		line := bytes.TrimSpace(s.buffer[:index])
 		s.buffer = s.buffer[index+1:]
-		if (s.family == shared.FamilySystemOne || s.family == shared.FamilyOllama) && len(line) > 4<<20 {
+		if (s.family == shared.FamilySystemOne || linesOf(s.family)) && len(line) > 4<<20 {
 			continue
 		}
 		var payload []byte
+		if s.family == shared.FamilyCommandCode {
+			// AI SDK events, one per line; finish ends the answer.
+			usage, found, complete := shared.CommandCodeLineUsage(line)
+			if complete {
+				s.complete = true
+			}
+			if found {
+				s.merged, s.found = s.merged.Merge(usage), true
+			}
+			continue
+		}
 		if s.family == shared.FamilyOllama {
 			// Ollama streams bare JSON lines, not SSE; done:true ends the stream
 			// and carries the counts.
@@ -699,9 +721,12 @@ func (s *usageScanner) Write(chunk []byte) (int, error) {
 }
 
 func (s *usageScanner) usage() (promptcache.Usage, bool) {
+	if s.family == shared.FamilyKiro {
+		return s.kiro.Usage()
+	}
 	// A line-delimited stream's last line may arrive without its newline; for
 	// Ollama that line is the done:true one that holds the counts.
-	if (s.family == shared.FamilySystemOne || s.family == shared.FamilyOllama) && len(s.buffer) > 0 {
+	if (s.family == shared.FamilySystemOne || linesOf(s.family)) && len(s.buffer) > 0 {
 		s.Write([]byte("\n"))
 	}
 	return s.merged, s.found
@@ -709,13 +734,17 @@ func (s *usageScanner) usage() (promptcache.Usage, bool) {
 
 // System One has no gateway-defined terminal marker; accounting needs clean EOF.
 func (s *usageScanner) reportsUsage(clean bool) bool {
+	if s.family == shared.FamilyKiro {
+		_, found := s.kiro.Usage()
+		return found && s.kiro.Complete()
+	}
 	if !s.found {
 		return false
 	}
 	if s.family == shared.FamilySystemOne {
 		return clean
 	}
-	return s.complete || (clean && s.family == shared.FamilyGemini)
+	return s.complete || (clean && shared.GeminiShaped(s.family))
 }
 
 // streamTerminalEvent reports whether one decoded SSE event type ends a family's

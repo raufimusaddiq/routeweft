@@ -54,6 +54,10 @@ type Hook struct {
 	// Target resolves where the request goes when that depends on the
 	// connection, the model or the wire (a deployment path, a region, a query).
 	Target func(routing.ProviderRef) (Target, error)
+	// Route resolves the target from the endpoint the translation chose, for a
+	// provider whose URL and query depend on the call it is (Cloud Code's and
+	// Vertex's streamGenerateContent). It runs after Target and overrides it.
+	Route func(provider routing.ProviderRef, endpoint string) (Target, error)
 	// PrepareMessages rewrites a Messages body produced by a conversion leg.
 	PrepareMessages func(body []byte) ([]byte, error)
 	// DefaultMessagesBeta is sent when the client supplied no anthropic-beta.
@@ -128,9 +132,10 @@ type Hook struct {
 }
 
 var hooks = map[string]Hook{
-	"codex":      codexHook,
-	"grok-cli":   grokCLIHook,
-	"gemini-cli": {ClassifyError: geminiCLIRetryInfo},
+	"codex":       codexHook,
+	"grok-cli":    grokCLIHook,
+	"gemini-cli":  {ClassifyError: geminiCLIRetryInfo, Route: cloudCodeRoute, RequestHeaders: geminiCLIHeaders, RequireCredential: true},
+	"antigravity": {Route: cloudCodeRoute, RequestHeaders: antigravityHeaders, RequireCredential: true},
 	// The gateway requires SSE even for buffered clients (registry/api-airforce.js:25-32).
 	"api-airforce": {ForceStream: true, Finalize: codebuddyStream, OpenAIHeaders: func(routing.ProviderRef) map[string]string {
 		return map[string]string{"HTTP-Referer": "https://endpoint-proxy.local", "X-Title": "Endpoint Proxy"}
@@ -168,6 +173,7 @@ var hooks = map[string]Hook{
 	"opencode-go":      {ForceStream: true, ForceStreamFor: openCodeGoForcesStream, ForcedTransport: openCodeGoTransport, FinalizeAccount: openCodeGoFinalize, RequestHeaders: openCodeGoSessionFallback, ClientRequestHeaders: openCodeGoSession},
 	"opencode":         {Target: opencodeTarget, OpenAIHeaders: opencodeHeaders, ForceStream: true, Finalize: codebuddyStream},
 	"vertex-partner":   {Target: vertexPartnerTarget},
+	"vertex":           vertexHook,
 	"cloudflare-ai":    {Target: cloudflareTarget},
 	"commandcode":      commandCodeHook,
 	"cursor":           {RequestHeaders: cursorHeaders, Target: cursorTarget, ForceStream: true, RequireCredential: true, Do: accountless(CursorDo)},

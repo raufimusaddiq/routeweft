@@ -8,10 +8,7 @@ import (
 	"time"
 
 	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
-	"github.com/raufimusaddiq/routeweft/internal/protocol/commandcode"
 	geminiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/gemini"
-	kiroadapter "github.com/raufimusaddiq/routeweft/internal/protocol/kiro"
-	ollamaadapter "github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
@@ -77,24 +74,24 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 				request := *chat
 				request.Model = upstreamModel
 				request.Scope = translationScope(r, provider)
+				request.Project = provider.Connection.Settings.ProjectID
 				translated, err = h.opts.TranslateChat(&request, plan.TargetProtocol)
 			} else if responses != nil && compact && h.opts.TranslateResponsesCompact != nil {
 				request := *responses
 				request.Model = upstreamModel
 				request.Scope = translationScope(r, provider)
+				request.Project = provider.Connection.Settings.ProjectID
 				translated, err = h.opts.TranslateResponsesCompact(&request, plan.TargetProtocol)
 			} else if responses != nil && !compact && h.opts.TranslateResponses != nil {
 				request := *responses
 				request.Model = upstreamModel
 				request.Scope = translationScope(r, provider)
+				request.Project = provider.Connection.Settings.ProjectID
 				translated, err = h.opts.TranslateResponses(&request, plan.TargetProtocol)
 			} else {
 				return ChatTranslation{}, fmt.Errorf("no translator registered for target protocol %q", plan.TargetProtocol)
 			}
-			// Kiro and CommandCode take their credential and identity headers from the
-			// same hook, as on the Messages path (ingress.go).
-			if plan.TargetProtocol == openaiadapter.ChatProtocol || plan.TargetProtocol == openaiadapter.ResponsesProtocol || plan.TargetProtocol == ollamaadapter.Protocol ||
-				plan.TargetProtocol == kiroadapter.Protocol || plan.TargetProtocol == commandcode.Protocol {
+			if takesProviderHeaders(plan.TargetProtocol) {
 				if translated.Headers == nil {
 					translated.Headers = http.Header{}
 				}

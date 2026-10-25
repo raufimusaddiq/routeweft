@@ -15,6 +15,9 @@ const (
 	FamilyOpenAIResponses = "openai-responses"
 	FamilyAnthropic       = "anthropic-messages"
 	FamilyGemini          = "gemini"
+	FamilyVertex          = "vertex"
+	FamilyGeminiCLI       = "gemini-cli"
+	FamilyAntigravity     = "antigravity"
 	FamilyOllama          = "ollama"
 	FamilySystemOne       = "systemone"
 )
@@ -32,10 +35,14 @@ func ParseUsage(family string, body []byte) (promptcache.Usage, bool) {
 		return promptcache.ParseAnthropicUsage(body)
 	case FamilyOpenAIChat, FamilyOpenAIResponses:
 		return parseOpenAIUsage(body)
-	case FamilyGemini:
+	case FamilyGemini, FamilyVertex, FamilyGeminiCLI, FamilyAntigravity:
 		return parseGeminiUsage(body)
 	case FamilyOllama:
 		return parseOllamaUsage(body)
+	case FamilyKiro:
+		return parseKiroUsage(body)
+	case FamilyCommandCode:
+		return parseCommandCodeUsage(body)
 	case FamilySystemOne:
 		var envelope struct {
 			Result json.RawMessage `json:"result"`
@@ -127,21 +134,44 @@ func firstDetails(values ...*openAIUsageDetails) *openAIUsageDetails {
 	return nil
 }
 
+// GeminiShaped reports the families whose bodies and events carry Gemini's
+// usageMetadata: Gemini, Vertex, and the two Cloud Code envelopes.
+func GeminiShaped(family string) bool {
+	switch family {
+	case FamilyGemini, FamilyVertex, FamilyGeminiCLI, FamilyAntigravity:
+		return true
+	}
+	return false
+}
+
+type geminiUsageMetadata struct {
+	PromptTokenCount     int64 `json:"promptTokenCount"`
+	CandidatesTokenCount int64 `json:"candidatesTokenCount"`
+	CachedContentTokens  int64 `json:"cachedContentTokenCount"`
+}
+
 func parseGeminiUsage(body []byte) (promptcache.Usage, bool) {
 	var decoded struct {
-		UsageMetadata *struct {
-			PromptTokenCount     int64 `json:"promptTokenCount"`
-			CandidatesTokenCount int64 `json:"candidatesTokenCount"`
-			CachedContentTokens  int64 `json:"cachedContentTokenCount"`
-		} `json:"usageMetadata"`
+		UsageMetadata *geminiUsageMetadata `json:"usageMetadata"`
+		// The Cloud Code wires wrap the Gemini body in {"response": ...}.
+		Response *struct {
+			UsageMetadata *geminiUsageMetadata `json:"usageMetadata"`
+		} `json:"response"`
 	}
-	if json.Unmarshal(body, &decoded) != nil || decoded.UsageMetadata == nil {
+	if json.Unmarshal(body, &decoded) != nil {
+		return promptcache.Usage{}, false
+	}
+	metadata := decoded.UsageMetadata
+	if metadata == nil && decoded.Response != nil {
+		metadata = decoded.Response.UsageMetadata
+	}
+	if metadata == nil {
 		return promptcache.Usage{}, false
 	}
 	return promptcache.Usage{
-		InputTokens:     decoded.UsageMetadata.PromptTokenCount,
-		OutputTokens:    decoded.UsageMetadata.CandidatesTokenCount,
-		CacheReadTokens: decoded.UsageMetadata.CachedContentTokens,
+		InputTokens:     metadata.PromptTokenCount,
+		OutputTokens:    metadata.CandidatesTokenCount,
+		CacheReadTokens: metadata.CachedContentTokens,
 	}, true
 }
 

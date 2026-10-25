@@ -125,14 +125,14 @@ func TestCommandCodeIsServedToEveryClientWire(t *testing.T) {
 						t.Errorf("%s client (stream=%v) response lacks %q:\n%s", client, stream, part, body)
 					}
 				}
-				// The usage scanner reads the families it knows (shared.ParseUsage), and
-				// the CommandCode NDJSON is not one: the request is recorded once, with
-				// usage marked unobserved rather than measured as zero (PARITY 6.19).
+				// The record carries the finish event's counts as the pin reads them
+				// (commandcode-to-openai.js:155-163); cachedInputTokens is an
+				// observation beside them, not a cache read (PARITY V37).
 				outcomes := s.outcomes()
 				if len(outcomes) != 1 {
 					t.Fatalf("want exactly one usage record, got %d", len(outcomes))
 				}
-				if got := outcomes[0]; got.Status != http.StatusOK || got.ProviderID != "commandcode" || !got.UsageUnobserved || got.InputTokens != 0 || got.OutputTokens != 0 {
+				if got := outcomes[0]; got.Status != http.StatusOK || got.ProviderID != "commandcode" || got.UsageUnobserved || got.InputTokens != 130 || got.OutputTokens != 42 || got.CacheRead != 0 {
 					t.Errorf("usage record %+v", got)
 				}
 			})
@@ -197,6 +197,7 @@ func kiroTurn() []byte {
 	for _, frame := range [][]byte{
 		kiroFrame("assistantResponseEvent", `{"content":"pong"}`),
 		kiroFrame("toolUseEvent", `{"toolUseId":"call_1","name":"lookup","input":"{\"city\":\"Oslo\"}"}`),
+		kiroFrame("metricsEvent", `{"inputTokens":30,"outputTokens":42,"cacheReadInputTokens":100}`),
 		kiroFrame("messageStopEvent", `{"stopReason":"tool_use"}`),
 	} {
 		body = append(body, frame...)
@@ -231,9 +232,9 @@ func TestKiroIsServedToEveryClientWire(t *testing.T) {
 						t.Errorf("%s client (stream=%v) response lacks %q:\n%s", client, stream, part, body)
 					}
 				}
-				// Kiro's event stream is not a family the usage scanner reads either, so
-				// usage is recorded as unobserved (PARITY 6.19).
-				if outcomes := s.outcomes(); len(outcomes) != 1 || outcomes[0].ProviderID != "kiro" || outcomes[0].Status != http.StatusOK || !outcomes[0].UsageUnobserved {
+				// The metricsEvent's counts, cache apart from the prompt (kiro.js:917).
+				if outcomes := s.outcomes(); len(outcomes) != 1 || outcomes[0].ProviderID != "kiro" || outcomes[0].Status != http.StatusOK || outcomes[0].UsageUnobserved ||
+					outcomes[0].InputTokens != 30 || outcomes[0].OutputTokens != 42 || outcomes[0].CacheRead != 100 {
 					t.Errorf("usage records %+v", outcomes)
 				}
 			})
@@ -255,5 +256,201 @@ func TestKiroExhaustedHostsAnswerTheClientWithTheUpstreamStatus(t *testing.T) {
 		if len(hosts()) != 3 {
 			t.Errorf("%s: hosts %v", client, hosts())
 		}
+	}
+}
+
+const geminiAnswer = `{"candidates":[{"content":{"role":"model","parts":[{"text":"pong"},{"functionCall":{"name":"lookup","args":{"city":"Oslo"}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":130,"candidatesTokenCount":42,"totalTokenCount":172,"cachedContentTokenCount":100},"modelVersion":"gemini-2.5-flash"}`
+
+// Vertex, Gemini CLI and Antigravity are served to every client wire with the
+// URL, query, credential, identity and project their executors bind (vertex.js:83-123,
+// gemini-cli.js:10-35, antigravity.js:118-135,306), and the usage the upstream
+// reports is the usage recorded, including from inside the Cloud Code envelope.
+func TestGeminiFamilyIsServedToEveryClientWire(t *testing.T) {
+	cases := []struct {
+		id       string
+		settings routing.ProviderSettings
+		token    string
+		path     string
+		cloud    bool
+	}{
+		{"vertex", routing.ProviderSettings{ProjectID: "fixture-project"}, "AIza-fixture", "/v1/projects/fixture-project/locations/global/publishers/google/models/gemini-2.5-flash:", false},
+		{"gemini-cli", routing.ProviderSettings{ProjectID: "fixture-project"}, "ya29.fixture", "/v1internal:", true},
+		{"antigravity", routing.ProviderSettings{ProjectID: "fixture-project"}, "ya29.fixture", "/v1internal:", true},
+	}
+	for _, c := range cases {
+		for _, client := range clientWires {
+			for _, stream := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/stream=%v", c.id, client, stream), func(t *testing.T) {
+					var seen struct {
+						sync.Mutex
+						path, query string
+						header      http.Header
+						body        map[string]any
+					}
+					upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						raw, _ := io.ReadAll(r.Body)
+						seen.Lock()
+						seen.path, seen.query, seen.header = r.URL.Path, r.URL.RawQuery, r.Header.Clone()
+						seen.body = map[string]any{}
+						_ = json.Unmarshal(raw, &seen.body)
+						seen.Unlock()
+						answer := geminiAnswer
+						if c.cloud {
+							answer = `{"response":` + geminiAnswer + `,"traceId":"t"}`
+						}
+						if stream {
+							w.Header().Set("Content-Type", "text/event-stream")
+							fmt.Fprintf(w, "data: %s\n\n", answer)
+							return
+						}
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = io.WriteString(w, answer)
+					}))
+					defer upstream.Close()
+					s := newServing(t, routing.ProviderRef{ProviderID: c.id, Protocol: c.id, BaseURL: upstream.URL, UpstreamModel: "gemini-2.5-flash", APIToken: c.token,
+						Connection: routing.ConnectionMetadata{Settings: c.settings}})
+					w := s.call(client, stream)
+					if w.Code != http.StatusOK {
+						t.Fatalf("client got %d: %s", w.Code, w.Body)
+					}
+					seen.Lock()
+					defer seen.Unlock()
+					action, query := "generateContent", ""
+					if stream {
+						action, query = "streamGenerateContent", "alt=sse"
+					}
+					if seen.path != c.path+action || seen.query != query {
+						t.Errorf("upstream saw %s?%s, want %s?%s", seen.path, seen.query, c.path+action, query)
+					}
+					switch c.id {
+					case "vertex":
+						if seen.header.Get("X-Goog-Api-Key") != c.token || seen.header.Get("Authorization") != "" {
+							t.Errorf("vertex credential headers %v", seen.header)
+						}
+					default:
+						if seen.header.Get("Authorization") != "Bearer "+c.token {
+							t.Errorf("%s authorization %q", c.id, seen.header.Get("Authorization"))
+						}
+						if envelope := seen.body; envelope["project"] != "fixture-project" || envelope["model"] != "gemini-2.5-flash" || envelope["request"] == nil {
+							t.Errorf("%s envelope %v", c.id, envelope)
+						}
+					}
+					if c.id == "gemini-cli" && !strings.HasPrefix(seen.header.Get("User-Agent"), "GeminiCLI/0.34.0/gemini-2.5-flash ") {
+						t.Errorf("gemini-cli user agent %q", seen.header.Get("User-Agent"))
+					}
+					if c.id == "antigravity" && !strings.HasPrefix(seen.header.Get("User-Agent"), "antigravity/ide/") {
+						t.Errorf("antigravity user agent %q", seen.header.Get("User-Agent"))
+					}
+					body := w.Body.String()
+					// Messages reports the cache apart from the prompt: 30 plus 100 read.
+					prompt := "130"
+					if client == anthropic.MessagesProtocol {
+						prompt = `"cache_read_input_tokens":100`
+					}
+					for _, part := range []string{"pong", "lookup", "Oslo", prompt, "42"} {
+						if !strings.Contains(body, part) {
+							t.Errorf("%s client (stream=%v) response lacks %q:\n%s", client, stream, part, body)
+						}
+					}
+					outcomes := s.outcomes()
+					if len(outcomes) != 1 {
+						t.Fatalf("want exactly one usage record, got %d", len(outcomes))
+					}
+					if got := outcomes[0]; got.UsageUnobserved || got.Status != http.StatusOK || got.ProviderID != c.id || got.InputTokens != 130 || got.OutputTokens != 42 || got.CacheRead != 100 {
+						t.Errorf("usage record %+v", got)
+					}
+				})
+			}
+		}
+	}
+}
+
+// A Cloud Code connection with no project is refused before anything is sent,
+// where the pin would make one up (antigravity.js:138).
+func TestCloudCodeWithoutAProjectSendsNothing(t *testing.T) {
+	for _, id := range []string{"gemini-cli", "antigravity"} {
+		for _, client := range clientWires {
+			var hits int
+			upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits++ }))
+			s := newServing(t, routing.ProviderRef{ProviderID: id, Protocol: id, BaseURL: upstream.URL, UpstreamModel: "gemini-2.5-flash", APIToken: "ya29.fixture"})
+			w := s.call(client, false)
+			upstream.Close()
+			if w.Code < 400 || w.Code == http.StatusInternalServerError || hits != 0 || !strings.Contains(w.Body.String(), "project id") {
+				t.Errorf("%s/%s: status %d after %d requests: %s", id, client, w.Code, hits, w.Body)
+			}
+		}
+	}
+}
+
+// A Vertex service account or ADC connection is minted into a bearer through the
+// connection's own client before the request goes out.
+func TestVertexAuthorizesWithAMintedToken(t *testing.T) {
+	adc := `{"type":"authorized_user","client_id":"cid","client_secret":"csecret","refresh_token":"rtok","quota_project_id":"adc-project"}`
+	for _, client := range clientWires {
+		s := newServing(t, routing.ProviderRef{ProviderID: "vertex", Protocol: "vertex", BaseURL: "https://aiplatform.googleapis.com", UpstreamModel: "gemini-2.5-flash", APIToken: adc})
+		var urls []string
+		var authorization, key string
+		s.handler.client = &http.Client{Transport: endpointTransport(func(r *http.Request) (*http.Response, error) {
+			urls = append(urls, r.URL.String())
+			if r.URL.Host == "oauth2.googleapis.com" {
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"access_token":"ya29.minted","expires_in":3600}`))}, nil
+			}
+			authorization, key = r.Header.Get("Authorization"), r.Header.Get("X-Goog-Api-Key")
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(geminiAnswer))}, nil
+		})}
+		w := s.call(client, false)
+		if w.Code != http.StatusOK || authorization != "Bearer ya29.minted" || key != "" {
+			t.Fatalf("%s: status %d, authorization %q, key %q: %s", client, w.Code, authorization, key, w.Body)
+		}
+		want := "https://aiplatform.googleapis.com/v1/projects/adc-project/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent"
+		if urls[len(urls)-1] != want {
+			t.Errorf("%s: url %s, want %s", client, urls[len(urls)-1], want)
+		}
+	}
+}
+
+// A CommandCode answer whose body names a rate limit is accounted as one, whatever
+// HTTP status carried it (executors/commandcode.js:63-78): a 400 the status
+// alone would call the client's fault moves on to the next account.
+func TestCommandCodeBodyStatusDecidesTheFallback(t *testing.T) {
+	var mu sync.Mutex
+	var credentials []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		credentials = append(credentials, r.Header.Get("Authorization"))
+		first := len(credentials) == 1
+		mu.Unlock()
+		if first {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"code":429,"message":"slow down"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, commandCodeNDJSON)
+	}))
+	defer upstream.Close()
+	manager := newManager(t)
+	_, key, err := manager.CreateAPIKey(context.Background(), "p02")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	New(manager, Options{
+		AllowPrivateUpstreams: true, TranslateChat: TranslateChat,
+		Candidates: func(*runtime.RuntimeSnapshot, string) ([]routing.Account, bool) {
+			return []routing.Account{{ID: "a", Enabled: true}, {ID: "b", Enabled: true}}, true
+		},
+		AccountProvider: func(_ *runtime.RuntimeSnapshot, _, account, _ string) (routing.ProviderRef, bool) {
+			return routing.ProviderRef{ProviderID: "commandcode", Protocol: "commandcode", ConnectionID: account, BaseURL: upstream.URL + "/alpha", UpstreamModel: "vendor/m", APIToken: "key-" + account}, true
+		},
+	}).Attach(mux)
+	request := clientRequests[openai.ChatProtocol]
+	r := httptest.NewRequest(http.MethodPost, request.path, strings.NewReader(fmt.Sprintf(request.body, false)))
+	r.Header.Set("Authorization", "Bearer "+key)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	mu.Lock()
+	defer mu.Unlock()
+	if w.Code != http.StatusOK || strings.Join(credentials, ",") != "Bearer key-a,Bearer key-b" {
+		t.Fatalf("status %d after %v: %s", w.Code, credentials, w.Body)
 	}
 }

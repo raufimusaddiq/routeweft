@@ -397,3 +397,33 @@ func TestCommandCodeRequiresACredential(t *testing.T) {
 		t.Fatal("an unsigned CommandCode request would be sent and its 401 blamed on the account")
 	}
 }
+
+// executors/commandcode.js:63-78: the status the pin acts on is the body's code,
+// else its statusCode, else the HTTP status.
+func TestCommandCodeClassifiesNon2xxByTheStatusTheBodyNames(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		status int
+		body   string
+		want   routing.Outcome
+		named  bool
+	}{
+		{"code in error", 400, `{"error":{"code":429,"message":"slow down"}}`, routing.OutcomeQuotaLock, true},
+		{"statusCode in error", 500, `{"error":{"statusCode":"401"}}`, routing.OutcomeAuthRefreshRequired, true},
+		{"code at the top", 400, `{"code":503,"message":"overloaded"}`, routing.OutcomeFallbackAccount, true},
+		{"code wins over statusCode", 400, `{"error":{"code":429,"statusCode":401}}`, routing.OutcomeQuotaLock, true},
+		{"same as the HTTP status", 429, `{"error":{"code":429}}`, "", false},
+		{"not a number", 400, `{"error":{"code":"rate_limit"}}`, "", false},
+		{"out of range", 400, `{"error":{"code":42}}`, "", false},
+		{"no body", 400, ``, "", false},
+		{"not JSON", 400, `upstream down`, "", false},
+	} {
+		got, named := commandCodeClassify(c.status, []byte(c.body), time.Time{})
+		if named != c.named || got.Outcome != c.want {
+			t.Errorf("%s: %+v %v", c.name, got, named)
+		}
+	}
+	if hook := For("commandcode").ClassifyError; hook == nil {
+		t.Fatal("commandcode declares no error classification")
+	}
+}

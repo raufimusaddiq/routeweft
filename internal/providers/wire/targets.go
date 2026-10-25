@@ -92,21 +92,36 @@ func (e *TargetError) Unwrap() error { return e.Err }
 // The optional attempt selects a Kiro surface, never an account retry.
 func ResolveTarget(provider routing.ProviderRef, endpoint string, attempt ...int) (Target, error) {
 	target := Target{BaseURL: provider.BaseURL, Endpoint: endpoint}
-	hook := For(provider.ProviderID).Target
-	if hook == nil {
+	hooks := For(provider.ProviderID)
+	if hooks.Target == nil && hooks.Route == nil {
 		return target, nil
 	}
-	resolved, err := hook(provider)
-	if err != nil {
-		return Target{}, &TargetError{Err: err}
+	if hooks.Target != nil {
+		resolved, err := hooks.Target(provider)
+		if err != nil {
+			return Target{}, &TargetError{Err: err}
+		}
+		if resolved.BaseURL != "" {
+			target.BaseURL = resolved.BaseURL
+		}
+		if resolved.Endpoint != "" {
+			target.Endpoint = resolved.Endpoint
+		}
+		target.Query = resolved.Query
 	}
-	if resolved.BaseURL != "" {
-		target.BaseURL = resolved.BaseURL
+	if hooks.Route != nil {
+		resolved, err := hooks.Route(provider, target.Endpoint)
+		if err != nil {
+			return Target{}, &TargetError{Err: err}
+		}
+		if resolved.BaseURL != "" {
+			target.BaseURL = resolved.BaseURL
+		}
+		if resolved.Endpoint != "" {
+			target.Endpoint = resolved.Endpoint
+		}
+		target.Query = resolved.Query
 	}
-	if resolved.Endpoint != "" {
-		target.Endpoint = resolved.Endpoint
-	}
-	target.Query = resolved.Query
 	if provider.ProviderID == "kiro" {
 		index := 0
 		if len(attempt) > 0 {

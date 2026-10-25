@@ -149,7 +149,7 @@ func asJSONText(value any) string {
 // serves it: a model that could end the path never reaches the network.
 func TestGeminiTranslationFailureMovesOn(t *testing.T) {
 	for _, model := range []string{"", "a/b", "a:b", "a?alt=x", "a#b", "a b", "../x"} {
-		if endpoint, err := geminiEndpoint(model, false); err == nil {
+		if endpoint, err := geminiEndpoint(geminiwire.Protocol, model, false); err == nil {
 			t.Errorf("model %q produced path %q", model, endpoint)
 		}
 	}
@@ -158,11 +158,11 @@ func TestGeminiTranslationFailureMovesOn(t *testing.T) {
 		"gemma-4-31b-it":         "v1beta/models/gemma-4-31b-it:generateContent",
 		"gemini-3.1-pro-preview": "v1beta/models/gemini-3.1-pro-preview:generateContent",
 	} {
-		if got, err := geminiEndpoint(model, false); err != nil || got != want {
+		if got, err := geminiEndpoint(geminiwire.Protocol, model, false); err != nil || got != want {
 			t.Errorf("%s: %q %v", model, got, err)
 		}
 	}
-	if got, _ := geminiEndpoint("m", true); got != "v1beta/models/m:streamGenerateContent" {
+	if got, _ := geminiEndpoint(geminiwire.Protocol, "m", true); got != "v1beta/models/m:streamGenerateContent" {
 		t.Errorf("stream endpoint %q", got)
 	}
 }
@@ -235,32 +235,6 @@ func TestTranslationScope(t *testing.T) {
 	}
 	if translationScope(nil, provider) == "" {
 		t.Error("a request with no attribution still has a connection to scope by")
-	}
-}
-
-// Vertex has conversion legs and no way to be reached: its URL is project-scoped
-// and its credential is a service-account token or a key in the query, both of
-// which #115 PR-C's target hook supplies (executors/vertex.js:66-123). Until it
-// does, a client routed to Vertex would fail at the last hop, so no client wire
-// may translate to it. When PR-C binds it, this test is the one to change, along
-// with ingress.unwired and TranslateChat's vertex arm.
-func TestVertexIsNotTranslatableUntilItsURLAndAuthLand(t *testing.T) {
-	if !hub.Has(openai.ChatProtocol, geminiwire.VertexProtocol, hub.Request) || !hub.Has(geminiwire.VertexProtocol, openai.ChatProtocol, hub.Response) {
-		t.Fatal("the vertex legs are expected to exist; the gate is the only thing keeping Vertex unrouted")
-	}
-	if !unwired[geminiwire.VertexProtocol] {
-		t.Fatal("vertex left ingress.unwired before #115 PR-C supplied its URL and auth: a client could route to Vertex and fail at the last hop")
-	}
-	for _, client := range []string{openai.ChatProtocol, openai.ResponsesProtocol, anthropic.MessagesProtocol} {
-		if CanTranslate(client, geminiwire.VertexProtocol) {
-			t.Errorf("%s client claims to reach vertex", client)
-		}
-		if reaches(client, []registry.Protocol{registry.TransportVertex}) {
-			t.Errorf("%s client reaches the vertex provider", client)
-		}
-	}
-	if _, err := TranslateChat(mustChat(t), geminiwire.VertexProtocol); err == nil {
-		t.Error("TranslateChat has a vertex arm before its endpoint exists")
 	}
 }
 
@@ -393,32 +367,29 @@ func TestTranslatedRequestWithoutUsageIsUnobserved(t *testing.T) {
 	}
 }
 
-// Gemini CLI and Antigravity have their conversion legs and no way to be reached:
-// the Cloud Code URL and its ?alt=sse query, the OAuth bearer, the client headers
-// and the project id the envelope names are the wire hook's (executors/gemini-cli.js,
-// executors/antigravity.js), and the legs refuse to invent a project. Until a PR
-// binds them, no client wire may translate to either. That PR removes, together:
-// the two ingress.unwired entries, the TranslateChat/TranslateResponses/
-// TranslateMessages arms it adds for them, their unreachableProviders entries
-// and this test.
-func TestCloudCodeWiresAreNotTranslatableUntilTheyAreBound(t *testing.T) {
-	for _, wire := range []string{geminiwire.GeminiCLIProtocol, geminiwire.AntigravityProtocol} {
+// Vertex, Gemini CLI and Antigravity are routable from the three converted
+// client wires: their legs, the URL, query, credential and project their wire
+// hook binds (providers/wire), and a TranslateChat, TranslateResponses and
+// TranslateMessages arm each. The proof that nothing fails at the last hop is
+// TestGeminiFamilyIsServedToEveryClientWire.
+func TestGeminiFamilyWiresAreTranslatable(t *testing.T) {
+	for _, wire := range []string{geminiwire.VertexProtocol, geminiwire.GeminiCLIProtocol, geminiwire.AntigravityProtocol} {
 		if !hub.Has(openai.ChatProtocol, wire, hub.Request) || !hub.Has(wire, openai.ChatProtocol, hub.Response) {
-			t.Fatalf("the %s legs are expected to exist; the gate is the only thing keeping it unrouted", wire)
+			t.Fatalf("the %s legs are expected to exist", wire)
 		}
-		if !unwired[wire] {
-			t.Fatalf("%s left ingress.unwired before its URL, auth and project id were bound", wire)
+		if unwired[wire] {
+			t.Fatalf("%s is still in ingress.unwired", wire)
 		}
 		for _, client := range []string{openai.ChatProtocol, openai.ResponsesProtocol, anthropic.MessagesProtocol} {
-			if CanTranslate(client, wire) {
-				t.Errorf("%s client claims to reach %s", client, wire)
+			if !CanTranslate(client, wire) {
+				t.Errorf("%s client cannot reach %s", client, wire)
 			}
-			if reaches(client, []registry.Protocol{registry.Protocol(wire)}) {
-				t.Errorf("%s client reaches the %s provider", client, wire)
+			if !reaches(client, []registry.Protocol{registry.Protocol(wire)}) {
+				t.Errorf("%s client does not reach the %s provider", client, wire)
 			}
 		}
-		if _, ok := unreachableProviders[wire]; !ok {
-			t.Errorf("%s is not tracked in unreachableProviders", wire)
+		if _, ok := unreachableProviders[wire]; ok {
+			t.Errorf("%s is still tracked in unreachableProviders", wire)
 		}
 	}
 }

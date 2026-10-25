@@ -32,6 +32,9 @@ type ChatRequest struct {
 	// provider connection), set by ingress for a translated attempt. A leg that
 	// keeps state between requests keys it by Scope; empty means keep none.
 	Scope string `json:"-"`
+	// Project is the Code Assist project of the connection the attempt is for,
+	// set by ingress for a Cloud Code attempt, whose envelope names it.
+	Project string `json:"-"`
 }
 
 // ParseChatRequest validates the required shape and records the untouched bytes.
