@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/providers/cloudcode"
 )
 
 // tokenResponse is the OAuth token payload. Providers differ only in field
@@ -668,7 +669,7 @@ func geminiCLIFlow() Flow {
 			}, &user); err == nil {
 				identity = user.Email
 			}
-			if project := cloudCodeProject(ctx, p.Client, tokens.AccessToken); project != "" {
+			if project := cloudCodeProject(ctx, p.Client, tokens.AccessToken, false); project != "" {
 				providerData["projectId"] = project
 			}
 			if len(providerData) == 0 {
@@ -689,14 +690,23 @@ func geminiCLIFlow() Flow {
 }
 
 // cloudCodeProject resolves the Code Assist project id that the quota and
-// inference paths need, so it is captured once at sign-in.
-func cloudCodeProject(ctx context.Context, client HTTPClient, accessToken string) string {
+// inference paths need, so it is captured once at sign-in. Both flows send the
+// host client metadata; they differ as the reference's do: gemini-cli adds
+// mode 1 (src/lib/oauth/providers/gemini-cli.js:51-63), antigravity sends the
+// metadata alone with the IDE user agent and x-request-source
+// (antigravity.js:61-67,82-86).
+func cloudCodeProject(ctx context.Context, client HTTPClient, accessToken string, antigravity bool) string {
 	var body struct {
 		Project json.RawMessage `json:"cloudaicompanionProject"`
 	}
-	if err := postJSONTarget(ctx, client, "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", map[string]string{
-		"Authorization": "Bearer " + accessToken,
-	}, `{"metadata":{"ideType":9,"pluginType":2},"mode":1}`, &body); err != nil {
+	headers := map[string]string{"Authorization": "Bearer " + accessToken}
+	request := `{"metadata":` + cloudcode.ClientMetadata() + `,"mode":1}`
+	if antigravity {
+		headers["User-Agent"] = cloudcode.AntigravityUserAgent
+		headers["x-request-source"] = "local"
+		request = `{"metadata":` + cloudcode.ClientMetadata() + `}`
+	}
+	if err := postJSONTarget(ctx, client, "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", headers, request, &body); err != nil {
 		return ""
 	}
 	return jsonProjectID(body.Project)
@@ -774,7 +784,7 @@ func antigravityFlow() Flow {
 			}, &user); err == nil {
 				identity = user.Email
 			}
-			if project := cloudCodeProject(ctx, p.Client, tokens.AccessToken); project != "" {
+			if project := cloudCodeProject(ctx, p.Client, tokens.AccessToken, true); project != "" {
 				providerData["projectId"] = project
 			}
 			if len(providerData) == 0 {

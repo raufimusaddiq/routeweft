@@ -3,7 +3,7 @@
 // through percent() so a raw fraction is never printed as a count.
 
 export type Credit = { currency: string; state: 'positive' | 'zero' | 'negative' | 'missing' | 'malformed'; total?: number; granted?: number; toppedUp?: number }
-export type QuotaWindow = { name: string; displayName?: string; remaining?: number; resetAt?: string; unlimited: boolean; credit?: Credit }
+export type QuotaWindow = { name: string; displayName?: string; remaining?: number; resetAt?: string; unlimited: boolean; credit?: Credit; observedAt?: string }
 export type QuotaStatus = 'available' | 'exhausted' | 'cooldown' | 'error' | 'unknown' | 'unlimited' | 'not-reported'
 export type QuotaItem = {
   connectionId: string; providerId: string; name: string; enabled: boolean; status: QuotaStatus | string
@@ -55,6 +55,12 @@ export function windowValue(window: QuotaWindow): string {
   if (window.unlimited) return 'unlimited'
   const value = percent(window.remaining)
   return value ? `${value} remaining` : 'limit not reported'
+}
+
+/** When a window was served from a reader's cache, the time it was read upstream; null for a fresh window (#240). */
+export function cachedAt(window: QuotaWindow): string | null {
+  if (!window.observedAt || Number.isNaN(Date.parse(window.observedAt))) return null
+  return window.observedAt
 }
 
 /** The account's summary limit: the most constrained window, or why there is none. */

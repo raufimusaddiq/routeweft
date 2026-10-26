@@ -37,6 +37,10 @@ type Window struct {
 	ResetAt     *time.Time `json:"resetAt,omitempty"`
 	Unlimited   bool       `json:"unlimited"`
 	Credit      *Credit    `json:"credit,omitempty"`
+	// ObservedAt is set only on a window a reader served from its own cache:
+	// it is when that window was read upstream, earlier than the State's
+	// ObservedAt, so a cached value is never presented as fresh.
+	ObservedAt *time.Time `json:"observedAt,omitempty"`
 }
 
 // CreditState classifies one reported credit balance. Missing and malformed are
