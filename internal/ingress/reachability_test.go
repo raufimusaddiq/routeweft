@@ -17,9 +17,9 @@ import (
 // leg at the oracle either, so closing them is an adapter decision, not a leg. (Qoder's
 // conversion is in the pin's executor, not absent; the entry says where.)
 var unreachableProviders = map[string]string{
-	"cursor":         "#115 PR-L Cursor: legs and Connect-RPC transport (wire.CursorDo) landed; public enablement is a separate decision (ingress.unwired)",
+	"cursor":         "#115 PR-L Cursor: legs and Connect-RPC transport (wire.CursorDo) landed, but TranslateChat/Responses/Messages have no cursor arm, so leaving ingress.unwired alone would not serve it (TestCursorFenceIsNotItsOnlyGap, PARITY 6.23)",
 	"typesafe":       "no conversion leg exists at the pin: registry/typesafe.js:22 format \"systemone\" is not in translator/formats.js:2-15",
-	"qoder":          "no translator leg at the pin: registry/qoder.js:19-26 declares no format, so the target format is \"openai\" (services/provider.js:142-151) and executors/qoder.js:210-335 builds the agent envelope from the Chat body, :426-597 unwraps its SSE (PARITY 6.19, fourth slice)",
+	"qoder":          "no translator leg at the pin: registry/qoder.js:19-26 declares no format, so the target format is \"openai\" (services/provider.js:142-151) and executors/qoder.js:210-335 builds the agent envelope from the Chat body, :426-597 unwraps its SSE; #203 ported both (wire.QoderClient, QoderUnwrapSSE) but no hook Codec binds them (PARITY 6.22, 6.23)",
 	"perplexity-web": "#195 Perplexity Web: hook Codec serves every client wire (the pin converts in the executor, no hub leg); fenced in ingress.unwired until a supervised live check",
 	"grok-web":       "#195 Grok Web: hook Codec serves every client wire (the pin converts in the executor, no hub leg); fenced in ingress.unwired until a supervised live check",
 }

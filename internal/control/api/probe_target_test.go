@@ -268,6 +268,34 @@ func TestQoderProbeIsUnavailableUntilConversionLegExists(t *testing.T) {
 	}
 }
 
+// The connection and model Test actions must not report OK for a provider the
+// build cannot serve (#229): an OK there would read as readiness. TypeSafe is the
+// exception that proves the rule: its one wire, System One, is served, so its
+// probe really is sent.
+func TestUnavailableProviderProbesNeverReportOK(t *testing.T) {
+	catalog, _ := registry.NewBuiltinCatalog()
+	for _, id := range []string{"cursor", "qoder", "grok-web", "perplexity-web", "typesafe"} {
+		t.Run(id, func(t *testing.T) {
+			spec, _ := catalog.Lookup(id)
+			if spec.Readiness.Status != registry.ProviderUnavailable {
+				t.Fatalf("%s readiness = %q", id, spec.Readiness.Status)
+			}
+			h, calls := recordingHandler(t)
+			node, connection := builtinConnection(id, routing.ProviderSettings{UserID: "fixture-user", MachineID: "stored-machine"}, credentials.AuthAPIKey)
+			result := h.testProviderModel(context.Background(), connection, node, spec, node.Transports[0], "model-x", time.Second)
+			if id == "typesafe" {
+				if got := calls(); len(got) != 1 || !strings.HasSuffix(got[0].URL, "/v1/systemone") {
+					t.Fatalf("typesafe's System One probe was not sent: %+v", got)
+				}
+				return
+			}
+			if result.OK || len(calls()) != 0 {
+				t.Fatalf("%s probe reported %+v after %d calls; an unserved provider must not test OK", id, result, len(calls()))
+			}
+		})
+	}
+}
+
 func TestForcedStreamProbesUseTheServingShape(t *testing.T) {
 	catalog, _ := registry.NewBuiltinCatalog()
 	for _, tc := range []struct{ provider, model, protocol, path string }{
