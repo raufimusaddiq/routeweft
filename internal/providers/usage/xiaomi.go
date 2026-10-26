@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
@@ -50,8 +51,14 @@ func (r apiKeyReader) xiaomi(ctx context.Context, credential quota.Credential) (
 	})
 }
 
+// mimoUsageTimeout bounds each usage read: the reference sets
+// AbortSignal.timeout(10000) on both the account-session read
+// (open-sse/shared/mimoAccount.js:252-254) and the API-key fallback
+// (xiaomi-mimo.js:53-62). The SSO hops before them keep the shared bound.
+const mimoUsageTimeout = 10 * time.Second
+
 func (r apiKeyReader) xiaomiUsage(ctx context.Context, endpoint string, headers map[string]string) (quota.State, error) {
-	reply, err := r.call(ctx, http.MethodGet, endpoint, headers, nil)
+	reply, err := r.callWithin(ctx, mimoUsageTimeout, http.MethodGet, endpoint, headers, nil)
 	if err != nil {
 		return failure("Xiaomi MiMo Desktop usage request failed.")
 	}

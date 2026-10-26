@@ -59,10 +59,16 @@ type response struct {
 
 // call performs one usage request and returns the response.
 func (c *Client) call(ctx context.Context, method, endpoint string, headers map[string]string, body []byte) (response, error) {
+	return c.callWithin(ctx, requestTimeout, method, endpoint, headers, body)
+}
+
+// callWithin is call with a per-call bound for the providers whose reference
+// handler sets its own (Cloud Code, Xiaomi MiMo usage reads).
+func (c *Client) callWithin(ctx context.Context, timeout time.Duration, method, endpoint string, headers map[string]string, body []byte) (response, error) {
 	if c.HTTP == nil {
 		return response{}, errors.New("usage client requires an HTTP client")
 	}
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var reader io.Reader
 	if body != nil {
