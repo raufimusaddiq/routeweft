@@ -1,0 +1,23 @@
+{
+  "loadCodeAssist": {"cloudaicompanionProject": "p1", "currentTier": {"name": "Pro"}, "paidTier": {"id": "g1-pro-tier", "name": "Google AI Pro"}},
+  "fetchAvailableModels": {
+    "models": {
+      "gemini-3.8-flash-high": {"displayName": "Gemini 3.8 Flash (High)", "quotaInfo": {"remainingFraction": 0.85, "resetTime": "2026-09-15T00:00:00Z"}},
+      "claude-opus-4-6-thinking": {"displayName": "Claude Opus 4.6 (Thinking)", "quotaInfo": {"remainingFraction": 0.9, "resetTime": "2026-09-08T00:00:00Z"}},
+      "gemini-pro-agent": {"quotaInfo": {"remainingFraction": 0.8, "resetTime": "2026-09-08T00:00:00Z"}},
+      "chat_internal_fixture": {"isInternal": true, "quotaInfo": {"remainingFraction": 0.1}},
+      "gemini-3-flash": {"displayName": "Gemini 3 Flash", "quotaInfo": {"remainingFraction": 0.2}}
+    }
+  },
+  "retrieveUserQuotaSummary": {
+    "groups": [
+      {"displayName": "Gemini Models", "buckets": [
+        {"bucketId": "gemini-weekly-bucket", "displayName": "Weekly Limit", "remainingFraction": 0.75, "resetTime": "2026-09-15T00:00:00Z"},
+        {"bucketId": "gemini-daily-bucket", "displayName": "Daily Limit", "remainingFraction": 0.9, "resetTime": "2026-09-09T00:00:00Z"}
+      ]},
+      {"displayName": "Claude and GPT models", "buckets": [
+        {"bucketId": "claude-gpt-weekly", "displayName": "Weekly Quota", "remainingFraction": 0.5, "resetTime": "2026-09-14T00:00:00Z"}
+      ]}
+    ]
+  }
+}

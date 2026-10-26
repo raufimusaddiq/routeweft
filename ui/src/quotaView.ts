@@ -3,7 +3,7 @@
 // through percent() so a raw fraction is never printed as a count.
 
 export type Credit = { currency: string; state: 'positive' | 'zero' | 'negative' | 'missing' | 'malformed'; total?: number; granted?: number; toppedUp?: number }
-export type QuotaWindow = { name: string; remaining?: number; resetAt?: string; unlimited: boolean; credit?: Credit }
+export type QuotaWindow = { name: string; displayName?: string; remaining?: number; resetAt?: string; unlimited: boolean; credit?: Credit }
 export type QuotaStatus = 'available' | 'exhausted' | 'cooldown' | 'error' | 'unknown' | 'unlimited' | 'not-reported'
 export type QuotaItem = {
   connectionId: string; providerId: string; name: string; enabled: boolean; status: QuotaStatus | string
@@ -43,6 +43,9 @@ export function money(amount: number, currency: string): string {
 const creditStates: Record<Credit['state'], string> = { positive: '', zero: '', negative: ' (negative)', missing: 'balance not reported', malformed: 'balance unreadable' }
 
 /** One window's value: a percentage, unlimited, a credit balance, or not reported. */
+// windowLabel prefers the provider's own label; name is the stable key (#221).
+export function windowLabel(window: QuotaWindow): string { return window.displayName || window.name }
+
 export function windowValue(window: QuotaWindow): string {
   if (window.credit) {
     const { credit } = window

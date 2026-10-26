@@ -29,11 +29,14 @@ const (
 // and its Remaining stays nil so one currency's balance cannot exhaust an
 // account that holds credit in another.
 type Window struct {
-	Name      string     `json:"name"`
-	Remaining *float64   `json:"remaining,omitempty"`
-	ResetAt   *time.Time `json:"resetAt,omitempty"`
-	Unlimited bool       `json:"unlimited"`
-	Credit    *Credit    `json:"credit,omitempty"`
+	Name string `json:"name"`
+	// DisplayName is the provider's own label for the window where it reports
+	// one; Name stays the stable key.
+	DisplayName string     `json:"displayName,omitempty"`
+	Remaining   *float64   `json:"remaining,omitempty"`
+	ResetAt     *time.Time `json:"resetAt,omitempty"`
+	Unlimited   bool       `json:"unlimited"`
+	Credit      *Credit    `json:"credit,omitempty"`
 }
 
 // CreditState classifies one reported credit balance. Missing and malformed are
