@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { QUOTA_PAGE_SIZE, QUOTA_SORTS, quotaQuery, remainingText, statusLabel, statusTone, until, windowLabel, windowValue, zoned, type QuotaItem } from './quotaView'
+import { QUOTA_PAGE_SIZE, QUOTA_SORTS, cachedAt, quotaQuery, remainingText, statusLabel, statusTone, until, windowLabel, windowValue, zoned, type QuotaItem } from './quotaView'
 
 type Props = { onUnauthorized: () => void }
 type QuotaPage = { items: QuotaItem[]; page: number; total: number; providers?: string[] }
@@ -101,6 +101,7 @@ export function Quota({ onUnauthorized }: Props) {
           <span className="quota-window-name">{windowLabel(window)}</span>
           <span className="quota-remaining">{windowValue(window)}</span>
           {window.resetAt && <Reset value={window.resetAt} />}
+          {cachedAt(window) && <span className="quota-window-note">cached, read <time dateTime={window.observedAt}>{zoned(window.observedAt)}</time></span>}
         </li>)}{item.windowsObservedAt && item.observedAt && Date.parse(item.windowsObservedAt) < Date.parse(item.observedAt) && <li className="quota-window-note">windows from <time dateTime={item.windowsObservedAt}>{zoned(item.windowsObservedAt)}</time>, the last successful read</li>}</ul>}
       </article>)}</div>}
       {total > QUOTA_PAGE_SIZE && <nav className="pagination" aria-label="Quota account pages"><button className="button-secondary" type="button" disabled={page <= 1 || loading} onClick={() => setPage(page - 1)}>Previous</button><span>Page {page} of {pages} · {total.toLocaleString()} accounts</span><button className="button-secondary" type="button" disabled={page >= pages || loading} onClick={() => setPage(page + 1)}>Next</button></nav>}

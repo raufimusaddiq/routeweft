@@ -1961,6 +1961,13 @@ toppedUp?}`, where `state` is `positive`, `zero`, `negative`, `missing` or
 `malformed`; such a window is never `unlimited`, has no `remaining`, and is
 never summed with or compared to another currency. The provider's account flag
 appears as `creditAvailable` only when it was reported.
+A window a reader served from its own cache carries `observedAt`, the time it
+was read upstream, and the UI labels it "cached, read <time>"; a window without
+`observedAt` is as fresh as `windowsObservedAt`. Only the Antigravity weekly
+summary is cached (3 minutes per token and project, never when the summary
+failed or was empty, not bypassed by a manual refresh, #240). Cloud Code quota
+calls (`gemini-cli`, `antigravity`) and the Xiaomi MiMo usage reads are each
+bounded at 10 seconds as in the reference; every other usage call keeps 15.
 `remaining` (item and window) is a fraction in [0,1]; the UI renders it as a
 rounded whole percentage, never as a count (#213). The read accepts `page`,
 `pageSize` (max 100), `provider` (exact provider id), `q` (case-insensitive

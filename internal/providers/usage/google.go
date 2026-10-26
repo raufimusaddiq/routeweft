@@ -3,15 +3,18 @@ package usage
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
-	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/cloudcode"
 	"github.com/raufimusaddiq/routeweft/internal/quota"
 )
 
@@ -28,26 +31,10 @@ const (
 	antigravityUserAgent  = "antigravity/ide/" + antigravityVersion + " darwin/arm64"
 )
 
-// clientMetadata is CLIENT_METADATA (open-sse/config/appConstants.js:35-70): the
-// IDE and plugin enums are fixed, the platform enum describes the host.
-func clientMetadata() string {
-	platform := 0
-	switch runtime.GOOS {
-	case "darwin":
-		platform = 1
-		if runtime.GOARCH == "arm64" {
-			platform = 2
-		}
-	case "linux":
-		platform = 3
-		if runtime.GOARCH == "arm64" {
-			platform = 4
-		}
-	case "windows":
-		platform = 5
-	}
-	return fmt.Sprintf(`{"ideType":9,"platform":%d,"pluginType":2}`, platform)
-}
+// cloudCodeTimeout bounds each Cloud Code quota call. The reference passes
+// 10000ms to fetchWithTimeout on every one of them (google.js:56,107,138,295,
+// antigravity-weekly.js:141; default at shared.js:62), not the shared 15s.
+const cloudCodeTimeout = 10 * time.Second
 
 // geminiReader mirrors getGeminiUsage (open-sse/services/usage/google.js:22-90).
 //
@@ -73,7 +60,7 @@ func (r geminiReader) Usage(ctx context.Context, credential quota.Credential) (q
 		return failure("gemini-cli project id is unavailable (plan %s); reconnect the account or configure a Google Cloud project with Gemini Code Assist access", plan)
 	}
 	encoded, _ := json.Marshal(projectID)
-	reply, err := r.call(ctx, http.MethodPost, geminiQuotaURL,
+	reply, err := r.callWithin(ctx, cloudCodeTimeout, http.MethodPost, geminiQuotaURL,
 		map[string]string{
 			"Authorization": "Bearer " + credential.AccessToken,
 			"Content-Type":  "application/json",
@@ -123,12 +110,12 @@ func (r geminiReader) Usage(ctx context.Context, credential quota.Credential) (q
 // subscription resolves the Cloud Code Assist project id and tier name. Any
 // failure is no discovery, never an error (google.js:95-115).
 func (r geminiReader) subscription(ctx context.Context, accessToken string) (string, string) {
-	reply, err := r.call(ctx, http.MethodPost, cloudCodeLoadURL,
+	reply, err := r.callWithin(ctx, cloudCodeTimeout, http.MethodPost, cloudCodeLoadURL,
 		map[string]string{
 			"Authorization": "Bearer " + accessToken,
 			"Content-Type":  "application/json",
 		},
-		[]byte(`{"metadata":`+clientMetadata()+`}`))
+		[]byte(`{"metadata":`+cloudcode.ClientMetadata()+`}`))
 	if err != nil || reply.status < 200 || reply.status >= 300 {
 		return "", ""
 	}
@@ -169,14 +156,17 @@ func projectIDFrom(raw json.RawMessage) string {
 // weekly overlay in antigravity-weekly.js. The weekly summary is best-effort: a
 // failure there never removes the per-model rows. A rejected model read stops
 // the whole read, weekly included, as in the reference.
-type antigravityReader struct{ Client }
+type antigravityReader struct {
+	Client
+	cache *weeklyCache
+}
 
 func (r antigravityReader) Usage(ctx context.Context, credential quota.Credential) (quota.State, error) {
 	if strings.TrimSpace(credential.AccessToken) == "" {
 		return failure("antigravity access token is required")
 	}
 	project, plan, paid := r.subscription(ctx, credential.AccessToken)
-	reply, err := r.call(ctx, http.MethodPost, antigravityModelsURL,
+	reply, err := r.callWithin(ctx, cloudCodeTimeout, http.MethodPost, antigravityModelsURL,
 		antigravityHeaders(credential.AccessToken, true), projectBody(project))
 	if err != nil {
 		return failure("antigravity quota request failed: %v", err)
@@ -200,12 +190,13 @@ func (r antigravityReader) Usage(ctx context.Context, credential quota.Credentia
 	} else if err := json.Unmarshal(reply.body, new(any)); err != nil {
 		return failure("antigravity quota response: %v", err)
 	}
-	weekly := r.weekly(ctx, credential.AccessToken, project)
-	reconcileSession(weekly, models, "gemini_session", func(id string) bool {
-		return strings.HasPrefix(id, "gemini-") && !strings.Contains(id, "image")
-	})
-	reconcileSession(weekly, models, "claude_gpt_session", func(id string) bool {
-		return strings.HasPrefix(id, "claude-")
+	weekly := r.weekly(ctx, credential.AccessToken, project, func(weekly []quota.Window) {
+		reconcileSession(weekly, models, "gemini_session", func(id string) bool {
+			return strings.HasPrefix(id, "gemini-") && !strings.Contains(id, "image")
+		})
+		reconcileSession(weekly, models, "claude_gpt_session", func(id string) bool {
+			return strings.HasPrefix(id, "claude-")
+		})
 	})
 	windows := append(models, weekly...)
 	// The reference returns an empty quota map here; Routeweft keeps its rule
@@ -258,9 +249,9 @@ func truthy(raw json.RawMessage) bool {
 // subscription reads loadCodeAssist once for the project, plan and tier. Any
 // failure leaves the plan Unknown and the account treated as free tier.
 func (r antigravityReader) subscription(ctx context.Context, accessToken string) (json.RawMessage, string, bool) {
-	reply, err := r.call(ctx, http.MethodPost, cloudCodeLoadURL,
+	reply, err := r.callWithin(ctx, cloudCodeTimeout, http.MethodPost, cloudCodeLoadURL,
 		antigravityHeaders(accessToken, false),
-		[]byte(`{"metadata":`+clientMetadata()+`,"mode":1}`))
+		[]byte(`{"metadata":`+cloudcode.ClientMetadata()+`,"mode":1}`))
 	if err != nil || reply.status < 200 || reply.status >= 300 {
 		return nil, "Unknown", false
 	}
@@ -372,14 +363,145 @@ func antigravityImportant(id string) bool {
 }
 
 // weekly reads the shared 5h and weekly pools from retrieveUserQuotaSummary.
-// Every failure is no overlay (antigravity-weekly.js:116-166).
-func (r antigravityReader) weekly(ctx context.Context, accessToken string, project json.RawMessage) []quota.Window {
-	reply, err := r.call(ctx, http.MethodPost, antigravitySummaryURL,
-		antigravityHeaders(accessToken, true), projectBody(project))
-	if err != nil || reply.status < 200 || reply.status >= 300 {
+// Every failure is no overlay (antigravity-weekly.js:116-166). The summary is
+// cached per token and project; reconcile runs on the cached windows (see
+// weeklyCache.read) and the caller gets a copy.
+func (r antigravityReader) weekly(ctx context.Context, accessToken string, project json.RawMessage, reconcile func([]quota.Window)) []quota.Window {
+	fetch := func() []quota.Window {
+		reply, err := r.callWithin(ctx, cloudCodeTimeout, http.MethodPost, antigravitySummaryURL,
+			antigravityHeaders(accessToken, true), projectBody(project))
+		if err != nil || reply.status < 200 || reply.status >= 300 {
+			return nil
+		}
+		return parseWeeklySummary(reply.body)
+	}
+	if r.cache == nil {
+		windows := fetch()
+		reconcile(windows)
+		return windows
+	}
+	return r.cache.read(ctx, weeklyKey(accessToken, project), r.now, fetch, reconcile)
+}
+
+// weeklyCacheTTL is WEEKLY_CACHE_TTL_MS (antigravity-weekly.js:16).
+const weeklyCacheTTL = 3 * time.Minute
+
+// weeklyCache is the reference's weeklyCache (antigravity-weekly.js:15-26,
+// 116-166): one entry per token and project, shared by concurrent reads while
+// a fetch is in flight, kept for three minutes only when the summary produced
+// windows. A failed or empty summary is never cached, so the next read asks
+// again. The observer's manual refresh does not bypass it: the reference passes
+// force only to the Claude handler (open-sse/services/usage.js:41-42).
+type weeklyCache struct {
+	mu      sync.Mutex
+	entries map[string]*weeklyEntry
+}
+
+type weeklyEntry struct {
+	done     chan struct{} // closed once the fetch has finished
+	windows  []quota.Window
+	observed time.Time
+	expires  time.Time
+}
+
+func newWeeklyCache() *weeklyCache { return &weeklyCache{entries: map[string]*weeklyEntry{}} }
+
+// weeklyKey is cacheKey (antigravity-weekly.js:19-21). The token is hashed so
+// the cache does not hold a second copy of the credential.
+func weeklyKey(accessToken string, project json.RawMessage) string {
+	sum := sha256.Sum256([]byte(accessToken))
+	scope := ""
+	var compact bytes.Buffer
+	if truthy(project) && json.Compact(&compact, project) == nil {
+		scope = compact.String()
+	}
+	return hex.EncodeToString(sum[:]) + "::" + scope
+}
+
+// read serves a fresh entry, joins an in-flight fetch, or fetches. reconcile
+// edits the shared windows under the lock: the reference reconciles the very
+// object it cached (google.js:225-266), so a 5h row zeroed by exhausted models
+// stays zeroed on later hits until the entry expires. Windows served from an
+// earlier fetch carry that fetch's time as ObservedAt.
+func (c *weeklyCache) read(ctx context.Context, key string, now func() time.Time, fetch func() []quota.Window, reconcile func([]quota.Window)) []quota.Window {
+	c.mu.Lock()
+	entry, ok := c.entries[key]
+	if ok && entry.done == nil && !now().Before(entry.expires) {
+		delete(c.entries, key)
+		ok = false
+	}
+	if !ok {
+		entry = &weeklyEntry{done: make(chan struct{})}
+		c.entries[key] = entry
+		c.mu.Unlock()
+		windows := fetch()
+		c.mu.Lock()
+		reconcile(windows)
+		// Reconciliation can point a reset at the caller's model row; the
+		// cache keeps its own copy.
+		windows = copyWindows(windows, nil)
+		finished := now()
+		close(entry.done)
+		entry.done, entry.windows, entry.observed = nil, windows, finished
+		if len(windows) > 0 {
+			entry.expires = finished.Add(weeklyCacheTTL)
+			c.prune(finished)
+		} else if c.entries[key] == entry {
+			delete(c.entries, key)
+		}
+		c.mu.Unlock()
+		return copyWindows(windows, nil)
+	}
+	if done := entry.done; done != nil {
+		c.mu.Unlock()
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return nil
+		}
+		c.mu.Lock()
+	}
+	reconcile(entry.windows)
+	entry.windows = copyWindows(entry.windows, nil)
+	observed := entry.observed
+	windows := copyWindows(entry.windows, &observed)
+	c.mu.Unlock()
+	return windows
+}
+
+// prune drops expired entries so rotated tokens do not accumulate. Callers hold
+// the lock.
+func (c *weeklyCache) prune(now time.Time) {
+	for key, entry := range c.entries {
+		if entry.done == nil && !now.Before(entry.expires) {
+			delete(c.entries, key)
+		}
+	}
+}
+
+// copyWindows deep-copies cached windows so a caller never aliases the cache,
+// stamping observed on each when it is set.
+func copyWindows(windows []quota.Window, observed *time.Time) []quota.Window {
+	if len(windows) == 0 {
 		return nil
 	}
-	return parseWeeklySummary(reply.body)
+	out := make([]quota.Window, len(windows))
+	for i, window := range windows {
+		if window.Remaining != nil {
+			value := *window.Remaining
+			window.Remaining = &value
+		}
+		if window.ResetAt != nil {
+			value := *window.ResetAt
+			window.ResetAt = &value
+		}
+		if observed != nil {
+			value := *observed
+			window.ObservedAt = &value
+		}
+		out[i] = window
+	}
+	return out
 }
 
 // antigravityFamilies are GROUP_CONFIGS (antigravity-weekly.js:29-40): the

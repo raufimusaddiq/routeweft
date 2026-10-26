@@ -169,7 +169,7 @@ const { join } = require('node:path');
   // per limit state. `remaining` is a fraction in [0,1], as the read model sends.
   const quotaURLs = [];
   const quotaAccounts = [
-    { connectionId: 'conn-1', providerId: 'openai', name: 'primary', enabled: true, status: 'available', plan: 'plus', remaining: 0.42, resetAt: '2026-09-26T01:00:00Z', nextResetAt: '2026-09-26T01:00:00Z', observedAt: '2026-09-25T23:30:00Z', stale: false, windows: [{ name: 'session', remaining: 0.42, resetAt: '2026-09-26T01:00:00Z', unlimited: false }, { name: 'weekly', remaining: 0.85, resetAt: '2026-09-30T00:00:00Z', unlimited: false }] },
+    { connectionId: 'conn-1', providerId: 'openai', name: 'primary', enabled: true, status: 'available', plan: 'plus', remaining: 0.42, resetAt: '2026-09-26T01:00:00Z', nextResetAt: '2026-09-26T01:00:00Z', observedAt: '2026-09-25T23:30:00Z', stale: false, windows: [{ name: 'session', remaining: 0.42, resetAt: '2026-09-26T01:00:00Z', unlimited: false }, { name: 'weekly', remaining: 0.85, resetAt: '2026-09-30T00:00:00Z', unlimited: false, observedAt: '2026-09-25T23:28:00Z' }] },
     { connectionId: 'conn-2', providerId: 'anthropic', name: 'claude', enabled: false, status: 'exhausted', remaining: 0, resetAt: '2026-09-26T02:00:00Z', nextResetAt: '2026-09-26T02:00:00Z', observedAt: '2026-09-25T23:30:00Z', stale: false, windows: [{ name: 'session', remaining: 0, resetAt: '2026-09-26T02:00:00Z', unlimited: false }] },
     { connectionId: 'conn-3', providerId: 'deepseek', name: 'balance', enabled: true, status: 'unknown', plan: 'DeepSeek', observedAt: '2026-09-25T23:30:00Z', stale: false, creditAvailable: true, windows: [{ name: 'Balance (USD)', unlimited: false, credit: { currency: 'USD', state: 'positive', total: 12.5 } }, { name: 'Balance (CNY)', unlimited: false, credit: { currency: 'CNY', state: 'zero', total: 0 } }] },
     { connectionId: 'conn-4', providerId: 'groq', name: 'free tier', enabled: true, status: 'unlimited', plan: 'free', observedAt: '2026-09-25T23:30:00Z', stale: false, windows: [{ name: 'daily', unlimited: true }] },
@@ -1402,6 +1402,9 @@ const { join } = require('node:path');
   assert.equal(report.quotaWindows.length, 2);
   assert.match(report.quotaWindows[0], /^session\s+42% remaining\s+resets /);
   assert.match(report.quotaWindows[1], /^weekly\s+85% remaining/);
+  // #240: a window served from the reader's cache says when it was read; a fresh one does not.
+  assert.match(report.quotaWindows[1], /cached, read /);
+  assert.doesNotMatch(report.quotaWindows[0], /cached/);
   assert.match(report.quotaCredit[0], /12\.50 credit/);
   assert.match(report.quotaCredit[1], /CN¥|CNY/);
   assert.ok(report.quotaCredit.every(text => !/%|unlimited/.test(text)), report.quotaCredit.join(' | '));

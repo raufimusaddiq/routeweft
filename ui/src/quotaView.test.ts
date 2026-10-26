@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { percent, quotaQuery, remainingText, statusLabel, until, windowLabel, windowValue, zoned, type QuotaItem } from './quotaView.ts'
+import { cachedAt, percent, quotaQuery, remainingText, statusLabel, until, windowLabel, windowValue, zoned, type QuotaItem } from './quotaView.ts'
 
 test('remaining fractions render as whole percentages (#213)', () => {
   assert.equal(percent(0), '0%')
@@ -63,4 +63,11 @@ test('reset times name their zone and count down', () => {
 test('the page query carries paging, sort, provider and search', () => {
   assert.equal(quotaQuery(3, 'reset', 'groq', '  team a '), 'page=3&pageSize=50&sort=reset&provider=groq&q=team+a')
   assert.equal(quotaQuery(1, 'default', '', ''), 'page=1&pageSize=50&sort=default')
+})
+
+test('a cached window shows when it was read; a fresh one does not (#240)', () => {
+  const fresh = { name: 'gemini_weekly', unlimited: false, remaining: 0.75 }
+  assert.equal(cachedAt(fresh), null)
+  assert.equal(cachedAt({ ...fresh, observedAt: '2026-09-10T00:00:00Z' }), '2026-09-10T00:00:00Z')
+  assert.equal(cachedAt({ ...fresh, observedAt: 'not a time' }), null)
 })

@@ -37,7 +37,7 @@ func Readers(client HTTPClient, now func() time.Time) (map[string]quota.UsageCli
 	readers["github"] = githubReader{Client: shared}
 	readers["gemini-cli"] = geminiReader{Client: shared}
 	readers["kiro"] = kiroReader{Client: shared}
-	readers["antigravity"] = antigravityReader{Client: shared}
+	readers["antigravity"] = antigravityReader{Client: shared, cache: newWeeklyCache()}
 	readers["grok-cli"] = grokCLIReader{Client: shared}
 	return readers, nil
 }
