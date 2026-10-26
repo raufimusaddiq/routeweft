@@ -115,8 +115,15 @@ const { join } = require('node:path');
   };
   const signInFixtureProviders = [
     { id: 'codex', transports: ['openai-responses'], auth: 'oauth', authModes: [], modelCatalog: 'static', passthroughModels: false, reportsUsage: true, flowType: 'authorization_code_pkce', signInModes: ['browser', 'import'], signInMethods: [{ mode: 'browser', authKind: 'oauth', resolvesIdentity: true, completion: 'redirect-url', loopbackRedirect: 'http://localhost:1455/auth/callback' }, { mode: 'import', authKind: 'oauth', resolvesIdentity: true }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'ready', served: true } },
+    { id: 'github', transports: ['openai-chat'], auth: 'oauth', authModes: [], modelCatalog: 'static', passthroughModels: false, reportsUsage: true, flowType: 'device_code', signInModes: ['device'], signInMethods: [{ mode: 'device', authKind: 'oauth', resolvesIdentity: false }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'ready', served: true } },
     { id: 'kimchi', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key', 'oauth'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, flowType: 'browser_token', signInModes: ['browser'], signInMethods: [{ mode: 'browser', authKind: 'oauth', resolvesIdentity: false, completion: 'token' }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'ready', served: true } },
   ];
+  const fulfillCancel = (route, mode) => {
+    if (mode === 'abort') return route.abort('failed');
+    if (mode === '500') return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: { code: 'internal', message: 'internal error' } }) });
+    if (mode === 'completing') return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: { code: 'oauth_completing', message: 'the sign-in was approved and is being saved' } }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'cancelled' }) });
+  };
   let sessionCalls = 0;
   let loginCalls = 0;
   let overviewCalls = 0;
@@ -145,6 +152,12 @@ const { join } = require('node:path');
   const signInCancels = [];
   const signInCallbacks = [];
   const signInPatches = [];
+  // Cancel answers the stubs give, in order; an empty queue confirms the cancel.
+  // 'abort' is a dropped request (no answer at all).
+  const codexCancelModes = [];
+  const deviceCancelModes = [];
+  let devicePolls = 0;
+  let deviceApproved = false;
   let usageSummaryCalls = 0;
   let lastUsageURL = '';
   // Quota mock (#213): 130 accounts so paging must reach past 100, with one row
@@ -244,7 +257,7 @@ const { join } = require('node:path');
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: createdKeyID, revoked: true, configRevision: 10 }) });
   }
   if (url.pathname === '/admin/v1/providers' && method === 'GET') {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [...(signInProviders ? signInFixtureProviders : []), { id: 'openai', transports: ['openai-chat','openai-responses'], auth: 'api-key', authModes: ['api-key'], defaultBaseURL: 'https://api.openai.com/v1', modelCatalog: 'static', passthroughModels: false, reportsUsage: false, configuredNodes: 1, enabledAccounts: 1, readiness: { status: 'ready', served: true } }, { id: 'openrouter', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'unavailable', served: false, reason: 'smoke fixture: wire not bound' } }], page: 1, pageSize: 100, total: signInProviders ? 4 : 2 }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [...(signInProviders ? signInFixtureProviders : []), { id: 'openai', transports: ['openai-chat','openai-responses'], auth: 'api-key', authModes: ['api-key'], defaultBaseURL: 'https://api.openai.com/v1', modelCatalog: 'static', passthroughModels: false, reportsUsage: false, configuredNodes: 1, enabledAccounts: 1, readiness: { status: 'ready', served: true } }, { id: 'openrouter', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'unavailable', served: false, reason: 'smoke fixture: wire not bound' } }], page: 1, pageSize: 100, total: signInProviders ? 5 : 2 }) });
   }
   if (url.pathname === '/admin/v1/oauth/codex/start' && method === 'POST') {
     signInStarts.push(route.request().postDataJSON());
@@ -253,7 +266,18 @@ const { join } = require('node:path');
   }
   if (url.pathname === '/admin/v1/oauth/codex/cancel' && method === 'POST') {
     signInCancels.push(route.request().postDataJSON());
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'cancelled' }) });
+    return fulfillCancel(route, codexCancelModes.shift());
+  }
+  if (url.pathname === '/admin/v1/oauth/github/device' && method === 'POST') {
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ state: 'smoke-device', flowType: 'device_code', userCode: 'ABCD-1234', verificationUrl: 'https://github.com/login/device', intervalSeconds: 2, expiresAt: '2026-09-25T12:10:00Z' }) });
+  }
+  if (url.pathname === '/admin/v1/oauth/github/poll' && method === 'POST') {
+    devicePolls += 1;
+    if (!deviceApproved) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'pending' }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'connected', connection: { id: 'conn-github', nodeId: 'node-github', providerId: 'github', name: 'octo', authKind: 'oauth', identity: 'octo@example.test', enabled: true, priority: 0, credentialConfigured: true } }) });
+  }
+  if (url.pathname === '/admin/v1/oauth/github/cancel' && method === 'POST') {
+    return fulfillCancel(route, deviceCancelModes.shift());
   }
   if (url.pathname === '/admin/v1/oauth/codex/callback' && method === 'POST') {
     signInCallbacks.push(route.request().postDataJSON());
@@ -602,9 +626,19 @@ const { join } = require('node:path');
   assert.match(report.codexHint, /http:\/\/localhost:1455\/auth\/callback/);
   assert.match(report.codexHint, /not on the Routeweft server/);
   assert.equal(await signInForm.locator('.access-picker').evaluate(element => element.disabled), true, 'method choice is locked while an attempt is pending');
+  // A cancel the server did not confirm keeps the attempt: a server error, then a
+  // dropped request through Close (which must not close), then a confirmed one.
+  codexCancelModes.push('500', 'abort');
+  await signInForm.getByRole('button', { name: 'Cancel sign-in', exact: true }).click();
+  await signInForm.getByText(/could not be cancelled \(internal error\)\. It may still be open; try again\./).waitFor();
+  assert.equal(await signInForm.getByLabel('Address from the browser').count(), 1, 'a failed cancel keeps the attempt');
+  assert.equal(await signInForm.getByText('Cancelled', { exact: true }).count(), 0);
+  await signInForm.getByRole('button', { name: 'Close', exact: true }).click();
+  await signInForm.getByText(/could not be cancelled.*It may still be open; try again\./).waitFor();
+  assert.equal(await signInForm.getByLabel('Address from the browser').count(), 1, 'Close does not drop an attempt the server still holds');
   await signInForm.getByRole('button', { name: 'Cancel sign-in', exact: true }).click();
   await signInForm.getByText('Cancelled', { exact: true }).waitFor();
-  assert.deepEqual(signInCancels, [{ state: 'smoke-state-1' }]);
+  assert.deepEqual(signInCancels, [{ state: 'smoke-state-1' }, { state: 'smoke-state-1' }, { state: 'smoke-state-1' }]);
   // Expiry is explicit: the attempt ends at the server's expiresAt.
   signInExpiresAt = '2026-09-25T12:00:01Z';
   await signInForm.getByRole('button', { name: 'Sign in with Codex', exact: true }).click();
@@ -623,6 +657,35 @@ const { join } = require('node:path');
   await signInForm.getByRole('button', { name: 'Save nickname', exact: true }).click();
   await signInForm.waitFor({ state: 'detached' });
   assert.deepEqual(signInPatches, [{ name: 'Work' }]);
+  // Device sign-in: a failed cancel leaves the poll running, and a cancel that
+  // meets a save in progress claims neither cancelled nor saved until the poll says.
+  await page.fill('#provider-filter', 'github');
+  await page.locator('.provider-option', { hasText: 'github' }).first().click();
+  await page.getByRole('button', { name: 'Add connection', exact: true }).click();
+  await signInForm.waitFor();
+  await signInForm.getByLabel('Stable account identity').fill('octo@example.test');
+  await signInForm.getByRole('button', { name: 'Sign in with GitHub Copilot (device code)', exact: true }).click();
+  await signInForm.getByText('Pending', { exact: true }).waitFor();
+  deviceCancelModes.push('500', 'abort', 'completing');
+  for (const expected of [/could not be cancelled \(internal error\)/, /could not be cancelled.*try again/]) {
+    await signInForm.getByRole('button', { name: 'Cancel sign-in', exact: true }).click();
+    await signInForm.getByText(expected).waitFor();
+    const before = devicePolls;
+    await signInForm.getByText('Pending', { exact: true }).waitFor();
+    const deadline = Date.now() + 8000;
+    while (devicePolls <= before && Date.now() < deadline) await page.waitForTimeout(250);
+    assert.ok(devicePolls > before, 'polling continues after a failed cancel');
+  }
+  await signInForm.getByRole('button', { name: 'Cancel sign-in', exact: true }).click();
+  await signInForm.getByText(/being saved, so it can no longer be cancelled\. Waiting for the result\./).waitFor();
+  assert.equal(await signInForm.getByText('Connected', { exact: true }).count(), 0, 'no success claimed before the server confirms');
+  assert.equal(await signInForm.getByText('Cancelled', { exact: true }).count(), 0);
+  deviceApproved = true;
+  await signInForm.getByText('Connected', { exact: true }).waitFor({ timeout: 8000 });
+  report.deviceConnected = await signInForm.locator('[aria-label="Sign-in result"] p').textContent();
+  assert.match(report.deviceConnected, /Signed in as octo@example\.test/);
+  await signInForm.getByRole('button', { name: 'Done', exact: true }).click();
+  await signInForm.waitFor({ state: 'detached' });
   // Dual auth: the primary API key stays the default, and each mode shows only its own fields.
   await page.fill('#provider-filter', 'kimchi');
   await page.locator('.provider-option', { hasText: 'kimchi' }).first().click();

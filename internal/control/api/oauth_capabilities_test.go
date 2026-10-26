@@ -133,6 +133,16 @@ func TestOAuthCancelLeavesASavingDeviceAttempt(t *testing.T) {
 	if _, ok := h.oauth.pending[started.State]; !ok {
 		t.Fatal("cancel removed an attempt that was being saved")
 	}
+	// A save that persisted nothing hands the attempt back, so the conflict above
+	// was not a save: the attempt is open again and a cancel now ends it.
+	h.oauth.release(started.State)
+	recorder = doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/kilocode/cancel", string(body))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("cancel after release status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if _, ok := h.oauth.pending[started.State]; ok {
+		t.Fatal("confirmed cancel left the attempt pending")
+	}
 }
 
 // Each sign-in method is described on its own, with only its own fields.

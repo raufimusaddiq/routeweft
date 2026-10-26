@@ -45,7 +45,7 @@ export function connectMethods(provider: ProviderAuth, providerName: string): Co
 }
 
 // The final state of one sign-in attempt. Pending is the attempt itself.
-export type AttemptPhase = 'success' | 'expired' | 'cancelled' | 'failed'
+export type AttemptPhase = 'success' | 'expired' | 'cancelled' | 'failed' | 'closed'
 
 // An attempt past its server-issued expiry can no longer complete.
 export function attemptExpired(expiresAt: string | undefined, now: number): boolean {
@@ -61,4 +61,20 @@ export function phaseForError(code: string | undefined, expiresAt: string | unde
   if (code === 'oauth_expired') return 'expired'
   if (code === 'oauth_state_invalid' && attemptExpired(expiresAt, now)) return 'expired'
   return 'failed'
+}
+
+// What the server's answer to a cancel means. Only the server can say an attempt
+// ended, so anything it did not confirm leaves the attempt tracked:
+//   cancelled  the server ended it; nothing was saved from it.
+//   saving     the provider already approved it and a save is in progress; the
+//              poll reports whether it landed.
+//   closed     the server no longer holds it (expired or already used), so it was
+//              not this cancel that ended it and nothing is claimed either way.
+//   retry      no answer (network) or any other failure: it may still be open.
+export type CancelResult = 'cancelled' | 'saving' | 'closed' | 'retry'
+export function cancelResult(status: number | undefined, code: string | undefined): CancelResult {
+  if (status !== undefined && status >= 200 && status < 300) return 'cancelled'
+  if (status === 409 && code === 'oauth_completing') return 'saving'
+  if (status === 400 && code === 'oauth_state_invalid') return 'closed'
+  return 'retry'
 }

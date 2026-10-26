@@ -1055,9 +1055,15 @@ or device attempt so it can no longer complete, and answers
 `{status: "cancelled"}`. It has the same session and provider binding as the
 other steps, and an unknown, expired, replayed or foreign state answers
 `oauth_state_invalid`. A device attempt that a poll is already saving answers
-`409 oauth_completing` and is left to finish. The dashboard shows each attempt as
-pending, then connected, expired (at the `expiresAt` the start returned),
-cancelled or failed.
+`409 oauth_completing` and is left to finish; that is not a confirmed save, since
+a save that persists nothing releases the attempt again. The dashboard shows each
+attempt as pending, then connected, expired (at the `expiresAt` the start
+returned), cancelled, closed or failed, and claims only what the server confirmed:
+an attempt stays tracked (and a device poll keeps running) until a cancel answers
+`200`; a network failure or any other error keeps it open for a retry, and Close
+does not drop it; `oauth_completing` waits for the poll to report the result; and
+`oauth_state_invalid` reports the attempt as already closed (or expired) without
+claiming it was cancelled or saved.
 
 A pinned loopback redirect names a port on the operator's own computer. Routeweft
 never listens there: a remote server cannot receive the browser's own localhost,

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { attemptExpired, connectMethods, phaseForError, type ProviderAuth } from './signIn.ts'
+import { attemptExpired, cancelResult, connectMethods, phaseForError, type ProviderAuth } from './signIn.ts'
 
 test('codex offers browser sign-in and token import without asking for an identity', () => {
   const codex: ProviderAuth = { auth: 'oauth', authModes: [], signInMethods: [
@@ -56,4 +56,17 @@ test('attempt outcomes are explicit', () => {
   assert.equal(phaseForError('oauth_state_invalid', '2026-10-27T11:00:00Z', now), 'expired')
   assert.equal(phaseForError('oauth_state_invalid', '2026-10-27T12:10:00Z', now), 'failed')
   assert.equal(phaseForError('oauth_denied', '2026-10-27T12:10:00Z', now), 'failed')
+})
+
+test('only a confirmed cancel counts as cancelled', () => {
+  assert.equal(cancelResult(200, undefined), 'cancelled')
+  // A save already in progress is neither cancelled nor known to be saved.
+  assert.equal(cancelResult(409, 'oauth_completing'), 'saving')
+  assert.equal(cancelResult(400, 'oauth_state_invalid'), 'closed')
+  // No answer, a server error or anything unexpected leaves the attempt open.
+  assert.equal(cancelResult(undefined, undefined), 'retry')
+  assert.equal(cancelResult(500, undefined), 'retry')
+  assert.equal(cancelResult(502, 'oauth_state_invalid'), 'retry')
+  assert.equal(cancelResult(409, undefined), 'retry')
+  assert.equal(cancelResult(400, 'invalid_request'), 'retry')
 })
