@@ -233,7 +233,9 @@ func TestLastStateIsolatedFromConcurrentReaders(t *testing.T) {
 	now := time.Now()
 	remaining := .5
 	credits := 2.0
-	client := &fakeClient{state: State{Windows: []Window{{Name: "session", Remaining: &remaining, ResetAt: &now}}, AvailableReset: &credits}}
+	balance := 12.5
+	available := true
+	client := &fakeClient{state: State{Windows: []Window{{Name: "session", Remaining: &remaining, ResetAt: &now, Credit: &Credit{Currency: "USD", State: CreditPositive, Total: &balance}}}, AvailableReset: &credits, CreditAvailable: &available}}
 	s := NewService(fakeConnections{}, fakeCredentials{}, Observer{Clients: map[string]UsageClient{"codex": client}})
 	if _, err := s.observe(context.Background(), "codex", "a", Credential{}); err != nil {
 		t.Fatal(err)
@@ -251,11 +253,15 @@ func TestLastStateIsolatedFromConcurrentReaders(t *testing.T) {
 			*state.Windows[0].Remaining = 0
 			*state.Windows[0].ResetAt = time.Time{}
 			*state.AvailableReset = 0
+			*state.Windows[0].Credit.Total = 0
+			state.Windows[0].Credit.State = CreditZero
+			*state.CreditAvailable = false
 		}()
 	}
 	wg.Wait()
 	state, _ := s.LastState("a")
-	if *state.Windows[0].Remaining != .5 || state.Windows[0].ResetAt.IsZero() || *state.AvailableReset != 2 {
+	if *state.Windows[0].Remaining != .5 || state.Windows[0].ResetAt.IsZero() || *state.AvailableReset != 2 ||
+		*state.Windows[0].Credit.Total != 12.5 || state.Windows[0].Credit.State != CreditPositive || !*state.CreditAvailable {
 		t.Fatal("readers mutated cached state")
 	}
 }

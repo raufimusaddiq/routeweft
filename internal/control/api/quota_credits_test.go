@@ -140,3 +140,62 @@ func TestQuotaReadIncludesNamedWindowsAndCredits(t *testing.T) {
 		t.Fatalf("quota: %d %s", got.Code, got.Body)
 	}
 }
+
+// TestQuotaReadKeepsDeepSeekCurrenciesApart is the #212 read-model check: each
+// currency's balance and state reach the API separately, a zero balance is a
+// zero and not unlimited, and the provider's availability flag is explicit.
+func TestQuotaReadKeepsDeepSeekCurrenciesApart(t *testing.T) {
+	h, mux, store, creds, cookie := newProvidersAPI(t, false, nil)
+	defer store.Close()
+	ctx := context.Background()
+	node, err := creds.PutNode(ctx, credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "deepseek", Name: "DeepSeek", Transports: []string{"openai-chat"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := creds.PutConnection(ctx, credentials.Connection{NodeID: node.ID, Name: "fixture", Identity: "fixture", AuthKind: credentials.AuthAPIKey, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	usd, cny, unavailable := 12.5, 0.0, false
+	h.opts.QuotaState = func(id string) (quota.State, bool) {
+		return quota.State{Plan: "DeepSeek (Insufficient Balance)", CreditAvailable: &unavailable, Windows: []quota.Window{
+			{Name: "Balance (USD)", Credit: &quota.Credit{Currency: "USD", State: quota.CreditPositive, Total: &usd}},
+			{Name: "Balance (CNY)", Credit: &quota.Credit{Currency: "CNY", State: quota.CreditZero, Total: &cny}},
+			{Name: "Balance (EUR)", Credit: &quota.Credit{Currency: "EUR", State: quota.CreditMissing}},
+		}}, id == c.ID
+	}
+	got := doJSON(t, mux, cookie, "GET", "/admin/v1/quota", "")
+	var page struct {
+		Items []struct {
+			ConnectionID    string         `json:"connectionId"`
+			CreditAvailable *bool          `json:"creditAvailable"`
+			Windows         []quota.Window `json:"windows"`
+		} `json:"items"`
+	}
+	if got.Code != 200 || json.Unmarshal(got.Body.Bytes(), &page) != nil {
+		t.Fatalf("quota: %d %s", got.Code, got.Body)
+	}
+	for _, item := range page.Items {
+		if item.ConnectionID != c.ID {
+			continue
+		}
+		if item.CreditAvailable == nil || *item.CreditAvailable || len(item.Windows) != 3 {
+			t.Fatalf("item=%+v", item)
+		}
+		for i, want := range []struct {
+			currency string
+			state    quota.CreditState
+			total    *float64
+		}{{"USD", quota.CreditPositive, &usd}, {"CNY", quota.CreditZero, &cny}, {"EUR", quota.CreditMissing, nil}} {
+			w := item.Windows[i]
+			if w.Unlimited || w.Remaining != nil || w.Credit == nil || w.Credit.Currency != want.currency || w.Credit.State != want.state {
+				t.Fatalf("window %d=%+v want %+v", i, w, want)
+			}
+			if (want.total == nil) != (w.Credit.Total == nil) || (want.total != nil && *w.Credit.Total != *want.total) {
+				t.Fatalf("%s total=%v want %v", want.currency, w.Credit.Total, want.total)
+			}
+		}
+		return
+	}
+	t.Fatalf("connection missing from %s", got.Body)
+}

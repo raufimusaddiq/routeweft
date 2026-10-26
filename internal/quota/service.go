@@ -230,10 +230,15 @@ func (s *Service) LastState(connectionID string) (State, bool) {
 			copy := *value
 			state.Windows[i].ResetAt = &copy
 		}
+		state.Windows[i].Credit = state.Windows[i].Credit.clone()
 	}
 	if state.AvailableReset != nil {
 		copy := *state.AvailableReset
 		state.AvailableReset = &copy
+	}
+	if state.CreditAvailable != nil {
+		copy := *state.CreditAvailable
+		state.CreditAvailable = &copy
 	}
 	return state, ok
 }

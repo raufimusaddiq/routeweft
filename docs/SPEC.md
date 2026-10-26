@@ -1897,8 +1897,13 @@ A LiteRouter source observation that conflicts with an approved Routeweft produc
 ### P05 quota admin actions and opt-in warming
 
 PRD-QUOTA-001: GET `/admin/v1/quota` adds cached named windows, plan and optional
-Codex `availableResetCredits`. GET `/admin/v1/quota/{id}/codex-reset-credits`
-returns the existing normalized credit listing. Session-gated POST at the same
+Codex `availableResetCredits`. A prepaid credit balance (DeepSeek, #212) is one
+window per currency carrying `credit` `{currency, state, total?, granted?,
+toppedUp?}`, where `state` is `positive`, `zero`, `negative`, `missing` or
+`malformed`; such a window is never `unlimited`, has no `remaining`, and is
+never summed with or compared to another currency. The provider's account flag
+appears as `creditAvailable` only when it was reported.
+GET `/admin/v1/quota/{id}/codex-reset-credits` returns the existing normalized credit listing. Session-gated POST at the same
 path requires `{"confirm":true}`, spends one credit with a server UUID, returns
 409 for no credit and 502 for an unavailable/ambiguous result. It never retries
 an ambiguous spend. Both actions reject non-Codex token connections before any

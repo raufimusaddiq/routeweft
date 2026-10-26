@@ -24,22 +24,67 @@ const (
 
 // Window is one normalized quota window. Remaining is the fraction still
 // available in [0,1]; it is nil when the provider did not report a bound (for
-// example an unlimited plan), which is Unknown rather than exhausted.
+// example an unlimited plan), which is Unknown rather than exhausted. A credit
+// balance window carries Credit instead of a fraction: it is never unlimited,
+// and its Remaining stays nil so one currency's balance cannot exhaust an
+// account that holds credit in another.
 type Window struct {
 	Name      string     `json:"name"`
 	Remaining *float64   `json:"remaining,omitempty"`
 	ResetAt   *time.Time `json:"resetAt,omitempty"`
 	Unlimited bool       `json:"unlimited"`
+	Credit    *Credit    `json:"credit,omitempty"`
 }
 
-// State is one account's normalized quota snapshot.
+// CreditState classifies one reported credit balance. Missing and malformed are
+// not zero: they mean the amount was not observed.
+type CreditState string
+
+const (
+	CreditPositive  CreditState = "positive"
+	CreditZero      CreditState = "zero"
+	CreditNegative  CreditState = "negative"
+	CreditMissing   CreditState = "missing"
+	CreditMalformed CreditState = "malformed"
+)
+
+// Credit is a prepaid balance in one currency. Amounts in different currencies
+// are never summed or compared; each currency is its own window. Total is nil
+// unless State is positive, zero or negative.
+type Credit struct {
+	Currency string      `json:"currency"`
+	State    CreditState `json:"state"`
+	Total    *float64    `json:"total,omitempty"`
+	Granted  *float64    `json:"granted,omitempty"`
+	ToppedUp *float64    `json:"toppedUp,omitempty"`
+}
+
+// clone deep-copies the credit so a cached snapshot cannot be mutated by a reader.
+func (c *Credit) clone() *Credit {
+	if c == nil {
+		return nil
+	}
+	copied := *c
+	for _, field := range []**float64{&copied.Total, &copied.Granted, &copied.ToppedUp} {
+		if *field != nil {
+			value := **field
+			*field = &value
+		}
+	}
+	return &copied
+}
+
+// State is one account's normalized quota snapshot. CreditAvailable is the
+// provider's own account-level availability flag where it reports one (DeepSeek
+// is_available); nil means not reported, which is neither available nor not.
 type State struct {
-	Status         Status
-	Plan           string
-	Windows        []Window
-	ObservedAt     time.Time
-	Err            string
-	AvailableReset *float64
+	Status          Status
+	Plan            string
+	Windows         []Window
+	ObservedAt      time.Time
+	Err             string
+	AvailableReset  *float64
+	CreditAvailable *bool
 }
 
 // PercentFromUsed converts a 0-100 used percentage into a nil-safe remaining
