@@ -135,6 +135,18 @@ const { join } = require('node:path');
   let systemOneModelAdded = false;
   let usageSummaryCalls = 0;
   let lastUsageURL = '';
+  // Quota mock (#213): 130 accounts so paging must reach past 100, with one row
+  // per limit state. `remaining` is a fraction in [0,1], as the read model sends.
+  const quotaURLs = [];
+  const quotaAccounts = [
+    { connectionId: 'conn-1', providerId: 'openai', name: 'primary', enabled: true, status: 'available', plan: 'plus', remaining: 0.42, resetAt: '2026-09-26T01:00:00Z', nextResetAt: '2026-09-26T01:00:00Z', observedAt: '2026-09-25T23:30:00Z', stale: false, windows: [{ name: 'session', remaining: 0.42, resetAt: '2026-09-26T01:00:00Z', unlimited: false }, { name: 'weekly', remaining: 0.85, resetAt: '2026-09-30T00:00:00Z', unlimited: false }] },
+    { connectionId: 'conn-2', providerId: 'anthropic', name: 'claude', enabled: false, status: 'exhausted', remaining: 0, resetAt: '2026-09-26T02:00:00Z', nextResetAt: '2026-09-26T02:00:00Z', observedAt: '2026-09-25T23:30:00Z', stale: false, windows: [{ name: 'session', remaining: 0, resetAt: '2026-09-26T02:00:00Z', unlimited: false }] },
+    { connectionId: 'conn-3', providerId: 'deepseek', name: 'balance', enabled: true, status: 'unknown', plan: 'DeepSeek', observedAt: '2026-09-25T23:30:00Z', stale: false, creditAvailable: true, windows: [{ name: 'Balance (USD)', unlimited: false, credit: { currency: 'USD', state: 'positive', total: 12.5 } }, { name: 'Balance (CNY)', unlimited: false, credit: { currency: 'CNY', state: 'zero', total: 0 } }] },
+    { connectionId: 'conn-4', providerId: 'groq', name: 'free tier', enabled: true, status: 'unlimited', plan: 'free', observedAt: '2026-09-25T23:30:00Z', stale: false, windows: [{ name: 'daily', unlimited: true }] },
+    { connectionId: 'conn-5', providerId: 'openai', name: 'fresh', enabled: true, status: 'not-reported' },
+    { connectionId: 'conn-6', providerId: 'kimi', name: 'flaky', enabled: true, status: 'error', error: true, observedAt: '2026-09-25T20:00:00Z', windowsObservedAt: '2026-09-25T18:00:00Z', stale: true, windows: [{ name: 'weekly', remaining: 0.5, unlimited: false }] },
+    ...Array.from({ length: 124 }, (_, i) => ({ connectionId: `fill-${i}`, providerId: 'openai', name: `bulk-${String(i).padStart(3, '0')}`, enabled: true, status: 'available', remaining: 1, observedAt: '2026-09-25T23:30:00Z', stale: false })),
+  ];
   let usageGate = null;
   // History length of the usage fixture: 2 days by default (the original fixture); a steady 100 a day with the latest 7 days at 140 otherwise.
   let historyDays = 2;
@@ -264,7 +276,15 @@ const { join } = require('node:path');
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 1, requestId: 'req-abc', status: 200, providerId: 'openai', modelId: 'gpt-5', inputTokens: 100, outputTokens: 20, cacheReadTokens: 10, cacheWriteTokens: 0, durationMs: 300, ttftMs: 80, createdAt: '2026-09-25T20:00:00Z' }], page: 1, pageSize: 50, total: 1 }) });
   }
   if (url.pathname === '/admin/v1/quota' && method === 'GET') {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ connectionId: 'conn-1', providerId: 'openai', name: 'primary', enabled: true, status: 'available', remaining: 42, resetAt: '2026-09-26T01:00:00Z', observedAt: '2026-09-25T23:30:00Z' }, { connectionId: 'conn-2', providerId: 'anthropic', name: 'claude', enabled: false, status: 'exhausted', remaining: 0, resetAt: '2026-09-26T02:00:00Z', observedAt: '2026-09-25T23:30:00Z' }], page: 1, pageSize: 100, total: 2 }) });
+    quotaURLs.push(url.search);
+    const query = url.searchParams;
+    const provider = query.get('provider') || '';
+    const search = (query.get('q') || '').toLowerCase();
+    const matched = quotaAccounts.filter(item => (!provider || item.providerId === provider) && (!search || item.name.toLowerCase().includes(search) || item.providerId.includes(search)));
+    const size = Number(query.get('pageSize') || 50);
+    const number = Number(query.get('page') || 1);
+    const providers = [...new Set(quotaAccounts.map(item => item.providerId))].sort();
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: matched.slice((number - 1) * size, number * size), page: number, pageSize: size, total: matched.length, providers, sort: query.get('sort') || 'default' }) });
   }
   if (url.pathname === '/admin/v1/quota/refresh' && method === 'POST') {
     quotaRefreshCalls += 1;
@@ -694,8 +714,37 @@ const { join } = require('node:path');
   await page.waitForSelector('.quota-content');
   await page.waitForSelector('.quota-row');
   report.quotaRows = await page.locator('.quota-row').count();
-  report.quotaRemaining = await page.locator('.quota-remaining').allTextContents();
-  report.quotaStatuses = await page.locator('.quota-row .state-tag').allTextContents();
+  report.quotaRemaining = await page.locator('.quota-row > .quota-remaining').allTextContents();
+  report.quotaRemaining = report.quotaRemaining.slice(0, 6);
+  report.quotaStatuses = [];
+  for (let i = 0; i < 6; i++) report.quotaStatuses.push(await page.locator('.quota-row').nth(i).locator('> .state-tag').allTextContents());
+  report.quotaWindows = await page.locator('.quota-row').first().locator('.quota-windows li').allInnerTexts();
+  report.quotaCredit = await page.locator('.quota-row').nth(2).locator('.quota-windows li').allInnerTexts();
+  report.quotaStaleNote = await page.locator('.quota-row').nth(5).locator('.quota-window-note').innerText();
+  report.quotaResetZone = await page.locator('.quota-row').first().locator('> .quota-reset').innerText();
+  report.quotaResetTitle = await page.locator('.quota-row').first().locator('> .quota-reset').getAttribute('title');
+  report.quotaPager = await page.locator('.quota-content .pagination span').innerText();
+  await captureVisuals('quota');
+  await page.getByRole('button', { name: 'Next' }).click();
+  await page.getByRole('button', { name: 'Next' }).click();
+  await page.waitForFunction(() => document.querySelector('.quota-content .pagination span')?.textContent?.startsWith('Page 3'));
+  report.quotaLastPageRows = await page.locator('.quota-row').count();
+  report.quotaLastPageFirst = await page.locator('.quota-row strong').first().innerText();
+  await page.selectOption('#quota-provider', 'deepseek');
+  await page.waitForFunction(() => document.querySelectorAll('.quota-row').length === 1);
+  report.quotaProviderRow = await page.locator('.quota-row strong').innerText();
+  await page.selectOption('#quota-provider', '');
+  await page.fill('#quota-search', 'bulk-12');
+  await page.press('#quota-search', 'Enter');
+  await page.waitForFunction(() => document.querySelector('.quota-toolbar .count-label')?.textContent === '4 accounts match');
+  report.quotaSearchRows = await page.locator('.quota-row').count();
+  await page.selectOption('#quota-sort', 'exhausted');
+  await page.waitForTimeout(100);
+  report.quotaURLs = quotaURLs.slice();
+  await page.fill('#quota-search', '');
+  await page.press('#quota-search', 'Enter');
+  await page.selectOption('#quota-sort', 'default');
+  await page.waitForFunction(() => document.querySelectorAll('.quota-row').length === 50);
   await page.click('.quota-toolbar .button-primary');
   await page.waitForSelector('.inline-notice');
   report.quotaNotice = await page.locator('.inline-notice').textContent();
@@ -1079,9 +1128,26 @@ const { join } = require('node:path');
   assert.equal(report.usagePeriod, '7d');
   assert.equal(report.usagePeriodAfterChange, '24h');
   assert.equal(report.usageSummaryCalls >= 2, true);
-  assert.equal(report.quotaRows, 2);
-  assert.deepEqual(report.quotaRemaining, ['42 remaining', '0 remaining']);
-  assert.deepEqual(report.quotaStatuses, ['available', 'exhausted', 'disabled']);
+  assert.equal(report.quotaRows, 50);
+  assert.deepEqual(report.quotaRemaining, ['42% remaining', '0% remaining', 'limit not reported', 'unlimited', 'not reported', 'limit not reported']);
+  assert.deepEqual(report.quotaStatuses, [['available'], ['exhausted', 'disabled'], ['limit unknown'], ['unlimited'], ['not reported'], ['read failed', 'stale']]);
+  assert.equal(report.quotaWindows.length, 2);
+  assert.match(report.quotaWindows[0], /^session\s+42% remaining\s+resets /);
+  assert.match(report.quotaWindows[1], /^weekly\s+85% remaining/);
+  assert.match(report.quotaCredit[0], /12\.50 credit/);
+  assert.match(report.quotaCredit[1], /CN¥|CNY/);
+  assert.ok(report.quotaCredit.every(text => !/%|unlimited/.test(text)), report.quotaCredit.join(' | '));
+  assert.match(report.quotaStaleNote, /last successful read/);
+  assert.match(report.quotaResetZone, /next reset .*(UTC|GMT)/);
+  assert.match(report.quotaResetTitle, /UTC/);
+  assert.equal(report.quotaPager, 'Page 1 of 3 · 130 accounts');
+  assert.equal(report.quotaLastPageRows, 30);
+  assert.equal(report.quotaLastPageFirst, 'bulk-094');
+  assert.equal(report.quotaProviderRow, 'balance');
+  assert.equal(report.quotaSearchRows, 4);
+  assert.ok(report.quotaURLs.includes('?page=3&pageSize=50&sort=default'), report.quotaURLs.join(' '));
+  assert.ok(report.quotaURLs.includes('?page=1&pageSize=50&sort=default&provider=deepseek'), report.quotaURLs.join(' '));
+  assert.ok(report.quotaURLs.includes('?page=1&pageSize=50&sort=exhausted&q=bulk-12'), report.quotaURLs.join(' '));
   assert.match(report.quotaNotice, /never blocks inference/);
   assert.equal(report.quotaRefreshCalls, 1);
   assert.equal(report.tokenSaverFeatures, 7);

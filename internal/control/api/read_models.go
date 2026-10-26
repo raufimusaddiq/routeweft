@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
@@ -652,79 +651,6 @@ func (h *Handler) requests(w http.ResponseWriter, r *http.Request) error {
 		detail = telemetry.Redact(detail)
 		return map[string]any{"requestId": id, "routeMode": mode, "detail": detail, "createdAt": created}, nil
 	})
-}
-
-func (h *Handler) quota(w http.ResponseWriter, r *http.Request) error {
-	if h.opts.Runtime == nil || h.opts.DB == nil {
-		writeError(w, http.StatusServiceUnavailable, "read_models_unavailable", "quota read model is not configured")
-		return nil
-	}
-	p, err := readPage(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_page", err.Error())
-		return nil
-	}
-	var total int64
-	if err := h.opts.DB.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM provider_connections").Scan(&total); err != nil {
-		return err
-	}
-	rows, err := h.opts.DB.QueryContext(r.Context(), `SELECT c.id,n.provider_id,c.name,c.enabled FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id ORDER BY n.provider_id,c.priority,c.name,c.id LIMIT ? OFFSET ?`, p.Size, p.Offset)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	items := make([]any, 0, p.Size)
-	state := h.opts.Runtime.State()
-	for rows.Next() {
-		var id, provider, name string
-		var enabled int
-		if err := rows.Scan(&id, &provider, &name, &enabled); err != nil {
-			return err
-		}
-		item := map[string]any{"connectionId": id, "providerId": provider, "name": name, "enabled": enabled != 0, "status": "unknown"}
-		if h.opts.QuotaState != nil {
-			if detail, ok := h.opts.QuotaState(id); ok {
-				item["plan"] = detail.Plan
-				item["windows"] = detail.Windows
-				if detail.AvailableReset != nil {
-					item["availableResetCredits"] = *detail.AvailableReset
-				}
-				if detail.CreditAvailable != nil {
-					item["creditAvailable"] = *detail.CreditAvailable
-				}
-			}
-		}
-		if state != nil {
-			if observation, ok := state.Quota(id); ok {
-				if observation.Err != "" {
-					item["status"] = "error"
-					item["error"] = true
-				} else if observation.Remaining != nil {
-					item["status"] = "available"
-					if *observation.Remaining <= 0 && (observation.ResetAt.IsZero() || observation.ResetAt.After(time.Now())) {
-						item["status"] = "exhausted"
-					}
-					item["remaining"] = *observation.Remaining
-				}
-				if !observation.ResetAt.IsZero() {
-					item["resetAt"] = observation.ResetAt
-				}
-				if !observation.ObservedAt.IsZero() {
-					item["observedAt"] = observation.ObservedAt
-				}
-			}
-			if until, ok := state.CooldownUntil(id, time.Now()); ok {
-				item["status"] = "cooldown"
-				item["cooldownUntil"] = until
-			}
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	writeJSON(w, http.StatusOK, pageResponse(items, p, total))
-	return nil
 }
 
 func (h *Handler) tokenSaver(w http.ResponseWriter, _ *http.Request) error {
