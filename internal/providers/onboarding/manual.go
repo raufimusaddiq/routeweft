@@ -76,6 +76,9 @@ func codexImportFlow() Flow {
 		Provider:   "codex",
 		Type:       FlowManualToken,
 		Completion: CompletionToken,
+		// A ChatGPT access token is a JWT naming its account (import-token/route.js
+		// reads the same claims).
+		ResolvesIdentity: true,
 		Import: func(_ context.Context, p Params) (Result, error) {
 			token := strings.TrimSpace(p.Input)
 			if token == "" {

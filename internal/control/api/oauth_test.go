@@ -143,8 +143,13 @@ func TestOAuthStartRequiresSessionAndKnownProvider(t *testing.T) {
 	if recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/openai/start", `{"name":"a","identity":"b"}`); recorder.Code != http.StatusNotFound {
 		t.Fatalf("api-key provider start status=%d want 404", recorder.Code)
 	}
-	if recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/claude/start", `{"name":"","identity":"b"}`); recorder.Code != http.StatusBadRequest {
-		t.Fatalf("missing name status=%d want 400", recorder.Code)
+	// Claude's flow does not resolve an identity, so one is required; the name is
+	// an optional nickname.
+	if recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/claude/start", `{"name":"a","identity":""}`); recorder.Code != http.StatusBadRequest {
+		t.Fatalf("missing identity status=%d want 400", recorder.Code)
+	}
+	if recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/claude/start", `{"name":"","identity":"b"}`); recorder.Code != http.StatusOK {
+		t.Fatalf("missing name status=%d want 200", recorder.Code)
 	}
 }
 
@@ -302,8 +307,8 @@ func TestOAuthPastedStateFromAnotherAttemptIsRefusedWithoutConsuming(t *testing.
 	_, mux, _, cookie := newOAuthAPI(t, exchange)
 	first := startFlow(t, mux, cookie, "claude")
 	second := startFlow(t, mux, cookie, "claude")
-	if recorder := callback(t, mux, cookie, "claude", second.State, oauthTestCode+"#"+first.State); recorder.Code != http.StatusBadRequest || exchange.calls() != 0 {
-		t.Fatalf("mismatched paste status=%d calls=%d", recorder.Code, exchange.calls())
+	if recorder := callback(t, mux, cookie, "claude", second.State, oauthTestCode+"#"+first.State); recorder.Code != http.StatusBadRequest || exchange.calls() != 0 || errorCode(t, recorder.Body.Bytes()) != "oauth_state_mismatch" {
+		t.Fatalf("mismatched paste status=%d calls=%d body=%s", recorder.Code, exchange.calls(), recorder.Body.String())
 	}
 	if recorder := callback(t, mux, cookie, "claude", second.State, oauthTestCode+"#"+second.State); recorder.Code != http.StatusOK {
 		t.Fatalf("matching paste status=%d", recorder.Code)

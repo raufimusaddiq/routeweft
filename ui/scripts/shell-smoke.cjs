@@ -113,6 +113,17 @@ const { join } = require('node:path');
     traffic: { active: 4, requests: 1200, errors: 3, lastRequestAt: '2026-09-25T20:00:00Z' },
     telemetry: { enabled: true, written: 1180, lost: 0, lostDiagnostics: 2, degraded: true },
   };
+  const signInFixtureProviders = [
+    { id: 'codex', transports: ['openai-responses'], auth: 'oauth', authModes: [], modelCatalog: 'static', passthroughModels: false, reportsUsage: true, flowType: 'authorization_code_pkce', signInModes: ['browser', 'import'], signInMethods: [{ mode: 'browser', authKind: 'oauth', resolvesIdentity: true, completion: 'redirect-url', loopbackRedirect: 'http://localhost:1455/auth/callback' }, { mode: 'import', authKind: 'oauth', resolvesIdentity: true }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'ready', served: true } },
+    { id: 'github', transports: ['openai-chat'], auth: 'oauth', authModes: [], modelCatalog: 'static', passthroughModels: false, reportsUsage: true, flowType: 'device_code', signInModes: ['device'], signInMethods: [{ mode: 'device', authKind: 'oauth', resolvesIdentity: false }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'ready', served: true } },
+    { id: 'kimchi', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key', 'oauth'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, flowType: 'browser_token', signInModes: ['browser'], signInMethods: [{ mode: 'browser', authKind: 'oauth', resolvesIdentity: false, completion: 'token' }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'ready', served: true } },
+  ];
+  const fulfillCancel = (route, mode) => {
+    if (mode === 'abort') return route.abort('failed');
+    if (mode === '500') return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: { code: 'internal', message: 'internal error' } }) });
+    if (mode === 'completing') return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: { code: 'oauth_completing', message: 'the sign-in was approved and is being saved' } }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'cancelled' }) });
+  };
   let sessionCalls = 0;
   let loginCalls = 0;
   let overviewCalls = 0;
@@ -133,6 +144,25 @@ const { join } = require('node:path');
   let comboPayload = null;
   let adapterEnabled = false;
   let systemOneModelAdded = false;
+  // Sign-in fixtures (#214): served only once the main provider checks have run,
+  // so the provider counts above stay as they were.
+  let signInProviders = false;
+  let signInExpiresAt = '';
+  const signInStarts = [];
+  const signInCancels = [];
+  const signInCallbacks = [];
+  const signInPatches = [];
+  // Cancel answers the stubs give, in order; an empty queue confirms the cancel.
+  // 'abort' is a dropped request (no answer at all).
+  const codexCancelModes = [];
+  const deviceCancelModes = [];
+  const codexCallbackModes = [];
+  let devicePolls = 0;
+  // What the device poll answers ('pending', 'connected', 'save_failed',
+  // 'state_invalid'), how long it holds the answer, and the attempt's expiry.
+  let deviceAnswer = 'pending';
+  let devicePollDelayMs = 0;
+  let deviceExpiresAt = '';
   let usageSummaryCalls = 0;
   let lastUsageURL = '';
   // Quota mock (#213): 130 accounts so paging must reach past 100, with one row
@@ -232,7 +262,43 @@ const { join } = require('node:path');
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: createdKeyID, revoked: true, configRevision: 10 }) });
   }
   if (url.pathname === '/admin/v1/providers' && method === 'GET') {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'openai', transports: ['openai-chat','openai-responses'], auth: 'api-key', authModes: ['api-key'], defaultBaseURL: 'https://api.openai.com/v1', modelCatalog: 'static', passthroughModels: false, reportsUsage: false, configuredNodes: 1, enabledAccounts: 1, readiness: { status: 'ready', served: true } }, { id: 'openrouter', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'unavailable', served: false, reason: 'smoke fixture: wire not bound' } }], page: 1, pageSize: 100, total: 2 }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [...(signInProviders ? signInFixtureProviders : []), { id: 'openai', transports: ['openai-chat','openai-responses'], auth: 'api-key', authModes: ['api-key'], defaultBaseURL: 'https://api.openai.com/v1', modelCatalog: 'static', passthroughModels: false, reportsUsage: false, configuredNodes: 1, enabledAccounts: 1, readiness: { status: 'ready', served: true } }, { id: 'openrouter', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'unavailable', served: false, reason: 'smoke fixture: wire not bound' } }], page: 1, pageSize: 100, total: signInProviders ? 5 : 2 }) });
+  }
+  if (url.pathname === '/admin/v1/oauth/codex/start' && method === 'POST') {
+    signInStarts.push(route.request().postDataJSON());
+    const state = `smoke-state-${signInStarts.length}`;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ state, authorizeUrl: 'https://auth.openai.com/oauth/authorize?state=' + state, completion: 'redirect-url', flowType: 'authorization_code_pkce', expiresAt: signInExpiresAt || '2026-09-25T12:10:00Z' }) });
+  }
+  if (url.pathname === '/admin/v1/oauth/codex/cancel' && method === 'POST') {
+    signInCancels.push(route.request().postDataJSON());
+    return fulfillCancel(route, codexCancelModes.shift());
+  }
+  if (url.pathname === '/admin/v1/oauth/github/device' && method === 'POST') {
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ state: 'smoke-device', flowType: 'device_code', userCode: 'ABCD-1234', verificationUrl: 'https://github.com/login/device', intervalSeconds: 2, expiresAt: deviceExpiresAt || '2026-09-25T12:10:00Z' }) });
+  }
+  if (url.pathname === '/admin/v1/oauth/github/poll' && method === 'POST') {
+    devicePolls += 1;
+    const answer = deviceAnswer;
+    if (devicePollDelayMs) await new Promise(resolve => setTimeout(resolve, devicePollDelayMs));
+    if (answer === 'pending') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'pending' }) });
+    if (answer === 'save_failed') return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: 'connection_save_failed', message: 'provider connection could not be saved; check its identity' } }) });
+    if (answer === 'state_invalid') return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: 'oauth_state_invalid', message: 'this sign-in attempt expired or was already used; start again' } }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'connected', connection: { id: 'conn-github', nodeId: 'node-github', providerId: 'github', name: 'octo', authKind: 'oauth', identity: 'octo@example.test', enabled: true, priority: 0, credentialConfigured: true } }) });
+  }
+  if (url.pathname === '/admin/v1/oauth/github/cancel' && method === 'POST') {
+    return fulfillCancel(route, deviceCancelModes.shift());
+  }
+  if (url.pathname === '/admin/v1/oauth/codex/callback' && method === 'POST') {
+    signInCallbacks.push(route.request().postDataJSON());
+    const mode = codexCallbackModes.shift();
+    if (mode === 'abort') return route.abort('failed');
+    if (mode === 'mismatch') return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: 'oauth_state_mismatch', message: 'this address is from a different sign-in attempt; paste the one from this attempt' } }) });
+    if (mode === 'invalid') return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: 'oauth_state_invalid', message: 'this sign-in attempt expired or was already used; start again' } }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-codex', nodeId: 'node-codex', providerId: 'codex', name: 'resolved@example.test', authKind: 'oauth', identity: 'resolved@example.test', enabled: true, priority: 0, credentialConfigured: true }) });
+  }
+  if (url.pathname === '/admin/v1/connections/conn-codex' && method === 'PATCH') {
+    signInPatches.push(route.request().postDataJSON());
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-codex', name: 'Work' }) });
   }
   if (url.pathname === '/admin/v1/provider-nodes' && method === 'GET') {
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'node-openai', kind: 'builtin', providerId: 'openai', name: 'openai', baseUrl: 'https://api.openai.com/v1', transports: ['openai-chat','openai-responses'] }, { id: 'node-jev', kind: 'builtin', providerId: 'typesafe', name: 'typesafe', baseUrl: 'https://api.typesafe.ai/v1/systemone', transports: ['systemone'] }], page: 1, pageSize: 100, total: 2 }) });
@@ -549,6 +615,198 @@ const { join } = require('node:path');
   await page.waitForFunction(() => document.querySelector('.providers-content .connection-row .state-tag').textContent === 'Disabled');
   report.providerPatches = providerPatches;
   report.providerDisabledLabel = await page.locator('.connection-row .state-tag').textContent();
+  // Provider-aware sign-in (#214): methods are separate choices, Codex starts with
+  // neither name nor identity, and every attempt ends in an explicit state.
+  signInProviders = true;
+  await page.click('a[href="#combo-capability-adapter"]');
+  await page.waitForSelector('.combos-content');
+  await page.click('a[href="#providers"]');
+  await page.waitForSelector('.provider-option');
+  await page.fill('#provider-filter', 'codex');
+  await page.locator('.provider-option', { hasText: 'codex' }).first().click();
+  await page.getByRole('button', { name: 'Add connection', exact: true }).click();
+  const signInForm = page.locator('.provider-form');
+  await signInForm.waitFor();
+  report.codexMethods = await signInForm.locator('.access-modes label').allTextContents();
+  assert.deepEqual(report.codexMethods, ['Sign in with Codex', 'Import token', 'Paste OAuth tokens']);
+  assert.equal(await signInForm.getByLabel('Account name').count(), 0);
+  assert.equal(await signInForm.getByLabel('Stable account identity').count(), 0);
+  assert.equal(await signInForm.locator('input[type="password"]').count(), 0, 'browser sign-in must not show raw token fields');
+  await signInForm.getByRole('button', { name: 'Sign in with Codex', exact: true }).click();
+  await signInForm.getByText('Pending').waitFor();
+  assert.deepEqual(signInStarts[0], { meta: {} }, 'codex start sends no name or identity');
+  report.codexHint = await signInForm.locator('.oauth-panel p').first().textContent();
+  assert.match(report.codexHint, /http:\/\/localhost:1455\/auth\/callback/);
+  assert.match(report.codexHint, /not on the Routeweft server/);
+  assert.equal(await signInForm.locator('.access-picker').evaluate(element => element.disabled), true, 'method choice is locked while an attempt is pending');
+  // A cancel the server did not confirm keeps the attempt: a server error, then a
+  // dropped request through Close (which must not close), then a confirmed one.
+  codexCancelModes.push('500', 'abort');
+  await signInForm.getByRole('button', { name: 'Cancel sign-in', exact: true }).click();
+  await signInForm.getByText(/could not be cancelled \(internal error\)\. It may still be open; try again\./).waitFor();
+  assert.equal(await signInForm.getByLabel('Address from the browser').count(), 1, 'a failed cancel keeps the attempt');
+  assert.equal(await signInForm.getByText('Cancelled', { exact: true }).count(), 0);
+  await signInForm.getByRole('button', { name: 'Close', exact: true }).click();
+  await signInForm.getByText(/could not be cancelled.*It may still be open; try again\./).waitFor();
+  assert.equal(await signInForm.getByLabel('Address from the browser').count(), 1, 'Close does not drop an attempt the server still holds');
+  await signInForm.getByRole('button', { name: 'Cancel sign-in', exact: true }).click();
+  await signInForm.getByText('Cancelled', { exact: true }).waitFor();
+  assert.deepEqual(signInCancels, [{ state: 'smoke-state-1' }, { state: 'smoke-state-1' }, { state: 'smoke-state-1' }]);
+  // Passing the time limit changes only the wording: the attempt stays until the
+  // server answers. No answer keeps it; a paste from another attempt keeps it; a
+  // server that no longer holds it reads as closed, never "nothing was saved".
+  signInExpiresAt = '2026-09-25T12:00:01Z';
+  await signInForm.getByRole('button', { name: 'Sign in with Codex', exact: true }).click();
+  await signInForm.getByText(/The time limit has passed, so the server will most likely refuse this sign-in/).waitFor({ timeout: 5000 });
+  assert.equal(await signInForm.getByLabel('Address from the browser').count(), 1, 'the clock does not end the attempt');
+  assert.equal(await signInForm.getByText('Expired', { exact: true }).count(), 0);
+  signInExpiresAt = '';
+  codexCallbackModes.push('abort', 'mismatch', 'invalid');
+  await signInForm.getByLabel('Address from the browser').fill('http://localhost:1455/auth/callback?code=auth-code-late&state=smoke-state-2');
+  await signInForm.getByRole('button', { name: 'Finish sign-in', exact: true }).click();
+  await signInForm.getByText(/No answer from the server\. The sign-in may have completed/).waitFor();
+  assert.equal(await signInForm.getByLabel('Address from the browser').count(), 1, 'no answer keeps the attempt');
+  await signInForm.getByRole('button', { name: 'Finish sign-in', exact: true }).click();
+  await page.locator('.providers-content > .auth-error', { hasText: 'different sign-in attempt' }).waitFor();
+  assert.equal(await signInForm.getByLabel('Address from the browser').count(), 1, 'a refused paste keeps the attempt');
+  await signInForm.getByRole('button', { name: 'Finish sign-in', exact: true }).click();
+  await signInForm.getByText('Closed', { exact: true }).waitFor();
+  report.codexClosed = await signInForm.locator('[aria-label="Sign-in result"] p').textContent();
+  assert.match(report.codexClosed, /no longer open on the server.*Check the connections below/);
+  assert.doesNotMatch(await signInForm.textContent(), /Nothing was saved/);
+  await signInForm.getByRole('button', { name: 'Sign in with Codex', exact: true }).click();
+  await signInForm.getByLabel('Address from the browser').fill('http://localhost:1455/auth/callback?code=auth-code-smoke&state=smoke-state-3');
+  await signInForm.getByRole('button', { name: 'Finish sign-in', exact: true }).click();
+  await signInForm.getByText('Connected', { exact: true }).waitFor();
+  assert.equal(signInCallbacks.length, 4);
+  assert.deepEqual(signInCallbacks.at(-1), { state: 'smoke-state-3', input: 'http://localhost:1455/auth/callback?code=auth-code-smoke&state=smoke-state-3' });
+  report.codexConnected = await signInForm.locator('[aria-label="Sign-in result"] p').textContent();
+  assert.match(report.codexConnected, /Signed in as resolved@example\.test/);
+  assert.equal(await page.content().then(html => html.includes('auth-code-smoke')), false, 'pasted callback must not stay in the DOM');
+  await signInForm.getByLabel('Nickname (optional)').fill('Work');
+  await signInForm.getByRole('button', { name: 'Save nickname', exact: true }).click();
+  await signInForm.waitFor({ state: 'detached' });
+  assert.deepEqual(signInPatches, [{ name: 'Work' }]);
+  // Device sign-in: a failed cancel leaves the poll running, and a cancel that
+  // meets a save in progress claims neither cancelled nor saved until the poll says.
+  await page.fill('#provider-filter', 'github');
+  await page.locator('.provider-option', { hasText: 'github' }).first().click();
+  await page.getByRole('button', { name: 'Add connection', exact: true }).click();
+  await signInForm.waitFor();
+  await signInForm.getByLabel('Stable account identity').fill('octo@example.test');
+  await signInForm.getByRole('button', { name: 'Sign in with GitHub Copilot (device code)', exact: true }).click();
+  await signInForm.getByText('Pending', { exact: true }).waitFor();
+  deviceCancelModes.push('500', 'abort', 'completing');
+  for (const expected of [/could not be cancelled \(internal error\)/, /could not be cancelled.*try again/]) {
+    await signInForm.getByRole('button', { name: 'Cancel sign-in', exact: true }).click();
+    await signInForm.getByText(expected).waitFor();
+    const before = devicePolls;
+    await signInForm.getByText('Pending', { exact: true }).waitFor();
+    const deadline = Date.now() + 8000;
+    while (devicePolls <= before && Date.now() < deadline) await page.waitForTimeout(250);
+    assert.ok(devicePolls > before, 'polling continues after a failed cancel');
+  }
+  await signInForm.getByRole('button', { name: 'Cancel sign-in', exact: true }).click();
+  await signInForm.getByText(/being saved, so it can no longer be cancelled\. Waiting for the result\./).waitFor();
+  assert.equal(await signInForm.getByText('Connected', { exact: true }).count(), 0, 'no success claimed before the server confirms');
+  assert.equal(await signInForm.getByText('Cancelled', { exact: true }).count(), 0);
+  deviceAnswer = 'connected';
+  await signInForm.getByText('Connected', { exact: true }).waitFor({ timeout: 8000 });
+  report.deviceConnected = await signInForm.locator('[aria-label="Sign-in result"] p').textContent();
+  assert.match(report.deviceConnected, /Signed in as octo@example\.test/);
+  await signInForm.getByRole('button', { name: 'Done', exact: true }).click();
+  await signInForm.waitFor({ state: 'detached' });
+  // Approval just before the time limit, with the save answering after it: the
+  // panel waits for the server and reports what it says, saved or not. Selecting
+  // another provider meanwhile neither drops nor re-points the attempt.
+  const startDevice = async () => {
+    await page.fill('#provider-filter', 'github');
+    await page.locator('.provider-option', { hasText: 'github' }).first().click();
+    if (!(await signInForm.count())) await page.getByRole('button', { name: 'Add connection', exact: true }).click();
+    await signInForm.waitFor();
+    await signInForm.getByLabel('Stable account identity').fill('octo@example.test');
+    await signInForm.getByRole('button', { name: 'Sign in with GitHub Copilot (device code)', exact: true }).click();
+    await signInForm.getByText('Pending', { exact: true }).waitFor();
+  };
+  for (const answer of ['connected', 'save_failed']) {
+    deviceExpiresAt = '2026-09-25T12:00:03Z';
+    deviceAnswer = 'pending';
+    devicePollDelayMs = 0;
+    await startDevice();
+    const before = devicePolls;
+    deviceAnswer = answer;
+    devicePollDelayMs = 6000;
+    if (answer === 'connected') {
+      await page.fill('#provider-filter', 'codex');
+      await page.locator('.provider-option', { hasText: 'codex' }).first().click();
+      await signInForm.getByText(/A GitHub Copilot sign-in is still pending/).waitFor();
+      assert.equal(await signInForm.getByRole('button', { name: 'Sign in with Codex', exact: true }).count(), 0, 'no second attempt while one is pending');
+      const deadline = Date.now() + 8000;
+      while (devicePolls <= before && Date.now() < deadline) await page.waitForTimeout(250);
+      assert.ok(devicePolls > before, 'the attempt keeps polling its own provider');
+      await signInForm.getByRole('button', { name: 'Back to GitHub Copilot', exact: true }).click();
+    }
+    await signInForm.getByText(/The time limit has passed\. A sign-in approved before it may still be saving/).waitFor({ timeout: 8000 });
+    assert.equal(await signInForm.getByText('Pending', { exact: true }).count(), 1, 'the clock does not end the attempt');
+    for (const final of ['Expired', 'Closed', 'Connected', 'Failed']) assert.equal(await signInForm.getByText(final, { exact: true }).count(), 0, final);
+    if (answer === 'connected') {
+      await signInForm.locator('[aria-label="Sign-in result"]').waitFor({ timeout: 15000 });
+      assert.match(await signInForm.locator('[aria-label="Sign-in result"] p').textContent(), /Signed in as octo@example\.test/);
+      await signInForm.getByRole('button', { name: 'Done', exact: true }).click();
+      await signInForm.waitFor({ state: 'detached' });
+      continue;
+    }
+    // A save that persisted nothing is not an outcome: the server released the
+    // attempt for another try, so it stays pending with the server's message.
+    await signInForm.getByText(/provider connection could not be saved; check its identity\. The sign-in is still open on the server: check again to retry, or cancel it\./).waitFor({ timeout: 15000 });
+    assert.equal(await signInForm.getByText('Pending', { exact: true }).count(), 1, 'a failed device save keeps the attempt');
+    assert.equal(await signInForm.locator('[aria-label="Sign-in result"]').count(), 0);
+    assert.doesNotMatch(await signInForm.textContent(), /Nothing was saved/);
+    // Failed save, then retry: the next poll saves.
+    deviceAnswer = 'connected';
+    devicePollDelayMs = 0;
+    await signInForm.getByRole('button', { name: 'Check again', exact: true }).click();
+    await signInForm.getByText('Connected', { exact: true }).waitFor({ timeout: 8000 });
+    await signInForm.getByRole('button', { name: 'Done', exact: true }).click();
+    await signInForm.waitFor({ state: 'detached' });
+  }
+  // Failed save, then cancel: the server confirms and nothing is claimed saved.
+  deviceExpiresAt = '';
+  deviceAnswer = 'save_failed';
+  devicePollDelayMs = 0;
+  await startDevice();
+  await signInForm.getByText(/The sign-in is still open on the server: check again to retry, or cancel it\./).waitFor({ timeout: 8000 });
+  await signInForm.getByRole('button', { name: 'Cancel sign-in', exact: true }).click();
+  await signInForm.getByText('Cancelled', { exact: true }).waitFor();
+  assert.equal(await signInForm.getByText('Connected', { exact: true }).count(), 0);
+  // The server no longer holding the attempt reads as closed, pointing at the list.
+  deviceAnswer = 'state_invalid';
+  devicePollDelayMs = 0;
+  deviceExpiresAt = '';
+  await signInForm.getByRole('button', { name: 'Sign in with GitHub Copilot (device code)', exact: true }).click();
+  await signInForm.getByText('Closed', { exact: true }).waitFor({ timeout: 8000 });
+  assert.match(await signInForm.locator('[aria-label="Sign-in result"] p').textContent(), /no longer open on the server.*Check the connections below/);
+  assert.doesNotMatch(await signInForm.textContent(), /Nothing was saved/);
+  deviceAnswer = 'pending';
+  await signInForm.getByRole('button', { name: 'Close', exact: true }).click();
+  await signInForm.waitFor({ state: 'detached' });
+  // Dual auth: the primary API key stays the default, and each mode shows only its own fields.
+  await page.fill('#provider-filter', 'kimchi');
+  await page.locator('.provider-option', { hasText: 'kimchi' }).first().click();
+  await page.getByRole('button', { name: 'Add connection', exact: true }).click();
+  await signInForm.waitFor();
+  report.kimchiMethods = await signInForm.locator('.access-modes label').allTextContents();
+  assert.deepEqual(report.kimchiMethods, ['API key', 'Sign in with Kimchi', 'Paste OAuth tokens']);
+  assert.equal(await signInForm.getByLabel('Account name').count(), 1);
+  assert.equal(await signInForm.getByLabel('Access token / API key').count(), 1);
+  await signInForm.getByText('Sign in with Kimchi', { exact: true }).click();
+  assert.equal(await signInForm.getByLabel('Account name').count(), 0);
+  assert.equal(await signInForm.getByLabel('Access token / API key').count(), 0);
+  assert.equal(await signInForm.getByLabel('Stable account identity').count(), 1, 'kimchi cannot always resolve the account, so it asks');
+  assert.equal(await signInForm.getByRole('button', { name: 'Sign in with Kimchi', exact: true }).isDisabled(), true);
+  await signInForm.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.fill('#provider-filter', '');
+  signInProviders = false;
   // Combo & Capability Adapter workflow (PRD 11).
   await page.click('a[href="#combo-capability-adapter"]');
   await page.waitForSelector('.combos-content');

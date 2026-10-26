@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
@@ -184,13 +185,38 @@ type providerReadModel struct {
 	SignInModes []string `json:"signInModes,omitempty"`
 	// MetaKeys lists the operator input the provider's flow reads, so the
 	// dashboard renders only fields that flow consumes.
-	MetaKeys        []string `json:"metaKeys,omitempty"`
-	ConfiguredNodes int      `json:"configuredNodes"`
-	EnabledAccounts int      `json:"enabledAccounts"`
+	MetaKeys []string `json:"metaKeys,omitempty"`
+	// SignInMethods describes each sign-in mode on its own, so the dashboard can
+	// offer them as separate choices with only that mode's fields. SignInModes and
+	// MetaKeys are the earlier union view of the same tables.
+	SignInMethods   []signInMethodReadModel `json:"signInMethods,omitempty"`
+	ConfiguredNodes int                     `json:"configuredNodes"`
+	EnabledAccounts int                     `json:"enabledAccounts"`
 	// Readiness is the build's immutable capability for this provider (SPEC §36).
 	// It is not derived from ConfiguredNodes or EnabledAccounts: enabling is a
 	// preference, and a stored credential is account state.
 	Readiness readinessReadModel `json:"readiness"`
+}
+
+// signInMethodReadModel is one way to connect a provider through an onboarding
+// flow, as the endpoint for that mode will treat it.
+type signInMethodReadModel struct {
+	// Mode is "browser", "device" or "import": the endpoint family to call.
+	Mode string `json:"mode"`
+	// AuthKind is the credential mode the method stores.
+	AuthKind string `json:"authKind"`
+	// ResolvesIdentity means the provider or credential names the account, so
+	// the method needs no identity from the operator.
+	ResolvesIdentity bool `json:"resolvesIdentity"`
+	// MetaKeys is the operator input this method reads, and only this method.
+	MetaKeys []string `json:"metaKeys,omitempty"`
+	// Completion is what a browser method's operator pastes back.
+	Completion string `json:"completion,omitempty"`
+	// LoopbackRedirect is the provider-registered loopback redirect a browser
+	// method sends. It names a port on the operator's own computer, not on this
+	// server, so the page it lands on is expected not to load and its address is
+	// pasted back.
+	LoopbackRedirect string `json:"loopbackRedirect,omitempty"`
 }
 
 // readinessReadModel reports registry.Readiness. A provider with no declared
@@ -241,7 +267,7 @@ FROM provider_nodes n LEFT JOIN provider_connections c ON c.node_id=n.id GROUP B
 	for _, spec := range specs {
 		count := counts[spec.ID]
 		item := providerReadModel{ID: spec.ID, Auth: string(spec.Auth), DefaultBaseURL: safeURL(spec.DefaultBaseURL), ModelCatalog: string(spec.ModelCatalog), PassthroughModels: spec.PassthroughModels, StaticModels: spec.StaticModels(), ReportsUsage: spec.ReportsUsage, ConfiguredNodes: count[0], EnabledAccounts: count[1], Readiness: readinessOf(spec.Readiness)}
-		item.FlowType, item.SignInModes, item.MetaKeys = h.signInModes(spec.ID)
+		item.FlowType, item.SignInModes, item.MetaKeys, item.SignInMethods = h.signInModes(spec.ID)
 		for _, transport := range spec.Transports {
 			item.Transports = append(item.Transports, string(transport))
 		}
@@ -747,34 +773,51 @@ func putNullInt(dst map[string]any, key string, value sql.NullInt64) {
 // It reads the same flow tables the endpoints use, so the UI cannot drift from
 // what the server accepts. An empty result means the provider has no onboarding
 // flow at all and keeps the manual credential form.
-func (h *Handler) signInModes(providerID string) (string, []string, []string) {
+func (h *Handler) signInModes(providerID string) (string, []string, []string, []signInMethodReadModel) {
 	flowType := ""
-	modes := make([]string, 0, 3)
 	var metaKeys []string
+	var methods []signInMethodReadModel
 	if flow, ok := h.oauthFlows.Lookup(providerID); ok {
 		flowType = string(flow.Type)
 		metaKeys = append(metaKeys, flow.MetaKeys...)
+		mode := ""
 		switch flow.Type {
 		case onboarding.FlowDeviceCode:
-			if flow.Startable() {
-				modes = append(modes, "device")
-			}
+			mode = "device"
 		case onboarding.FlowImportToken, onboarding.FlowManualToken:
 			// Import only; no browser or device step exists.
 		default:
-			if flow.Startable() {
-				modes = append(modes, "browser")
+			mode = "browser"
+		}
+		if mode != "" && flow.Startable() {
+			method := signInMethodFor(mode, flow, flow.MetaKeys)
+			if mode == "browser" {
+				method.Completion = string(flow.Completion)
+				if flow.FixedPort > 0 {
+					method.LoopbackRedirect, _ = onboarding.DefaultRedirectURI(flow, "")
+				}
 			}
+			methods = append(methods, method)
 		}
 	}
 	if manual, ok := h.importFlowFor(providerID); ok {
-		modes = append(modes, "import")
 		// An import mode's own operator input is additive with the browser flow's.
-		for _, key := range manual.MetaKeys {
-			metaKeys = append(metaKeys, key)
-		}
+		metaKeys = append(metaKeys, manual.MetaKeys...)
+		methods = append(methods, signInMethodFor("import", manual, manual.ImportKeys()))
 	}
-	return flowType, modes, dedupeStrings(metaKeys)
+	modes := make([]string, 0, len(methods))
+	for _, method := range methods {
+		modes = append(modes, method.Mode)
+	}
+	return flowType, modes, dedupeStrings(metaKeys), methods
+}
+
+func signInMethodFor(mode string, flow onboarding.Flow, metaKeys []string) signInMethodReadModel {
+	authKind := flow.AuthKind
+	if authKind == "" {
+		authKind = credentials.AuthOAuth
+	}
+	return signInMethodReadModel{Mode: mode, AuthKind: string(authKind), ResolvesIdentity: flow.ResolvesIdentity, MetaKeys: dedupeStrings(metaKeys)}
 }
 
 func dedupeStrings(values []string) []string {

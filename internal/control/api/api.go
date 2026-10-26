@@ -214,6 +214,7 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.Handle("POST /admin/v1/oauth/{provider}/callback", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthCallback)))
 	mux.Handle("POST /admin/v1/oauth/{provider}/device", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthDeviceStart)))
 	mux.Handle("POST /admin/v1/oauth/{provider}/poll", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthDevicePoll)))
+	mux.Handle("POST /admin/v1/oauth/{provider}/cancel", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthCancel)))
 	mux.Handle("POST /admin/v1/oauth/{provider}/import", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthImport)))
 	// Bulk import is only served where the reference exposes it (codex, grok-cli);
 	// the handler refuses the rest rather than accepting a batch it would drop.

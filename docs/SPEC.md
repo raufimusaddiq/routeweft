@@ -971,8 +971,8 @@ and API-key routes). One implementation exists per shape, not per provider:
 The provider-to-flow mapping is `internal/providers/onboarding`; the parity gate
 compares it against the reference so a provider cannot lose its sign-in mode.
 
-`POST /admin/v1/oauth/{provider}/start` (body: account name, stable identity, and
-optional provider `meta` such as GitLab's base URL/client id or Kiro's region)
+`POST /admin/v1/oauth/{provider}/start` (body: optional account name, an identity
+when the flow cannot resolve one, and optional provider `meta` such as GitLab's base URL/client id or Kiro's region)
 mints a PKCE pair and a 256-bit state, and returns
 `{state, authorizeUrl, completion, flowType, expiresAt}`. A device flow has its
 own endpoint (`/device`, below). The verifier and any flow-private state never
@@ -997,7 +997,7 @@ attempt. Concurrent approved polls cannot both save: one reserves the attempt,
 and a save that persisted nothing releases it so the token already issued
 upstream is not lost.
 
-`POST /admin/v1/oauth/{provider}/import` (body: account name/identity, `input`,
+`POST /admin/v1/oauth/{provider}/import` (body: optional account name/identity, `input`,
 optional `meta`) completes an import mode: a token bundle, a cookie, a PAT or an
 API key. `POST /admin/v1/oauth/{provider}/bulk-import` accepts an array, a single
 object, or `{accounts: [...]}` and imports each entry serially, for the providers
@@ -1029,7 +1029,65 @@ stored credential shape, and a rotation is committed before it is published
 The provider read model reports `flowType` and `signInModes` (`browser`,
 `device`, `import`) from the same flow tables the endpoints use, so the dashboard
 offers exactly the affordances that exist rather than guessing from the auth
-kind.
+kind. `signInMethods` describes each mode separately: `mode`, the `authKind` it
+stores, `resolvesIdentity`, the `metaKeys` that mode alone reads (GitLab's PAT
+import reads `baseUrl`, not the OAuth application's client id and secret), a
+browser mode's `completion`, and `loopbackRedirect` when the provider registered
+a loopback callback (Codex `http://localhost:1455/auth/callback`, xAI
+`http://127.0.0.1:56121/callback`). The dashboard offers each method, and each
+manual credential mode the spec accepts, as its own choice showing only its own
+fields (#214).
+
+Account name and identity at sign-in (#214). The name is an optional nickname:
+the reference opens a sign-in without asking for one (`OAuthModal.js`) and labels
+the connection from what the provider reports. A blank name falls back to the
+provider's display name and then to the identity, and the dashboard offers to set
+a nickname once the sign-in succeeds. An identity is required up front only when
+the flow does not declare `ResolvesIdentity`; a flow declares it only where a
+genuine credential always yields one (Codex from its id token, falling back to
+the ChatGPT account id when the token carries no email; iFlow's browser and
+cookie flows; GitLab's browser and PAT flows; Cursor). An operator identity sent anyway stays the fallback, and a
+sign-in that resolves no identity answers `502 oauth_identity_unresolved` before
+anything is saved.
+
+`POST /admin/v1/oauth/{provider}/cancel` (body: `state`) ends a pending browser
+or device attempt so it can no longer complete, and answers
+`{status: "cancelled"}`. It has the same session and provider binding as the
+other steps, and an unknown, expired, replayed or foreign state answers
+`oauth_state_invalid`. A device attempt that a poll is already saving answers
+`409 oauth_completing` and is left to finish; that is not a confirmed save, since
+a save that persists nothing releases the attempt again. The dashboard shows each
+attempt as pending, then connected, expired, cancelled, closed or failed, and
+reports only what the server answered, never what the clock or a missing answer
+suggests: an approval just before the time limit may still be saving.
+
+- The attempt stays tracked, and a device poll keeps running, until a server
+  answer ends it. Passing `expiresAt` only changes the wording.
+- Whether an error leaves the attempt open is decided per endpoint by the code
+  table in `ui/src/signIn.ts` (`SIGN_IN_CODES`), which a test checks against the
+  codes this file's callback, poll and cancel handlers can write. No answer (a
+  network failure, or a response without an API error code) and an unknown code
+  keep the attempt.
+- A device save that persisted nothing (`connection_save_failed`,
+  `oauth_identity_unresolved`, `invalid_auth_kind`, `oauth_exchange_failed` from
+  the poll) releases the attempt on the server, so the dashboard keeps it pending
+  with the server's message and offers Check again or Cancel. The same codes from
+  a callback end the attempt, because the callback consumed its state first.
+- An unreachable server or provider (no answer, `oauth_poll_failed`) is retried,
+  then polling pauses for the operator to resume.
+- A cancel counts only on `200`; any other failure keeps the attempt for a retry,
+  and Close does not drop it. `oauth_completing` waits for the poll's result.
+- `oauth_state_invalid` reads as closed: the server no longer holds the attempt,
+  which does not say whether an earlier request saved it, so the dashboard points
+  at the connection list. Only the provider's `oauth_expired` reads as expired
+  with nothing saved.
+- An attempt belongs to the provider it was started for; selecting another
+  provider leaves it pending and polling.
+
+A pinned loopback redirect names a port on the operator's own computer. Routeweft
+never listens there: a remote server cannot receive the browser's own localhost,
+so the dashboard says the page will not load and asks for the full address to be
+pasted back.
 
 The providers' registered redirect URIs never point at Routeweft, so the operator
 hands the result back from the authenticated dashboard rather than receiving a
@@ -1063,7 +1121,7 @@ ARN and client registration, Kimi device id, Qoder machine id, Kilocode org id)
 live inside the sealed credential payload, never in a snapshot or a browser
 response.
 
-Pending state is process-local, expires after 10 minutes, is bound to the admin session that started it and to the provider, and is single-use even when the exchange fails. A state that is unknown, expired, replayed or owned by another session returns the same `oauth_state_invalid` error, and a foreign session does not consume the owner's attempt. A device-authorization start the provider rate-limits (Kilo: too many pending authorizations) returns HTTP 429 `oauth_rate_limited`, distinct from `oauth_start_failed`. A device poll that loses the save reservation to a concurrent poll of the same approved attempt answers `{"status":"pending"}`; a state that is gone keeps `oauth_state_invalid`. Responses carry fixed messages only: no provider text, code, verifier or token.
+Pending state is process-local, expires after 10 minutes, is bound to the admin session that started it and to the provider, and is single-use even when the exchange fails. A state that is unknown, expired, replayed or owned by another session returns the same `oauth_state_invalid` error, and a foreign session does not consume the owner's attempt. A pasted result whose own state names a different attempt answers `oauth_state_mismatch` and leaves the attempt open. A device-authorization start the provider rate-limits (Kilo: too many pending authorizations) returns HTTP 429 `oauth_rate_limited`, distinct from `oauth_start_failed`. A device poll that loses the save reservation to a concurrent poll of the same approved attempt answers `{"status":"pending"}`; a state that is gone keeps `oauth_state_invalid`. Responses carry fixed messages only: no provider text, code, verifier or token.
 
 Connections whose provider has a refresh grant are registered with a refresh
 exchanger by the credential registry, so every registration path (sign-in,
@@ -1076,7 +1134,7 @@ counts as successful.
 
 ### 19.2 Device sign-in
 
-Providers whose oracle flow is device authorization use `POST /admin/v1/oauth/{provider}/device` (body: account name and stable identity), which returns `{state, userCode, verificationUrl, intervalSeconds, expiresAt}`, and `POST /admin/v1/oauth/{provider}/poll` (body: `state`). The browser's only handle on an attempt is the opaque `state`; poll requests carry nothing else, and poll responses never echo the code. Kilo Code's protocol uses one code as both the device code and the user code, so that code is shown to the operator once, in the start response, because the operator must confirm it on the provider's page. A provider with a separate device code keeps it server-side.
+Providers whose oracle flow is device authorization use `POST /admin/v1/oauth/{provider}/device` (body: optional account name, and an identity when the flow cannot resolve one), which returns `{state, userCode, verificationUrl, intervalSeconds, expiresAt}`, and `POST /admin/v1/oauth/{provider}/poll` (body: `state`). The browser's only handle on an attempt is the opaque `state`; poll requests carry nothing else, and poll responses never echo the code. Kilo Code's protocol uses one code as both the device code and the user code, so that code is shown to the operator once, in the start response, because the operator must confirm it on the provider's page. A provider with a separate device code keeps it server-side.
 
 `expiresAt` is the earlier of the 10-minute flow limit and the lifetime the provider reported for its code, so an attempt never outlives its code. Poll is session-bound, answers `{status:"pending"}` while the operator has not approved (throttled server-side so a fast client cannot drive upstream traffic), and on approval answers `{status:"connected", connection}`. Approval reserves the attempt so concurrent polls cannot save it twice, and ends it only once a connection has been persisted; a save that persisted nothing releases the attempt so the next poll can save the token already issued upstream. Denial and expiry end the attempt (`oauth_denied`, `oauth_expired`); a transient upstream fault answers `oauth_poll_failed` (502) and leaves the attempt open, and clients must retry on it. A provider offers either the browser flow or the device flow, never both. Kilo Code's approved token is a non-expiring bearer with no refresh token.
 
