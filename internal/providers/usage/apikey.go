@@ -400,8 +400,14 @@ func rawJSON(value any) json.RawMessage {
 	return encoded
 }
 
-// deepseek mirrors open-sse/services/usage/deepseek.js: a credit balance, not a
-// usage window.
+// deepseek mirrors open-sse/services/usage/deepseek.js: a credit balance per
+// currency, not a usage window (deepseek.js:11-37,90-108). Each currency is its
+// own window carrying a quota.Credit, so CNY and USD are never summed, a zero
+// balance stays zero rather than unlimited, and a missing or malformed amount
+// is reported as such instead of being read as zero the way the pin's
+// toFiniteNumber fallback does. Remaining stays nil on every balance window:
+// a zero balance in one currency must not exhaust an account holding credit in
+// another, so routing is unchanged by these windows.
 func (r apiKeyReader) deepseek(ctx context.Context, key string) (quota.State, error) {
 	reply, err := r.getJSON(ctx, "https://api.deepseek.com/user/balance", key)
 	if err != nil {
@@ -414,37 +420,118 @@ func (r apiKeyReader) deepseek(ctx context.Context, key string) (quota.State, er
 		return failure("deepseek balance returned HTTP %d", reply.status)
 	}
 	var body struct {
-		Available bool `json:"is_available"`
-		Balances  []struct {
-			Currency string          `json:"currency"`
-			Total    json.RawMessage `json:"total_balance"`
-			Granted  json.RawMessage `json:"granted_balance"`
-			ToppedUp json.RawMessage `json:"topped_up_balance"`
-		} `json:"balance_infos"`
+		Available      json.RawMessage   `json:"is_available"`
+		AvailableCamel json.RawMessage   `json:"isAvailable"`
+		Balances       []json.RawMessage `json:"balance_infos"`
 	}
 	if err := decode(reply.body, &body); err != nil {
 		return failure("deepseek balance response: %v", err)
 	}
-	if len(body.Balances) == 0 {
-		return failure("deepseek returned no balance")
-	}
 	var windows []quota.Window
-	for _, balance := range body.Balances {
-		currency := strings.ToUpper(balance.Currency)
-		if currency == "" {
+	for _, raw := range body.Balances {
+		credit, ok := deepseekCredit(raw)
+		if !ok {
 			continue
 		}
-		total, _ := number(balance.Total)
-		windows = append(windows, window("Balance ("+currency+")", 0, total, nil))
-	}
-	plan := "DeepSeek"
-	if !body.Available {
-		plan = "DeepSeek (Insufficient Balance)"
+		name := "Balance (" + credit.Currency + ")"
+		next := quota.Window{Name: name, Credit: &credit}
+		// The pin keys quotas by name, so a repeated currency replaces the
+		// earlier entry rather than adding a second window of the same name.
+		replaced := false
+		for i := range windows {
+			if windows[i].Name == name {
+				windows[i], replaced = next, true
+			}
+		}
+		if !replaced {
+			windows = append(windows, next)
+		}
 	}
 	if len(windows) == 0 {
-		return failure("%s returned no quota windows", r.Name)
+		return failure("deepseek returned no balance")
 	}
-	return quota.State{Plan: plan, Windows: windows, ObservedAt: r.now()}, nil
+	available := deepseekFlag(body.Available)
+	if available == nil {
+		available = deepseekFlag(body.AvailableCamel)
+	}
+	plan := "DeepSeek"
+	switch {
+	case available == nil:
+		plan = "DeepSeek (Availability Unknown)"
+	case !*available:
+		plan = "DeepSeek (Insufficient Balance)"
+	}
+	return quota.State{Plan: plan, Windows: windows, ObservedAt: r.now(), CreditAvailable: available}, nil
+}
+
+// deepseekFlag reads is_available; anything but a JSON boolean is unreported.
+func deepseekFlag(raw json.RawMessage) *bool {
+	var value bool
+	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil {
+		return nil
+	}
+	return &value
+}
+
+// deepseekCredit parses one balance_infos entry. Like the pin it skips an entry
+// that is not an object or has no string currency (deepseek.js:15-18) and
+// accepts the camelCase spellings (deepseek.js:20,27,31).
+func deepseekCredit(raw json.RawMessage) (quota.Credit, bool) {
+	var item map[string]json.RawMessage
+	if json.Unmarshal(raw, &item) != nil || item == nil {
+		return quota.Credit{}, false
+	}
+	var currency string
+	if json.Unmarshal(item["currency"], &currency) != nil || strings.TrimSpace(currency) == "" {
+		return quota.Credit{}, false
+	}
+	field := func(snake, camel string) json.RawMessage {
+		if value, ok := item[snake]; ok && strings.TrimSpace(string(value)) != "null" {
+			return value
+		}
+		return item[camel]
+	}
+	credit := quota.Credit{Currency: strings.ToUpper(strings.TrimSpace(currency))}
+	total, state := creditAmount(field("total_balance", "totalBalance"))
+	credit.State, credit.Total = state, total
+	credit.Granted, _ = creditAmount(field("granted_balance", "grantedBalance"))
+	credit.ToppedUp, _ = creditAmount(field("topped_up_balance", "toppedUpBalance"))
+	return credit, true
+}
+
+// creditAmount reads a decimal amount sent as a JSON number or numeric string.
+// It is strict where number() is lenient: "12abc", NaN and infinities are
+// malformed, not a partial parse.
+func creditAmount(raw json.RawMessage) (*float64, quota.CreditState) {
+	text := strings.TrimSpace(string(raw))
+	if text == "" || text == "null" {
+		return nil, quota.CreditMissing
+	}
+	var value float64
+	if err := json.Unmarshal([]byte(text), &value); err != nil {
+		var quoted string
+		if json.Unmarshal([]byte(text), &quoted) != nil {
+			return nil, quota.CreditMalformed
+		}
+		quoted = strings.TrimSpace(quoted)
+		if quoted == "" {
+			return nil, quota.CreditMissing
+		}
+		parsed, err := strconv.ParseFloat(quoted, 64)
+		if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+			return nil, quota.CreditMalformed
+		}
+		value = parsed
+	}
+	switch {
+	case value > 0:
+		return &value, quota.CreditPositive
+	case value < 0:
+		return &value, quota.CreditNegative
+	default:
+		value = 0 // normalize -0
+		return &value, quota.CreditZero
+	}
 }
 
 // groq mirrors open-sse/services/usage/groq.js: rate limits arrive as headers on

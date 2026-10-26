@@ -689,6 +689,9 @@ func (h *Handler) quota(w http.ResponseWriter, r *http.Request) error {
 				if detail.AvailableReset != nil {
 					item["availableResetCredits"] = *detail.AvailableReset
 				}
+				if detail.CreditAvailable != nil {
+					item["creditAvailable"] = *detail.CreditAvailable
+				}
 			}
 		}
 		if state != nil {

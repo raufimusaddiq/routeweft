@@ -228,7 +228,7 @@ func quotaCell(spec registry.Spec) cell {
 		"minimax-cn":        {kindP, ref("providers/usage:TestMiniMaxUsageEndpointsRegionsAndCountSemantics"), "U/minimax.js:95-226; China host"},
 		"codebuddy-cn":      {kindP, ref("providers/usage:TestCodeBuddyUsageUsesRouteweftIdentity", "providers/usage:TestRegionalReadersUseTheirOwnHost", "ingress:TestCodeBuddyCNUsageFixtureReplays"), "U/codebuddy-cn.js:46-145"},
 		"codebuddy-intl":    {kindP, ref("providers/usage:TestRegionalReadersUseTheirOwnHost", "providers/wire:TestCodeBuddyIntlMessages"), "U/codebuddy-cn.js:46-145; International host"},
-		"deepseek":          {kindP, ref("providers/usage:TestDeepSeekReportsBalance"), "U/deepseek.js:11-108. A zero balance has total 0, which the reader's window() reads as unlimited (P05 open)"},
+		"deepseek":          {kindP, ref("providers/usage:TestDeepSeekPinnedBalanceKeepsCurrenciesApart", "providers/usage:TestDeepSeekBothZeroIsZeroNotUnlimited", "providers/usage:TestDeepSeekUnobservedAmountsStayDistinct", "providers/usage:TestDeepSeekUpstreamFailuresAreErrors"), "U/deepseek.js:11-108. One credit window per currency (#212): zero is zero, never unlimited; missing, malformed and negative amounts and an unreported is_available stay distinct; balances carry no remaining fraction, so they do not change routing"},
 		"groq":              {kindP, ref("providers/usage:TestGroqPinnedHeadersBuildRequestAndTokenWindows", "providers/usage:TestGroqAbsentHeadersAreNotReported", "providers/usage:TestGroqMalformedHeadersNeverInventQuota", "providers/usage:TestGroqUpstreamErrorsAreExplicit"), "U/groq.js:44-129; x-ratelimit-* headers on GET /models become Requests and Tokens windows (#211). Absent buckets are an error, not an empty plan; a malformed bucket is unbounded beside a valid one"},
 		"kenari":            {kindP, ref("providers/usage:TestKenariPinnedZeroCapacity", "providers/usage:TestKenariAbsentAmountsAreUnknownNotExhausted"), "U/kenari.js:9-51"},
 		"opencode-go":       {kindP, ref("providers/usage:TestOpenCodeGoUsageUsedPercentAndAbsentPeriods", "providers/usage:TestOpenCodeGoUsageFailuresAreErrorsNotHealthyAccounts"), "U/opencode-go.js:11-100"},
@@ -278,13 +278,13 @@ func unavailableCell(spec registry.Spec) cell {
 		return c
 	}
 	gaps := map[string]string{
-		"deepseek":   "pin: 402 Insufficient Balance cools the account for two minutes and falls back (errorConfig.js:77, accountFallback.js:35-46), and the balance endpoint reports is_available:false. Routeweft treats 402 as a terminal client error (no cooldown, no fallback) and reads a zero balance as unlimited",
+		"deepseek":   "pin: 402 Insufficient Balance cools the account for two minutes and falls back (errorConfig.js:77, accountFallback.js:35-46), and the balance endpoint reports is_available:false. Routeweft treats 402 as a terminal client error (no cooldown, no fallback). Since #212 the read model reports a zero balance and is_available:false explicitly, but routing does not consume them",
 		"openrouter": "pin: 402 cools the account for two minutes and falls back (errorConfig.js:77). Routeweft treats 402 as a terminal client error",
 	}
 	if note, ok := gaps[id]; ok {
 		refs := ref(gapGuard)
 		if id == "deepseek" {
-			refs = ref(gapGuard, "providers/usage:TestDeepSeekReportsBalance")
+			refs = ref(gapGuard, "providers/usage:TestDeepSeekBothZeroIsZeroNotUnlimited")
 		}
 		return cell{kindG, refs, note}
 	}
@@ -936,7 +936,7 @@ These are findings, not new work in this PR. Each is recorded in PARITY and stay
 1. **402 Payment Required is not an unavailability signal.** The pin cools the account for two minutes and falls back (` + "`errorConfig.js:77`" + `, ` + "`accountFallback.js:35-46`" + `). Routeweft classifies 402 as a terminal client error: no cooldown and no fallback, so an out-of-credit DeepSeek or OpenRouter account keeps (Grok CLI closed it in #184) being tried and keeps failing. ` + "`TestOpenP08ErrorClassificationGaps`" + `.
 2. **Codex ` + "`usage_limit_reached`" + ` ignored ` + "`resets_at`" + ` when this audit began.** P02 (#177) closed it (` + "`wire/error_reset.go`" + `); the gap guard for it was removed and the Codex cell is now P.
 3. **Groq had no quota reader in effect when this audit began.** #211 closed it: the reader now parses the ` + "`x-ratelimit-*`" + ` headers the pin reads (` + "`usage/groq.js:44-129`" + `) and the Groq quota and unavailability cells are now P.
-4. **A zero DeepSeek balance reads as unlimited** (the reader's ` + "`window()`" + ` treats a total of 0 as unlimited), so the account is never seen as out of credit. P05 listed this as open; no test exists for it because the expected behaviour would fail.
+4. **A zero DeepSeek balance read as unlimited when this audit began.** #212 closed the read side: each currency is its own credit window, a zero stays zero and ` + "`is_available`" + ` is explicit (` + "`TestDeepSeekPinnedBalanceKeepsCurrenciesApart`" + `). Balances still do not take an out-of-credit account out of rotation; that is gap 1.
 5. **Providers declared ready whose pin executor is not replicated.** The shared-path table proves their URL and credential only: Codex (` + "`executors/codex.js:415-515`" + `: forced stream, ` + "`store:false`" + `, default instructions, allowlist) and Grok CLI (` + "`executors/grok-cli.js:362-470`" + `: grok-shell identity, forced stream). Their streaming and non-streaming cells are ` + "`G`" + `. Whether their readiness should change is a product decision for #76 P02 and the readiness table (#176). Zed and MiMo Free with its alias mmf were in this list until #192, which built their executors (token exchange, thread envelope, NDJSON frames, bootstrap JWT); their cells are now evidence and their readiness stays ` + "`ready`" + `.
 6. Smaller, in the cell notes: Zed's ` + "`{limited:N}`" + ` quota form, Qoder's absent pool read as unlimited, Command Code's empty window, MiniMax's camelCase envelope, Zed's ` + "`trial_blocked`" + ` message rewrite, Gemini CLI's ` + "`retryDelay`" + ` hint, Claude's and Zed's authenticated listing.
 

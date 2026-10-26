@@ -274,7 +274,8 @@ func TestVercelBalanceIsNotAUsagePercentage(t *testing.T) {
 	}
 }
 
-// TestDeepSeekReportsBalance keeps a credit balance out of the used/total shape.
+// TestDeepSeekReportsBalance keeps a credit balance out of the used/total shape:
+// it is a per-currency credit, not a remaining fraction (#212).
 func TestDeepSeekReportsBalance(t *testing.T) {
 	stub := &stubClient{status: http.StatusOK, body: `{"is_available":true,
 		"balance_infos":[{"currency":"usd","total_balance":"12.50","granted_balance":"0","topped_up_balance":"12.50"}]}`}
@@ -285,8 +286,10 @@ func TestDeepSeekReportsBalance(t *testing.T) {
 	if len(state.Windows) != 1 || state.Windows[0].Name != "Balance (USD)" {
 		t.Fatalf("windows=%+v", state.Windows)
 	}
-	if state.Windows[0].Remaining == nil || *state.Windows[0].Remaining != 1 {
-		t.Fatalf("balance window=%+v", state.Windows[0])
+	w := state.Windows[0]
+	if w.Unlimited || w.Remaining != nil || w.Credit == nil || w.Credit.Currency != "USD" ||
+		w.Credit.State != quota.CreditPositive || w.Credit.Total == nil || *w.Credit.Total != 12.5 {
+		t.Fatalf("balance window=%+v credit=%+v", w, w.Credit)
 	}
 }
 
