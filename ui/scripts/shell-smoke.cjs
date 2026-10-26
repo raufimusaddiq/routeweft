@@ -728,7 +728,7 @@ const { join } = require('node:path');
     await signInForm.getByRole('button', { name: 'Sign in with GitHub Copilot (device code)', exact: true }).click();
     await signInForm.getByText('Pending', { exact: true }).waitFor();
   };
-  for (const [answer, expected] of [['connected', /Signed in as octo@example\.test/], ['save_failed', /provider connection could not be saved; check its identity/]]) {
+  for (const answer of ['connected', 'save_failed']) {
     deviceExpiresAt = '2026-09-25T12:00:03Z';
     deviceAnswer = 'pending';
     devicePollDelayMs = 0;
@@ -749,14 +749,36 @@ const { join } = require('node:path');
     await signInForm.getByText(/The time limit has passed\. A sign-in approved before it may still be saving/).waitFor({ timeout: 8000 });
     assert.equal(await signInForm.getByText('Pending', { exact: true }).count(), 1, 'the clock does not end the attempt');
     for (const final of ['Expired', 'Closed', 'Connected', 'Failed']) assert.equal(await signInForm.getByText(final, { exact: true }).count(), 0, final);
-    await signInForm.locator('[aria-label="Sign-in result"]').waitFor({ timeout: 15000 });
-    assert.match(await signInForm.locator('[aria-label="Sign-in result"] p').textContent(), expected);
-    assert.doesNotMatch(await signInForm.textContent(), /Nothing was saved/);
     if (answer === 'connected') {
+      await signInForm.locator('[aria-label="Sign-in result"]').waitFor({ timeout: 15000 });
+      assert.match(await signInForm.locator('[aria-label="Sign-in result"] p').textContent(), /Signed in as octo@example\.test/);
       await signInForm.getByRole('button', { name: 'Done', exact: true }).click();
       await signInForm.waitFor({ state: 'detached' });
+      continue;
     }
+    // A save that persisted nothing is not an outcome: the server released the
+    // attempt for another try, so it stays pending with the server's message.
+    await signInForm.getByText(/provider connection could not be saved; check its identity\. The sign-in is still open on the server: check again to retry, or cancel it\./).waitFor({ timeout: 15000 });
+    assert.equal(await signInForm.getByText('Pending', { exact: true }).count(), 1, 'a failed device save keeps the attempt');
+    assert.equal(await signInForm.locator('[aria-label="Sign-in result"]').count(), 0);
+    assert.doesNotMatch(await signInForm.textContent(), /Nothing was saved/);
+    // Failed save, then retry: the next poll saves.
+    deviceAnswer = 'connected';
+    devicePollDelayMs = 0;
+    await signInForm.getByRole('button', { name: 'Check again', exact: true }).click();
+    await signInForm.getByText('Connected', { exact: true }).waitFor({ timeout: 8000 });
+    await signInForm.getByRole('button', { name: 'Done', exact: true }).click();
+    await signInForm.waitFor({ state: 'detached' });
   }
+  // Failed save, then cancel: the server confirms and nothing is claimed saved.
+  deviceExpiresAt = '';
+  deviceAnswer = 'save_failed';
+  devicePollDelayMs = 0;
+  await startDevice();
+  await signInForm.getByText(/The sign-in is still open on the server: check again to retry, or cancel it\./).waitFor({ timeout: 8000 });
+  await signInForm.getByRole('button', { name: 'Cancel sign-in', exact: true }).click();
+  await signInForm.getByText('Cancelled', { exact: true }).waitFor();
+  assert.equal(await signInForm.getByText('Connected', { exact: true }).count(), 0);
   // The server no longer holding the attempt reads as closed, pointing at the list.
   deviceAnswer = 'state_invalid';
   devicePollDelayMs = 0;

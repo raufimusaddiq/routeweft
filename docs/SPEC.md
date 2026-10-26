@@ -1063,9 +1063,18 @@ suggests: an approval just before the time limit may still be saving.
 
 - The attempt stays tracked, and a device poll keeps running, until a server
   answer ends it. Passing `expiresAt` only changes the wording.
-- No answer (a network failure, or a response without an API error code),
-  `oauth_poll_failed`, `oauth_code_missing` and `oauth_state_mismatch` keep the
-  attempt; repeated poll failures pause polling for the operator to resume.
+- Whether an error leaves the attempt open is decided per endpoint by the code
+  table in `ui/src/signIn.ts` (`SIGN_IN_CODES`), which a test checks against the
+  codes this file's callback, poll and cancel handlers can write. No answer (a
+  network failure, or a response without an API error code) and an unknown code
+  keep the attempt.
+- A device save that persisted nothing (`connection_save_failed`,
+  `oauth_identity_unresolved`, `invalid_auth_kind`, `oauth_exchange_failed` from
+  the poll) releases the attempt on the server, so the dashboard keeps it pending
+  with the server's message and offers Check again or Cancel. The same codes from
+  a callback end the attempt, because the callback consumed its state first.
+- An unreachable server or provider (no answer, `oauth_poll_failed`) is retried,
+  then polling pauses for the operator to resume.
 - A cancel counts only on `200`; any other failure keeps the attempt for a retry,
   and Close does not drop it. `oauth_completing` waits for the poll's result.
 - `oauth_state_invalid` reads as closed: the server no longer holds the attempt,

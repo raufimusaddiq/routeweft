@@ -200,15 +200,21 @@ export function Providers({ onUnauthorized }: Props) {
         // An abort is the operator ending the sign-in, not a failure to report.
         if (cancelled || (cause instanceof DOMException && cause.name === 'AbortError')) return
         // Without an answer that ends it, the attempt is still open on the server
-        // (and may be saving), so it stays tracked: retry, then pause for the
-        // operator rather than drop it.
-        if (attemptStillOpen(errorCodeOf(cause))) {
-          if (++failures < DEVICE_POLL_RETRIES) { window.setTimeout(poll, delay); return }
+        // (and may be saving), so it stays tracked. An unreachable server or
+        // provider is retried, then paused; any other open answer (a save that
+        // persisted nothing, which the server releases for another try) pauses
+        // at once with the server's message. The operator checks again or cancels.
+        const code = errorCodeOf(cause)
+        if (attemptStillOpen(code, 'poll')) {
+          const unreachable = code === undefined || code === 'oauth_poll_failed'
+          if (unreachable && ++failures < DEVICE_POLL_RETRIES) { window.setTimeout(poll, delay); return }
           setPollStalled(true)
-          setAttemptNote('The server or the provider could not be reached. The sign-in may still be open or saving; check again.')
+          setAttemptNote(unreachable
+            ? 'The server or the provider could not be reached. The sign-in may still be open or saving; check again.'
+            : `${cause instanceof Error ? cause.message : 'The sign-in could not be completed'}. The sign-in is still open on the server: check again to retry, or cancel it.`)
           return
         }
-        setDeviceFlow(null); attemptFailed(cause)
+        endAttempt(); attemptFailed(cause)
       }
     }, delay)
     return () => { cancelled = true; window.clearTimeout(timer); controller.abort() }
@@ -340,12 +346,21 @@ export function Providers({ onUnauthorized }: Props) {
     setOutcome({ phase: 'success', message: connection ? `Signed in as ${connection.identity}; the connection is saved.` : 'Provider connection saved.', connection })
   }
 
+  // Forgets the attempt on screen and everything learned about it (a stalled poll,
+  // a note), once the server has ended it or before a new one starts, so nothing
+  // carries over to the next attempt.
+  function endAttempt() {
+    setOauthFlow(null); setOauthInput(''); setDeviceFlow(null)
+    setAttemptNote(''); setPollStalled(false)
+  }
+
   // Reports how the server ended an attempt. Called only with a server answer that
   // ended it (attemptStillOpen is false), never on the clock or on silence.
   function attemptFailed(cause: unknown) {
     if (errorCodeOf(cause) === 'oauth_identity_unresolved') setNeedIdentity(true)
     const phase = phaseForError(errorCodeOf(cause))
-    if (phase === 'closed') { void load().then(() => setReload(value => value + 1)) }
+    // Closed may hide an earlier save, and a publish failure is a save: show the list.
+    if (phase === 'closed' || errorCodeOf(cause) === 'connection_publish_failed') { void load().then(() => setReload(value => value + 1)) }
     setOutcome(phase === 'expired'
       ? { phase, message: 'The provider reports the sign-in code expired. Nothing was saved; start again.' }
       : phase === 'closed' ? { phase, message: CLOSED_MESSAGE }
@@ -354,7 +369,7 @@ export function Providers({ onUnauthorized }: Props) {
 
   async function startOAuth() {
     if (!selectedProvider || (askIdentity && !account.identity.trim())) return
-    setOauthInput(''); setOutcome(null)
+    endAttempt(); setOutcome(null)
     await action('oauth-start', '', async () => {
       const flow = await send(`/oauth/${encodeURIComponent(selected)}/start`, 'POST', { ...signInAccount(), meta: flowMeta() }) as Omit<OAuthFlow, 'provider'>
       setOauthFlow({ ...flow, provider: selected })
@@ -384,14 +399,14 @@ export function Providers({ onUnauthorized }: Props) {
     if (liveState.current !== state) return true
     switch (cancelResult(status, code)) {
       case 'cancelled':
-        setOauthFlow(null); setOauthInput(''); setDeviceFlow(null)
+        endAttempt()
         setOutcome({ phase: 'cancelled', message: 'Sign-in cancelled. Nothing was saved.' })
         return true
       case 'saving':
         setAttemptNote('The provider already approved this sign-in and it is being saved, so it can no longer be cancelled. Waiting for the result.')
         return false
       case 'closed':
-        setOauthFlow(null); setOauthInput(''); setDeviceFlow(null)
+        endAttempt()
         setOutcome({ phase: 'closed', message: CLOSED_MESSAGE })
         await load(); setReload(value => value + 1)
         return true
@@ -444,7 +459,7 @@ export function Providers({ onUnauthorized }: Props) {
 
   async function startDevice() {
     if (!selectedProvider || (askIdentity && !account.identity.trim())) return
-    setOutcome(null)
+    endAttempt(); setOutcome(null)
     await action('device-start', '', async () => {
       const flow = await send(`/oauth/${encodeURIComponent(selected)}/device`, 'POST', { ...signInAccount(), meta: flowMeta() }) as Omit<DeviceFlow, 'provider'>
       setDeviceFlow({ ...flow, provider: selected })
@@ -491,8 +506,9 @@ export function Providers({ onUnauthorized }: Props) {
         // finishing again gets the server's answer (a used attempt reads as closed).
         setAttemptNote('No answer from the server. The sign-in may have completed; check the connections below, then finish again or cancel.')
         await load(); setReload(value => value + 1)
-      } else if (attemptStillOpen(code)) {
-        // A paste the server refused before touching the attempt: paste again.
+      } else if (attemptStillOpen(code, 'callback')) {
+        // Refused before the attempt was touched (a paste without a code or from
+        // another attempt, a session or configuration problem): try again.
         setError(cause instanceof Error ? cause.message : 'Sign-in failed.')
       } else {
         resetSecrets(); attemptFailed(cause)

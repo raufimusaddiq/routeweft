@@ -8,8 +8,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/adminauth"
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 )
 
@@ -209,5 +211,41 @@ func TestProviderReadModelDescribesEachSignInMethod(t *testing.T) {
 	}
 	if len(methods["openai"]) != 0 {
 		t.Fatalf("openai=%+v", methods["openai"])
+	}
+}
+
+// A device save that persisted nothing releases the attempt (see
+// TestOAuthDeviceSaveFailureKeepsAttemptOpen for the retry), so the operator can
+// also end it: the cancel is confirmed and the approval is never saved later.
+func TestOAuthDeviceSaveFailureThenCancelEndsTheAttempt(t *testing.T) {
+	upstream := &deviceUpstream{pollStatus: 200, pollBody: `{"status":"approved","token":"` + deviceTestToken + `"}`}
+	h, mux, creds, cookie, clock := newDeviceAPI(t, upstream)
+	started := startDevice(t, mux, cookie)
+	clock.now = clock.now.Add(3 * time.Second)
+	node, err := h.builtinNode(context.Background(), "kilocode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clash, err := creds.PutConnection(context.Background(), credentials.Connection{NodeID: node.ID, Name: "Existing", AuthKind: credentials.AuthOAuth, Identity: "work@example.test", Secret: credentials.Secret{AccessToken: "other"}, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recorder := pollDevice(t, mux, cookie, started.State); recorder.Code != http.StatusBadRequest || errorCode(t, recorder.Body.Bytes()) != "connection_save_failed" {
+		t.Fatalf("save failure status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	body, _ := json.Marshal(map[string]string{"state": started.State})
+	if recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/kilocode/cancel", string(body)); recorder.Code != http.StatusOK {
+		t.Fatalf("cancel after failed save status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	// With the clash gone a poll would now save; the cancelled attempt must not.
+	if err := creds.DeleteConnection(context.Background(), clash.ID); err != nil {
+		t.Fatal(err)
+	}
+	clock.now = clock.now.Add(3 * time.Second)
+	if recorder := pollDevice(t, mux, cookie, started.State); recorder.Code != http.StatusBadRequest || errorCode(t, recorder.Body.Bytes()) != "oauth_state_invalid" {
+		t.Fatalf("poll after cancel status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if connections, _ := creds.ListConnections(context.Background(), "kilocode"); len(connections) != 0 {
+		t.Fatalf("cancelled attempt saved %+v", connections)
 	}
 }

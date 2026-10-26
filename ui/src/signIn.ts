@@ -69,16 +69,51 @@ export function phaseForError(code: string | undefined): 'expired' | 'closed' | 
   return 'failed'
 }
 
-// Whether a failed request left the attempt open on the server, so the dashboard
-// must keep tracking it rather than report an outcome:
-//   no answer (network, or a response without the API's error code), where the
-//   request may or may not have landed;
-//   oauth_poll_failed, where the provider could not be reached and the attempt
-//   stays open;
-//   oauth_code_missing and oauth_state_mismatch, refused before the attempt was
-//   touched.
-export function attemptStillOpen(code: string | undefined): boolean {
-  return code === undefined || code === 'oauth_poll_failed' || code === 'oauth_code_missing' || code === 'oauth_state_mismatch'
+// Every error code the callback, poll and cancel endpoints answer, and whether
+// the attempt is still open on the server afterwards, per endpoint
+// (internal/control/api/oauth.go; signIn.test.ts reads that file and fails on a
+// code missing here). The same code can differ by endpoint: a callback consumes
+// its state before the exchange, so a failed save ends it, while a device poll
+// releases an attempt whose save persisted nothing, so it stays open.
+export type SignInStep = 'callback' | 'poll' | 'cancel'
+type AttemptAfter = 'open' | 'ended'
+export const SIGN_IN_CODES: Record<string, Partial<Record<SignInStep, AttemptAfter>>> = {
+  // Refused before the attempt is read.
+  cross_origin: { callback: 'open', poll: 'open', cancel: 'open' },
+  unauthenticated: { callback: 'open', poll: 'open', cancel: 'open' },
+  invalid_request: { callback: 'open', poll: 'open', cancel: 'open' },
+  credentials_unavailable: { callback: 'open', poll: 'open' },
+  oauth_unsupported: { callback: 'open', poll: 'open' },
+  oauth_code_missing: { callback: 'open' },
+  oauth_state_mismatch: { callback: 'open' },
+  // The provider could not be reached; the attempt is kept for the next poll.
+  oauth_poll_failed: { poll: 'open' },
+  // The server no longer holds the attempt (unknown, expired, used, foreign).
+  oauth_state_invalid: { callback: 'ended', poll: 'ended', cancel: 'ended' },
+  // The provider ended it.
+  oauth_denied: { callback: 'ended', poll: 'ended' },
+  oauth_expired: { poll: 'ended' },
+  oauth_sign_in_rejected: { poll: 'ended' },
+  // Consumed, then the redirect could not be resolved.
+  oauth_redirect_unconfigured: { callback: 'ended' },
+  // Save failures: a callback already consumed the state; a poll released it.
+  oauth_exchange_failed: { callback: 'ended', poll: 'open' },
+  oauth_identity_unresolved: { callback: 'ended', poll: 'open' },
+  invalid_auth_kind: { callback: 'ended', poll: 'open' },
+  connection_save_failed: { callback: 'ended', poll: 'open' },
+  // Saved but not published: the attempt is finished either way.
+  connection_publish_failed: { callback: 'ended', poll: 'ended' },
+  // A poll is saving the approval; the poll reports the result.
+  oauth_completing: { cancel: 'open' },
+}
+
+// Whether a failed callback or poll left the attempt open on the server, so the
+// dashboard keeps tracking it instead of reporting an outcome. No answer (a
+// network failure, or a response without an API error code) may or may not have
+// landed, and an unknown code is not a known end, so both keep it.
+export function attemptStillOpen(code: string | undefined, step: SignInStep): boolean {
+  if (code === undefined || !Object.hasOwn(SIGN_IN_CODES, code)) return true
+  return SIGN_IN_CODES[code][step] !== 'ended'
 }
 
 // What the server's answer to a cancel means. Only the server can say an attempt

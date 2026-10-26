@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { attemptExpired, attemptStillOpen, cancelResult, connectMethods, phaseForError, type ProviderAuth } from './signIn.ts'
+import { readFileSync } from 'node:fs'
+import { attemptExpired, attemptStillOpen, cancelResult, connectMethods, phaseForError, SIGN_IN_CODES, type ProviderAuth, type SignInStep } from './signIn.ts'
 
 test('codex offers browser sign-in and token import without asking for an identity', () => {
   const codex: ProviderAuth = { auth: 'oauth', authModes: [], signInMethods: [
@@ -61,8 +62,45 @@ test('outcomes come from the server answer, never the clock', () => {
   assert.equal(phaseForError('oauth_denied'), 'failed')
   assert.equal(phaseForError('connection_save_failed'), 'failed')
   // No answer, a provider outage, or a refused paste leave the attempt open.
-  for (const code of [undefined, 'oauth_poll_failed', 'oauth_code_missing', 'oauth_state_mismatch']) assert.equal(attemptStillOpen(code), true, String(code))
-  for (const code of ['oauth_state_invalid', 'oauth_expired', 'oauth_denied', 'oauth_exchange_failed', 'connection_save_failed']) assert.equal(attemptStillOpen(code), false, code)
+  for (const code of [undefined, 'oauth_poll_failed', 'oauth_code_missing', 'oauth_state_mismatch', 'not_a_known_code', '__proto__']) assert.equal(attemptStillOpen(code, 'callback'), true, String(code))
+  for (const code of ['oauth_state_invalid', 'oauth_expired', 'oauth_denied', 'oauth_sign_in_rejected', 'connection_publish_failed']) assert.equal(attemptStillOpen(code, 'poll'), false, code)
+})
+
+test('a failed save ends a callback attempt but leaves a device attempt open', () => {
+  for (const code of ['connection_save_failed', 'oauth_identity_unresolved', 'invalid_auth_kind', 'oauth_exchange_failed']) {
+    assert.equal(attemptStillOpen(code, 'poll'), true, code)
+    assert.equal(attemptStillOpen(code, 'callback'), false, code)
+  }
+})
+
+// Reads the server's own source so a code added to the callback, poll or cancel
+// path cannot reach the dashboard unclassified, and a code removed there cannot
+// linger here.
+test('every code the sign-in endpoints answer is classified', () => {
+  const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
+  const oauth = read('../../internal/control/api/oauth.go')
+  const api = read('../../internal/control/api/api.go')
+  const body = (source: string, name: string) => {
+    const start = source.search(new RegExp(`\\nfunc (\\([^)]*\\) )?${name}\\(`))
+    assert.ok(start >= 0, `${name} not found`)
+    const end = source.indexOf('\nfunc ', start + 1)
+    return source.slice(start, end < 0 ? undefined : end)
+  }
+  const codes = (source: string) => [...source.matchAll(/writeError\(w, http\.\w+, "([a-z_]+)"/g)].map(match => match[1])
+  const shared = [...codes(body(api, 'requireSession')), ...codes(body(api, 'decodeJSON'))]
+  const helpers = [...codes(body(oauth, 'oauthProviderFor')), ...codes(body(oauth, 'saveOnboardedConnection'))]
+  const answered: Record<SignInStep, string[]> = {
+    callback: [...shared, ...helpers, ...codes(body(oauth, 'flowRedirectURI')), ...codes(body(oauth, 'handleOAuthCallback'))],
+    poll: [...shared, ...helpers, ...codes(body(oauth, 'handleOAuthDevicePoll'))],
+    cancel: [...shared, ...codes(body(oauth, 'handleOAuthCancel'))],
+  }
+  for (const [step, list] of Object.entries(answered) as Array<[SignInStep, string[]]>) {
+    assert.ok(list.length > 5, `${step}: extraction found too few codes`)
+    for (const code of new Set(list)) assert.ok(SIGN_IN_CODES[code]?.[step], `${step} answers ${code} but signIn.ts does not classify it`)
+  }
+  for (const [code, steps] of Object.entries(SIGN_IN_CODES)) {
+    for (const step of Object.keys(steps) as SignInStep[]) assert.ok(answered[step].includes(code), `${code} is classified for ${step}, which never answers it`)
+  }
 })
 
 test('only a confirmed cancel counts as cancelled', () => {
