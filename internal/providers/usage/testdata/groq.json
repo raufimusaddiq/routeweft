@@ -1,0 +1,12 @@
+{
+  "status": 200,
+  "headers": {
+    "x-ratelimit-limit-requests": "14400",
+    "x-ratelimit-remaining-requests": "14370",
+    "x-ratelimit-reset-requests": "2m59.56s",
+    "x-ratelimit-limit-tokens": "18000",
+    "x-ratelimit-remaining-tokens": "17997",
+    "x-ratelimit-reset-tokens": "7.66s"
+  },
+  "body": {"data": []}
+}
