@@ -1044,11 +1044,39 @@ the connection from what the provider reports. A blank name falls back to the
 provider's display name and then to the identity, and the dashboard offers to set
 a nickname once the sign-in succeeds. An identity is required up front only when
 the flow does not declare `ResolvesIdentity`; a flow declares it only where a
-genuine credential always yields one (Codex from its id token, falling back to
-the ChatGPT account id when the token carries no email; iFlow's browser and
-cookie flows; GitLab's browser and PAT flows; Cursor). An operator identity sent anyway stays the fallback, and a
-sign-in that resolves no identity answers `502 oauth_identity_unresolved` before
-anything is saved.
+genuine credential always yields one (iFlow's browser and cookie flows; GitLab's
+browser and PAT flows; Cursor) or, with `IdentityOptional`, where the reference
+stores a credential that names no account without one (Codex). An operator
+identity sent anyway stays the fallback, and a sign-in that resolves no identity
+answers `502 oauth_identity_unresolved` before anything is saved, except under
+`IdentityOptional`.
+
+Codex identity follows the reference at 9router `1c3b9f47` (#239); the identity
+is what the reference stores as the connection's email, and the ChatGPT account
+id is never used as one:
+
+- Browser sign-in: the id token's `email`, else the access token's `email`,
+  `preferred_username` or `sub` (`codex.js:48-66`, `providerHelpers.js:47-82`).
+  The account id and plan come from the id token only.
+- Token import: the access token's profile email, `email` or
+  `preferred_username` (`import-token/route.js:29-66`); the label falls back to
+  the operator's name, then the email, then `ChatGPT Access Token`.
+- Bulk import: the item's `email`, else the `email` claim of its id token, or
+  of its access token when it has none (`bulk-import/route.js:76-95`).
+- A Codex credential that names none of these is stored with no identity,
+  labelled `Account N` (N is one more than the provider's connections,
+  `connectionsRepo.js:289-291`) unless named, and is never matched to another
+  connection, so importing it twice stores two. The store keeps `identity` NULL
+  for it (migration v11); a non-NULL identity stays unique per node, the manual
+  connection form still requires one, and an edit that sends a blank identity
+  keeps the stored one.
+- A connection stored before #239 with the ChatGPT account id as its identity
+  is kept as is: v11 copies it unchanged and nothing rewrites it. Signing in,
+  importing or bulk-importing the same account again adds a connection beside
+  it, which the operator may delete. Routeweft still refuses a second connection
+  with an identity a node already has instead of updating it, unlike the
+  reference's merge (`connectionsRepo.js:228-287`); that is generic, not Codex
+  identity, and out of #239's scope.
 
 `POST /admin/v1/oauth/{provider}/cancel` (body: `state`) ends a pending browser
 or device attempt so it can no longer complete, and answers

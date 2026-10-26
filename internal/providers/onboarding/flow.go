@@ -105,6 +105,11 @@ type Flow struct {
 	// sent anyway stays the fallback, and a sign-in that resolves none is refused
 	// before anything is saved.
 	ResolvesIdentity bool
+	// IdentityOptional means a credential that names no account is stored without
+	// an identity rather than refused, as the reference stores a Codex connection
+	// with no email (connectionsRepo.js:228-264 never dedups one). Such a
+	// connection is never matched to another.
+	IdentityOptional bool
 	// RedirectSource says where the flow's redirect URI comes from. It is the
 	// single declaration that decides whether the handler must resolve one, so a
 	// flow cannot consume a URI the handler never builds, or demand one it discards.
@@ -218,6 +223,9 @@ type Result struct {
 	Secret      credentials.Secret
 	Identity    string
 	DisplayName string
+	// FallbackName labels the connection when neither the operator, the provider
+	// nor an identity names it. Empty means the reference's "Account N".
+	FallbackName string
 	// AuthKind is the credential mode to store. Most flows store oauth; a PAT,
 	// cookie or API-key import stores its own kind.
 	AuthKind credentials.AuthKind

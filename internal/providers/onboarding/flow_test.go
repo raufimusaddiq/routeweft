@@ -156,7 +156,7 @@ func TestClaudePasteCodeState(t *testing.T) {
 func TestCodexCapturesAccountID(t *testing.T) {
 	// A JWT with the OpenAI auth claims; the signature is irrelevant because the
 	// claims are only used for display and routing.
-	claims := urlSafeEncode([]byte(`{"https://api.openai.com/auth":{"chatgpt_account_id":"fixture-account","chatgpt_plan_type":"plus"},"https://api.openai.com/profile":{"email":"fixture@example.invalid"}}`))
+	claims := urlSafeEncode([]byte(`{"https://api.openai.com/auth":{"chatgpt_account_id":"fixture-account","chatgpt_plan_type":"plus"},"email":"fixture@example.invalid"}`))
 	idToken := "header." + claims + ".signature"
 	stub := &stubClient{handler: func(*http.Request) (int, string) {
 		return http.StatusOK, `{"access_token":"fixture-access","refresh_token":"fixture-refresh","id_token":"` + idToken + `","expires_in":3600}`
@@ -809,7 +809,9 @@ func TestFlowAuthKindIsPermittedByItsProviderSpec(t *testing.T) {
 // TestResolvesIdentityFlowsReturnOne keeps the flag honest. The flag tells the
 // dashboard not to ask for an identity, so a flow that sets it must resolve one
 // from the provider or the credential; otherwise the connection is stored with an
-// empty identity and dedup has no key.
+// empty identity and dedup has no key. A flow that also declares IdentityOptional
+// (Codex) stores such a credential without one on purpose; its chain is pinned by
+// TestCodexIdentityMatchesReference instead.
 func TestResolvesIdentityFlowsReturnOne(t *testing.T) {
 	// The imports that declare the flag, with a credential that resolves an identity
 	// without a live provider.
@@ -820,8 +822,6 @@ func TestResolvesIdentityFlowsReturnOne(t *testing.T) {
 			Meta:  map[string]string{"machineId": "0123abcd-0123-4abc-8def-0123456789ab"},
 		},
 		"gitlab": {Input: "fixture-pat", Meta: map[string]string{"baseUrl": "https://gitlab.example.invalid"}},
-		// A ChatGPT token without an email still names its account.
-		"codex": {Input: fixtureJWT(t, `{"https://api.openai.com/auth":{"chatgpt_account_id":"acct-fixture"}}`)},
 	}
 	// The providers answer with a resolved identity; the point is that the flow
 	// reads it rather than trusting the operator.
@@ -879,7 +879,7 @@ func TestResolvesIdentityFlowsReturnOne(t *testing.T) {
 	// Every flow that declares the flag must be exercised above, so a new one
 	// cannot claim the capability without a test.
 	for provider, flow := range ManualFlows() {
-		if flow.ResolvesIdentity {
+		if flow.ResolvesIdentity && !flow.IdentityOptional {
 			if _, ok := cases[provider]; !ok {
 				t.Errorf("%s declares ResolvesIdentity but has no case here", provider)
 			}
@@ -890,13 +890,11 @@ func TestResolvesIdentityFlowsReturnOne(t *testing.T) {
 	t.Setenv(IflowClientIDEnv, "fixture-client")
 	t.Setenv(IflowClientSecretEnv, "fixture-secret")
 	exchanges := map[string]string{
-		// Email-less id token: the account id is the identity.
-		"codex":  `{"access_token":"fixture-access","id_token":"` + fixtureJWT(t, `{"https://api.openai.com/auth":{"chatgpt_account_id":"acct-fixture"}}`) + `"}`,
 		"iflow":  `{"access_token":"fixture-access"}`,
 		"gitlab": `{"access_token":"fixture-access"}`,
 	}
 	for _, flow := range builtinFlows() {
-		if !flow.ResolvesIdentity {
+		if !flow.ResolvesIdentity || flow.IdentityOptional {
 			continue
 		}
 		if flow.Import != nil {

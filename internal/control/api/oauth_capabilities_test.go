@@ -40,7 +40,7 @@ func errorCode(t *testing.T, body []byte) string {
 // (OAuthModal.js opens the provider page directly), and the id token supplies
 // the identity. The nickname defaults to that identity.
 func TestCodexSignInStartsWithoutNameOrIdentity(t *testing.T) {
-	idToken := unsignedJWT(`{"https://api.openai.com/profile":{"email":"resolved@example.test"},"https://api.openai.com/auth":{"chatgpt_account_id":"acct-fixture"}}`)
+	idToken := unsignedJWT(`{"email":"resolved@example.test","https://api.openai.com/auth":{"chatgpt_account_id":"acct-fixture"}}`)
 	exchange := &oauthExchange{body: `{"access_token":"` + oauthTestAccess + `","refresh_token":"` + oauthTestRefresh + `","id_token":"` + idToken + `","expires_in":3600}`}
 	_, mux, creds, cookie := newOAuthAPI(t, exchange)
 	recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/codex/start", `{}`)
@@ -62,9 +62,15 @@ func TestCodexSignInStartsWithoutNameOrIdentity(t *testing.T) {
 }
 
 // A flow that declares ResolvesIdentity but whose credential names nobody, with
-// no operator fallback, is refused with its own code and saves nothing.
+// no operator fallback, is refused with its own code and saves nothing. Codex
+// itself now stores such a credential without an identity (#239), so its import
+// is made identity-required here to keep the guard every other flow relies on
+// under test.
 func TestUnresolvedIdentityIsRefusedBeforeSaving(t *testing.T) {
-	_, mux, creds, cookie := newOAuthAPI(t, &oauthExchange{})
+	h, mux, creds, cookie := newOAuthAPI(t, &oauthExchange{})
+	required := h.manualFlows["codex"]
+	required.IdentityOptional = false
+	h.manualFlows["codex"] = required
 	recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/codex/import", `{"input":"opaque-not-a-jwt"}`)
 	if recorder.Code != http.StatusBadGateway || errorCode(t, recorder.Body.Bytes()) != "oauth_identity_unresolved" {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())

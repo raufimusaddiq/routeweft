@@ -294,7 +294,9 @@ const { join } = require('node:path');
     if (mode === 'abort') return route.abort('failed');
     if (mode === 'mismatch') return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: 'oauth_state_mismatch', message: 'this address is from a different sign-in attempt; paste the one from this attempt' } }) });
     if (mode === 'invalid') return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: 'oauth_state_invalid', message: 'this sign-in attempt expired or was already used; start again' } }) });
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-codex', nodeId: 'node-codex', providerId: 'codex', name: 'resolved@example.test', authKind: 'oauth', identity: 'resolved@example.test', enabled: true, priority: 0, credentialConfigured: true }) });
+    // A ChatGPT account whose tokens name no email is saved without an identity
+    // and labelled "Account N", as the reference does (#239).
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-codex', nodeId: 'node-codex', providerId: 'codex', name: 'Account 1', authKind: 'oauth', identity: '', enabled: true, priority: 0, credentialConfigured: true }) });
   }
   if (url.pathname === '/admin/v1/connections/conn-codex' && method === 'PATCH') {
     signInPatches.push(route.request().postDataJSON());
@@ -681,7 +683,7 @@ const { join } = require('node:path');
   assert.equal(signInCallbacks.length, 4);
   assert.deepEqual(signInCallbacks.at(-1), { state: 'smoke-state-3', input: 'http://localhost:1455/auth/callback?code=auth-code-smoke&state=smoke-state-3' });
   report.codexConnected = await signInForm.locator('[aria-label="Sign-in result"] p').textContent();
-  assert.match(report.codexConnected, /Signed in as resolved@example\.test/);
+  assert.match(report.codexConnected, /Signed in as Account 1; the connection is saved\./, 'a connection without identity is reported by its label');
   assert.equal(await page.content().then(html => html.includes('auth-code-smoke')), false, 'pasted callback must not stay in the DOM');
   await signInForm.getByLabel('Nickname (optional)').fill('Work');
   await signInForm.getByRole('button', { name: 'Save nickname', exact: true }).click();
