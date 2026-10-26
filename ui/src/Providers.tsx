@@ -4,7 +4,7 @@ import { EmptyState, ErrorNotice, SkeletonRows } from './kit'
 import { Dot, Statement, Status, type Tone } from './editorial'
 import { badRate, num, largest, outlier, pct, rate, share, topByRequests, type Summary } from './format'
 import { READINESS_LABEL, readinessNote, readinessStatus, type Readiness } from './readiness'
-import { attemptExpired, cancelResult, connectMethods, phaseForError, type AttemptPhase, type Completion, type ConnectMethod, type SignInMethod, type SignInMode } from './signIn'
+import { attemptExpired, attemptStillOpen, cancelResult, connectMethods, phaseForError, type AttemptPhase, type Completion, type ConnectMethod, type SignInMethod, type SignInMode } from './signIn'
 
 function ReadinessTag({ provider }: { provider: { readiness?: Readiness } }) {
   const status = readinessStatus(provider)
@@ -17,7 +17,9 @@ type Model = { providerId: string; id: string; name?: string; contextWindow?: nu
 type Alias = { alias: string; providerId: string; modelId: string }
 type Pricing = { providerId: string; modelId: string; inputPerMTok?: number; outputPerMTok?: number; cacheReadPerMTok?: number; cacheWritePerMTok?: number }
 type ProxyPool = { id: string; name: string; enabled: boolean }
-type OAuthFlow = { state: string; authorizeUrl: string; completion: Completion; expiresAt?: string }
+// Each attempt carries the provider it was started for, so polling, finishing and
+// cancelling stay on that provider even if another one is selected meanwhile.
+type OAuthFlow = { provider: string; state: string; authorizeUrl: string; completion: Completion; expiresAt?: string }
 // How the last sign-in attempt ended. A success carries the saved connection so
 // the operator can see the identity the provider reported and name it.
 type Outcome = { phase: AttemptPhase; message: string; connection?: Connection }
@@ -61,7 +63,7 @@ function providerLabel(id: string): string {
 }
 // Consecutive transient poll failures tolerated before the panel gives up.
 const DEVICE_POLL_RETRIES = 5
-type DeviceFlow = { state: string; userCode: string; verificationUrl: string; intervalSeconds: number; expiresAt?: string }
+type DeviceFlow = { provider: string; state: string; userCode: string; verificationUrl: string; intervalSeconds: number; expiresAt?: string }
 const OAUTH_HINTS: Record<Completion, string> = {
   code: 'Sign in on the provider page, then copy the code it shows and paste it below.',
   'redirect-url': 'Sign in on the provider page. Your browser then goes to an address on localhost that will not load; copy that full address from the address bar and paste it below.',
@@ -76,6 +78,10 @@ function loopbackHint(redirect: string): string {
 }
 const ATTEMPT_LABEL: Record<AttemptPhase, string> = { success: 'Connected', expired: 'Expired', cancelled: 'Cancelled', failed: 'Failed', closed: 'Closed' }
 const EMPTY_ACCOUNT = { name: '', identity: '', accessToken: '', refreshToken: '', cookie: '' }
+// Shown for an attempt the server no longer holds. Gone does not say whether an
+// earlier request saved it (a lost response, a save that finished as time ran
+// out), so the operator is pointed at the connection list instead of told.
+const CLOSED_MESSAGE = 'This sign-in is no longer open on the server: it expired or was already used. Check the connections below for anything it saved.'
 const errorCodeOf = (cause: unknown) => cause instanceof RequestError ? (cause.body as { error?: { code?: string } } | null)?.error?.code : undefined
 
 class RequestError extends Error {
@@ -112,9 +118,16 @@ export function Providers({ onUnauthorized }: Props) {
   // Set when a flow that normally reads the account from the provider came back
   // without one, so the next attempt asks the operator instead.
   const [needIdentity, setNeedIdentity] = useState(false)
-  // What a cancel that did not end the attempt found out (a save in progress, or
-  // no answer). Shown on the pending attempt, which stays tracked.
-  const [cancelNote, setCancelNote] = useState('')
+  // What a request that did not end the attempt found out (a save in progress, no
+  // answer, a cancel the server did not confirm). Shown on the pending attempt,
+  // which stays tracked.
+  const [attemptNote, setAttemptNote] = useState('')
+  // The attempt's time limit has passed. Informational only: the server decides
+  // what that means, and a save may already be under way.
+  const [pastExpiry, setPastExpiry] = useState(false)
+  // Polling stopped after repeated failures to reach the server or the provider;
+  // the attempt is still tracked and the operator resumes it.
+  const [pollStalled, setPollStalled] = useState(false)
   // The state of the attempt on screen, read after an await to tell whether the
   // attempt the request was about is still the current one.
   const liveState = useRef<string | null>(null)
@@ -165,7 +178,7 @@ export function Providers({ onUnauthorized }: Props) {
   // Device sign-in: the operator approves on the provider's page; poll until the
   // server reports the attempt ended. The server also throttles polling.
   useEffect(() => {
-    if (!deviceFlow) return
+    if (!deviceFlow || pollStalled) return
     let cancelled = false
     let failures = 0
     // Cancel and unmount end the in-flight poll request, not just the next tick.
@@ -175,7 +188,7 @@ export function Providers({ onUnauthorized }: Props) {
     const timer = window.setTimeout(async function poll() {
       if (cancelled) return
       try {
-        const result = await send(`/oauth/${encodeURIComponent(selected)}/poll`, 'POST', { state: flow.state }, controller.signal) as { status: string; connection?: Connection }
+        const result = await send(`/oauth/${encodeURIComponent(flow.provider)}/poll`, 'POST', { state: flow.state }, controller.signal) as { status: string; connection?: Connection }
         if (cancelled) return
         failures = 0
         if (result.status === 'connected') {
@@ -186,27 +199,31 @@ export function Providers({ onUnauthorized }: Props) {
       } catch (cause) {
         // An abort is the operator ending the sign-in, not a failure to report.
         if (cancelled || (cause instanceof DOMException && cause.name === 'AbortError')) return
-        // The server keeps the attempt open on oauth_poll_failed (and a dropped
-        // request never reached it), so retry those; anything else ended it.
-        const code = errorCodeOf(cause)
-        const transient = code === 'oauth_poll_failed' || cause instanceof TypeError
-        if (transient && ++failures < DEVICE_POLL_RETRIES) { window.setTimeout(poll, delay); return }
-        setDeviceFlow(null); attemptFailed(cause, flow.expiresAt)
+        // Without an answer that ends it, the attempt is still open on the server
+        // (and may be saving), so it stays tracked: retry, then pause for the
+        // operator rather than drop it.
+        if (attemptStillOpen(errorCodeOf(cause))) {
+          if (++failures < DEVICE_POLL_RETRIES) { window.setTimeout(poll, delay); return }
+          setPollStalled(true)
+          setAttemptNote('The server or the provider could not be reached. The sign-in may still be open or saving; check again.')
+          return
+        }
+        setDeviceFlow(null); attemptFailed(cause)
       }
     }, delay)
     return () => { cancelled = true; window.clearTimeout(timer); controller.abort() }
-  }, [deviceFlow, selected, load])
+  }, [deviceFlow, pollStalled, load])
   useEffect(() => () => { modelProbeController.current?.abort(); usageAbort.current?.abort() }, [])
-  // A pending attempt ends at its server-issued expiry; the panel says so rather
-  // than leaving a form that can only fail.
+  // Reaching the server-issued expiry only changes what the panel says. The attempt
+  // stays tracked, and a poll keeps running, until the server answers: an approval
+  // just before the limit may still be saving, so the clock cannot say whether
+  // anything was saved.
   const pendingExpiry = oauthFlow?.expiresAt ?? deviceFlow?.expiresAt
   liveState.current = oauthFlow?.state ?? deviceFlow?.state ?? null
   useEffect(() => {
+    setPastExpiry(attemptExpired(pendingExpiry, Date.now()))
     if (!pendingExpiry) return
-    const timer = window.setTimeout(() => {
-      setOauthFlow(null); setOauthInput(''); setDeviceFlow(null)
-      setOutcome({ phase: 'expired', message: 'This sign-in expired before it finished. Nothing was saved; start again.' })
-    }, Math.max(0, Date.parse(pendingExpiry) - Date.now()))
+    const timer = window.setTimeout(() => setPastExpiry(true), Math.max(0, Date.parse(pendingExpiry) - Date.now()))
     return () => window.clearTimeout(timer)
   }, [pendingExpiry])
 
@@ -214,6 +231,10 @@ export function Providers({ onUnauthorized }: Props) {
   const methods = useMemo(() => selectedProvider ? connectMethods(selectedProvider, providerLabel(selected)) : [], [selectedProvider, selected])
   const method: ConnectMethod | undefined = methods.find(item => item.id === methodId) ?? methods[0]
   const pending = oauthFlow !== null || deviceFlow !== null
+  // A pending attempt belongs to the provider it was started for. Selecting another
+  // provider must not re-point or drop it, so the form points back to it instead.
+  const attemptProvider = (oauthFlow ?? deviceFlow)?.provider
+  const attemptElsewhere = attemptProvider !== undefined && attemptProvider !== selected
   const askIdentity = method?.kind === 'manual' || Boolean(method?.askIdentity) || needIdentity
   const selectedNode = nodes.find(node => node.kind === 'generic' && node.providerId === selected)
   const selectedConnections = connections.filter(connection => connection.providerId === selected).sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name))
@@ -319,11 +340,15 @@ export function Providers({ onUnauthorized }: Props) {
     setOutcome({ phase: 'success', message: connection ? `Signed in as ${connection.identity}; the connection is saved.` : 'Provider connection saved.', connection })
   }
 
-  function attemptFailed(cause: unknown, expiresAt?: string) {
+  // Reports how the server ended an attempt. Called only with a server answer that
+  // ended it (attemptStillOpen is false), never on the clock or on silence.
+  function attemptFailed(cause: unknown) {
     if (errorCodeOf(cause) === 'oauth_identity_unresolved') setNeedIdentity(true)
-    const phase = phaseForError(errorCodeOf(cause), expiresAt, Date.now())
+    const phase = phaseForError(errorCodeOf(cause))
+    if (phase === 'closed') { void load().then(() => setReload(value => value + 1)) }
     setOutcome(phase === 'expired'
-      ? { phase, message: 'This sign-in expired before it finished. Nothing was saved; start again.' }
+      ? { phase, message: 'The provider reports the sign-in code expired. Nothing was saved; start again.' }
+      : phase === 'closed' ? { phase, message: CLOSED_MESSAGE }
       : { phase, message: cause instanceof Error ? cause.message : 'Sign-in failed.' })
   }
 
@@ -331,8 +356,8 @@ export function Providers({ onUnauthorized }: Props) {
     if (!selectedProvider || (askIdentity && !account.identity.trim())) return
     setOauthInput(''); setOutcome(null)
     await action('oauth-start', '', async () => {
-      const flow = await send(`/oauth/${encodeURIComponent(selected)}/start`, 'POST', { ...signInAccount(), meta: flowMeta() }) as OAuthFlow
-      setOauthFlow(flow)
+      const flow = await send(`/oauth/${encodeURIComponent(selected)}/start`, 'POST', { ...signInAccount(), meta: flowMeta() }) as Omit<OAuthFlow, 'provider'>
+      setOauthFlow({ ...flow, provider: selected })
     })
   }
 
@@ -341,13 +366,13 @@ export function Providers({ onUnauthorized }: Props) {
   // cancel can be retried and a save already under way still reports its result.
   // Reports whether the attempt is no longer live.
   async function cancelAttempt(): Promise<boolean> {
-    const state = oauthFlow?.state ?? deviceFlow?.state
-    const expiresAt = oauthFlow?.expiresAt ?? deviceFlow?.expiresAt
-    if (!state) return true
-    setBusy('oauth-cancel'); setError(''); setCancelNote('')
+    const flow = oauthFlow ?? deviceFlow
+    if (!flow) return true
+    const state = flow.state
+    setBusy('oauth-cancel'); setError(''); setAttemptNote('')
     let status: number | undefined, code: string | undefined, message = ''
     try {
-      await send(`/oauth/${encodeURIComponent(selected)}/cancel`, 'POST', { state })
+      await send(`/oauth/${encodeURIComponent(flow.provider)}/cancel`, 'POST', { state })
       status = 200
     } catch (cause) {
       status = cause instanceof RequestError ? cause.status : undefined
@@ -363,17 +388,15 @@ export function Providers({ onUnauthorized }: Props) {
         setOutcome({ phase: 'cancelled', message: 'Sign-in cancelled. Nothing was saved.' })
         return true
       case 'saving':
-        setCancelNote('The provider already approved this sign-in and it is being saved, so it can no longer be cancelled. Waiting for the result.')
+        setAttemptNote('The provider already approved this sign-in and it is being saved, so it can no longer be cancelled. Waiting for the result.')
         return false
       case 'closed':
         setOauthFlow(null); setOauthInput(''); setDeviceFlow(null)
-        setOutcome(attemptExpired(expiresAt, Date.now())
-          ? { phase: 'expired', message: 'This sign-in had already expired. Nothing was saved from it.' }
-          : { phase: 'closed', message: 'This sign-in is no longer open on the server, so there was nothing to cancel. Check the connections below for anything it saved.' })
+        setOutcome({ phase: 'closed', message: CLOSED_MESSAGE })
         await load(); setReload(value => value + 1)
         return true
       default:
-        setCancelNote(`The sign-in could not be cancelled${message ? ` (${message})` : ''}. It may still be open; try again.`)
+        setAttemptNote(`The sign-in could not be cancelled${message ? ` (${message})` : ''}. It may still be open; try again.`)
         return false
     }
   }
@@ -415,14 +438,16 @@ export function Providers({ onUnauthorized }: Props) {
     setDeviceFlow(null)
     setOutcome(null)
     setNeedIdentity(false)
-    setCancelNote('')
+    setAttemptNote('')
+    setPollStalled(false)
   }
 
   async function startDevice() {
     if (!selectedProvider || (askIdentity && !account.identity.trim())) return
     setOutcome(null)
     await action('device-start', '', async () => {
-      setDeviceFlow(await send(`/oauth/${encodeURIComponent(selected)}/device`, 'POST', { ...signInAccount(), meta: flowMeta() }) as DeviceFlow)
+      const flow = await send(`/oauth/${encodeURIComponent(selected)}/device`, 'POST', { ...signInAccount(), meta: flowMeta() }) as Omit<DeviceFlow, 'provider'>
+      setDeviceFlow({ ...flow, provider: selected })
     })
   }
 
@@ -435,7 +460,13 @@ export function Providers({ onUnauthorized }: Props) {
       try {
         signedIn(await send(`/oauth/${encodeURIComponent(selected)}/import`, 'POST', { ...signInAccount(), input: importInput, meta: flowMeta() }) as Connection)
       } catch (cause) {
-        if (errorCodeOf(cause) === 'oauth_identity_unresolved') setNeedIdentity(true)
+        const code = errorCodeOf(cause)
+        if (code === 'oauth_identity_unresolved') setNeedIdentity(true)
+        // No answer: the import may have landed, so do not invite a blind retry.
+        if (code === undefined) {
+          await load(); setReload(value => value + 1)
+          throw new Error('No answer from the server; the import may have been saved. Check the connections below before importing again.')
+        }
         throw cause
       }
     })
@@ -443,21 +474,29 @@ export function Providers({ onUnauthorized }: Props) {
 
   async function finishOAuth() {
     if (!oauthFlow || !oauthInput.trim()) return
-    // The attempt is single-use: it ends here whether or not the provider accepts the code.
     const flow = oauthFlow
     const input = oauthInput
-    setBusy('oauth-finish'); setError(''); setNotice('')
+    setBusy('oauth-finish'); setError(''); setNotice(''); setAttemptNote('')
     try {
       // finishOAuth only ever handles a flow that came from /start, so it is always
       // a browser flow and always completes on /callback — even when the operator
       // pastes a token (kimchi). Import-only providers use importOnly() instead, so
       // routing on the completion hint here sent kimchi to a 404.
-      signedIn(await send(`/oauth/${encodeURIComponent(selected)}/callback`, 'POST', { state: flow.state, input }) as Connection)
+      signedIn(await send(`/oauth/${encodeURIComponent(flow.provider)}/callback`, 'POST', { state: flow.state, input }) as Connection)
       await load(); setReload(value => value + 1)
     } catch (cause) {
-      // A paste with no code leaves the attempt open, so the operator can try again.
-      if (errorCodeOf(cause) === 'oauth_code_missing') setError(cause instanceof Error ? cause.message : 'Sign-in failed.')
-      else { resetSecrets(); attemptFailed(cause, flow.expiresAt) }
+      const code = errorCodeOf(cause)
+      if (code === undefined) {
+        // No answer: the exchange may have saved the connection. Keep the attempt;
+        // finishing again gets the server's answer (a used attempt reads as closed).
+        setAttemptNote('No answer from the server. The sign-in may have completed; check the connections below, then finish again or cancel.')
+        await load(); setReload(value => value + 1)
+      } else if (attemptStillOpen(code)) {
+        // A paste the server refused before touching the attempt: paste again.
+        setError(cause instanceof Error ? cause.message : 'Sign-in failed.')
+      } else {
+        resetSecrets(); attemptFailed(cause)
+      }
     } finally { setBusy('') }
   }
 
@@ -522,9 +561,11 @@ export function Providers({ onUnauthorized }: Props) {
     await action('pricing', 'Pricing override saved.', async () => { await send('/pricing', 'POST', body); setPrice({ modelId: '', input: '', output: '', cacheRead: '', cacheWrite: '' }) })
   }
 
+  // Selecting a provider resets the connection panel, except while an attempt is
+  // pending: dropping it would abandon a sign-in the server still holds.
   const option = (row: typeof rows[number]) => {
     const bad = row.requests > 0 && badRate(row.errors, row.requests, fleet)
-    return <button className={`provider-option${selected === row.provider.id ? ' provider-option-selected' : ''}`} type="button" key={row.provider.id} onClick={() => { setSelected(row.provider.id); setAccountOpen(false); resetSecrets(); setConnectionPage(1); setSeedPage(1) }}>
+    return <button className={`provider-option${selected === row.provider.id ? ' provider-option-selected' : ''}`} type="button" key={row.provider.id} onClick={() => { setSelected(row.provider.id); setConnectionPage(1); setSeedPage(1); if (!pending) { setAccountOpen(false); resetSecrets() } }}>
       <Status tone={tone(row)}><strong>{row.provider.id}</strong></Status>
       <span className="provider-option-meta">{row.provider.authModes.join(' / ') || row.provider.auth} · {row.provider.transports.length} transport{row.provider.transports.length === 1 ? '' : 's'}{row.total ? ` · ${row.provider.enabledAccounts}/${row.total} on` : ''} · <span className={`readiness-text readiness-${readinessStatus(row.provider)}`}>{READINESS_LABEL[readinessStatus(row.provider)].toLowerCase()}</span></span>
       <span className="ed-bar" aria-hidden="true"><span style={{ width: `${share(row.requests, peak)}%` }} /></span>
@@ -565,6 +606,7 @@ export function Providers({ onUnauthorized }: Props) {
       </div>
 
       {accountOpen && method && <form className="detail-panel provider-form" onSubmit={event => void createAccount(event)}><div className="section-heading"><div><h3>New connection</h3><p>Credential material stays server-side and is sealed at rest.</p></div><button className="button-ghost" type="button" onClick={() => void closeAccount()}>Close</button></div><div className="provider-form-grid">
+        {attemptElsewhere ? <div className="wide-field oauth-panel" role="status"><p>A {providerLabel(attemptProvider)} sign-in is still pending. Finish or cancel it before starting another.</p><div><button className="button-secondary" type="button" onClick={() => setSelected(attemptProvider)}>Back to {providerLabel(attemptProvider)}</button></div></div> : <>
         {methods.length > 1 && <fieldset className="wide-field access-picker" disabled={pending}><legend>Connect with</legend><div className="access-modes" role="radiogroup" aria-label="Connection method">
           {methods.map(item => <label key={item.id}><input type="radio" name="connect-method" checked={item.id === method.id} onChange={() => { resetSecrets(); setMethodId(item.id) }} /><span><strong>{item.label}</strong></span></label>)}
         </div></fieldset>}
@@ -590,7 +632,7 @@ export function Providers({ onUnauthorized }: Props) {
         </div>}
         {method.kind === 'device' && !outcome?.connection && <div className="wide-field oauth-panel" role="group" aria-label={method.label}>
           {!deviceFlow ? <><p>Approve this dashboard on the provider's page with a one-time code. The account is read from the provider.</p><div><button className="button-primary" type="button" disabled={busy !== '' || (askIdentity && !account.identity.trim())} onClick={() => void startDevice()}>{busy === 'device-start' ? 'Starting…' : method.label}</button></div></>
-            : <><p>Open the page below and confirm this code. This dashboard finishes the connection on its own once you approve.</p><p><code className="technical-value" aria-label="Device code">{deviceFlow.userCode}</code></p><div className="oauth-actions"><a className="button-secondary" href={deviceFlow.verificationUrl} target="_blank" rel="noopener noreferrer">Open {providerLabel(selected)} sign-in page</a><button className="button-ghost" type="button" disabled={busy === 'oauth-cancel'} onClick={() => void cancelAttempt()}>{busy === 'oauth-cancel' ? 'Cancelling…' : 'Cancel sign-in'}</button></div><p role="status"><span className="state-tag">Pending</span> Waiting for approval{deviceFlow.expiresAt ? `; the code expires at ${new Date(deviceFlow.expiresAt).toLocaleTimeString()}` : ''}.</p>{cancelNote && <p role="alert">{cancelNote}</p>}</>}
+            : <><p>Open the page below and confirm this code. This dashboard finishes the connection on its own once you approve.</p><p><code className="technical-value" aria-label="Device code">{deviceFlow.userCode}</code></p><div className="oauth-actions"><a className="button-secondary" href={deviceFlow.verificationUrl} target="_blank" rel="noopener noreferrer">Open {providerLabel(deviceFlow.provider)} sign-in page</a><button className="button-ghost" type="button" disabled={busy === 'oauth-cancel'} onClick={() => void cancelAttempt()}>{busy === 'oauth-cancel' ? 'Cancelling…' : 'Cancel sign-in'}</button></div><p role="status"><span className="state-tag">Pending</span> Waiting for approval{deviceFlow.expiresAt ? `; the code expires at ${new Date(deviceFlow.expiresAt).toLocaleTimeString()}` : ''}.</p>{pastExpiry && <p>The time limit has passed. A sign-in approved before it may still be saving, so this waits for the server's answer.</p>}{attemptNote && <p role="alert">{attemptNote}</p>}{pollStalled && <div><button className="button-secondary" type="button" onClick={() => { setAttemptNote(''); setPollStalled(false) }}>Check again</button></div>}</>}
         </div>}
         {method.kind === 'import' && !outcome?.connection && <div className="wide-field oauth-panel" role="group" aria-label={method.label}>
           <p>Paste the credential {providerLabel(selected)} issued. It is validated with the provider before it is stored{askIdentity ? '' : ', and the account is read from it'}.</p>
@@ -599,16 +641,17 @@ export function Providers({ onUnauthorized }: Props) {
         </div>}
         {method.kind === 'browser' && !outcome?.connection && <div className="wide-field oauth-panel" role="group" aria-label={method.label}>
           {!oauthFlow ? <><p>Sign in on the provider's page instead of copying tokens by hand.{askIdentity ? '' : ' The account is read from the provider, and you can name it afterwards.'}</p><div><button className="button-primary" type="button" disabled={busy !== '' || (askIdentity && !account.identity.trim())} onClick={() => void startOAuth()}>{busy === 'oauth-start' ? 'Starting…' : method.label}</button></div></>
-            : <><p>{method.loopbackRedirect && oauthFlow.completion === 'redirect-url' ? loopbackHint(method.loopbackRedirect) : OAUTH_HINTS[oauthFlow.completion]}</p><div><a className="button-secondary" href={oauthFlow.authorizeUrl} target="_blank" rel="noopener noreferrer">Open {providerLabel(selected)} sign-in page</a></div>
+            : <><p>{method.loopbackRedirect && oauthFlow.completion === 'redirect-url' ? loopbackHint(method.loopbackRedirect) : OAUTH_HINTS[oauthFlow.completion]}</p><div><a className="button-secondary" href={oauthFlow.authorizeUrl} target="_blank" rel="noopener noreferrer">Open {providerLabel(oauthFlow.provider)} sign-in page</a></div>
               <label>{oauthFlow.completion === 'code' ? 'Code from the provider' : oauthFlow.completion === 'token' ? 'Token, cookie or key' : 'Address from the browser'}<input type={oauthFlow.completion === 'code' || oauthFlow.completion === 'token' ? 'password' : 'text'} autoComplete="off" spellCheck={false} value={oauthInput} onChange={event => setOauthInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void finishOAuth() } }} /></label>
               <div className="oauth-actions"><button className="button-primary" type="button" disabled={busy !== '' || !oauthInput.trim()} onClick={() => void finishOAuth()}>{busy === 'oauth-finish' ? 'Finishing…' : 'Finish sign-in'}</button><button className="button-ghost" type="button" disabled={busy === 'oauth-cancel'} onClick={() => void cancelAttempt()}>{busy === 'oauth-cancel' ? 'Cancelling…' : 'Cancel sign-in'}</button></div>
-              <p role="status"><span className="state-tag">Pending</span> Waiting for the provider's answer{oauthFlow.expiresAt ? `; this sign-in expires at ${new Date(oauthFlow.expiresAt).toLocaleTimeString()}` : ''}.</p>{cancelNote && <p role="alert">{cancelNote}</p>}</>}
+              <p role="status"><span className="state-tag">Pending</span> Waiting for the provider's answer{oauthFlow.expiresAt ? `; this sign-in expires at ${new Date(oauthFlow.expiresAt).toLocaleTimeString()}` : ''}.</p>{pastExpiry && <p>The time limit has passed, so the server will most likely refuse this sign-in. Finish or cancel it to get the server's answer.</p>}{attemptNote && <p role="alert">{attemptNote}</p>}</>}
         </div>}
         {method.kind === 'manual' && <>
           {selected === 'vertex-partner' && <label className="wide-field">Project ID<input required value={projectId} onChange={event => setProjectId(event.target.value)} placeholder="my-gcp-project" /></label>}
           {method.authKind === 'cookie' ? <label className="wide-field">Cookie/session<input type="password" autoComplete="new-password" value={account.cookie} onChange={event => setAccount({ ...account, cookie: event.target.value })} /></label> : method.authKind !== 'none' && <><label className="wide-field">Access token / API key<input required type="password" autoComplete="new-password" value={account.accessToken} onChange={event => setAccount({ ...account, accessToken: event.target.value })} /></label>{method.authKind === 'oauth' && <label className="wide-field">Refresh token<input type="password" autoComplete="new-password" value={account.refreshToken} onChange={event => setAccount({ ...account, refreshToken: event.target.value })} /></label>}</>}
         </>}
-      </div>{method.kind === 'manual' && <button className="button-primary" type="submit" disabled={busy === 'account'}>{busy === 'account' ? 'Saving…' : 'Save connection'}</button>}</form>}
+        </>}
+      </div>{method.kind === 'manual' && !attemptElsewhere && <button className="button-primary" type="submit" disabled={busy === 'account'}>{busy === 'account' ? 'Saving…' : 'Save connection'}</button>}</form>}
 
       <section className="detail-panel" aria-labelledby="connection-list-title"><div className="section-heading"><div><h3 id="connection-list-title">Connections</h3><p>{selectedConnections.length} account{selectedConnections.length === 1 ? '' : 's'} · lower priority routes first</p></div></div>{selectedConnections.length === 0 ? <p className="empty-keys">No connections configured.</p> : <div className="connection-list">{connectionRows.map((connection,index) => <article className="connection-row" key={connection.id}><div className="connection-main"><strong>{connection.name}</strong><code>{connection.identity}</code></div><span className={`state-tag${connection.enabled ? ' state-good' : ' state-warn'}`}>{connection.enabled ? 'Enabled' : 'Disabled'}</span><label className="proxy-select">Proxy<select aria-label={`Proxy for ${connection.name}`} value={connection.proxyPoolId || ''} onChange={event => void action(`proxy-${connection.id}`, 'Proxy assignment saved.', () => send(`/connections/${encodeURIComponent(connection.id)}/proxy`, 'POST', { proxyPoolId: event.target.value }).then(() => undefined))}><option value="">No proxy pool</option>{proxyPools.map(pool => <option value={pool.id} key={pool.id}>{pool.name}{pool.enabled ? '' : ' (disabled)'}</option>)}</select></label><div className="connection-actions"><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void changeConnection(connection,{enabled:!connection.enabled})}>{connection.enabled ? 'Disable' : 'Enable'}</button><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void changeConnection(connection,{priority:connection.priority-1})} aria-label={`Move ${connection.name} up`} title="Move up">↑</button><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void changeConnection(connection,{priority:connection.priority+1})} aria-label={`Move ${connection.name} down`} title="Move down">↓</button><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void testConnection(connection)}>{busy === `test-${connection.id}` ? 'Checking…' : 'Check'}</button><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void discover(connection)}>{busy === `discover-${connection.id}` ? 'Discovering…' : 'Discover models'}</button><button className="button-danger" type="button" disabled={busy !== ''} onClick={() => { if (window.confirm(`Delete account “${connection.name}”?`)) void action(connection.id, 'Connection deleted.', () => send(`/connections/${encodeURIComponent(connection.id)}`, 'DELETE').then(() => undefined)) }}>Delete</button></div><small>Priority {connection.priority} · {connection.credentialConfigured ? 'credential stored' : 'no credential'} · position {(connectionPage - 1) * PAGE_SIZE + index + 1}</small></article>)}</div>}<Pager label="Connection" page={connectionPage} total={selectedConnections.length} onPage={setConnectionPage} /></section>
 

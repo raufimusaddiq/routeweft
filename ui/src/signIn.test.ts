@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { attemptExpired, cancelResult, connectMethods, phaseForError, type ProviderAuth } from './signIn.ts'
+import { attemptExpired, attemptStillOpen, cancelResult, connectMethods, phaseForError, type ProviderAuth } from './signIn.ts'
 
 test('codex offers browser sign-in and token import without asking for an identity', () => {
   const codex: ProviderAuth = { auth: 'oauth', authModes: [], signInMethods: [
@@ -52,10 +52,17 @@ test('attempt outcomes are explicit', () => {
   assert.equal(attemptExpired('2026-10-27T12:10:00Z', now), false)
   assert.equal(attemptExpired(undefined, now), false)
   assert.equal(attemptExpired('not a time', now), false)
-  assert.equal(phaseForError('oauth_expired', '2026-10-27T12:10:00Z', now), 'expired')
-  assert.equal(phaseForError('oauth_state_invalid', '2026-10-27T11:00:00Z', now), 'expired')
-  assert.equal(phaseForError('oauth_state_invalid', '2026-10-27T12:10:00Z', now), 'failed')
-  assert.equal(phaseForError('oauth_denied', '2026-10-27T12:10:00Z', now), 'failed')
+})
+
+test('outcomes come from the server answer, never the clock', () => {
+  assert.equal(phaseForError('oauth_expired'), 'expired')
+  // Gone from the server says nothing about whether an earlier request saved it.
+  assert.equal(phaseForError('oauth_state_invalid'), 'closed')
+  assert.equal(phaseForError('oauth_denied'), 'failed')
+  assert.equal(phaseForError('connection_save_failed'), 'failed')
+  // No answer, a provider outage, or a refused paste leave the attempt open.
+  for (const code of [undefined, 'oauth_poll_failed', 'oauth_code_missing', 'oauth_state_mismatch']) assert.equal(attemptStillOpen(code), true, String(code))
+  for (const code of ['oauth_state_invalid', 'oauth_expired', 'oauth_denied', 'oauth_exchange_failed', 'connection_save_failed']) assert.equal(attemptStillOpen(code), false, code)
 })
 
 test('only a confirmed cancel counts as cancelled', () => {

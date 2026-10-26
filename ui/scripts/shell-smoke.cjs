@@ -156,8 +156,13 @@ const { join } = require('node:path');
   // 'abort' is a dropped request (no answer at all).
   const codexCancelModes = [];
   const deviceCancelModes = [];
+  const codexCallbackModes = [];
   let devicePolls = 0;
-  let deviceApproved = false;
+  // What the device poll answers ('pending', 'connected', 'save_failed',
+  // 'state_invalid'), how long it holds the answer, and the attempt's expiry.
+  let deviceAnswer = 'pending';
+  let devicePollDelayMs = 0;
+  let deviceExpiresAt = '';
   let usageSummaryCalls = 0;
   let lastUsageURL = '';
   // Quota mock (#213): 130 accounts so paging must reach past 100, with one row
@@ -269,11 +274,15 @@ const { join } = require('node:path');
     return fulfillCancel(route, codexCancelModes.shift());
   }
   if (url.pathname === '/admin/v1/oauth/github/device' && method === 'POST') {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ state: 'smoke-device', flowType: 'device_code', userCode: 'ABCD-1234', verificationUrl: 'https://github.com/login/device', intervalSeconds: 2, expiresAt: '2026-09-25T12:10:00Z' }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ state: 'smoke-device', flowType: 'device_code', userCode: 'ABCD-1234', verificationUrl: 'https://github.com/login/device', intervalSeconds: 2, expiresAt: deviceExpiresAt || '2026-09-25T12:10:00Z' }) });
   }
   if (url.pathname === '/admin/v1/oauth/github/poll' && method === 'POST') {
     devicePolls += 1;
-    if (!deviceApproved) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'pending' }) });
+    const answer = deviceAnswer;
+    if (devicePollDelayMs) await new Promise(resolve => setTimeout(resolve, devicePollDelayMs));
+    if (answer === 'pending') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'pending' }) });
+    if (answer === 'save_failed') return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: 'connection_save_failed', message: 'provider connection could not be saved; check its identity' } }) });
+    if (answer === 'state_invalid') return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: 'oauth_state_invalid', message: 'this sign-in attempt expired or was already used; start again' } }) });
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'connected', connection: { id: 'conn-github', nodeId: 'node-github', providerId: 'github', name: 'octo', authKind: 'oauth', identity: 'octo@example.test', enabled: true, priority: 0, credentialConfigured: true } }) });
   }
   if (url.pathname === '/admin/v1/oauth/github/cancel' && method === 'POST') {
@@ -281,6 +290,10 @@ const { join } = require('node:path');
   }
   if (url.pathname === '/admin/v1/oauth/codex/callback' && method === 'POST') {
     signInCallbacks.push(route.request().postDataJSON());
+    const mode = codexCallbackModes.shift();
+    if (mode === 'abort') return route.abort('failed');
+    if (mode === 'mismatch') return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: 'oauth_state_mismatch', message: 'this address is from a different sign-in attempt; paste the one from this attempt' } }) });
+    if (mode === 'invalid') return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: 'oauth_state_invalid', message: 'this sign-in attempt expired or was already used; start again' } }) });
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-codex', nodeId: 'node-codex', providerId: 'codex', name: 'resolved@example.test', authKind: 'oauth', identity: 'resolved@example.test', enabled: true, priority: 0, credentialConfigured: true }) });
   }
   if (url.pathname === '/admin/v1/connections/conn-codex' && method === 'PATCH') {
@@ -639,17 +652,34 @@ const { join } = require('node:path');
   await signInForm.getByRole('button', { name: 'Cancel sign-in', exact: true }).click();
   await signInForm.getByText('Cancelled', { exact: true }).waitFor();
   assert.deepEqual(signInCancels, [{ state: 'smoke-state-1' }, { state: 'smoke-state-1' }, { state: 'smoke-state-1' }]);
-  // Expiry is explicit: the attempt ends at the server's expiresAt.
+  // Passing the time limit changes only the wording: the attempt stays until the
+  // server answers. No answer keeps it; a paste from another attempt keeps it; a
+  // server that no longer holds it reads as closed, never "nothing was saved".
   signInExpiresAt = '2026-09-25T12:00:01Z';
   await signInForm.getByRole('button', { name: 'Sign in with Codex', exact: true }).click();
-  await signInForm.getByText('Expired', { exact: true }).waitFor({ timeout: 5000 });
-  assert.equal(await signInForm.getByLabel('Address from the browser').count(), 0);
+  await signInForm.getByText(/The time limit has passed, so the server will most likely refuse this sign-in/).waitFor({ timeout: 5000 });
+  assert.equal(await signInForm.getByLabel('Address from the browser').count(), 1, 'the clock does not end the attempt');
+  assert.equal(await signInForm.getByText('Expired', { exact: true }).count(), 0);
   signInExpiresAt = '';
+  codexCallbackModes.push('abort', 'mismatch', 'invalid');
+  await signInForm.getByLabel('Address from the browser').fill('http://localhost:1455/auth/callback?code=auth-code-late&state=smoke-state-2');
+  await signInForm.getByRole('button', { name: 'Finish sign-in', exact: true }).click();
+  await signInForm.getByText(/No answer from the server\. The sign-in may have completed/).waitFor();
+  assert.equal(await signInForm.getByLabel('Address from the browser').count(), 1, 'no answer keeps the attempt');
+  await signInForm.getByRole('button', { name: 'Finish sign-in', exact: true }).click();
+  await page.locator('.providers-content > .auth-error', { hasText: 'different sign-in attempt' }).waitFor();
+  assert.equal(await signInForm.getByLabel('Address from the browser').count(), 1, 'a refused paste keeps the attempt');
+  await signInForm.getByRole('button', { name: 'Finish sign-in', exact: true }).click();
+  await signInForm.getByText('Closed', { exact: true }).waitFor();
+  report.codexClosed = await signInForm.locator('[aria-label="Sign-in result"] p').textContent();
+  assert.match(report.codexClosed, /no longer open on the server.*Check the connections below/);
+  assert.doesNotMatch(await signInForm.textContent(), /Nothing was saved/);
   await signInForm.getByRole('button', { name: 'Sign in with Codex', exact: true }).click();
   await signInForm.getByLabel('Address from the browser').fill('http://localhost:1455/auth/callback?code=auth-code-smoke&state=smoke-state-3');
   await signInForm.getByRole('button', { name: 'Finish sign-in', exact: true }).click();
   await signInForm.getByText('Connected', { exact: true }).waitFor();
-  assert.deepEqual(signInCallbacks, [{ state: 'smoke-state-3', input: 'http://localhost:1455/auth/callback?code=auth-code-smoke&state=smoke-state-3' }]);
+  assert.equal(signInCallbacks.length, 4);
+  assert.deepEqual(signInCallbacks.at(-1), { state: 'smoke-state-3', input: 'http://localhost:1455/auth/callback?code=auth-code-smoke&state=smoke-state-3' });
   report.codexConnected = await signInForm.locator('[aria-label="Sign-in result"] p').textContent();
   assert.match(report.codexConnected, /Signed in as resolved@example\.test/);
   assert.equal(await page.content().then(html => html.includes('auth-code-smoke')), false, 'pasted callback must not stay in the DOM');
@@ -680,11 +710,63 @@ const { join } = require('node:path');
   await signInForm.getByText(/being saved, so it can no longer be cancelled\. Waiting for the result\./).waitFor();
   assert.equal(await signInForm.getByText('Connected', { exact: true }).count(), 0, 'no success claimed before the server confirms');
   assert.equal(await signInForm.getByText('Cancelled', { exact: true }).count(), 0);
-  deviceApproved = true;
+  deviceAnswer = 'connected';
   await signInForm.getByText('Connected', { exact: true }).waitFor({ timeout: 8000 });
   report.deviceConnected = await signInForm.locator('[aria-label="Sign-in result"] p').textContent();
   assert.match(report.deviceConnected, /Signed in as octo@example\.test/);
   await signInForm.getByRole('button', { name: 'Done', exact: true }).click();
+  await signInForm.waitFor({ state: 'detached' });
+  // Approval just before the time limit, with the save answering after it: the
+  // panel waits for the server and reports what it says, saved or not. Selecting
+  // another provider meanwhile neither drops nor re-points the attempt.
+  const startDevice = async () => {
+    await page.fill('#provider-filter', 'github');
+    await page.locator('.provider-option', { hasText: 'github' }).first().click();
+    if (!(await signInForm.count())) await page.getByRole('button', { name: 'Add connection', exact: true }).click();
+    await signInForm.waitFor();
+    await signInForm.getByLabel('Stable account identity').fill('octo@example.test');
+    await signInForm.getByRole('button', { name: 'Sign in with GitHub Copilot (device code)', exact: true }).click();
+    await signInForm.getByText('Pending', { exact: true }).waitFor();
+  };
+  for (const [answer, expected] of [['connected', /Signed in as octo@example\.test/], ['save_failed', /provider connection could not be saved; check its identity/]]) {
+    deviceExpiresAt = '2026-09-25T12:00:03Z';
+    deviceAnswer = 'pending';
+    devicePollDelayMs = 0;
+    await startDevice();
+    const before = devicePolls;
+    deviceAnswer = answer;
+    devicePollDelayMs = 6000;
+    if (answer === 'connected') {
+      await page.fill('#provider-filter', 'codex');
+      await page.locator('.provider-option', { hasText: 'codex' }).first().click();
+      await signInForm.getByText(/A GitHub Copilot sign-in is still pending/).waitFor();
+      assert.equal(await signInForm.getByRole('button', { name: 'Sign in with Codex', exact: true }).count(), 0, 'no second attempt while one is pending');
+      const deadline = Date.now() + 8000;
+      while (devicePolls <= before && Date.now() < deadline) await page.waitForTimeout(250);
+      assert.ok(devicePolls > before, 'the attempt keeps polling its own provider');
+      await signInForm.getByRole('button', { name: 'Back to GitHub Copilot', exact: true }).click();
+    }
+    await signInForm.getByText(/The time limit has passed\. A sign-in approved before it may still be saving/).waitFor({ timeout: 8000 });
+    assert.equal(await signInForm.getByText('Pending', { exact: true }).count(), 1, 'the clock does not end the attempt');
+    for (const final of ['Expired', 'Closed', 'Connected', 'Failed']) assert.equal(await signInForm.getByText(final, { exact: true }).count(), 0, final);
+    await signInForm.locator('[aria-label="Sign-in result"]').waitFor({ timeout: 15000 });
+    assert.match(await signInForm.locator('[aria-label="Sign-in result"] p').textContent(), expected);
+    assert.doesNotMatch(await signInForm.textContent(), /Nothing was saved/);
+    if (answer === 'connected') {
+      await signInForm.getByRole('button', { name: 'Done', exact: true }).click();
+      await signInForm.waitFor({ state: 'detached' });
+    }
+  }
+  // The server no longer holding the attempt reads as closed, pointing at the list.
+  deviceAnswer = 'state_invalid';
+  devicePollDelayMs = 0;
+  deviceExpiresAt = '';
+  await signInForm.getByRole('button', { name: 'Sign in with GitHub Copilot (device code)', exact: true }).click();
+  await signInForm.getByText('Closed', { exact: true }).waitFor({ timeout: 8000 });
+  assert.match(await signInForm.locator('[aria-label="Sign-in result"] p').textContent(), /no longer open on the server.*Check the connections below/);
+  assert.doesNotMatch(await signInForm.textContent(), /Nothing was saved/);
+  deviceAnswer = 'pending';
+  await signInForm.getByRole('button', { name: 'Close', exact: true }).click();
   await signInForm.waitFor({ state: 'detached' });
   // Dual auth: the primary API key stays the default, and each mode shows only its own fields.
   await page.fill('#provider-filter', 'kimchi');

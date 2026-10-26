@@ -476,8 +476,11 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if pastedState != "" && subtle.ConstantTimeCompare([]byte(pastedState), []byte(body.State)) != 1 {
-		// Output from a different attempt: refuse without consuming this one.
-		writeError(w, http.StatusBadRequest, "oauth_state_invalid", "this sign-in attempt expired or was already used; start again")
+		// Output from a different attempt: refuse without consuming this one. It has
+		// its own code because this attempt is still open; answering
+		// oauth_state_invalid told the dashboard the attempt was gone. Both states are
+		// the caller's own, so the distinction reveals nothing.
+		writeError(w, http.StatusBadRequest, "oauth_state_mismatch", "this address is from a different sign-in attempt; paste the one from this attempt")
 		return
 	}
 	flow, ok := h.oauth.consume(body.State, session.ID, providerID)

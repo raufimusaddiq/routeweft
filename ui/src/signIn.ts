@@ -54,13 +54,31 @@ export function attemptExpired(expiresAt: string | undefined, now: number): bool
   return Number.isFinite(at) && at <= now
 }
 
-// What an error from completing or polling an attempt means. The server answers an
-// expired state with the same oauth_state_invalid as a replayed one, so the
-// attempt's own expiry decides which the operator is told.
-export function phaseForError(code: string | undefined, expiresAt: string | undefined, now: number): 'expired' | 'failed' {
+// What an error from completing or polling an attempt means, from the server's
+// answer alone, never from the clock: a save can be under way when the attempt's
+// time runs out, so the time limit says nothing about whether anything was saved.
+//   expired  the provider reported the code expired; the server ended the attempt
+//            without saving.
+//   closed   the server no longer holds the attempt (it expired or was already
+//            used). That does not say whether an earlier request saved it.
+//   failed   any other answer from the server, whose message says what happened.
+// No answer at all is not an outcome: the caller keeps the attempt.
+export function phaseForError(code: string | undefined): 'expired' | 'closed' | 'failed' {
   if (code === 'oauth_expired') return 'expired'
-  if (code === 'oauth_state_invalid' && attemptExpired(expiresAt, now)) return 'expired'
+  if (code === 'oauth_state_invalid') return 'closed'
   return 'failed'
+}
+
+// Whether a failed request left the attempt open on the server, so the dashboard
+// must keep tracking it rather than report an outcome:
+//   no answer (network, or a response without the API's error code), where the
+//   request may or may not have landed;
+//   oauth_poll_failed, where the provider could not be reached and the attempt
+//   stays open;
+//   oauth_code_missing and oauth_state_mismatch, refused before the attempt was
+//   touched.
+export function attemptStillOpen(code: string | undefined): boolean {
+  return code === undefined || code === 'oauth_poll_failed' || code === 'oauth_code_missing' || code === 'oauth_state_mismatch'
 }
 
 // What the server's answer to a cancel means. Only the server can say an attempt

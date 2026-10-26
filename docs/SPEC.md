@@ -1057,13 +1057,23 @@ other steps, and an unknown, expired, replayed or foreign state answers
 `oauth_state_invalid`. A device attempt that a poll is already saving answers
 `409 oauth_completing` and is left to finish; that is not a confirmed save, since
 a save that persists nothing releases the attempt again. The dashboard shows each
-attempt as pending, then connected, expired (at the `expiresAt` the start
-returned), cancelled, closed or failed, and claims only what the server confirmed:
-an attempt stays tracked (and a device poll keeps running) until a cancel answers
-`200`; a network failure or any other error keeps it open for a retry, and Close
-does not drop it; `oauth_completing` waits for the poll to report the result; and
-`oauth_state_invalid` reports the attempt as already closed (or expired) without
-claiming it was cancelled or saved.
+attempt as pending, then connected, expired, cancelled, closed or failed, and
+reports only what the server answered, never what the clock or a missing answer
+suggests: an approval just before the time limit may still be saving.
+
+- The attempt stays tracked, and a device poll keeps running, until a server
+  answer ends it. Passing `expiresAt` only changes the wording.
+- No answer (a network failure, or a response without an API error code),
+  `oauth_poll_failed`, `oauth_code_missing` and `oauth_state_mismatch` keep the
+  attempt; repeated poll failures pause polling for the operator to resume.
+- A cancel counts only on `200`; any other failure keeps the attempt for a retry,
+  and Close does not drop it. `oauth_completing` waits for the poll's result.
+- `oauth_state_invalid` reads as closed: the server no longer holds the attempt,
+  which does not say whether an earlier request saved it, so the dashboard points
+  at the connection list. Only the provider's `oauth_expired` reads as expired
+  with nothing saved.
+- An attempt belongs to the provider it was started for; selecting another
+  provider leaves it pending and polling.
 
 A pinned loopback redirect names a port on the operator's own computer. Routeweft
 never listens there: a remote server cannot receive the browser's own localhost,
@@ -1102,7 +1112,7 @@ ARN and client registration, Kimi device id, Qoder machine id, Kilocode org id)
 live inside the sealed credential payload, never in a snapshot or a browser
 response.
 
-Pending state is process-local, expires after 10 minutes, is bound to the admin session that started it and to the provider, and is single-use even when the exchange fails. A state that is unknown, expired, replayed or owned by another session returns the same `oauth_state_invalid` error, and a foreign session does not consume the owner's attempt. A device-authorization start the provider rate-limits (Kilo: too many pending authorizations) returns HTTP 429 `oauth_rate_limited`, distinct from `oauth_start_failed`. A device poll that loses the save reservation to a concurrent poll of the same approved attempt answers `{"status":"pending"}`; a state that is gone keeps `oauth_state_invalid`. Responses carry fixed messages only: no provider text, code, verifier or token.
+Pending state is process-local, expires after 10 minutes, is bound to the admin session that started it and to the provider, and is single-use even when the exchange fails. A state that is unknown, expired, replayed or owned by another session returns the same `oauth_state_invalid` error, and a foreign session does not consume the owner's attempt. A pasted result whose own state names a different attempt answers `oauth_state_mismatch` and leaves the attempt open. A device-authorization start the provider rate-limits (Kilo: too many pending authorizations) returns HTTP 429 `oauth_rate_limited`, distinct from `oauth_start_failed`. A device poll that loses the save reservation to a concurrent poll of the same approved attempt answers `{"status":"pending"}`; a state that is gone keeps `oauth_state_invalid`. Responses carry fixed messages only: no provider text, code, verifier or token.
 
 Connections whose provider has a refresh grant are registered with a refresh
 exchanger by the credential registry, so every registration path (sign-in,
