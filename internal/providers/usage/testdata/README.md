@@ -8,3 +8,10 @@ Tests pass these upstream envelopes directly to the production readers.
 `groq.json` is pinned to oracle commit `264a26d0`: the header block is `tests/unit/groq-usage.test.js:24-31` (RATE_LIMIT_HEADERS) and the body is the `{ data: [] }` models envelope from the same test, both read by `open-sse/services/usage/groq.js:44-62,102-129`. Groq reports quota only in headers, so the fixture carries status, headers and body together.
 
 `deepseek.json` is pinned to oracle commit `264a26d0`: it is ACTIVE_BALANCE from `tests/unit/deepseek-usage.test.js:24-40` (positive USD beside zero CNY), the `/user/balance` envelope read by `open-sse/services/usage/deepseek.js:11-37,77-108`.
+
+`antigravity.json` and `gemini-cli.json` are pinned to oracle commit `264a26d0` and keyed by the Cloud Code method each body answers:
+
+- `antigravity.json`: `loadCodeAssist` is the paid-tier subscription from `tests/unit/antigravity-weekly-quota.test.js:301-305`; `fetchAvailableModels` extends the model map at `:311-318` with the `claude-opus-4-6-thinking` and `gemini-pro-agent` rows from `tests/unit/antigravity-weekly-dashboard.test.js:7-20` (the latter without `displayName`, to exercise the `info.displayName || modelKey` fallback at `open-sse/services/usage/google.js:218`) and two synthetic rows, an internal model and one outside the allowlist, that `google.js:192-201` drops; `retrieveUserQuotaSummary` is FULL_RESPONSE from `antigravity-weekly-quota.test.js:16-46`.
+- `gemini-cli.json`: `retrieveUserQuota` is the bucket envelope from `tests/unit/gemini-usage-projectid.test.js:23-31`; `loadCodeAssist` is the project-object envelope from `:55-58`.
+
+Tests vary these envelopes in place for the zero, empty, expired, multiple-window, auth, timeout and error cases.
