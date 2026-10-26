@@ -310,6 +310,7 @@ func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager 
 		QuotaRefresher:        a.RefreshQuota,
 		QuotaState:            a.quotaState,
 		QuotaForget:           a.quotaForget,
+		QuotaStaleAfter:       3 * a.cfg.QuotaRefreshInterval,
 		AllowPrivateUpstreams: a.cfg.AllowPrivateUpstreams,
 		PublicOrigin:          a.cfg.PublicOrigin,
 		PXPIPE:                a.pxpipe,

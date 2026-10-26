@@ -1903,6 +1903,19 @@ toppedUp?}`, where `state` is `positive`, `zero`, `negative`, `missing` or
 `malformed`; such a window is never `unlimited`, has no `remaining`, and is
 never summed with or compared to another currency. The provider's account flag
 appears as `creditAvailable` only when it was reported.
+`remaining` (item and window) is a fraction in [0,1]; the UI renders it as a
+rounded whole percentage, never as a count (#213). The read accepts `page`,
+`pageSize` (max 100), `provider` (exact provider id), `q` (case-insensitive
+substring of account name or provider id) and `sort` (`default`, `reset`,
+`exhausted`, `error`; anything else is 400 `invalid_sort`); filtering and sorting
+apply to every account before paging, and the response adds `providers` (every
+configured provider id) and `sort`. Item `status` is one of `available`,
+`exhausted`, `cooldown`, `error`, `unknown` (observed, no bound reported),
+`unlimited` (every reported window unlimited) or `not-reported` (never
+observed); a missing observation is never zero, unlimited or available. Items
+add `nextResetAt` (earliest reset across the routing observation and windows),
+`windowsObservedAt` (the read the windows came from, which an outage keeps) and
+`stale` (observation older than three refresh intervals, default 15 minutes).
 GET `/admin/v1/quota/{id}/codex-reset-credits` returns the existing normalized credit listing. Session-gated POST at the same
 path requires `{"confirm":true}`, spends one credit with a server UUID, returns
 409 for no credit and 502 for an unavailable/ambiguous result. It never retries

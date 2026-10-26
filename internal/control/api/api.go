@@ -48,20 +48,23 @@ type KeyManager interface {
 
 // Options configure the control API.
 type Options struct {
-	Accounts              *adminauth.Store
-	Sessions              *adminauth.SessionManager
-	Settings              SettingsStore
-	Keys                  KeyManager
-	DB                    *sql.DB
-	Runtime               RuntimeReader
-	Credentials           *credentials.Store
-	CredentialRegistry    *credentials.Registry
-	ProviderCatalog       ProviderCatalog
-	PoolBindings          PoolBindingRefresher
-	Combos                ComboManager
-	QuotaRefresher        func(context.Context) error
-	QuotaState            func(string) (quota.State, bool)
-	QuotaForget           func(string)
+	Accounts           *adminauth.Store
+	Sessions           *adminauth.SessionManager
+	Settings           SettingsStore
+	Keys               KeyManager
+	DB                 *sql.DB
+	Runtime            RuntimeReader
+	Credentials        *credentials.Store
+	CredentialRegistry *credentials.Registry
+	ProviderCatalog    ProviderCatalog
+	PoolBindings       PoolBindingRefresher
+	Combos             ComboManager
+	QuotaRefresher     func(context.Context) error
+	QuotaState         func(string) (quota.State, bool)
+	QuotaForget        func(string)
+	// QuotaStaleAfter is the age past which a quota observation is reported as
+	// stale. Zero uses defaultQuotaStaleAfter.
+	QuotaStaleAfter       time.Duration
 	AllowPrivateUpstreams bool
 	// PXPIPE is the process-level sink compiled saver pipelines report into;
 	// it backs the PXPIPE logs and stats routes.
