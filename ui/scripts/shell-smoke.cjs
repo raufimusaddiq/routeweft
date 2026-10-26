@@ -534,7 +534,17 @@ const { join } = require('node:path');
   report.filteredCards = await page.locator('.provider-option').count();
   assert.match(await page.locator('.provider-option', { hasText: 'openrouter' }).first().textContent(), /unavailable/);
   report.providerPageSummaryFiltered = await page.locator('.providers-content').innerText().then(text => text.split('\n').filter(line => /providers carry traffic|carry \d+% of the month/.test(line)));
+  // An unavailable provider says which requests are not routed, not that every request fails (#229).
+  await page.locator('.provider-option', { hasText: 'openrouter' }).first().click();
+  await page.waitForSelector('.provider-summary .readiness-note');
+  assert.equal((await page.locator('.provider-summary .readiness-tag').textContent()).trim(), 'Unavailable');
+  report.unavailableReadinessNote = await page.locator('.provider-summary .readiness-note').textContent();
+  assert.match(report.unavailableReadinessNote, /does not route Chat, Responses or Messages requests to this provider yet/);
+  assert.match(report.unavailableReadinessNote, /smoke fixture: wire not bound\./);
+  assert.doesNotMatch(report.unavailableReadinessNote, /will fail/);
   await page.fill('#provider-filter', '');
+  await page.locator('.provider-option', { hasText: 'openai' }).first().click();
+  await page.waitForSelector('.connection-row');
   await page.click('.providers-content .provider-details .connection-row .button-secondary');
   await page.waitForFunction(() => document.querySelector('.providers-content .connection-row .state-tag').textContent === 'Disabled');
   report.providerPatches = providerPatches;
