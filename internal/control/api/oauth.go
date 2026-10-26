@@ -68,10 +68,13 @@ type oauthFlow struct {
 	// URL, Kiro's region and start URL). Exchange and Import read it, so it has to
 	// survive on the attempt; keeping only Extra dropped it between start and
 	// callback.
-	meta      map[string]string
-	name      string
-	identity  string
-	expiresAt time.Time
+	meta     map[string]string
+	name     string
+	identity string
+	// identityOptional is the flow's IdentityOptional: a credential that names no
+	// account is saved without an identity instead of refused.
+	identityOptional bool
+	expiresAt        time.Time
 }
 
 // oauthFlows holds pending attempts in process memory, like admin sessions: a
@@ -407,7 +410,8 @@ func (h *Handler) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	}
 	expiresAt, ok := h.oauth.begin(state, oauthFlow{
 		sessionID: session.ID, provider: providerID, verifier: verifier,
-		name: name, identity: identity, extra: request.Extra, meta: body.Meta,
+		name: name, identity: identity, identityOptional: provider.flow.IdentityOptional,
+		extra: request.Extra, meta: body.Meta,
 	})
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "oauth_busy", "too many sign-ins in progress; try again shortly")
@@ -578,7 +582,7 @@ func (h *Handler) handleOAuthDeviceStart(w http.ResponseWriter, r *http.Request)
 		sessionID: session.ID, provider: providerID,
 		deviceCode: device.DeviceCode, verifier: device.Verifier,
 		extra: device.Extra, meta: body.Meta, name: name, identity: identity,
-		ttl: device.ExpiresIn, nextPoll: h.oauth.now().Add(device.Interval),
+		identityOptional: provider.flow.IdentityOptional, ttl: device.ExpiresIn, nextPoll: h.oauth.now().Add(device.Interval),
 	})
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "oauth_busy", "too many sign-ins in progress; try again shortly")
@@ -741,14 +745,17 @@ func (h *Handler) saveOnboardedConnection(w http.ResponseWriter, r *http.Request
 	if identity == "" {
 		identity = flow.identity
 	}
-	// Nothing to dedup on: refuse before saving rather than let the store reject a
-	// blank identity as a generic save failure.
-	if identity == "" {
+	// Nothing to dedup on: refuse before saving, unless the flow stores such a
+	// credential without an identity as the reference does (Codex).
+	if identity == "" && !flow.identityOptional {
 		writeError(w, http.StatusBadGateway, "oauth_identity_unresolved", "the provider did not report which account signed in; start again and enter its identity")
 		return nil, persisted, false
 	}
 	if name == "" {
 		name = identity
+	}
+	if name == "" {
+		name = result.FallbackName
 	}
 	authKind := result.AuthKind
 	if authKind == "" {
@@ -762,6 +769,14 @@ func (h *Handler) saveOnboardedConnection(w http.ResponseWriter, r *http.Request
 	if !authKindPermitted(spec, authKind) {
 		writeError(w, http.StatusBadRequest, "invalid_auth_kind", "this provider does not accept the credential mode this sign-in produced")
 		return nil, persisted, false
+	}
+	if name == "" {
+		label, err := h.accountLabel(r.Context(), providerID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
+			return nil, persisted, false
+		}
+		name = label
 	}
 	flow.name, flow.identity = name, identity
 	connection, persisted, err := h.publishConnection(r.Context(), credentials.Connection{
@@ -902,7 +917,7 @@ func (h *Handler) handleOAuthImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "oauth_exchange_failed", "the provider did not accept the credential")
 		return
 	}
-	flowState := oauthFlow{name: name, identity: identity}
+	flowState := oauthFlow{name: name, identity: identity, identityOptional: flow.IdentityOptional}
 	if saved, _, ok := h.saveOnboardedConnection(w, r, providerID, flowState, result); ok {
 		writeJSON(w, http.StatusOK, saved)
 	}
@@ -1009,7 +1024,7 @@ func (h *Handler) handleOAuthBulkImport(w http.ResponseWriter, r *http.Request) 
 			failed++
 			continue
 		}
-		if account.Identity == "" {
+		if account.Identity == "" && !flow.IdentityOptional {
 			results = append(results, itemResult{Index: index, Error: "account has no email or identity claim"})
 			failed++
 			continue
@@ -1019,11 +1034,20 @@ func (h *Handler) handleOAuthBulkImport(w http.ResponseWriter, r *http.Request) 
 			failed++
 			continue
 		}
-		// The label falls back to the identity, as the reference does for a bulk
-		// item that carries no display name.
+		// The label falls back to the identity, and then to the reference's
+		// "Account N", as it does for a bulk item that carries no display name.
 		name := account.Name
 		if name == "" {
 			name = account.Identity
+		}
+		if name == "" {
+			label, err := h.accountLabel(r.Context(), providerID)
+			if err != nil {
+				results = append(results, itemResult{Index: index, Error: err.Error()})
+				failed++
+				continue
+			}
+			name = label
 		}
 		if len(name) > oauthMaxNameLength || len(account.Identity) > oauthMaxNameLength {
 			results = append(results, itemResult{Index: index, Error: "account name or identity is too long"})
@@ -1184,6 +1208,17 @@ func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name 
 	stored.ProviderID = node.ProviderID
 	h.register(stored)
 	return stored, nil
+}
+
+// accountLabel is the reference's label for a connection that names no account:
+// "Account N", N being one more than the provider's connections
+// (connectionsRepo.js:289-291).
+func (h *Handler) accountLabel(ctx context.Context, providerID string) (string, error) {
+	existing, err := h.opts.Credentials.ListConnections(ctx, providerID)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Account %d", len(existing)+1), nil
 }
 
 // register publishes one stored connection to the runtime registry. It is separate

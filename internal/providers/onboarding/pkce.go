@@ -276,21 +276,26 @@ func codexBulkAccount(item map[string]any) (BulkAccount, error) {
 	}
 	refresh := bulkString(item, "refreshToken", "refresh_token")
 	idToken := bulkString(item, "idToken", "id_token")
-	identity, claims := codexAccount(idToken, access)
-	if given := bulkString(item, "email"); given != "" {
-		identity = given
-	}
-	// An exported providerSpecificData wins; the JWT only backfills what is missing
-	// (bulk-import/route.js:77-95).
+	// An exported email and providerSpecificData win; the JWT only backfills what
+	// is missing, read from the id token when there is one and the access token
+	// otherwise (bulk-import/route.js:76-95). An item that names no email is
+	// imported without one.
 	providerData := map[string]string{}
-	for key, value := range claims {
-		providerData[key] = value
-	}
 	if given, ok := item["providerSpecificData"].(map[string]any); ok {
 		for key, value := range given {
 			if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
 				providerData[key] = strings.TrimSpace(text)
 			}
+		}
+	}
+	identity := bulkString(item, "email")
+	email, accountID, planType := codexAccountInfo(firstNonEmpty(idToken, access))
+	if identity == "" {
+		identity = email
+	}
+	for key, value := range codexProviderData(accountID, planType) {
+		if providerData[key] == "" {
+			providerData[key] = value
 		}
 	}
 	return BulkAccount{
@@ -399,9 +404,10 @@ func codexFlow() Flow {
 		FixedPort:      1455,
 		CallbackPath:   "/auth/callback",
 		Bulk:           codexBulkAccount,
-		// The id token names the account (codexAccount), as in the reference
-		// (codex.js mapTokens), so sign-in starts without a name or identity.
+		// The reference never asks for an account (OAuthModal.js opens the provider
+		// page directly) and stores one with no email when the tokens name none.
 		ResolvesIdentity: true,
+		IdentityOptional: true,
 		Authorize: func(_ context.Context, p Params) (AuthRequest, error) {
 			return pkceAuthorize(authorizeURL, url.Values{
 				"response_type":              {"code"},
@@ -427,10 +433,20 @@ func codexFlow() Flow {
 			if err != nil {
 				return Result{}, err
 			}
-			identity, providerData := codexAccount(tokens.IDToken, tokens.AccessToken)
+			// codex.js mapTokens (:48-66): the id token's email, else the access token's
+			// email, preferred_username or sub; the account id and plan come from the id
+			// token only. No email is stored when none of those exist.
+			email, accountID, planType := codexAccountInfo(tokens.IDToken)
+			if email == "" {
+				email = codexTokenEmail(tokens.AccessToken)
+			}
+			var providerData map[string]string
+			if accountID != "" || planType != "" {
+				providerData = codexProviderData(accountID, planType)
+			}
 			return Result{
 				AuthKind: credentials.AuthOAuth,
-				Identity: identity,
+				Identity: email,
 				Secret: credentials.Secret{
 					AccessToken:  tokens.AccessToken,
 					RefreshToken: tokens.RefreshToken,
@@ -443,45 +459,43 @@ func codexFlow() Flow {
 	}
 }
 
-// codexAccount reads the ChatGPT account id, plan and email out of the JWT
-// claims, so the connection is identifiable without a second round trip.
-func codexAccount(idToken, accessToken string) (string, map[string]string) {
-	claims := jwtClaims(idToken)
-	if len(claims) == 0 {
-		claims = jwtClaims(accessToken)
-	}
+// codexAccountInfo mirrors extractCodexAccountInfo (providerHelpers.js:73-82):
+// the top-level email, and the ChatGPT account id and plan from the OpenAI auth
+// claim with the top-level account_id/plan_type as fallback. A token that is not
+// a JWT yields nothing.
+func codexAccountInfo(token string) (email, accountID, planType string) {
+	claims := jwtClaims(token)
 	auth, _ := claims["https://api.openai.com/auth"].(map[string]any)
-	profile, _ := claims["https://api.openai.com/profile"].(map[string]any)
+	return claimString(claims, "email"),
+		firstNonEmpty(claimString(auth, "chatgpt_account_id"), claimString(claims, "account_id")),
+		firstNonEmpty(claimString(auth, "chatgpt_plan_type"), claimString(claims, "plan_type"))
+}
+
+// codexTokenEmail mirrors extractEmailFromAccessToken (providerHelpers.js:47-51):
+// email, then preferred_username, then sub.
+func codexTokenEmail(token string) string {
+	claims := jwtClaims(token)
+	return firstNonEmpty(claimString(claims, "email"), claimString(claims, "preferred_username"), claimString(claims, "sub"))
+}
+
+// codexProviderData is the providerSpecificData the reference stores for an
+// account id and plan, leaving out whichever is absent.
+func codexProviderData(accountID, planType string) map[string]string {
 	data := map[string]string{}
-	if value, ok := auth["chatgpt_account_id"].(string); ok && value != "" {
-		data["chatgptAccountId"] = value
+	if accountID != "" {
+		data["chatgptAccountId"] = accountID
 	}
-	if value, ok := auth["chatgpt_plan_type"].(string); ok && value != "" {
-		data["chatgptPlanType"] = value
+	if planType != "" {
+		data["chatgptPlanType"] = planType
 	}
-	identity := ""
-	if value, ok := profile["email"].(string); ok {
-		identity = value
-	}
-	if identity == "" {
-		if value, ok := claims["email"].(string); ok {
-			identity = value
-		}
-	}
-	if identity == "" {
-		if value, ok := claims["preferred_username"].(string); ok {
-			identity = value
-		}
-	}
-	// A token without an email still names its ChatGPT account, which is stable
-	// across sign-ins and so a sound dedup key.
-	if identity == "" {
-		identity = data["chatgptAccountId"]
-	}
-	if len(data) == 0 {
-		return identity, nil
-	}
-	return identity, data
+	return data
+}
+
+// claimString reads one string claim; anything else reads as absent, as a falsy
+// value does in the reference.
+func claimString(claims map[string]any, key string) string {
+	value, _ := claims[key].(string)
+	return value
 }
 
 // jwtClaims decodes a JWT payload without verifying it. The token was just

@@ -116,7 +116,7 @@ func loadConfiguration(ctx context.Context, db *sql.DB, sealer *Sealer, settings
 	if err != nil {
 		return Configuration{}, err
 	}
-	rows, err := db.QueryContext(ctx, `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,c.identity,COALESCE(c.secret_blob,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.account_id FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id ORDER BY c.priority,c.name,c.id`)
+	rows, err := db.QueryContext(ctx, `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,COALESCE(c.identity,''),COALESCE(c.secret_blob,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.account_id FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id ORDER BY c.priority,c.name,c.id`)
 	if err != nil {
 		return Configuration{}, err
 	}

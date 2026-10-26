@@ -267,3 +267,56 @@ func TestV8MimoFreeBaseURLUpgrade(t *testing.T) {
 		}
 	}
 }
+
+// v11 keeps every stored connection, including one whose identity is a ChatGPT
+// account id from the pre-#239 Codex fallback, and then lets identity be absent:
+// absent identities never collide, present ones stay unique per node.
+func TestV11KeepsConnectionsAndMakesIdentityOptional(t *testing.T) {
+	ctx := context.Background()
+	s, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "routeweft.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := NewRunner(s.DB(), v1, v2, v3, v4, v5, v6, v7, v8, v9, v10).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `INSERT INTO proxy_pools(id,name) VALUES('pool-1','pool');
+INSERT INTO provider_nodes(id,kind,provider_id,name) VALUES('node-codex','builtin','codex','Codex');
+INSERT INTO provider_connections(id,node_id,name,auth_kind,identity,secret_blob,enabled,priority,proxy_pool_id,created_at,updated_at,account_id)
+VALUES('conn-legacy','node-codex','legacy','oauth','acct-legacy','sealed-blob',0,3,'pool-1','2026-01-01T00:00:00.000Z','2026-01-02T00:00:00.000Z','acct-header');`); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewRunner(s.DB()).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var name, kind, identity, blob, pool, created, updated, account string
+	var enabled, priority int
+	if err := s.DB().QueryRowContext(ctx, `SELECT name,auth_kind,identity,secret_blob,enabled,priority,proxy_pool_id,created_at,updated_at,account_id FROM provider_connections WHERE id='conn-legacy'`).
+		Scan(&name, &kind, &identity, &blob, &enabled, &priority, &pool, &created, &updated, &account); err != nil {
+		t.Fatal(err)
+	}
+	if name != "legacy" || kind != "oauth" || identity != "acct-legacy" || blob != "sealed-blob" || enabled != 0 || priority != 3 || pool != "pool-1" ||
+		created != "2026-01-01T00:00:00.000Z" || updated != "2026-01-02T00:00:00.000Z" || account != "acct-header" {
+		t.Fatalf("v11 rewrote the stored connection: %q %q %q %q %d %d %q %q %q %q", name, kind, identity, blob, enabled, priority, pool, created, updated, account)
+	}
+	insert := `INSERT INTO provider_connections(id,node_id,name,auth_kind,identity) VALUES(?,?,?,?,?)`
+	for _, id := range []string{"conn-a", "conn-b"} {
+		if _, err := s.DB().ExecContext(ctx, insert, id, "node-codex", "Account", "oauth", nil); err != nil {
+			t.Fatalf("connection without identity refused: %v", err)
+		}
+	}
+	if _, err := s.DB().ExecContext(ctx, insert, "conn-dup", "node-codex", "dup", "oauth", "acct-legacy"); err == nil {
+		t.Fatal("a duplicate identity on the same node was accepted")
+	}
+	if _, err := s.DB().ExecContext(ctx, insert, "conn-blank", "node-codex", "blank", "oauth", ""); err == nil {
+		t.Fatal("an empty identity was accepted alongside NULL")
+	}
+	if _, err := s.DB().ExecContext(ctx, `DELETE FROM provider_nodes WHERE id='node-codex'`); err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM provider_connections`).Scan(&left); err != nil || left != 0 {
+		t.Fatalf("node delete no longer cascades: %d %v", left, err)
+	}
+}
