@@ -1152,6 +1152,10 @@ const { join } = require('node:path');
   // order, landmark presence, and reduced-motion behavior. Runs on the live
   // stubbed DOM rather than a static source scrape.
   await page.emulateMedia({ reducedMotion: 'no-preference' });
+  // The system-dark flip above starts 80ms colour transitions on nav links and
+  // buttons; sampling mid-transition pairs light-theme text with the dark
+  // sidebar (2.45:1, #243). Measure the settled colours.
+  await page.evaluate(() => Promise.all(document.getAnimations().filter(animation => animation instanceof CSSTransition).map(animation => animation.finished.catch(() => {}))));
   report.a11y = await page.evaluate(() => {
     const luminance = color => {
       const match = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(color);
