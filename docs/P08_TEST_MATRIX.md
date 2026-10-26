@@ -54,14 +54,14 @@ Cells by kind and column:
 | Column | P | C | T | S | U | G | N |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Authenticated listing | 22 | 0 | 20 | 2 | 0 | 3 | 34 |
-| Quota / usage read | 23 | 0 | 0 | 0 | 0 | 1 | 57 |
-| Applicable unavailability | 20 | 1 | 0 | 54 | 3 | 3 | 0 |
+| Quota / usage read | 24 | 0 | 0 | 0 | 0 | 0 | 57 |
+| Applicable unavailability | 21 | 1 | 0 | 54 | 3 | 2 | 0 |
 | Import / refresh | 18 | 0 | 3 | 0 | 0 | 3 | 57 |
 | Streaming | 22 | 2 | 51 | 1 | 2 | 3 | 0 |
 | Non-streaming | 23 | 1 | 50 | 1 | 2 | 4 | 0 |
 | Error shapes | 29 | 2 | 1 | 47 | 2 | 0 | 0 |
 | Cached vs ordinary tokens | 18 | 2 | 5 | 54 | 2 | 0 | 0 |
-| **All cells** | **175** | **8** | **130** | **159** | **11** | **17** | **148** |
+| **All cells** | **177** | **8** | **130** | **159** | **11** | **15** | **148** |
 
 648 cells in all (81 providers x 8 behaviours). `N` cells carry a pin citation in the evidence tables below.
 
@@ -84,7 +84,7 @@ Cells by kind and column:
 | `cohere` | ready | T | N | S | N | T | T | S | S |
 | `featherless` | ready | N | N | S | N | T | T | S | S |
 | `fireworks` | ready | T | N | S | N | T | T | S | S |
-| `groq` | ready | T | G | G | N | T | T | P | S |
+| `groq` | ready | T | P | P | N | T | T | P | S |
 | `hyperbolic` | ready | T | N | S | N | T | T | S | S |
 | `kilo-gateway` | ready | N | N | S | N | T | T | S | S |
 | `llm7` | ready | N | N | S | N | T | T | S | S |
@@ -190,6 +190,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 
 ### Quota / usage read
 
+- **P** `groq` — U/groq.js:44-129; x-ratelimit-* headers on GET /models become Requests and Tokens windows (#211). Absent buckets are an error, not an empty plan; a malformed bucket is unbounded beside a valid one Tests: `providers/usage:TestGroqPinnedHeadersBuildRequestAndTokenWindows`, `providers/usage:TestGroqAbsentHeadersAreNotReported`, `providers/usage:TestGroqMalformedHeadersNeverInventQuota`, `providers/usage:TestGroqUpstreamErrorsAreExplicit`.
 - **P** `vercel-ai-gateway` — misc.js:150-200 Tests: `providers/usage:TestVercelBalanceIsNotAUsagePercentage`.
 - **P** `codex` — U/codex.js:107-217; rate_limits_by_limit_id aliases open (P05) Tests: `providers/codex:TestUsageNormalizesWindowsAndResetCredits`, `providers/codex:TestUsageOmittedResetCreditsAreUnknown`.
 - **P** `claude` — U/claude.js:20-185; scoped weekly metadata open (P05) Tests: `providers/claude:TestOAuthUsageParsesWindowsAndCaches`, `providers/claude:TestOAuthUsage429CoolsDownThenFallsBackToLegacy`.
@@ -213,7 +214,6 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `grok-cli` — U/grok-cli.js:141-239; gRPC fallback open (P05) Tests: `providers/usage:TestGrokPinnedRESTCredits`, `providers/usage:TestGrokRESTPaidFreeAndMonthlyShapes`.
 - **P** `kenari` — U/kenari.js:9-51 Tests: `providers/usage:TestKenariPinnedZeroCapacity`, `providers/usage:TestKenariAbsentAmountsAreUnknownNotExhausted`.
 - **P** `zed` — U/zed.js:54-120; the pin's {limited:N} limit form is not read, so such a window is omitted Tests: `providers/usage:TestZedUsageLimitedUnlimitedAndExhausted`.
-- **G** `groq` — U/groq.js:44-129 reads x-ratelimit-* headers from GET /models; Routeweft's reader (usage/apikey.go groq) discards the headers and always returns the error "rate limits are only exposed on inference responses". No quota is read for Groq
 - **N** `alicode-intl` — open-sse/providers/registry/alicode-intl.js:1-30 has no quota endpoint or header contract; open-sse/services/usage.js:38-69 has no handler for it and :78-79 returns "not implemented" (P05 audit row)
 - **N** `alitp-intl` — open-sse/providers/registry/alitp-intl.js:1-35 has no quota endpoint or header contract; open-sse/services/usage.js:38-69 has no handler for it and :78-79 returns "not implemented" (P05 audit row)
 - **N** `alicode` — open-sse/providers/registry/alicode.js:1-31 has no quota endpoint or header contract; open-sse/services/usage.js:38-69 has no handler for it and :78-79 returns "not implemented" (P05 audit row)
@@ -274,6 +274,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 
 ### Applicable unavailability
 
+- **P** `groq` — a reported zero remaining holds the account out until the header's reset duration (U/groq.js:44-62), landed in #211 Tests: `providers/usage:TestGroqZeroRemainingIsExhaustedUntilReset`.
 - **P** `vercel-ai-gateway` — a credit balance is not a usage percentage Tests: `providers/usage:TestVercelBalanceIsNotAUsagePercentage`.
 - **P** `codex` — usage_limit_reached cools until resets_at / resets_in_seconds (executors/codex.js:388-410), landed in P02 Tests: `ingress:TestCodexBodyResetReachesDispatchCooldown`, `providers/wire:TestPinnedErrorBodyResets`, `providers/codex:TestUsageFailureIsUnavailableNotExhausted`.
 - **P** `claude` — a 429 on the usage read cools and falls back; no organization reports an admin message Tests: `providers/claude:TestOAuthUsage429CoolsDownThenFallsBackToLegacy`, `providers/claude:TestLegacyWithoutOrganizationReportsAdminMessage`.
@@ -296,7 +297,6 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **C** `cursor` — the resource_exhausted in-band failure (cursor.js:365-374); provider unavailable for serving Tests: `providers/wire:TestCursorDoReportsAFailureInBandNotAsSuccess`, `providers/wire:TestCursorDoPassesUpstreamRejectionsThrough`.
 - **S** `alicode-intl`, `alitp-intl`, `alicode`, `alims-intl`, `api-airforce`, `baidu`, `bazaarlink`, `blackbox`, `bluesminds`, `byteplus`, `cerebras`, `chutes`, `cohere`, `featherless`, `fireworks`, `hyperbolic`, `kilo-gateway`, `llm7`, `mistral`, `morph`, `nebius`, `nvidia`, `perplexity`, `poolside`, `sambanova`, `siliconflow`, `tencent`, `together`, `venice`, `volcengine-ark`, `openai`, `anthropic`, `gemini`, `glm-cn`, `xiaomi-tokenplan`, `mimo-free`, `mmf`, `opencode`, `ollama-local`, `vertex-partner`, `tokenrouter`, `perplexity-agent`, `cloudflare-ai`, `muse`, `xai`, `gitlab`, `iflow`, `cline`, `clinepass`, `kilocode`, `gemini-cli`, `vertex`, `kimchi`, `azure` — generic 429/5xx/401 classification; the pin has no provider-specific capacity contract for it Tests: `ingress:TestRecordUpstreamFailureMapsProviderErrToCooldown`, `ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin`.
 - **U** `typesafe`, `grok-web`, `perplexity-web` — refused by its immutable readiness; no capacity behaviour is reachable Tests: `ingress:TestReadinessMatchesIngressReachability`.
-- **G** `groq` — the quota reader returns an error for every key (see the quota column), so no exhausted-key state is ever observed Tests: `ingress:TestOpenP08ErrorClassificationGaps`.
 - **G** `openrouter` — pin: 402 cools the account for two minutes and falls back (errorConfig.js:77). Routeweft treats 402 as a terminal client error Tests: `ingress:TestOpenP08ErrorClassificationGaps`.
 - **G** `deepseek` — pin: 402 Insufficient Balance cools the account for two minutes and falls back (errorConfig.js:77, accountFallback.js:35-46), and the balance endpoint reports is_available:false. Routeweft treats 402 as a terminal client error (no cooldown, no fallback) and reads a zero balance as unlimited Tests: `ingress:TestOpenP08ErrorClassificationGaps`, `providers/usage:TestDeepSeekReportsBalance`.
 
@@ -537,7 +537,7 @@ These are findings, not new work in this PR. Each is recorded in PARITY and stay
 
 1. **402 Payment Required is not an unavailability signal.** The pin cools the account for two minutes and falls back (`errorConfig.js:77`, `accountFallback.js:35-46`). Routeweft classifies 402 as a terminal client error: no cooldown and no fallback, so an out-of-credit DeepSeek or OpenRouter account keeps (Grok CLI closed it in #184) being tried and keeps failing. `TestOpenP08ErrorClassificationGaps`.
 2. **Codex `usage_limit_reached` ignored `resets_at` when this audit began.** P02 (#177) closed it (`wire/error_reset.go`); the gap guard for it was removed and the Codex cell is now P.
-3. **Groq has no quota reader in effect.** The reader discards the `x-ratelimit-*` headers the pin reads (`usage/groq.js:44-129`) and always returns an error.
+3. **Groq had no quota reader in effect when this audit began.** #211 closed it: the reader now parses the `x-ratelimit-*` headers the pin reads (`usage/groq.js:44-129`) and the Groq quota and unavailability cells are now P.
 4. **A zero DeepSeek balance reads as unlimited** (the reader's `window()` treats a total of 0 as unlimited), so the account is never seen as out of credit. P05 listed this as open; no test exists for it because the expected behaviour would fail.
 5. **Providers declared ready whose pin executor is not replicated.** The shared-path table proves their URL and credential only: Codex (`executors/codex.js:415-515`: forced stream, `store:false`, default instructions, allowlist) and Grok CLI (`executors/grok-cli.js:362-470`: grok-shell identity, forced stream). Their streaming and non-streaming cells are `G`. Whether their readiness should change is a product decision for #76 P02 and the readiness table (#176). Zed and MiMo Free with its alias mmf were in this list until #192, which built their executors (token exchange, thread envelope, NDJSON frames, bootstrap JWT); their cells are now evidence and their readiness stays `ready`.
 6. Smaller, in the cell notes: Zed's `{limited:N}` quota form, Qoder's absent pool read as unlimited, Command Code's empty window, MiniMax's camelCase envelope, Zed's `trial_blocked` message rewrite, Gemini CLI's `retryDelay` hint, Claude's and Zed's authenticated listing.

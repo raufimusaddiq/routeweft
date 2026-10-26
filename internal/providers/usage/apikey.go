@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -461,8 +463,91 @@ func (r apiKeyReader) groq(ctx context.Context, key string) (quota.State, error)
 	if reply.status < 200 || reply.status >= 300 {
 		return failure("groq usage returned HTTP %d", reply.status)
 	}
-	_ = reply.body
-	return failure("groq rate limits are only exposed on inference responses")
+	now := r.now()
+	var windows []quota.Window
+	var malformed []string
+	for _, bucket := range []struct{ label, suffix string }{{"Requests", "requests"}, {"Tokens", "tokens"}} {
+		window, reported, err := groqWindow(reply.headers, bucket.label, bucket.suffix, now)
+		switch {
+		case err != nil:
+			malformed = append(malformed, err.Error())
+			// A malformed bucket is shown without a bound: unknown, never zero or
+			// unlimited, so it cannot steer routing.
+			windows = append(windows, quota.Window{Name: bucket.label})
+		case reported:
+			windows = append(windows, window)
+		}
+	}
+	if len(malformed) == len(windows) {
+		if len(malformed) == 0 {
+			// The key works but Groq sent no bucket: not reported, not healthy.
+			return failure("groq connected but reported no rate-limit headers")
+		}
+		return failure("groq rate-limit headers malformed: %s", strings.Join(malformed, "; "))
+	}
+	return quota.State{Plan: "Groq", Windows: windows, ObservedAt: now}, nil
+}
+
+// groqWindow reads one x-ratelimit-{limit,remaining,reset}-<suffix> bucket. The
+// bucket is unreported when both counts are absent; a half-present, empty,
+// non-numeric, negative or non-positive-limit value is malformed. Neither ever
+// becomes a zero or unlimited window.
+func groqWindow(headers http.Header, label, suffix string, now time.Time) (quota.Window, bool, error) {
+	limitKey := "x-ratelimit-limit-" + suffix
+	remainingKey := "x-ratelimit-remaining-" + suffix
+	limitRaw, limitOK := headerValue(headers, limitKey)
+	remainingRaw, remainingOK := headerValue(headers, remainingKey)
+	if !limitOK && !remainingOK {
+		return quota.Window{}, false, nil
+	}
+	limit, err := groqCount(limitKey, limitRaw, limitOK)
+	if err != nil {
+		return quota.Window{}, true, err
+	}
+	if limit <= 0 {
+		return quota.Window{}, true, fmt.Errorf("%s is not positive", limitKey)
+	}
+	remaining, err := groqCount(remainingKey, remainingRaw, remainingOK)
+	if err != nil {
+		return quota.Window{}, true, err
+	}
+	var reset *time.Time
+	if raw, ok := headerValue(headers, "x-ratelimit-reset-"+suffix); ok {
+		if duration, ok := groqDuration(raw); ok {
+			at := now.Add(duration).UTC()
+			reset = &at
+		}
+	}
+	return window(label, math.Max(0, limit-remaining), limit, reset), true, nil
+}
+
+func headerValue(headers http.Header, key string) (string, bool) {
+	values := headers.Values(key)
+	if len(values) == 0 {
+		return "", false
+	}
+	return strings.TrimSpace(values[0]), true
+}
+
+func groqCount(key, raw string, present bool) (float64, error) {
+	if !present {
+		return 0, fmt.Errorf("%s is missing", key)
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+		return 0, fmt.Errorf("%s is not a count", key)
+	}
+	return value, nil
+}
+
+// groqDuration parses Groq's Go-style reset durations ("2m59.56s", "7.66s",
+// "120ms"). An unparseable or negative value yields no reset, never a bogus time.
+func groqDuration(raw string) (time.Duration, bool) {
+	duration, err := time.ParseDuration(raw)
+	if err != nil || duration < 0 {
+		return 0, false
+	}
+	return duration, true
 }
 
 // kenari mirrors open-sse/services/usage/kenari.js.
