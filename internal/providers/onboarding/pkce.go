@@ -300,6 +300,8 @@ func codexBulkAccount(item map[string]any) (BulkAccount, error) {
 	}
 	return BulkAccount{
 		Name:     bulkString(item, "displayName", "name"),
+		ItemName: bulkString(item, "name"),
+		Disabled: item["isActive"] == false,
 		Identity: identity,
 		AuthKind: credentials.AuthOAuth,
 		Secret: credentials.Secret{

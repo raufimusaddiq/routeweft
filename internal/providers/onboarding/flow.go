@@ -155,6 +155,13 @@ type BulkAccount struct {
 	Identity string
 	AuthKind credentials.AuthKind
 	Secret   credentials.Secret
+	// ItemName is the item's own "name", the only label that replaces a matched
+	// Codex connection's name: the reference spreads the item over the row
+	// (connectionsRepo.js:283) and displayName is a separate field there.
+	ItemName string
+	// Disabled is an item that says isActive: false; any other item is stored or
+	// updated enabled (bulk-import/route.js:103, connectionsRepo.js:308).
+	Disabled bool
 }
 
 // ImportKeys is the operator input the flow's Import step reads.
@@ -229,6 +236,10 @@ type Result struct {
 	// AuthKind is the credential mode to store. Most flows store oauth; a PAT,
 	// cookie or API-key import stores its own kind.
 	AuthKind credentials.AuthKind
+	// NeverDeduped is the reference's access_token connection, which is always
+	// inserted and never matched to an existing row (connectionsRepo.js:264): the
+	// Codex token import (import-token/route.js:73).
+	NeverDeduped bool
 }
 
 // PollResult is one device-code poll outcome.

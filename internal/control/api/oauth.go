@@ -770,6 +770,34 @@ func (h *Handler) saveOnboardedConnection(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid_auth_kind", "this provider does not accept the credential mode this sign-in produced")
 		return nil, persisted, false
 	}
+	if providerID == codexProviderID {
+		h.codexSaveMu.Lock()
+		defer h.codexSaveMu.Unlock()
+	}
+	if providerID == codexProviderID && !result.NeverDeduped {
+		match, found, err := h.codexMatch(r.Context(), identity, result.Secret.ProviderData)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
+			return nil, persisted, false
+		}
+		if found {
+			// The matched row keeps its id, name, priority, enabled flag, proxy pool and
+			// identity: a sign-in sends none of them (codex.js:48-66,
+			// [provider]/[action]/route.js:471-479), and takes the new credential.
+			match.Secret = result.Secret
+			connection, persisted, err := h.publishMergedConnection(r.Context(), match, codexMergedSecret)
+			if err != nil {
+				if persisted {
+					writeError(w, http.StatusInternalServerError, "connection_publish_failed", "connection saved but could not be published to the runtime")
+				} else {
+					writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
+				}
+				return nil, persisted, false
+			}
+			h.clearConnectionHealth(connection.ID)
+			return connectionJSON(connection), true, true
+		}
+	}
 	if name == "" {
 		label, err := h.accountLabel(r.Context(), providerID)
 		if err != nil {
@@ -1139,6 +1167,14 @@ func decodeBulkBody(w http.ResponseWriter, r *http.Request) ([]map[string]any, b
 // whether a sign-in attempt may be closed: a publish failure after the write must
 // not discard a token the provider already issued.
 func (h *Handler) publishConnection(ctx context.Context, connection credentials.Connection) (stored credentials.Connection, persisted bool, err error) {
+	return h.publishMergedConnection(ctx, connection, mergeConnectionSecret)
+}
+
+// publishMergedConnection is publishConnection with the rule that combines an
+// existing connection's stored secret with the update's: a Codex duplicate
+// replaces its providerSpecificData whole (codexMergedSecret), every other edit
+// merges it key by key (mergeConnectionSecret).
+func (h *Handler) publishMergedConnection(ctx context.Context, connection credentials.Connection, merge func(existing, update credentials.Secret) credentials.Secret) (stored credentials.Connection, persisted bool, err error) {
 	// A caller that already resolved its node keeps it: a Generic Provider node has
 	// no built-in spec to look up, and a second resolution could disagree with the
 	// first. Onboarding callers pass only the provider and get the built-in node.
@@ -1167,7 +1203,7 @@ func (h *Handler) publishConnection(ctx context.Context, connection credentials.
 		if err != nil {
 			return credentials.Connection{}, false, err
 		}
-		connection.Secret = mergeConnectionSecret(existing.Secret, connection.Secret)
+		connection.Secret = merge(existing.Secret, connection.Secret)
 	}
 	stored, err = h.opts.Credentials.PutConnection(ctx, connection)
 	if err != nil {
@@ -1189,9 +1225,40 @@ func (h *Handler) publishConnection(ctx context.Context, connection credentials.
 // runtime, without recompiling the snapshot. Bulk import calls it per item and
 // publishes once; a single import goes through publishConnection, which does both.
 func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name string, account onboarding.BulkAccount) (credentials.Connection, error) {
+	if providerID == codexProviderID {
+		// Held from before the node is resolved: builtinNode creates the node on
+		// first use, and two first imports racing there would each create one.
+		h.codexSaveMu.Lock()
+		defer h.codexSaveMu.Unlock()
+	}
 	node, err := h.builtinNode(ctx, providerID)
 	if err != nil {
 		return credentials.Connection{}, err
+	}
+	if providerID == codexProviderID {
+		match, found, err := h.codexMatch(ctx, account.Identity, account.Secret.ProviderData)
+		if err != nil {
+			return credentials.Connection{}, err
+		}
+		if found {
+			// {...existing, ...item} (connectionsRepo.js:283): the item's credential
+			// replaces the stored one, its own name replaces the label, and its
+			// isActive, true unless it says false (bulk-import/route.js:103), sets
+			// enabled. The id, priority, proxy pool and identity are kept.
+			match.Secret = codexMergedSecret(match.Secret, account.Secret)
+			if account.ItemName != "" {
+				match.Name = account.ItemName
+			}
+			match.Enabled = !account.Disabled
+			stored, err := h.opts.Credentials.PutConnection(ctx, match)
+			if err != nil {
+				return credentials.Connection{}, err
+			}
+			stored.ProviderID = node.ProviderID
+			h.register(stored)
+			h.clearConnectionHealth(stored.ID)
+			return stored, nil
+		}
 	}
 	existing, err := h.opts.Credentials.ListConnections(ctx, providerID)
 	if err != nil {
@@ -1199,7 +1266,7 @@ func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name 
 	}
 	stored, err := h.opts.Credentials.PutConnection(ctx, credentials.Connection{
 		NodeID: node.ID, Name: name, Identity: account.Identity,
-		AuthKind: account.AuthKind, Secret: account.Secret, Enabled: true,
+		AuthKind: account.AuthKind, Secret: account.Secret, Enabled: !account.Disabled,
 		Priority: len(existing),
 	})
 	if err != nil {

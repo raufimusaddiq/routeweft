@@ -157,6 +157,9 @@ type Handler struct {
 	// import/cookie/PAT flows that have no browser step.
 	oauthFlows  *onboarding.Registry
 	manualFlows map[string]onboarding.Flow
+	// codexSaveMu makes a Codex duplicate lookup and the write it decides one
+	// step, as the reference runs both in one transaction (connectionsRepo.js:210).
+	codexSaveMu sync.Mutex
 }
 
 // New builds the control API handler.

@@ -1067,16 +1067,39 @@ id is never used as one:
   labelled `Account N` (N is one more than the provider's connections,
   `connectionsRepo.js:289-291`) unless named, and is never matched to another
   connection, so importing it twice stores two. The store keeps `identity` NULL
-  for it (migration v11); a non-NULL identity stays unique per node, the manual
-  connection form still requires one, and an edit that sends a blank identity
-  keeps the stored one.
+  for it (migration v11). The manual connection form still requires one, and an
+  edit that sends a blank identity keeps the stored one.
 - A connection stored before #239 with the ChatGPT account id as its identity
-  is kept as is: v11 copies it unchanged and nothing rewrites it. Signing in,
-  importing or bulk-importing the same account again adds a connection beside
-  it, which the operator may delete. Routeweft still refuses a second connection
-  with an identity a node already has instead of updating it, unlike the
-  reference's merge (`connectionsRepo.js:228-287`); that is generic, not Codex
-  identity, and out of #239's scope.
+  is kept as is: v11 and v12 copy it unchanged and nothing rewrites it. An email
+  never matches it, so signing in, importing or bulk-importing the same account
+  again adds a connection beside it, which the operator may delete.
+
+Codex duplicate handling follows the same pin (#241, `connectionsRepo.js:226-292`):
+
+- A browser sign-in or bulk item with an email updates the existing Codex oauth
+  connection with that email only when both carry the same non-empty
+  `chatgptAccountId` (`:239-242`). A different account id, or none on either
+  side, inserts a new connection with the same email; so does an item with no
+  email (`:228`).
+- A token import is the reference's `access_token` connection: it always inserts
+  and is never the existing side of a match (`:232,264`,
+  `import-token/route.js:73`).
+- An update is `{...existing, ...incoming}` (`:283`). The connection keeps its
+  id, priority, proxy pool and identity. The tokens, id token and expiry the
+  incoming credential carries replace the stored ones (one it leaves out is
+  kept), and its `providerSpecificData` replaces the stored map whole. A sign-in
+  keeps the name and enabled flag (it sends neither); a bulk item replaces the
+  name only with its own `name` and sets enabled from `isActive`, true unless it
+  says false (`bulk-import/route.js:103`). Every update clears the connection's
+  cooldown, the reference's health reset on `testStatus: "active"` (`:64-82`).
+- Migration v12 drops `UNIQUE(node_id, identity)` and keeps it by trigger for
+  every node except the built-in Codex node, so every other provider (built-in
+  or Generic, including a Generic node that names `codex`) still refuses a second
+  connection with an identity its node has. The manual connection form keeps that
+  refusal for Codex too: it is Routeweft's own (the reference's manual create
+  stores only API-key and cookie rows, `providers/route.js:179-181`), so a create,
+  or an edit that changes the identity, onto one another Codex connection holds is
+  refused, while an edit that keeps it succeeds. v12 is forward-only (RUNBOOK 14).
 
 `POST /admin/v1/oauth/{provider}/cancel` (body: `state`) ends a pending browser
 or device attempt so it can no longer complete, and answers

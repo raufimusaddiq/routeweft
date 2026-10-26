@@ -212,12 +212,14 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, 1<<20, &body) {
 		return
 	}
+	oldIdentity := ""
 	if r.Method == http.MethodPatch {
 		old, err := h.opts.Credentials.GetConnection(r.Context(), r.PathValue("id"))
 		if err != nil {
 			providerNotFound(w, err)
 			return
 		}
+		oldIdentity = old.Identity
 		if body.NodeID == "" {
 			body.NodeID = old.NodeID
 		}
@@ -315,6 +317,16 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPatch && strings.TrimSpace(body.Identity) == "" {
 		writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity, auth mode, and proxy pool")
 		return
+	}
+	// v12 lets the built-in Codex node hold one identity twice for onboarding
+	// (#241); a manual create, or an edit that changes the identity, still may not
+	// take one another Codex connection holds.
+	if node.Kind == credentials.NodeBuiltin && node.ProviderID == codexProviderID && (r.Method != http.MethodPatch || body.Identity != oldIdentity) {
+		taken, err := h.codexIdentityTaken(r.Context(), node.ID, r.PathValue("id"), body.Identity)
+		if err != nil || taken {
+			writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity, auth mode, and proxy pool")
+			return
+		}
 	}
 	connection, _, err := h.publishConnection(r.Context(), credentials.Connection{ID: r.PathValue("id"), NodeID: node.ID, ProviderID: node.ProviderID, Name: body.Name, AuthKind: authKind, Identity: body.Identity, Secret: body.Secret, Enabled: enabled, Priority: priority, ProxyPoolID: proxyPool, AccountID: accountID})
 	if err != nil {
