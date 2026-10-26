@@ -126,8 +126,8 @@ func TestOAuthDeviceStartRequiresSessionAndDeviceProvider(t *testing.T) {
 	if recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/openai/device", `{"name":"a","identity":"b"}`); recorder.Code != http.StatusNotFound {
 		t.Fatalf("api-key provider device status=%d want 404", recorder.Code)
 	}
-	if recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/kilocode/device", `{"name":"","identity":"b"}`); recorder.Code != http.StatusBadRequest {
-		t.Fatalf("missing name status=%d want 400", recorder.Code)
+	if recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/kilocode/device", `{"name":"a","identity":""}`); recorder.Code != http.StatusBadRequest {
+		t.Fatalf("missing identity status=%d want 400", recorder.Code)
 	}
 }
 

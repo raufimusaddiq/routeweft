@@ -25,6 +25,8 @@ func iflowFlow() Flow {
 		Provider:   "iflow",
 		Type:       FlowAuthorizationCode,
 		Completion: CompletionCode,
+		// The exchange fails rather than return without an email or phone.
+		ResolvesIdentity: true,
 		Authorize: func(_ context.Context, p Params) (AuthRequest, error) {
 			clientID, _, err := iflowClient()
 			if err != nil {
@@ -115,9 +117,11 @@ func gitlabFlow() Flow {
 		// clientSecret is optional: a confidential GitLab OAuth application sends it
 		// at exchange, a public one does not. Declared because the flow reads it, so
 		// the dashboard can offer it.
-		MetaKeys:   []string{"clientId", "clientSecret", "baseUrl"},
-		Type:       FlowAuthorizationCodePKCE,
-		Completion: CompletionCode,
+		MetaKeys: []string{"clientId", "clientSecret", "baseUrl"},
+		// The PAT import talks to the same instance but uses no OAuth application.
+		ImportMetaKeys: []string{"baseUrl"},
+		Type:           FlowAuthorizationCodePKCE,
+		Completion:     CompletionCode,
 		Authorize: func(_ context.Context, p Params) (AuthRequest, error) {
 			base := strings.TrimSuffix(metaOr(p, "baseUrl", defaultBase), "/")
 			clientID := p.Meta["clientId"]

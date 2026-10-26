@@ -113,6 +113,10 @@ const { join } = require('node:path');
     traffic: { active: 4, requests: 1200, errors: 3, lastRequestAt: '2026-09-25T20:00:00Z' },
     telemetry: { enabled: true, written: 1180, lost: 0, lostDiagnostics: 2, degraded: true },
   };
+  const signInFixtureProviders = [
+    { id: 'codex', transports: ['openai-responses'], auth: 'oauth', authModes: [], modelCatalog: 'static', passthroughModels: false, reportsUsage: true, flowType: 'authorization_code_pkce', signInModes: ['browser', 'import'], signInMethods: [{ mode: 'browser', authKind: 'oauth', resolvesIdentity: true, completion: 'redirect-url', loopbackRedirect: 'http://localhost:1455/auth/callback' }, { mode: 'import', authKind: 'oauth', resolvesIdentity: true }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'ready', served: true } },
+    { id: 'kimchi', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key', 'oauth'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, flowType: 'browser_token', signInModes: ['browser'], signInMethods: [{ mode: 'browser', authKind: 'oauth', resolvesIdentity: false, completion: 'token' }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'ready', served: true } },
+  ];
   let sessionCalls = 0;
   let loginCalls = 0;
   let overviewCalls = 0;
@@ -133,6 +137,14 @@ const { join } = require('node:path');
   let comboPayload = null;
   let adapterEnabled = false;
   let systemOneModelAdded = false;
+  // Sign-in fixtures (#214): served only once the main provider checks have run,
+  // so the provider counts above stay as they were.
+  let signInProviders = false;
+  let signInExpiresAt = '';
+  const signInStarts = [];
+  const signInCancels = [];
+  const signInCallbacks = [];
+  const signInPatches = [];
   let usageSummaryCalls = 0;
   let lastUsageURL = '';
   // Quota mock (#213): 130 accounts so paging must reach past 100, with one row
@@ -232,7 +244,24 @@ const { join } = require('node:path');
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: createdKeyID, revoked: true, configRevision: 10 }) });
   }
   if (url.pathname === '/admin/v1/providers' && method === 'GET') {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'openai', transports: ['openai-chat','openai-responses'], auth: 'api-key', authModes: ['api-key'], defaultBaseURL: 'https://api.openai.com/v1', modelCatalog: 'static', passthroughModels: false, reportsUsage: false, configuredNodes: 1, enabledAccounts: 1, readiness: { status: 'ready', served: true } }, { id: 'openrouter', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'unavailable', served: false, reason: 'smoke fixture: wire not bound' } }], page: 1, pageSize: 100, total: 2 }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [...(signInProviders ? signInFixtureProviders : []), { id: 'openai', transports: ['openai-chat','openai-responses'], auth: 'api-key', authModes: ['api-key'], defaultBaseURL: 'https://api.openai.com/v1', modelCatalog: 'static', passthroughModels: false, reportsUsage: false, configuredNodes: 1, enabledAccounts: 1, readiness: { status: 'ready', served: true } }, { id: 'openrouter', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'unavailable', served: false, reason: 'smoke fixture: wire not bound' } }], page: 1, pageSize: 100, total: signInProviders ? 4 : 2 }) });
+  }
+  if (url.pathname === '/admin/v1/oauth/codex/start' && method === 'POST') {
+    signInStarts.push(route.request().postDataJSON());
+    const state = `smoke-state-${signInStarts.length}`;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ state, authorizeUrl: 'https://auth.openai.com/oauth/authorize?state=' + state, completion: 'redirect-url', flowType: 'authorization_code_pkce', expiresAt: signInExpiresAt || '2026-09-25T12:10:00Z' }) });
+  }
+  if (url.pathname === '/admin/v1/oauth/codex/cancel' && method === 'POST') {
+    signInCancels.push(route.request().postDataJSON());
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'cancelled' }) });
+  }
+  if (url.pathname === '/admin/v1/oauth/codex/callback' && method === 'POST') {
+    signInCallbacks.push(route.request().postDataJSON());
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-codex', nodeId: 'node-codex', providerId: 'codex', name: 'resolved@example.test', authKind: 'oauth', identity: 'resolved@example.test', enabled: true, priority: 0, credentialConfigured: true }) });
+  }
+  if (url.pathname === '/admin/v1/connections/conn-codex' && method === 'PATCH') {
+    signInPatches.push(route.request().postDataJSON());
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-codex', name: 'Work' }) });
   }
   if (url.pathname === '/admin/v1/provider-nodes' && method === 'GET') {
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'node-openai', kind: 'builtin', providerId: 'openai', name: 'openai', baseUrl: 'https://api.openai.com/v1', transports: ['openai-chat','openai-responses'] }, { id: 'node-jev', kind: 'builtin', providerId: 'typesafe', name: 'typesafe', baseUrl: 'https://api.typesafe.ai/v1/systemone', transports: ['systemone'] }], page: 1, pageSize: 100, total: 2 }) });
@@ -549,6 +578,68 @@ const { join } = require('node:path');
   await page.waitForFunction(() => document.querySelector('.providers-content .connection-row .state-tag').textContent === 'Disabled');
   report.providerPatches = providerPatches;
   report.providerDisabledLabel = await page.locator('.connection-row .state-tag').textContent();
+  // Provider-aware sign-in (#214): methods are separate choices, Codex starts with
+  // neither name nor identity, and every attempt ends in an explicit state.
+  signInProviders = true;
+  await page.click('a[href="#combo-capability-adapter"]');
+  await page.waitForSelector('.combos-content');
+  await page.click('a[href="#providers"]');
+  await page.waitForSelector('.provider-option');
+  await page.fill('#provider-filter', 'codex');
+  await page.locator('.provider-option', { hasText: 'codex' }).first().click();
+  await page.getByRole('button', { name: 'Add connection', exact: true }).click();
+  const signInForm = page.locator('.provider-form');
+  await signInForm.waitFor();
+  report.codexMethods = await signInForm.locator('.access-modes label').allTextContents();
+  assert.deepEqual(report.codexMethods, ['Sign in with Codex', 'Import token', 'Paste OAuth tokens']);
+  assert.equal(await signInForm.getByLabel('Account name').count(), 0);
+  assert.equal(await signInForm.getByLabel('Stable account identity').count(), 0);
+  assert.equal(await signInForm.locator('input[type="password"]').count(), 0, 'browser sign-in must not show raw token fields');
+  await signInForm.getByRole('button', { name: 'Sign in with Codex', exact: true }).click();
+  await signInForm.getByText('Pending').waitFor();
+  assert.deepEqual(signInStarts[0], { meta: {} }, 'codex start sends no name or identity');
+  report.codexHint = await signInForm.locator('.oauth-panel p').first().textContent();
+  assert.match(report.codexHint, /http:\/\/localhost:1455\/auth\/callback/);
+  assert.match(report.codexHint, /not on the Routeweft server/);
+  assert.equal(await signInForm.locator('.access-picker').evaluate(element => element.disabled), true, 'method choice is locked while an attempt is pending');
+  await signInForm.getByRole('button', { name: 'Cancel sign-in', exact: true }).click();
+  await signInForm.getByText('Cancelled', { exact: true }).waitFor();
+  assert.deepEqual(signInCancels, [{ state: 'smoke-state-1' }]);
+  // Expiry is explicit: the attempt ends at the server's expiresAt.
+  signInExpiresAt = '2026-09-25T12:00:01Z';
+  await signInForm.getByRole('button', { name: 'Sign in with Codex', exact: true }).click();
+  await signInForm.getByText('Expired', { exact: true }).waitFor({ timeout: 5000 });
+  assert.equal(await signInForm.getByLabel('Address from the browser').count(), 0);
+  signInExpiresAt = '';
+  await signInForm.getByRole('button', { name: 'Sign in with Codex', exact: true }).click();
+  await signInForm.getByLabel('Address from the browser').fill('http://localhost:1455/auth/callback?code=auth-code-smoke&state=smoke-state-3');
+  await signInForm.getByRole('button', { name: 'Finish sign-in', exact: true }).click();
+  await signInForm.getByText('Connected', { exact: true }).waitFor();
+  assert.deepEqual(signInCallbacks, [{ state: 'smoke-state-3', input: 'http://localhost:1455/auth/callback?code=auth-code-smoke&state=smoke-state-3' }]);
+  report.codexConnected = await signInForm.locator('[aria-label="Sign-in result"] p').textContent();
+  assert.match(report.codexConnected, /Signed in as resolved@example\.test/);
+  assert.equal(await page.content().then(html => html.includes('auth-code-smoke')), false, 'pasted callback must not stay in the DOM');
+  await signInForm.getByLabel('Nickname (optional)').fill('Work');
+  await signInForm.getByRole('button', { name: 'Save nickname', exact: true }).click();
+  await signInForm.waitFor({ state: 'detached' });
+  assert.deepEqual(signInPatches, [{ name: 'Work' }]);
+  // Dual auth: the primary API key stays the default, and each mode shows only its own fields.
+  await page.fill('#provider-filter', 'kimchi');
+  await page.locator('.provider-option', { hasText: 'kimchi' }).first().click();
+  await page.getByRole('button', { name: 'Add connection', exact: true }).click();
+  await signInForm.waitFor();
+  report.kimchiMethods = await signInForm.locator('.access-modes label').allTextContents();
+  assert.deepEqual(report.kimchiMethods, ['API key', 'Sign in with Kimchi', 'Paste OAuth tokens']);
+  assert.equal(await signInForm.getByLabel('Account name').count(), 1);
+  assert.equal(await signInForm.getByLabel('Access token / API key').count(), 1);
+  await signInForm.getByText('Sign in with Kimchi', { exact: true }).click();
+  assert.equal(await signInForm.getByLabel('Account name').count(), 0);
+  assert.equal(await signInForm.getByLabel('Access token / API key').count(), 0);
+  assert.equal(await signInForm.getByLabel('Stable account identity').count(), 1, 'kimchi cannot always resolve the account, so it asks');
+  assert.equal(await signInForm.getByRole('button', { name: 'Sign in with Kimchi', exact: true }).isDisabled(), true);
+  await signInForm.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.fill('#provider-filter', '');
+  signInProviders = false;
   // Combo & Capability Adapter workflow (PRD 11).
   await page.click('a[href="#combo-capability-adapter"]');
   await page.waitForSelector('.combos-content');

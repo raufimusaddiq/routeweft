@@ -820,6 +820,8 @@ func TestResolvesIdentityFlowsReturnOne(t *testing.T) {
 			Meta:  map[string]string{"machineId": "0123abcd-0123-4abc-8def-0123456789ab"},
 		},
 		"gitlab": {Input: "fixture-pat", Meta: map[string]string{"baseUrl": "https://gitlab.example.invalid"}},
+		// A ChatGPT token without an email still names its account.
+		"codex": {Input: fixtureJWT(t, `{"https://api.openai.com/auth":{"chatgpt_account_id":"acct-fixture"}}`)},
 	}
 	// The providers answer with a resolved identity; the point is that the flow
 	// reads it rather than trusting the operator.
@@ -883,12 +885,47 @@ func TestResolvesIdentityFlowsReturnOne(t *testing.T) {
 			}
 		}
 	}
+	// A browser flow's flag covers its exchange as well as any import half, so the
+	// exchange is driven too.
+	t.Setenv(IflowClientIDEnv, "fixture-client")
+	t.Setenv(IflowClientSecretEnv, "fixture-secret")
+	exchanges := map[string]string{
+		// Email-less id token: the account id is the identity.
+		"codex":  `{"access_token":"fixture-access","id_token":"` + fixtureJWT(t, `{"https://api.openai.com/auth":{"chatgpt_account_id":"acct-fixture"}}`) + `"}`,
+		"iflow":  `{"access_token":"fixture-access"}`,
+		"gitlab": `{"access_token":"fixture-access"}`,
+	}
 	for _, flow := range builtinFlows() {
-		if flow.ResolvesIdentity {
+		if !flow.ResolvesIdentity {
+			continue
+		}
+		if flow.Import != nil {
 			if _, ok := cases[flow.Provider]; !ok {
 				t.Errorf("%s declares ResolvesIdentity but has no case here", flow.Provider)
 			}
 		}
+		if flow.Exchange == nil {
+			continue
+		}
+		token, ok := exchanges[flow.Provider]
+		if !ok {
+			t.Errorf("%s declares ResolvesIdentity but its exchange has no case here", flow.Provider)
+			continue
+		}
+		client := &stubClient{handler: func(request *http.Request) (int, string) {
+			if strings.Contains(request.URL.Path, "token") {
+				return http.StatusOK, token
+			}
+			return upstream.handler(request)
+		}}
+		result, err := flow.Exchange(context.Background(), Params{Input: "fixture-code", Verifier: "fixture-verifier", Meta: map[string]string{"clientId": "fixture-client"}, Client: client})
+		if err != nil {
+			t.Fatalf("%s declares ResolvesIdentity but its exchange failed: %v", flow.Provider, err)
+		}
+		if strings.TrimSpace(result.Identity) == "" {
+			t.Fatalf("%s declares ResolvesIdentity but its exchange returned no identity", flow.Provider)
+		}
+		checked++
 	}
 	if checked == 0 {
 		t.Fatal("no flow was checked")

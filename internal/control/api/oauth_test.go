@@ -143,8 +143,13 @@ func TestOAuthStartRequiresSessionAndKnownProvider(t *testing.T) {
 	if recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/openai/start", `{"name":"a","identity":"b"}`); recorder.Code != http.StatusNotFound {
 		t.Fatalf("api-key provider start status=%d want 404", recorder.Code)
 	}
-	if recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/claude/start", `{"name":"","identity":"b"}`); recorder.Code != http.StatusBadRequest {
-		t.Fatalf("missing name status=%d want 400", recorder.Code)
+	// Claude's flow does not resolve an identity, so one is required; the name is
+	// an optional nickname.
+	if recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/claude/start", `{"name":"a","identity":""}`); recorder.Code != http.StatusBadRequest {
+		t.Fatalf("missing identity status=%d want 400", recorder.Code)
+	}
+	if recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/claude/start", `{"name":"","identity":"b"}`); recorder.Code != http.StatusOK {
+		t.Fatalf("missing name status=%d want 200", recorder.Code)
 	}
 }
 

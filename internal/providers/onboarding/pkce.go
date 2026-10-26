@@ -398,6 +398,9 @@ func codexFlow() Flow {
 		FixedPort:      1455,
 		CallbackPath:   "/auth/callback",
 		Bulk:           codexBulkAccount,
+		// The id token names the account (codexAccount), as in the reference
+		// (codex.js mapTokens), so sign-in starts without a name or identity.
+		ResolvesIdentity: true,
 		Authorize: func(_ context.Context, p Params) (AuthRequest, error) {
 			return pkceAuthorize(authorizeURL, url.Values{
 				"response_type":              {"code"},
@@ -468,6 +471,11 @@ func codexAccount(idToken, accessToken string) (string, map[string]string) {
 		if value, ok := claims["preferred_username"].(string); ok {
 			identity = value
 		}
+	}
+	// A token without an email still names its ChatGPT account, which is stable
+	// across sign-ins and so a sound dedup key.
+	if identity == "" {
+		identity = data["chatgptAccountId"]
 	}
 	if len(data) == 0 {
 		return identity, nil

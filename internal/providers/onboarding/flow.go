@@ -82,6 +82,11 @@ type Flow struct {
 	// dashboard offers exactly those fields. Declared here rather than inferred by
 	// the UI, and checked against the flow's actual reads by a test.
 	MetaKeys []string
+	// ImportMetaKeys narrows MetaKeys for the Import half of a flow that also has a
+	// browser step (GitLab's PAT reads only baseUrl, not the OAuth application's
+	// client id and secret), so the import method does not show fields it ignores.
+	// Nil means the import reads MetaKeys.
+	ImportMetaKeys []string
 	// AuthKind is the credential mode this flow produces, so it can be checked
 	// against the provider spec without performing a sign-in. Empty means the
 	// default, AuthOAuth.
@@ -95,6 +100,10 @@ type Flow struct {
 	// or the credential itself (a JWT claim, /api/v4/user, the account key), so the
 	// operator is not asked for one. Without this the dashboard demanded a "stable
 	// account identity", validated it, and then stored the flow's value instead.
+	// Declare it only where a genuine credential always yields one; a best-effort
+	// lookup that can come back empty still needs the operator's. An operator value
+	// sent anyway stays the fallback, and a sign-in that resolves none is refused
+	// before anything is saved.
 	ResolvesIdentity bool
 	// RedirectSource says where the flow's redirect URI comes from. It is the
 	// single declaration that decides whether the handler must resolve one, so a
@@ -141,6 +150,14 @@ type BulkAccount struct {
 	Identity string
 	AuthKind credentials.AuthKind
 	Secret   credentials.Secret
+}
+
+// ImportKeys is the operator input the flow's Import step reads.
+func (f Flow) ImportKeys() []string {
+	if f.ImportMetaKeys != nil {
+		return f.ImportMetaKeys
+	}
+	return f.MetaKeys
 }
 
 // Startable reports whether the flow can start a browser or device sign-in.

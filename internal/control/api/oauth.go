@@ -223,6 +223,26 @@ func (f *oauthFlows) release(state string) {
 	}
 }
 
+// cancel ends an attempt the operator abandoned, with the same session and
+// provider binding as consume. An attempt a poll is saving right now is left to
+// finish: its token is already issued, and dropping it mid-save would orphan it.
+func (f *oauthFlows) cancel(state, sessionID, provider string) reserveResult {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	flow, ok := f.pending[state]
+	if !ok || !f.now().Before(flow.expiresAt) {
+		return reserveInvalid
+	}
+	if subtle.ConstantTimeCompare([]byte(flow.sessionID), []byte(sessionID)) != 1 || flow.provider != provider {
+		return reserveInvalid
+	}
+	if flow.completing {
+		return reserveBusy
+	}
+	delete(f.pending, state)
+	return reserveTaken
+}
+
 // finish ends an attempt for good.
 func (f *oauthFlows) finish(state string) {
 	f.mu.Lock()
@@ -292,6 +312,26 @@ func specAllowsOAuth(spec registry.Spec) bool {
 	return false
 }
 
+// onboardingAccount validates the operator's optional account name and identity
+// for a sign-in or import. The name is a nickname: the reference starts a sign-in
+// with neither (OAuthModal.js opens straight to the provider) and labels the
+// connection from what the provider reports, so a blank name falls back to that
+// and finally to the identity. The identity is required up front only when the
+// flow cannot resolve one, rather than surfacing later as a misleading
+// connection_save_failed from the store.
+func onboardingAccount(w http.ResponseWriter, flow onboarding.Flow, rawName, rawIdentity string) (name, identity string, ok bool) {
+	name, identity = strings.TrimSpace(rawName), strings.TrimSpace(rawIdentity)
+	if len(name) > oauthMaxNameLength || len(identity) > oauthMaxNameLength {
+		writeError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("account name and identity must be at most %d characters", oauthMaxNameLength))
+		return "", "", false
+	}
+	if !flow.ResolvesIdentity && identity == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "a stable account identity is required for this provider")
+		return "", "", false
+	}
+	return name, identity, true
+}
+
 // handleOAuthStart mints PKCE and a session-bound state, and returns the
 // provider authorize URL. Nothing is persisted until the callback succeeds.
 func (h *Handler) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
@@ -314,17 +354,8 @@ func (h *Handler) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
-	name, identity := strings.TrimSpace(body.Name), strings.TrimSpace(body.Identity)
-	// A flow that resolves the identity from the provider or the credential is not
-	// asked for one: requiring a value it then discards is a field the operator
-	// fills in for nothing.
-	identityRequired := !provider.flow.ResolvesIdentity
-	if name == "" || (identityRequired && identity == "") || len(name) > oauthMaxNameLength || len(identity) > oauthMaxNameLength {
-		if identityRequired {
-			writeError(w, http.StatusBadRequest, "invalid_request", "account name and stable account identity are required")
-		} else {
-			writeError(w, http.StatusBadRequest, "invalid_request", "account name is required")
-		}
+	name, identity, ok := onboardingAccount(w, provider.flow, body.Name, body.Identity)
+	if !ok {
 		return
 	}
 	session, ok := h.sessionFor(r)
@@ -505,17 +536,8 @@ func (h *Handler) handleOAuthDeviceStart(w http.ResponseWriter, r *http.Request)
 	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
-	name, identity := strings.TrimSpace(body.Name), strings.TrimSpace(body.Identity)
-	// A flow that resolves the identity from the provider or the credential is not
-	// asked for one: requiring a value it then discards is a field the operator
-	// fills in for nothing.
-	identityRequired := !provider.flow.ResolvesIdentity
-	if name == "" || (identityRequired && identity == "") || len(name) > oauthMaxNameLength || len(identity) > oauthMaxNameLength {
-		if identityRequired {
-			writeError(w, http.StatusBadRequest, "invalid_request", "account name and stable account identity are required")
-		} else {
-			writeError(w, http.StatusBadRequest, "invalid_request", "account name is required")
-		}
+	name, identity, ok := onboardingAccount(w, provider.flow, body.Name, body.Identity)
+	if !ok {
 		return
 	}
 	session, ok := h.sessionFor(r)
@@ -570,6 +592,32 @@ func (h *Handler) handleOAuthDeviceStart(w http.ResponseWriter, r *http.Request)
 		"intervalSeconds": int(device.Interval / time.Second),
 		"expiresAt":       expiresAt,
 	})
+}
+
+// handleOAuthCancel ends a pending browser or device attempt so its state can no
+// longer complete. Without it a dashboard "Cancel" only hid the form while the
+// attempt stayed redeemable for the rest of its lifetime. Unknown, expired,
+// replayed and foreign states answer oauth_state_invalid, as everywhere else.
+func (h *Handler) handleOAuthCancel(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		State string `json:"state"`
+	}
+	if !decodeJSON(w, r, 4<<10, &body) {
+		return
+	}
+	session, ok := h.sessionFor(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthenticated", "admin session is required")
+		return
+	}
+	switch h.oauth.cancel(body.State, session.ID, r.PathValue("provider")) {
+	case reserveTaken:
+		writeJSON(w, http.StatusOK, map[string]any{"status": "cancelled"})
+	case reserveBusy:
+		writeError(w, http.StatusConflict, "oauth_completing", "the sign-in was approved and is being saved")
+	default:
+		writeError(w, http.StatusBadRequest, "oauth_state_invalid", "this sign-in attempt expired or was already used; start again")
+	}
 }
 
 // handleOAuthDevicePoll checks a device authorization once. Pending answers 200
@@ -689,6 +737,15 @@ func (h *Handler) saveOnboardedConnection(w http.ResponseWriter, r *http.Request
 	}
 	if identity == "" {
 		identity = flow.identity
+	}
+	// Nothing to dedup on: refuse before saving rather than let the store reject a
+	// blank identity as a generic save failure.
+	if identity == "" {
+		writeError(w, http.StatusBadGateway, "oauth_identity_unresolved", "the provider did not report which account signed in; start again and enter its identity")
+		return nil, persisted, false
+	}
+	if name == "" {
+		name = identity
 	}
 	authKind := result.AuthKind
 	if authKind == "" {
@@ -812,17 +869,9 @@ func (h *Handler) handleOAuthImport(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, 32<<10, &body) {
 		return
 	}
-	// Same rule as /start and /device: the operator's name and identity are required
-	// up front, not discovered later as a misleading connection_save_failed from the
-	// store.
-	name, identity := strings.TrimSpace(body.Name), strings.TrimSpace(body.Identity)
-	identityRequired := !flow.ResolvesIdentity
-	if name == "" || (identityRequired && identity == "") || len(name) > oauthMaxNameLength || len(identity) > oauthMaxNameLength {
-		if identityRequired {
-			writeError(w, http.StatusBadRequest, "invalid_request", "account name and stable account identity are required")
-		} else {
-			writeError(w, http.StatusBadRequest, "invalid_request", "account name is required")
-		}
+	// Same rule as /start and /device.
+	name, identity, ok := onboardingAccount(w, flow, body.Name, body.Identity)
+	if !ok {
 		return
 	}
 	// The same bounds /callback applies to pasted input: an import payload becomes a
