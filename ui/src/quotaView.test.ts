@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { percent, quotaQuery, remainingText, statusLabel, until, windowValue, zoned, type QuotaItem } from './quotaView.ts'
+import { percent, quotaQuery, remainingText, statusLabel, until, windowLabel, windowValue, zoned, type QuotaItem } from './quotaView.ts'
 
 test('remaining fractions render as whole percentages (#213)', () => {
   assert.equal(percent(0), '0%')
@@ -43,6 +43,11 @@ test('windows carry their own unit', () => {
   assert.doesNotMatch(cny, /unlimited|%/)
   assert.equal(windowValue({ name: 'Balance (EUR)', unlimited: false, credit: { currency: 'EUR', state: 'missing' } }), 'EUR: balance not reported')
   assert.match(windowValue({ name: 'Balance (EUR)', unlimited: false, credit: { currency: 'EUR', state: 'negative', total: -1.5 } }), /negative/)
+})
+
+test('windows show the provider label and keep the stable key (#221)', () => {
+  assert.equal(windowLabel({ name: 'gemini_weekly', displayName: 'Gemini (Weekly)', unlimited: false }), 'Gemini (Weekly)')
+  assert.equal(windowLabel({ name: 'gemini-2.5-pro', unlimited: false }), 'gemini-2.5-pro')
 })
 
 test('reset times name their zone and count down', () => {

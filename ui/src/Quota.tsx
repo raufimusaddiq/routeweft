@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { QUOTA_PAGE_SIZE, QUOTA_SORTS, quotaQuery, remainingText, statusLabel, statusTone, until, windowValue, zoned, type QuotaItem } from './quotaView'
+import { QUOTA_PAGE_SIZE, QUOTA_SORTS, quotaQuery, remainingText, statusLabel, statusTone, until, windowLabel, windowValue, zoned, type QuotaItem } from './quotaView'
 
 type Props = { onUnauthorized: () => void }
 type QuotaPage = { items: QuotaItem[]; page: number; total: number; providers?: string[] }
@@ -98,7 +98,7 @@ export function Quota({ onUnauthorized }: Props) {
         {item.creditAvailable === false && <span className="state-tag state-warn">provider reports no usable balance</span>}
         {typeof item.availableResetCredits === 'number' && <span className="count-label">{item.availableResetCredits} reset credit{item.availableResetCredits === 1 ? '' : 's'}</span>}
         {item.windows && item.windows.length > 0 && <ul className="quota-windows" aria-label={`${item.name} limit windows`}>{item.windows.map(window => <li key={window.name}>
-          <span className="quota-window-name">{window.name}</span>
+          <span className="quota-window-name">{windowLabel(window)}</span>
           <span className="quota-remaining">{windowValue(window)}</span>
           {window.resetAt && <Reset value={window.resetAt} />}
         </li>)}{item.windowsObservedAt && item.observedAt && Date.parse(item.windowsObservedAt) < Date.parse(item.observedAt) && <li className="quota-window-note">windows from <time dateTime={item.windowsObservedAt}>{zoned(item.windowsObservedAt)}</time>, the last successful read</li>}</ul>}

@@ -1,0 +1,8 @@
+{
+  "loadCodeAssist": {"cloudaicompanionProject": {"id": "project-from-load"}, "currentTier": {"name": "Free"}},
+  "retrieveUserQuota": {
+    "buckets": [
+      {"modelId": "gemini-3-flash-preview", "remainingFraction": 0.75, "resetTime": "2026-05-25T12:00:00Z"}
+    ]
+  }
+}
