@@ -230,7 +230,9 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 		if body.AuthKind == "" {
 			body.AuthKind = string(old.AuthKind)
 		}
-		if body.Identity == "" {
+		// Blank keeps the stored identity: an edit cannot clear one, now that the
+		// store accepts a connection without.
+		if strings.TrimSpace(body.Identity) == "" {
 			body.Identity = old.Identity
 		}
 		if body.Enabled == nil {
@@ -306,6 +308,13 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 	proxyPool := ""
 	if body.ProxyPool != nil {
 		proxyPool = *body.ProxyPool
+	}
+	// The manual form always names its account. Only a connection onboarded
+	// without one (a Codex credential that names no email) has none, and an edit
+	// that sends no identity keeps it that way rather than inventing one.
+	if r.Method != http.MethodPatch && strings.TrimSpace(body.Identity) == "" {
+		writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity, auth mode, and proxy pool")
+		return
 	}
 	connection, _, err := h.publishConnection(r.Context(), credentials.Connection{ID: r.PathValue("id"), NodeID: node.ID, ProviderID: node.ProviderID, Name: body.Name, AuthKind: authKind, Identity: body.Identity, Secret: body.Secret, Enabled: enabled, Priority: priority, ProxyPoolID: proxyPool, AccountID: accountID})
 	if err != nil {

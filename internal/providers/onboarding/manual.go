@@ -76,22 +76,36 @@ func codexImportFlow() Flow {
 		Provider:   "codex",
 		Type:       FlowManualToken,
 		Completion: CompletionToken,
-		// A ChatGPT access token is a JWT naming its account (import-token/route.js
-		// reads the same claims).
+		// The reference takes only the token and an optional name, and stores a
+		// token whose JWT names no email without one (import-token/route.js:14-79).
 		ResolvesIdentity: true,
+		IdentityOptional: true,
 		Import: func(_ context.Context, p Params) (Result, error) {
 			token := strings.TrimSpace(p.Input)
 			if token == "" {
 				return Result{}, fmt.Errorf("codex access token is required")
 			}
-			identity, providerData := codexAccount("", token)
-			if providerData == nil {
-				providerData = map[string]string{}
+			// import-token/route.js:29-66: the profile email, top-level email or
+			// preferred_username; only when none exists, extractCodexAccountInfo's
+			// email, whose account id and plan then win.
+			claims := jwtClaims(token)
+			auth, _ := claims["https://api.openai.com/auth"].(map[string]any)
+			profile, _ := claims["https://api.openai.com/profile"].(map[string]any)
+			email := firstNonEmpty(claimString(profile, "email"), claimString(claims, "email"), claimString(claims, "preferred_username"))
+			accountID, planType := claimString(auth, "chatgpt_account_id"), claimString(auth, "chatgpt_plan_type")
+			if email == "" {
+				var infoAccount, infoPlan string
+				email, infoAccount, infoPlan = codexAccountInfo(token)
+				accountID, planType = firstNonEmpty(infoAccount, accountID), firstNonEmpty(infoPlan, planType)
 			}
+			providerData := codexProviderData(accountID, planType)
 			providerData["authMethod"] = "access_token"
 			return Result{
 				AuthKind: credentials.AuthOAuth,
-				Identity: identity,
+				Identity: email,
+				// The label the reference falls back to after the operator's name and
+				// the email (import-token/route.js:68).
+				FallbackName: "ChatGPT Access Token",
 				Secret: credentials.Secret{
 					AccessToken:  token,
 					ProviderData: providerData,

@@ -222,16 +222,14 @@ func (s *Store) DeleteGenericNode(ctx context.Context, id string) error {
 
 // PutConnection creates or replaces one connection, sealing the secret. Writes
 // never persist the plaintext payload and never clear a stored blob with an
-// empty secret (PRD-AUTH-003).
+// empty secret (PRD-AUTH-003). A blank identity is stored as none (v11): the
+// store does not decide who may omit one, the API does.
 func (s *Store) PutConnection(ctx context.Context, connection Connection) (Connection, error) {
 	if strings.TrimSpace(connection.NodeID) == "" {
 		return Connection{}, errors.New("connection node id is required")
 	}
 	if strings.TrimSpace(connection.Name) == "" {
 		return Connection{}, errors.New("connection name is required")
-	}
-	if strings.TrimSpace(connection.Identity) == "" {
-		return Connection{}, errors.New("connection identity is required")
 	}
 	switch connection.AuthKind {
 	case AuthAPIKey, AuthOAuth, AuthCookie, AuthNone:
@@ -268,7 +266,7 @@ ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_k
 		c.Connections = append(c.Connections, metadata)
 		return nil
 	}
-	if err := s.exec(ctx, change, upsert, connection.ID, connection.NodeID, connection.Name, string(connection.AuthKind), connection.Identity, blob, enabled, connection.Priority, nullable(connection.ProxyPoolID), connection.AccountID); err != nil {
+	if err := s.exec(ctx, change, upsert, connection.ID, connection.NodeID, connection.Name, string(connection.AuthKind), nullable(connection.Identity), blob, enabled, connection.Priority, nullable(connection.ProxyPoolID), connection.AccountID); err != nil {
 		return Connection{}, fmt.Errorf("persist provider connection %q: %w", connection.Name, err)
 	}
 	return connection, nil
@@ -318,7 +316,7 @@ func (s *Store) RotateSecret(ctx context.Context, connectionID string, secret Se
 
 // GetConnection returns one connection with its decrypted secret.
 func (s *Store) GetConnection(ctx context.Context, id string) (Connection, error) {
-	const query = "SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,c.identity,COALESCE(c.secret_blob,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.account_id FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id WHERE c.id=?"
+	const query = "SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,COALESCE(c.identity,''),COALESCE(c.secret_blob,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.account_id FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id WHERE c.id=?"
 	row := s.db.QueryRowContext(ctx, query, id)
 	connection, err := s.scanConnection(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -330,7 +328,7 @@ func (s *Store) GetConnection(ctx context.Context, id string) (Connection, error
 // ListConnections returns a provider's connections in routing order: priority
 // ascending, then name, so selection is deterministic across restarts.
 func (s *Store) ListConnections(ctx context.Context, providerID string) ([]Connection, error) {
-	const query = `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,c.identity,COALESCE(c.secret_blob,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.account_id
+	const query = `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,COALESCE(c.identity,''),COALESCE(c.secret_blob,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.account_id
 FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id
 WHERE n.provider_id=? ORDER BY c.priority,c.name,c.id`
 	rows, err := s.db.QueryContext(ctx, query, providerID)
