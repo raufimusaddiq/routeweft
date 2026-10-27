@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
 // RefreshLead is the default window before expiry in which a rotating access
@@ -338,7 +340,9 @@ func (r *Registry) Secret(ctx context.Context, connectionID string) (Secret, err
 // after it. Either order leaves the newer install as both the durable and the
 // published credential; they can never diverge.
 func (r *Registry) refresh(ctx context.Context, connectionID string, stored Secret, generation uint64, current *entry, exchanger Exchanger) (Secret, error) {
-	refreshed, err := exchanger(ctx, stored)
+	// A refresh leaves through the connection's proxy, as the pin passes its
+	// proxyOptions to every refresh (chatCore.js:473-474, usage route.js:170).
+	refreshed, err := exchanger(transport.WithConnection(ctx, connectionID), stored)
 	if err != nil {
 		return Secret{}, err
 	}

@@ -128,3 +128,34 @@ func TestNoProxyMatchesPinSemantics(t *testing.T) {
 		t.Fatalf("unrelated host must use the proxy: %v %v", proxy, err)
 	}
 }
+
+// A pool member and a per-connection proxy at the same URL differ in which
+// no-proxy list applies, so they never share a cached client.
+func TestConnectionOwnedNoProxyIsMaterial(t *testing.T) {
+	pool := NewPooledClients()
+	member := ProxyPolicy{Enabled: true, ConnectionProxyURL: "http://proxy.example:3128", NoProxy: []string{"localhost"}}
+	owned := member
+	owned.ConnectionOwnsNoProxy = true
+	scoped := owned
+	scoped.ConnectionNoProxy = []string{"internal.example"}
+	clients := map[*http.Client]string{}
+	for name, policy := range map[string]ProxyPolicy{"member": member, "owned": owned, "scoped": scoped} {
+		client, err := pool.Client(policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if other, ok := clients[client]; ok {
+			t.Fatalf("%s shares a client with %s", name, other)
+		}
+		clients[client] = name
+	}
+	if got, _ := member.ProxyForHost("localhost"); got != nil {
+		t.Fatalf("global no-proxy did not bypass a pool member: %v", got)
+	}
+	if got, _ := owned.ProxyForHost("localhost"); got == nil {
+		t.Fatal("global no-proxy bypassed a per-connection proxy")
+	}
+	if got, _ := scoped.ProxyForHost("api.internal.example"); got != nil {
+		t.Fatalf("connection no-proxy did not bypass, and no global proxy is set: %v", got)
+	}
+}

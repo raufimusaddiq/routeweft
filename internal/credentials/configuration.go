@@ -35,6 +35,9 @@ var errNoChange = errors.New("provider configuration unchanged")
 
 func (s *Store) SetPublisher(publish Publisher) { s.publish = publish }
 
+// Publishes reports whether writes publish the runtime snapshot themselves.
+func (s *Store) Publishes() bool { return s.publish != nil }
+
 func (s *Store) update(ctx context.Context, change func(*Configuration) error, persist func(*sql.Tx) error) error {
 	if s.publish != nil {
 		err := s.publish(ctx, change, persist)
@@ -155,5 +158,6 @@ func projectSettings(data map[string]string) routing.ProviderSettings {
 		WorkspaceID: data["workspaceId"], DeviceID: data["deviceId"], MachineID: data["machineId"], AgentID: data["agentId"],
 		Email: data["email"], UserID: data["userId"], SystemID: data["systemId"],
 		OrganizationID: data["organizationId"], DefaultOrganizationID: data["defaultOrganizationId"], UID: data["uid"], OrgID: data["orgId"], ProjectID: data["projectId"], Location: data["location"], ChatGPTAccountID: data["chatgptAccountId"], KiroToolCallRepair: data["kiroToolCallRepair"],
+		ConnectionProxyEnabled: data["connectionProxyEnabled"], ConnectionProxyURL: data["connectionProxyUrl"], ConnectionNoProxy: data["connectionNoProxy"],
 	}
 }

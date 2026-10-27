@@ -575,3 +575,67 @@ func TestCodexBulkKeepsExportedProviderData(t *testing.T) {
 		t.Fatalf("providerSpecificData=%v, want %v", account.Secret.ProviderData, want)
 	}
 }
+
+// The Grok CLI route spreads providerSpecificData as given
+// (grok-cli/bulk-import/route.js:87): a non-string value such as LiteRouter's
+// connectionProxyEnabled flag is kept, as its JSON text.
+func TestGrokBulkKeepsNonStringProviderData(t *testing.T) {
+	account, err := grokBulkAccount(map[string]any{
+		"accessToken": "grok-access", "email": "person@example.invalid",
+		"providerSpecificData": map[string]any{
+			"connectionProxyEnabled": true, "connectionProxyUrl": " http://proxy.example:3128 ", "connectionNoProxy": "",
+			"retries": float64(2), "gone": nil,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"authMethod": "device_code", "email": "person@example.invalid",
+		"connectionProxyEnabled": "true", "connectionProxyUrl": "http://proxy.example:3128", "retries": "2",
+	}
+	if fmt.Sprint(account.Secret.ProviderData) != fmt.Sprint(want) {
+		t.Fatalf("providerSpecificData=%v, want %v", account.Secret.ProviderData, want)
+	}
+}
+
+// connectionProxyEnabled keeps its JSON type through both imports: the
+// reference enables only a JSON true (connectionProxy.js:40-41) and stores
+// the object as given (codex bulk-import/route.js:77-93, grok :84-88), so a
+// string "true" must not be stored the way a boolean true is.
+func TestBulkImportKeepsConnectionProxyFlagType(t *testing.T) {
+	importers := map[string]func(map[string]any) (BulkAccount, error){
+		"codex": func(psd map[string]any) (BulkAccount, error) {
+			return codexBulkAccount(map[string]any{"accessToken": fixtureJWT(t, `{"email":"person@example.invalid"}`), "providerSpecificData": psd})
+		},
+		"grok-cli": func(psd map[string]any) (BulkAccount, error) {
+			return grokBulkAccount(map[string]any{"accessToken": "grok-access", "email": "person@example.invalid", "providerSpecificData": psd})
+		},
+	}
+	cases := []struct {
+		name   string
+		value  any
+		stored string
+	}{
+		{"boolean true", true, `true`},
+		{"string true", "true", `"true"`},
+		{"boolean false", false, `false`},
+		{"string false", "false", `"false"`},
+		{"padded string true", " true ", `" true "`},
+		{"number one", float64(1), `1`},
+		{"empty string", "", `""`},
+	}
+	for provider, importer := range importers {
+		for _, tc := range cases {
+			t.Run(provider+"/"+tc.name, func(t *testing.T) {
+				account, err := importer(map[string]any{"connectionProxyEnabled": tc.value, "connectionProxyUrl": "http://proxy.example:3128"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := account.Secret.ProviderData["connectionProxyEnabled"]; got != tc.stored {
+					t.Fatalf("stored %q, want %q", got, tc.stored)
+				}
+			})
+		}
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
+	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
 const probeTimeout = 20 * time.Second
@@ -94,6 +95,9 @@ func (h *Handler) workflowConnection(ctx context.Context, id string) (credential
 
 func (h *Handler) validateConnection(ctx context.Context, c credentials.Connection, node credentials.Node, protocol, model string) validationResult {
 	result := validationResult{ConnectionID: c.ID, ProviderID: node.ProviderID, Method: "inference"}
+	// The test leaves through the connection's proxy, as inference does
+	// (testUtils.js:865-889).
+	ctx = transport.WithConnection(ctx, c.ID)
 	if !c.Enabled {
 		result.Error = "enable the connection before validation"
 		return result

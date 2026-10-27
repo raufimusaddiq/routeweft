@@ -19,6 +19,10 @@ type ProviderSettings struct {
 	Location                                                            string // Vertex location (stored as location)
 	ChatGPTAccountID                                                    string // Codex ChatGPT account (stored as chatgptAccountId)
 	KiroToolCallRepair                                                  string // "false" turns Kiro's integrity repair retry off (stored as kiroToolCallRepair)
+	// LiteRouter per-connection proxy, stored as connectionProxyEnabled,
+	// connectionProxyUrl and connectionNoProxy. The URL may carry proxy
+	// credentials and never leaves the server unredacted.
+	ConnectionProxyEnabled, ConnectionProxyURL, ConnectionNoProxy string
 }
 
 // ConnectionMetadata contains immutable account configuration needed by provider wires.

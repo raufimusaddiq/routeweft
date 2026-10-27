@@ -159,6 +159,8 @@ func (s *Service) refreshConnection(ctx context.Context, connection credentials.
 		return err
 	}
 	credential := Credential{
+		// The connection routes the read through its proxy (Observer.Observe).
+		ConnectionID: connection.ID,
 		AccessToken:  secret.AccessToken,
 		Cookie:       secret.Cookie,
 		ProviderData: secret.ProviderData,

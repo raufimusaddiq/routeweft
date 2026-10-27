@@ -16,11 +16,17 @@ type GlobalConfig struct {
 }
 
 // Binding describes one connection's compiled proxy decision: its optional
-// bound pool and the selected member URL for this attempt.
+// bound pool and the selected member URL for this attempt, or, when no pool
+// member applies, its LiteRouter per-connection proxy.
 type Binding struct {
 	PoolID       string
 	MemberURL    string
 	RotationUsed bool
+	// ConnectionProxyURL and ConnectionNoProxy are the connection's own proxy
+	// (providerSpecificData.connectionProxyUrl/connectionNoProxy). The pin uses
+	// it only when no usable pool is bound (connectionProxy.js:58-165).
+	ConnectionProxyURL string
+	ConnectionNoProxy  []string
 }
 
 // Resolver compiles transport.ProxyPolicy values. Pools are durable; the
@@ -32,13 +38,27 @@ type Resolver struct {
 }
 
 // Policy compiles the effective proxy policy for one connection. A bound, enabled
-// pool member takes precedence over the global proxy; an empty or disabled pool
-// falls back to the global setting (an empty pool is not a hard failure, matching
-// the capacity-adapter deselect semantics for optional infrastructure).
+// pool member takes precedence over the connection's own proxy, which takes
+// precedence over the global proxy; an empty or disabled pool falls back to the
+// next (an empty pool is not a hard failure, matching the capacity-adapter
+// deselect semantics for optional infrastructure).
 func (r Resolver) Policy(binding Binding) transport.ProxyPolicy {
 	globalURL := strings.TrimSpace(r.Global.ProxyURL)
 	if !r.Global.Enabled {
 		globalURL = ""
+	}
+	if strings.TrimSpace(binding.MemberURL) == "" {
+		if connectionURL := strings.TrimSpace(binding.ConnectionProxyURL); connectionURL != "" {
+			return transport.ProxyPolicy{
+				Enabled:               true,
+				GlobalProxyURL:        globalURL,
+				ConnectionProxyURL:    connectionURL,
+				NoProxy:               append([]string(nil), r.Global.NoProxy...),
+				AllowPrivate:          r.Global.AllowLocal,
+				ConnectionOwnsNoProxy: true,
+				ConnectionNoProxy:     append([]string(nil), binding.ConnectionNoProxy...),
+			}
+		}
 	}
 	return transport.ProxyPolicy{
 		Enabled:            globalURL != "" || strings.TrimSpace(binding.MemberURL) != "",
