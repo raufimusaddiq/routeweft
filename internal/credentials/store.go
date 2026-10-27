@@ -65,7 +65,8 @@ type Connection struct {
 	ProxyPoolID string
 	AccountID   string
 	// CredentialRevision is how many times the stored credential was replaced
-	// (v13), read in the same row as Secret. A validation records its result
+	// by a different one (v13; a reseal of the same credential or a refresh
+	// rotation is not a replacement), read in the same row as Secret. A validation records its result
 	// only against the revision it tested (RecordValidation). It is not
 	// configuration: a save ignores it and the store keeps the count.
 	CredentialRevision int64
@@ -295,21 +296,31 @@ func (s *Store) PutConnection(ctx context.Context, connection Connection) (Conne
 	if blob != nil {
 		expiry = expiryColumn(connection.Secret)
 	}
-	// ?14 is whether this save resets the lifecycle: it writes a new secret and
-	// names its status (Lifecycle).
-	reset := 0
-	if blob != nil && connection.Lifecycle.Status != "" {
-		reset = 1
+	// A save that reseals the stored credential (an edit merges it back in) is
+	// not a replacement: ?15, the credential's digest, decides in the statement
+	// itself whether the revision counts and the lifecycle resets. ?14 is
+	// whether this save names a status for a replacement (Lifecycle).
+	var digest any
+	if blob != nil {
+		digest = s.sealer.Digest(credentialMaterial(connection.Secret))
 	}
-	const upsert = `INSERT INTO provider_connections(id,node_id,name,auth_kind,identity,secret_blob,enabled,priority,proxy_pool_id,account_id,credential_expires_at,test_status,auth_origin)
-VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,COALESCE(NULLIF(?12,''),'untested'),?13)
-ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_kind=excluded.auth_kind,identity=excluded.identity,secret_blob=COALESCE(excluded.secret_blob,provider_connections.secret_blob),enabled=excluded.enabled,priority=excluded.priority,proxy_pool_id=excluded.proxy_pool_id,account_id=excluded.account_id,credential_expires_at=CASE WHEN excluded.secret_blob IS NULL THEN provider_connections.credential_expires_at ELSE excluded.credential_expires_at END,credential_revision=CASE WHEN excluded.secret_blob IS NULL THEN provider_connections.credential_revision ELSE provider_connections.credential_revision+1 END,
-test_status=CASE WHEN ?14 THEN excluded.test_status ELSE provider_connections.test_status END,
-auth_origin=CASE WHEN excluded.secret_blob IS NOT NULL AND ?13<>'' THEN ?13 ELSE provider_connections.auth_origin END,
-last_tested_at=CASE WHEN ?14 THEN NULL ELSE provider_connections.last_tested_at END,
-last_error=CASE WHEN ?14 THEN NULL ELSE provider_connections.last_error END,
-last_error_at=CASE WHEN ?14 THEN NULL ELSE provider_connections.last_error_at END,
-models_available=CASE WHEN ?14 THEN NULL ELSE provider_connections.models_available END,
+	named := 0
+	if connection.Lifecycle.Status != "" {
+		named = 1
+	}
+	// "replaced" below is: a new secret whose digest differs from the stored one.
+	// SET expressions read the row as it was before this update.
+	const upsert = `INSERT INTO provider_connections(id,node_id,name,auth_kind,identity,secret_blob,enabled,priority,proxy_pool_id,account_id,credential_expires_at,test_status,auth_origin,credential_digest)
+VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,COALESCE(NULLIF(?12,''),'untested'),?13,?15)
+ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_kind=excluded.auth_kind,identity=excluded.identity,secret_blob=COALESCE(excluded.secret_blob,provider_connections.secret_blob),enabled=excluded.enabled,priority=excluded.priority,proxy_pool_id=excluded.proxy_pool_id,account_id=excluded.account_id,credential_expires_at=CASE WHEN excluded.secret_blob IS NULL THEN provider_connections.credential_expires_at ELSE excluded.credential_expires_at END,
+credential_revision=CASE WHEN excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN provider_connections.credential_revision+1 ELSE provider_connections.credential_revision END,
+credential_digest=CASE WHEN excluded.secret_blob IS NULL THEN provider_connections.credential_digest ELSE ?15 END,
+test_status=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN excluded.test_status ELSE provider_connections.test_status END,
+auth_origin=CASE WHEN ?13<>'' AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN ?13 ELSE provider_connections.auth_origin END,
+last_tested_at=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN NULL ELSE provider_connections.last_tested_at END,
+last_error=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN NULL ELSE provider_connections.last_error END,
+last_error_at=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN NULL ELSE provider_connections.last_error_at END,
+models_available=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN NULL ELSE provider_connections.models_available END,
 updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 	change := func(c *Configuration) error {
 		metadata := connection
@@ -327,7 +338,7 @@ updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 		c.Connections = append(c.Connections, metadata)
 		return nil
 	}
-	if err := s.exec(ctx, change, upsert, connection.ID, connection.NodeID, connection.Name, string(connection.AuthKind), nullable(connection.Identity), blob, enabled, connection.Priority, nullable(connection.ProxyPoolID), connection.AccountID, expiry, connection.Lifecycle.Status, connection.Lifecycle.Origin, reset); err != nil {
+	if err := s.exec(ctx, change, upsert, connection.ID, connection.NodeID, connection.Name, string(connection.AuthKind), nullable(connection.Identity), blob, enabled, connection.Priority, nullable(connection.ProxyPoolID), connection.AccountID, expiry, connection.Lifecycle.Status, connection.Lifecycle.Origin, named, digest); err != nil {
 		return Connection{}, fmt.Errorf("persist provider connection %q: %w", connection.Name, err)
 	}
 	return connection, nil
@@ -372,7 +383,7 @@ func (s *Store) RotateSecret(ctx context.Context, connectionID string, secret Se
 	}
 	return s.exec(ctx, editConnection(connectionID, func(c *Connection) {
 		c.Settings = projectSettings(secret.ProviderData)
-	}), "UPDATE provider_connections SET secret_blob=?,credential_expires_at=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", sealed, expiryColumn(secret), connectionID)
+	}), "UPDATE provider_connections SET secret_blob=?,credential_expires_at=?,credential_digest=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", sealed, expiryColumn(secret), s.sealer.Digest(credentialMaterial(secret)), connectionID)
 }
 
 // GetConnection returns one connection with its decrypted secret.

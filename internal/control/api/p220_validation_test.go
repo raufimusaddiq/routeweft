@@ -405,3 +405,54 @@ func TestConcurrentImportAndRelinkKeepStatusWithItsCredential(t *testing.T) {
 		}
 	}
 }
+
+// An edit that keeps the credential (name, enabled state, order, proxy) during a
+// check reseals the same credential, so the check still records its result:
+// only a replacement makes a running check's result stale.
+func TestMetadataEditDuringCheckKeepsItsResult(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if r.URL.Path == "/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"relink-a"},{"id":"relink-b"}]}`)
+			return
+		}
+		started <- struct{}{}
+		<-release
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"OK"}}]}`)
+	}))
+	defer upstream.Close()
+	_, mux, store, creds, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	c := workflowAccount(t, creds, "edit", upstream.URL, "edit@example.invalid")
+	if err := creds.RotateSecret(context.Background(), c.ID, credentials.Secret{AccessToken: relinkKeyOne}); err != nil {
+		t.Fatal(err)
+	}
+	before := connectionByID(t, creds, c.ID).CredentialRevision
+	for i, edit := range []string{`{"name":"Renamed"}`, `{"priority":3}`, `{"accountId":"acct-2"}`, `{"secret":{"accessToken":"` + relinkKeyOne + `"}}`} {
+		done := make(chan int, 1)
+		go func() {
+			done <- doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"relink-a"}`).Code
+		}()
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("check did not reach the upstream")
+		}
+		if recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, edit); recorder.Code != http.StatusOK {
+			t.Fatalf("edit %s: %d %s", edit, recorder.Code, recorder.Body.String())
+		}
+		release <- struct{}{}
+		if code := <-done; code != http.StatusOK {
+			t.Fatalf("check during %s: %d", edit, code)
+		}
+		view := listedConnection(t, mux, cookie, c.ID, relinkKeyOne)
+		if view.TestStatus != credentials.StatusActive || view.LastTestedAt == "" || view.ModelsAvailable == nil || *view.ModelsAvailable != 2 {
+			t.Fatalf("edit %d %s lost the check result: %+v", i, edit, view)
+		}
+		if got := connectionByID(t, creds, c.ID); got.CredentialRevision != before || got.Secret.AccessToken != relinkKeyOne {
+			t.Fatalf("edit %s replaced the credential: revision %d -> %d", edit, before, got.CredentialRevision)
+		}
+	}
+}

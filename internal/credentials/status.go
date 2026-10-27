@@ -3,9 +3,12 @@ package credentials
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/raufimusaddiq/routeweft/internal/telemetry"
 )
 
 // A connection's validation lifecycle (v13, #220). It is kept beside the
@@ -90,6 +93,31 @@ func (s *Store) GetConnectionStatus(ctx context.Context, id string) (ConnectionS
 	}
 	status.ModelsAvailable = models
 	return status, err
+}
+
+// credentialMaterial is what a credential is, for Digest: the access, refresh
+// and ID tokens, the cookie, and the provider-data values under credential keys
+// (apiKey, copilotToken, mimoPassToken, ...). Provider metadata and settings
+// (project, region, proxy, plan) are not the credential, so changing them is not
+// a replacement. JSON encodes the map in key order, so the result is canonical.
+func credentialMaterial(secret Secret) []byte {
+	material := struct {
+		AccessToken  string            `json:"a,omitempty"`
+		RefreshToken string            `json:"r,omitempty"`
+		IDToken      string            `json:"i,omitempty"`
+		Cookie       string            `json:"c,omitempty"`
+		ProviderData map[string]string `json:"p,omitempty"`
+	}{AccessToken: secret.AccessToken, RefreshToken: secret.RefreshToken, IDToken: secret.IDToken, Cookie: secret.Cookie}
+	for key, value := range secret.ProviderData {
+		if value != "" && telemetry.SensitiveKey(key) {
+			if material.ProviderData == nil {
+				material.ProviderData = map[string]string{}
+			}
+			material.ProviderData[key] = value
+		}
+	}
+	encoded, _ := json.Marshal(material)
+	return encoded
 }
 
 func statusTime(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z") }

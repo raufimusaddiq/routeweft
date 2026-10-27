@@ -259,8 +259,24 @@ func TestValidationIsRefusedForAReplacedCredential(t *testing.T) {
 	if err := store.RotateSecret(ctx, connection.ID, Secret{AccessToken: "fixture-old-rotated"}); err != nil {
 		t.Fatal(err)
 	}
+	// An API edit merges the stored secret back in, so it reseals the same
+	// credential; provider settings that are not credentials may change with
+	// it. Neither is a replacement, even when the save names a status.
+	resealed := connection
+	resealed.Name = "resealed"
+	resealed.Secret = Secret{AccessToken: "fixture-old-rotated", ProviderData: map[string]string{"region": "eu", "projectId": "proj-2"}}
+	resealed.Lifecycle = Lifecycle{Status: StatusUntested, Origin: OriginManual}
+	if err := store.RecordValidation(ctx, connection.ID, tested, Validation{OK: true, ModelsAvailable: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutConnection(ctx, resealed); err != nil {
+		t.Fatal(err)
+	}
 	if got := revision(); got != tested {
 		t.Fatalf("revision moved without a replacement: %d -> %d", tested, got)
+	}
+	if status, _ := store.GetConnectionStatus(ctx, connection.ID); status.TestStatus != StatusActive || status.ModelsAvailable == nil || status.AuthOrigin == OriginManual {
+		t.Fatalf("a reseal reset the lifecycle: %+v", status)
 	}
 	// The relink.
 	replaced := connection

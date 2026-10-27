@@ -11,9 +11,12 @@ package migrations
 // pass). auth_origin names how the credential arrived (manual, oauth, device,
 // import) and credential_expires_at mirrors the sealed secret's expiry so a
 // refresh rotation's new expiry is readable without the key.
-// credential_revision counts credential replacements (a new secret written by
-// a save; a refresh rotation is the same credential and does not count), so a
-// test that read one credential cannot record its result over the next. None of these
+// credential_revision counts credential replacements, so a test that read one
+// credential cannot record its result over the next. credential_digest is a
+// keyed fingerprint of the credential material (never the material), which is
+// how a save that reseals the same credential (an edit of name, order, proxy or
+// provider settings) is told from a replacement; a refresh rotation updates it
+// without counting as one. None of these
 // columns hold credential material and none enter the runtime snapshot.
 // Existing rows start untested. Forward-only: the added columns are ignored by
 // an older binary, but rollback still requires the pre-upgrade backup.
@@ -29,5 +32,6 @@ ALTER TABLE provider_connections ADD COLUMN models_available INTEGER;
 ALTER TABLE provider_connections ADD COLUMN auth_origin TEXT NOT NULL DEFAULT '';
 ALTER TABLE provider_connections ADD COLUMN credential_expires_at TEXT;
 ALTER TABLE provider_connections ADD COLUMN credential_revision INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE provider_connections ADD COLUMN credential_digest TEXT;
 `,
 }

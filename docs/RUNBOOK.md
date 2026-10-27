@@ -658,7 +658,7 @@ connection works.
 
 Schema v13 (#220) only adds columns to `provider_connections` (validation
 status, last test, last error, model count, auth origin, credential expiry and
-credential revision;
+credential revision and a keyed credential digest;
 SPEC §33.2). Existing connections start `untested`. No column holds credential
 material. It is forward-only like every migration: a release built before v13
 refuses to start on a v13 database (schema newer than supported), so rolling

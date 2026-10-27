@@ -2143,10 +2143,14 @@ the last test, error and model count:
   `POST /admin/v1/providers/test-batch` record `active` (clearing the error)
   or `failed` with the error, the time and the listed model count. A canceled
   test and a disabled connection record nothing. A result is recorded only
-  against the `credential_revision` read with the credential it tested: every
-  save that writes a secret increments it (a refresh rotation does not), so
-  a check that started before a relink and ends after it is refused and the
-  replacement keeps its own status. The error is the probe's bounded text with
+  against the `credential_revision` read with the credential it tested. Only a
+  replacement increments it: a save whose credential material differs, by a
+  keyed digest (`credential_digest`, HMAC under a key derived from the master
+  key), from the stored one. An edit that reseals the same credential (name,
+  order, proxy, provider settings) and a refresh rotation do not, so a check
+  survives them, while a check that started before a relink and ends after it
+  is refused and the replacement keeps its own status. A save's lifecycle is
+  likewise applied only on a replacement. The error is the probe's bounded text with
   every credential value of the connection (stored and as the registry
   currently holds it), whatever its length, replaced by `[redacted]`, in both
   the answer and the stored row: the access, refresh and ID tokens, the cookie,
