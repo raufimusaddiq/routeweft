@@ -90,7 +90,8 @@ test('every code the sign-in endpoints answer is classified', () => {
   const shared = [...codes(body(api, 'requireSession')), ...codes(body(api, 'decodeJSON'))]
   const helpers = [...codes(body(oauth, 'oauthProviderFor')), ...codes(body(oauth, 'saveOnboardedConnection'))]
   const answered: Record<SignInStep, string[]> = {
-    callback: [...shared, ...helpers, ...codes(body(oauth, 'flowRedirectURI')), ...codes(body(oauth, 'handleOAuthCallback'))],
+    // Only /start sets a Reauthenticate target, so only a callback reaches saveReauthenticated.
+    callback: [...shared, ...helpers, ...codes(body(oauth, 'saveReauthenticated')), ...codes(body(oauth, 'flowRedirectURI')), ...codes(body(oauth, 'handleOAuthCallback'))],
     poll: [...shared, ...helpers, ...codes(body(oauth, 'handleOAuthDevicePoll'))],
     cancel: [...shared, ...codes(body(oauth, 'handleOAuthCancel'))],
   }

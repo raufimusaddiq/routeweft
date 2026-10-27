@@ -1,19 +1,21 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchAll, PAGE_SIZE, Pager, usePagedList } from './ProviderPaging'
 import { EmptyState, ErrorNotice, SkeletonRows } from './kit'
-import { Dot, Statement, Status, type Tone } from './editorial'
+import { Dot, Fact, Statement, Status, type Tone } from './editorial'
 import { badRate, num, largest, outlier, pct, rate, share, topByRequests, type Summary } from './format'
 import { connectionProxyText, type ConnectionProxy } from './connectionProxy'
 import { READINESS_LABEL, readinessNote, readinessStatus, type Readiness } from './readiness'
 import { attemptExpired, attemptStillOpen, cancelResult, connectMethods, phaseForError, type AttemptPhase, type Completion, type ConnectMethod, type SignInMethod, type SignInMode } from './signIn'
+import { bulkSummary, canReauthenticate, closeSignInWindow, duplicateNote, openSignInWindow, outcomeMessage, parseBulkInput, sendSignInWindow, signInURL, type BulkResponse, type SignInWindow } from './onboarding'
+import { quotaLine, quotaQuery, type QuotaItem } from './quotaView'
 
 function ReadinessTag({ provider }: { provider: { readiness?: Readiness } }) {
   const status = readinessStatus(provider)
   return <span className={`state-tag readiness-tag readiness-${status}`} title={provider.readiness?.reason || 'Set by this build, not by account settings.'}>{READINESS_LABEL[status]}</span>
 }
-type Provider = { id: string; transports: string[]; auth: string; authModes: string[]; defaultBaseURL?: string; modelCatalog: string; passthroughModels: boolean; staticModels?: string[]; reportsUsage: boolean; flowType?: string; signInModes?: SignInMode[]; metaKeys?: string[]; signInMethods?: SignInMethod[]; configuredNodes: number; enabledAccounts: number; readiness?: Readiness }
+type Provider = { id: string; transports: string[]; auth: string; authModes: string[]; defaultBaseURL?: string; modelCatalog: string; passthroughModels: boolean; staticModels?: string[]; reportsUsage: boolean; flowType?: string; signInModes?: SignInMode[]; metaKeys?: string[]; signInMethods?: SignInMethod[]; bulkImport?: boolean; configuredNodes: number; enabledAccounts: number; readiness?: Readiness }
 type Node = { id: string; kind: string; providerId: string; name: string; prefix?: string; baseUrl?: string; transports: string[] }
-type Connection = { id: string; nodeId: string; providerId: string; name: string; authKind: string; identity: string; enabled: boolean; priority: number; proxyPoolId?: string; connectionProxy?: ConnectionProxy; credentialConfigured: boolean }
+type Connection = { id: string; nodeId: string; providerId: string; name: string; authKind: string; identity: string; enabled: boolean; priority: number; proxyPoolId?: string; connectionProxy?: ConnectionProxy; credentialConfigured: boolean; outcome?: string; plan?: string }
 type Model = { providerId: string; id: string; name?: string; contextWindow?: number; capabilities: string[]; disabled: boolean; custom?: boolean }
 type Alias = { alias: string; providerId: string; modelId: string }
 type Pricing = { providerId: string; modelId: string; inputPerMTok?: number; outputPerMTok?: number; cacheReadPerMTok?: number; cacheWritePerMTok?: number }
@@ -138,6 +140,18 @@ export function Providers({ onUnauthorized }: Props) {
   // gitlab, …), so one state made the second field overwrite the first.
   const [oauthInput, setOauthInput] = useState('')
   const [importInput, setImportInput] = useState('')
+  // The sign-in window opened in the click that started the attempt, and whether
+  // the browser refused it (the panel then points at the link instead).
+  const popupRef = useRef<SignInWindow | null>(null)
+  const [popupBlocked, setPopupBlocked] = useState(false)
+  // The connection a Reauthenticate renews; null for a sign-in that adds.
+  const [reauthTarget, setReauthTarget] = useState<Connection | null>(null)
+  // Bulk import: the pasted export (cleared once sent), and the per-item result.
+  const [bulkInput, setBulkInput] = useState('')
+  const [bulkError, setBulkError] = useState('')
+  const [bulkResult, setBulkResult] = useState<ReturnType<typeof bulkSummary> | null>(null)
+  // What the operator learned about a just-saved account: a connection check and its quota.
+  const [afterLogin, setAfterLogin] = useState<{ check?: string; quota?: string }>({})
   const [deviceFlow, setDeviceFlow] = useState<DeviceFlow | null>(null)
   // Operator input a flow needs beyond name/identity: GitLab's self-hosted
   // application client id and base URL, Kiro's region, Cursor's machine id.
@@ -343,8 +357,12 @@ export function Providers({ onUnauthorized }: Props) {
   }
 
   function signedIn(connection?: Connection) {
+    const popup = popupRef.current
     resetSecrets(); setAccount(EMPTY_ACCOUNT); setNickname('')
-    setOutcome({ phase: 'success', message: connection ? `Signed in as ${connection.identity || connection.name}; the connection is saved.` : 'Provider connection saved.', connection })
+    // resetSecrets tried to close the sign-in window; one on the provider's origin
+    // stays open (closeSignInWindow), so the operator is told it can go.
+    const windowLeft = popup !== null && !popup.closed ? ' You can close the provider\'s sign-in window.' : ''
+    setOutcome({ phase: 'success', message: (connection ? outcomeMessage(connection) : 'Provider connection saved.') + windowLeft, connection })
   }
 
   // Forgets the attempt on screen and everything learned about it (a stalled poll,
@@ -353,6 +371,7 @@ export function Providers({ onUnauthorized }: Props) {
   function endAttempt() {
     setOauthFlow(null); setOauthInput(''); setDeviceFlow(null)
     setAttemptNote(''); setPollStalled(false)
+    closeSignInWindow(popupRef.current); popupRef.current = null; setPopupBlocked(false); setReauthTarget(null)
   }
 
   // Reports how the server ended an attempt. Called only with a server answer that
@@ -368,13 +387,35 @@ export function Providers({ onUnauthorized }: Props) {
       : { phase, message: cause instanceof Error ? cause.message : 'Sign-in failed.' })
   }
 
-  async function startOAuth() {
-    if (!selectedProvider || (askIdentity && !account.identity.trim())) return
+  // Starts a browser sign-in; with a target, a Reauthenticate of that connection,
+  // whose name and identity the server takes from the connection itself.
+  async function startOAuth(target?: Connection) {
+    if (!selectedProvider || (!target && askIdentity && !account.identity.trim())) return
     endAttempt(); setOutcome(null)
+    // Opened before the request: browsers block a window opened after an await.
+    const popup = openSignInWindow((url, name, features) => window.open(url, name, features))
+    popupRef.current = popup
+    setReauthTarget(target ?? null)
+    let started = false
     await action('oauth-start', '', async () => {
-      const flow = await send(`/oauth/${encodeURIComponent(selected)}/start`, 'POST', { ...signInAccount(), meta: flowMeta() }) as Omit<OAuthFlow, 'provider'>
+      const flow = await send(`/oauth/${encodeURIComponent(selected)}/start`, 'POST', target ? { connectionId: target.id, meta: flowMeta() } : { ...signInAccount(), meta: flowMeta() }) as Omit<OAuthFlow, 'provider'>
       setOauthFlow({ ...flow, provider: selected })
+      setPopupBlocked(sendSignInWindow(popup, flow.authorizeUrl) === 'blocked')
+      started = true
     })
+    // A start that failed keeps a Reauthenticate on its connection, to retry.
+    if (!started) {
+      closeSignInWindow(popup)
+      if (popupRef.current === popup) popupRef.current = null
+    }
+  }
+
+  // Reauthenticate from a connection row opens the panel on the browser sign-in
+  // for that connection; its start button begins it (the sign-in window must open
+  // in a click), after any provider fields the sign-in reads.
+  function reauthenticate(connection: Connection) {
+    resetSecrets(); setOutcome(null); setMethodId('browser'); setAccountOpen(true)
+    setReauthTarget(connection)
   }
 
   // Ends the pending attempt on the server. The attempt stays tracked (and a
@@ -450,6 +491,14 @@ export function Providers({ onUnauthorized }: Props) {
     setOauthFlow(null)
     setOauthInput('')
     setImportInput('')
+    setBulkInput('')
+    setBulkError('')
+    setBulkResult(null)
+    setAfterLogin({})
+    closeSignInWindow(popupRef.current)
+    popupRef.current = null
+    setPopupBlocked(false)
+    setReauthTarget(null)
     setMetaInput({})
     setDeviceFlow(null)
     setOutcome(null)
@@ -486,6 +535,48 @@ export function Providers({ onUnauthorized }: Props) {
         throw cause
       }
     })
+  }
+
+  // Bulk import: the export is checked here first (nothing is sent if it is not
+  // JSON), then sent once; the result is reported per item. The pasted text is
+  // cleared as soon as the server may hold it, whatever the answer.
+  async function importBulk() {
+    if (!selectedProvider || !bulkInput.trim()) return
+    const parsed = parseBulkInput(bulkInput)
+    setBulkResult(null)
+    if ('error' in parsed) { setBulkError(parsed.error); return }
+    setBulkError('')
+    await action('bulk-import', '', async () => {
+      try {
+        setBulkResult(bulkSummary(await send(`/oauth/${encodeURIComponent(selected)}/bulk-import`, 'POST', { accounts: parsed.accounts }) as BulkResponse))
+      } catch (cause) {
+        // No answer: part of the batch may have been saved.
+        if (errorCodeOf(cause) === undefined && !(cause instanceof RequestError)) throw new Error('No answer from the server; some accounts may have been saved. Check the connections below before importing again.')
+        throw cause
+      } finally { setBulkInput('') }
+    })
+  }
+
+  // After a sign-in: check the saved connection and read its quota, without
+  // leaving the result panel.
+  async function checkSignedIn(connection: Connection) {
+    setBusy(`signed-check-${connection.id}`)
+    try {
+      await send(`/connections/${encodeURIComponent(connection.id)}/test`, 'POST')
+      setAfterLogin(value => ({ ...value, check: 'Connection check succeeded.' }))
+    } catch (cause) {
+      setAfterLogin(value => ({ ...value, check: `Connection check failed: ${cause instanceof Error ? cause.message : 'no answer'}` }))
+    } finally { setBusy('') }
+  }
+
+  async function readSignedInQuota(connection: Connection) {
+    setBusy(`signed-quota-${connection.id}`)
+    try {
+      const page = await send(`/quota?${quotaQuery(1, 'default', connection.providerId, connection.name)}`, 'GET') as { items?: QuotaItem[] }
+      setAfterLogin(value => ({ ...value, quota: quotaLine(page.items?.find(item => item.connectionId === connection.id)) }))
+    } catch (cause) {
+      setAfterLogin(value => ({ ...value, quota: `Could not read quota: ${cause instanceof Error ? cause.message : 'no answer'}` }))
+    } finally { setBusy('') }
   }
 
   async function finishOAuth() {
@@ -622,13 +713,13 @@ export function Providers({ onUnauthorized }: Props) {
         <button className="button-primary" type="button" onClick={() => { if (accountOpen) void closeAccount(); else { setMethodId(''); setAccountOpen(true) } }}>Add connection</button>{selectedNode && <><button className="button-secondary" type="button" onClick={() => { setGenericNodeID(selectedNode.id); setGeneric({ name: selectedNode.name, prefix: selectedNode.prefix || selectedNode.providerId, baseUrl: selectedNode.baseUrl || '', transports: selectedNode.transports }); setGenericOpen(true) }}>Edit Generic Provider</button><button className="button-danger" type="button" onClick={() => { if (window.confirm(`Delete ${selectedNode.name} and all its connections?`)) void action('delete-generic', 'Generic Provider deleted.', () => send(`/provider-nodes/${encodeURIComponent(selectedNode.id)}`, 'DELETE').then(() => { setSelected('') })) }}>Delete Generic Provider</button></>}
       </div>
 
-      {accountOpen && method && <form className="detail-panel provider-form" onSubmit={event => void createAccount(event)}><div className="section-heading"><div><h3>New connection</h3><p>Credential material stays server-side and is sealed at rest.</p></div><button className="button-ghost" type="button" onClick={() => void closeAccount()}>Close</button></div><div className="provider-form-grid">
+      {accountOpen && method && <form className="detail-panel provider-form" onSubmit={event => void createAccount(event)}><div className="section-heading"><div><h3>{reauthTarget ? `Reauthenticate “${reauthTarget.name}”` : 'New connection'}</h3><p>Credential material stays server-side and is sealed at rest.</p></div><button className="button-ghost" type="button" onClick={() => void closeAccount()}>Close</button></div><div className="provider-form-grid">
         {attemptElsewhere ? <div className="wide-field oauth-panel" role="status"><p>A {providerLabel(attemptProvider)} sign-in is still pending. Finish or cancel it before starting another.</p><div><button className="button-secondary" type="button" onClick={() => setSelected(attemptProvider)}>Back to {providerLabel(attemptProvider)}</button></div></div> : <>
         {methods.length > 1 && <fieldset className="wide-field access-picker" disabled={pending}><legend>Connect with</legend><div className="access-modes" role="radiogroup" aria-label="Connection method">
           {methods.map(item => <label key={item.id}><input type="radio" name="connect-method" checked={item.id === method.id} onChange={() => { resetSecrets(); setMethodId(item.id) }} /><span><strong>{item.label}</strong></span></label>)}
         </div></fieldset>}
         {method.kind === 'manual' && <><label>Account name<input required value={account.name} onChange={event => setAccount({ ...account, name: event.target.value })} /></label><label>Stable account identity<input required value={account.identity} onChange={event => setAccount({ ...account, identity: event.target.value })} /></label></>}
-        {method.kind !== 'manual' && askIdentity && !pending && !outcome?.connection && <label className="wide-field">Stable account identity<input required value={account.identity} onChange={event => setAccount({ ...account, identity: event.target.value })} /><small>{providerLabel(selected)} does not report which account signed in, so name it here, for example its email.</small></label>}
+        {method.kind !== 'manual' && askIdentity && !reauthTarget && !pending && !outcome?.connection && <label className="wide-field">Stable account identity<input required value={account.identity} onChange={event => setAccount({ ...account, identity: event.target.value })} /><small>{providerLabel(selected)} does not report which account signed in, so name it here, for example its email.</small></label>}
         {method.kind !== 'manual' && method.metaKeys.length > 0 && !pending && !outcome?.connection && <div className="wide-field oauth-panel" role="group" aria-label="Sign-in parameters">
           <p>Only fill what this provider requires. Leave the rest blank.</p>
           {method.metaKeys.map(key => {
@@ -643,6 +734,9 @@ export function Providers({ onUnauthorized }: Props) {
         </div>}
         {outcome && <div className="wide-field oauth-panel" role={outcome.phase === 'success' ? 'status' : 'alert'} aria-label="Sign-in result">
           <p><span className={`state-tag ${outcome.phase === 'success' ? 'state-good' : 'state-warn'}`}>{ATTEMPT_LABEL[outcome.phase]}</span> {outcome.message}</p>
+          {outcome.connection && <dl className="ed-facts" aria-label="Signed-in account"><Fact label="Account" value={outcome.connection.identity || outcome.connection.name} />{outcome.connection.plan && <Fact label="Plan" value={outcome.connection.plan} />}</dl>}
+          {outcome.connection && <div className="oauth-actions"><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void checkSignedIn(outcome.connection!)}>{busy === `signed-check-${outcome.connection.id}` ? 'Checking…' : 'Check connection'}</button><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void readSignedInQuota(outcome.connection!)}>{busy === `signed-quota-${outcome.connection.id}` ? 'Reading…' : 'Read quota'}</button></div>}
+          {afterLogin.check && <p role="status">{afterLogin.check}</p>}{afterLogin.quota && <p role="status">Quota: {afterLogin.quota}</p>}
           {outcome.connection ? <><label>Nickname (optional)<input value={nickname} placeholder={outcome.connection.name} maxLength={200} onChange={event => setNickname(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void saveNickname(outcome.connection!) } }} /></label>
             <div className="oauth-actions"><button className="button-primary" type="button" disabled={busy !== ''} onClick={() => void saveNickname(outcome.connection!)}>{nickname.trim() ? 'Save nickname' : 'Done'}</button></div></>
             : outcome.phase === 'success' && <div className="oauth-actions"><button className="button-primary" type="button" onClick={() => void closeAccount()}>Done</button></div>}
@@ -656,9 +750,18 @@ export function Providers({ onUnauthorized }: Props) {
           <label>{method.authKind === 'cookie' ? 'Cookie' : method.authKind === 'api-key' ? 'API key or token' : 'Token'}<input type="password" autoComplete="off" spellCheck={false} value={importInput} onChange={event => setImportInput(event.target.value)} /></label>
           <div className="oauth-actions"><button className="button-primary" type="button" disabled={busy !== '' || !importInput.trim() || (askIdentity && !account.identity.trim())} onClick={() => void importOnly()}>{busy === 'oauth-import' ? 'Saving…' : 'Import credential'}</button></div>
         </div>}
+        {method.kind === 'bulk' && !outcome?.connection && <div className="wide-field oauth-panel" role="group" aria-label={method.label}>
+          <p>Paste accounts exported from {providerLabel(selected)}: a JSON array of objects with accessToken, and ideally refreshToken and idToken. Each is stored sealed. {duplicateNote(selected) ? 'An account that is already connected updates its connection instead of adding a duplicate.' : ''}</p>
+          <label>Exported accounts (JSON)<textarea className="bulk-input" autoComplete="off" spellCheck={false} value={bulkInput} onChange={event => { setBulkInput(event.target.value); setBulkError('') }} /></label>
+          {bulkError && <p role="alert">{bulkError}</p>}
+          <div className="oauth-actions"><button className="button-primary" type="button" disabled={busy !== '' || !bulkInput.trim()} onClick={() => void importBulk()}>{busy === 'bulk-import' ? 'Importing…' : 'Import all'}</button></div>
+          {bulkResult && <div role="status" aria-label="Bulk import result"><p><strong>{bulkResult.headline}</strong></p><ul className="bulk-results">{bulkResult.rows.map(row => <li key={row.item}><span className={`state-tag ${row.ok ? 'state-good' : 'state-warn'}`}>{row.ok ? 'Saved' : 'Failed'}</span> Item {row.item}: {row.text}</li>)}</ul></div>}
+        </div>}
         {method.kind === 'browser' && !outcome?.connection && <div className="wide-field oauth-panel" role="group" aria-label={method.label}>
-          {!oauthFlow ? <><p>Sign in on the provider's page instead of copying tokens by hand.{askIdentity ? '' : ' The account is read from the provider, and you can name it afterwards.'}</p><div><button className="button-primary" type="button" disabled={busy !== '' || (askIdentity && !account.identity.trim())} onClick={() => void startOAuth()}>{busy === 'oauth-start' ? 'Starting…' : method.label}</button></div></>
-            : <><p>{method.loopbackRedirect && oauthFlow.completion === 'redirect-url' ? loopbackHint(method.loopbackRedirect) : OAUTH_HINTS[oauthFlow.completion]}</p><div><a className="button-secondary" href={oauthFlow.authorizeUrl} target="_blank" rel="noopener noreferrer">Open {providerLabel(oauthFlow.provider)} sign-in page</a></div>
+          {reauthTarget && <p role="note">Renewing “{reauthTarget.name}”{reauthTarget.identity ? ` (${reauthTarget.identity})` : ''}. Sign in as that account: another account is refused and nothing is saved.</p>}
+          {!oauthFlow ? reauthTarget ? <div><button className="button-primary" type="button" disabled={busy !== ''} onClick={() => void startOAuth(reauthTarget)}>{busy === 'oauth-start' ? 'Starting…' : 'Reauthenticate'}</button></div>
+            : <><p>Sign in on the provider's page instead of copying tokens by hand.{askIdentity ? '' : ' The account is read from the provider, and you can name it afterwards.'}</p>{duplicateNote(selected) && <p>{duplicateNote(selected)}</p>}<div><button className="button-primary" type="button" disabled={busy !== '' || (askIdentity && !account.identity.trim())} onClick={() => void startOAuth()}>{busy === 'oauth-start' ? 'Starting…' : method.label}</button></div></>
+            : <><p>{method.loopbackRedirect && oauthFlow.completion === 'redirect-url' ? loopbackHint(method.loopbackRedirect) : OAUTH_HINTS[oauthFlow.completion]}</p>{popupBlocked ? <p role="alert">Your browser blocked the sign-in window. Open the sign-in page with the button below; the rest is the same.</p> : <p>The sign-in page opened in a new window. If you cannot see it, open it with the button below.</p>}<div><a className="button-secondary" href={signInURL(oauthFlow.authorizeUrl) ?? undefined} target="_blank" rel="noopener noreferrer">Open {providerLabel(oauthFlow.provider)} sign-in page</a></div>
               <label>{oauthFlow.completion === 'code' ? 'Code from the provider' : oauthFlow.completion === 'token' ? 'Token, cookie or key' : 'Address from the browser'}<input type={oauthFlow.completion === 'code' || oauthFlow.completion === 'token' ? 'password' : 'text'} autoComplete="off" spellCheck={false} value={oauthInput} onChange={event => setOauthInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void finishOAuth() } }} /></label>
               <div className="oauth-actions"><button className="button-primary" type="button" disabled={busy !== '' || !oauthInput.trim()} onClick={() => void finishOAuth()}>{busy === 'oauth-finish' ? 'Finishing…' : 'Finish sign-in'}</button><button className="button-ghost" type="button" disabled={busy === 'oauth-cancel'} onClick={() => void cancelAttempt()}>{busy === 'oauth-cancel' ? 'Cancelling…' : 'Cancel sign-in'}</button></div>
               <p role="status"><span className="state-tag">Pending</span> Waiting for the provider's answer{oauthFlow.expiresAt ? `; this sign-in expires at ${new Date(oauthFlow.expiresAt).toLocaleTimeString()}` : ''}.</p>{pastExpiry && <p>The time limit has passed, so the server will most likely refuse this sign-in. Finish or cancel it to get the server's answer.</p>}{attemptNote && <p role="alert">{attemptNote}</p>}</>}
@@ -670,7 +773,7 @@ export function Providers({ onUnauthorized }: Props) {
         </>}
       </div>{method.kind === 'manual' && !attemptElsewhere && <button className="button-primary" type="submit" disabled={busy === 'account'}>{busy === 'account' ? 'Saving…' : 'Save connection'}</button>}</form>}
 
-      <section className="detail-panel" aria-labelledby="connection-list-title"><div className="section-heading"><div><h3 id="connection-list-title">Connections</h3><p>{selectedConnections.length} account{selectedConnections.length === 1 ? '' : 's'} · lower priority routes first</p></div></div>{selectedConnections.length === 0 ? <p className="empty-keys">No connections configured.</p> : <div className="connection-list">{connectionRows.map((connection,index) => <article className="connection-row" key={connection.id}><div className="connection-main"><strong>{connection.name}</strong>{connection.identity && <code>{connection.identity}</code>}</div><span className={`state-tag${connection.enabled ? ' state-good' : ' state-warn'}`}>{connection.enabled ? 'Enabled' : 'Disabled'}</span><label className="proxy-select">Proxy<select aria-label={`Proxy for ${connection.name}`} value={connection.proxyPoolId || ''} onChange={event => void action(`proxy-${connection.id}`, 'Proxy assignment saved.', () => send(`/connections/${encodeURIComponent(connection.id)}/proxy`, 'POST', { proxyPoolId: event.target.value }).then(() => undefined))}><option value="">No proxy pool</option>{proxyPools.map(pool => <option value={pool.id} key={pool.id}>{pool.name}{pool.enabled ? '' : ' (disabled)'}</option>)}</select></label><div className="connection-actions"><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void changeConnection(connection,{enabled:!connection.enabled})}>{connection.enabled ? 'Disable' : 'Enable'}</button><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void changeConnection(connection,{priority:connection.priority-1})} aria-label={`Move ${connection.name} up`} title="Move up">↑</button><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void changeConnection(connection,{priority:connection.priority+1})} aria-label={`Move ${connection.name} down`} title="Move down">↓</button><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void testConnection(connection)}>{busy === `test-${connection.id}` ? 'Checking…' : 'Check'}</button><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void discover(connection)}>{busy === `discover-${connection.id}` ? 'Discovering…' : 'Discover models'}</button><button className="button-danger" type="button" disabled={busy !== ''} onClick={() => { if (window.confirm(`Delete account “${connection.name}”?`)) void action(connection.id, 'Connection deleted.', () => send(`/connections/${encodeURIComponent(connection.id)}`, 'DELETE').then(() => undefined)) }}>Delete</button></div><small>Priority {connection.priority} · {connection.credentialConfigured ? 'credential stored' : 'no credential'} · position {(connectionPage - 1) * PAGE_SIZE + index + 1}</small>{connection.connectionProxy && <small className="connection-proxy">{connectionProxyText(connection)}</small>}</article>)}</div>}<Pager label="Connection" page={connectionPage} total={selectedConnections.length} onPage={setConnectionPage} /></section>
+      <section className="detail-panel" aria-labelledby="connection-list-title"><div className="section-heading"><div><h3 id="connection-list-title">Connections</h3><p>{selectedConnections.length} account{selectedConnections.length === 1 ? '' : 's'} · lower priority routes first</p></div></div>{selectedConnections.length === 0 ? <p className="empty-keys">No connections configured.</p> : <div className="connection-list">{connectionRows.map((connection,index) => <article className="connection-row" key={connection.id}><div className="connection-main"><strong>{connection.name}</strong>{connection.identity && <code>{connection.identity}</code>}</div><span className={`state-tag${connection.enabled ? ' state-good' : ' state-warn'}`}>{connection.enabled ? 'Enabled' : 'Disabled'}</span><label className="proxy-select">Proxy<select aria-label={`Proxy for ${connection.name}`} value={connection.proxyPoolId || ''} onChange={event => void action(`proxy-${connection.id}`, 'Proxy assignment saved.', () => send(`/connections/${encodeURIComponent(connection.id)}/proxy`, 'POST', { proxyPoolId: event.target.value }).then(() => undefined))}><option value="">No proxy pool</option>{proxyPools.map(pool => <option value={pool.id} key={pool.id}>{pool.name}{pool.enabled ? '' : ' (disabled)'}</option>)}</select></label><div className="connection-actions"><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void changeConnection(connection,{enabled:!connection.enabled})}>{connection.enabled ? 'Disable' : 'Enable'}</button><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void changeConnection(connection,{priority:connection.priority-1})} aria-label={`Move ${connection.name} up`} title="Move up">↑</button><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void changeConnection(connection,{priority:connection.priority+1})} aria-label={`Move ${connection.name} down`} title="Move down">↓</button>{canReauthenticate(selectedProvider.signInMethods, connection) && <button className="button-secondary" type="button" disabled={busy !== '' || pending} title={pending ? 'Finish or cancel the pending sign-in first' : undefined} onClick={() => reauthenticate(connection)}>Reauthenticate</button>}<button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void testConnection(connection)}>{busy === `test-${connection.id}` ? 'Checking…' : 'Check'}</button><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void discover(connection)}>{busy === `discover-${connection.id}` ? 'Discovering…' : 'Discover models'}</button><button className="button-danger" type="button" disabled={busy !== ''} onClick={() => { if (window.confirm(`Delete account “${connection.name}”?`)) void action(connection.id, 'Connection deleted.', () => send(`/connections/${encodeURIComponent(connection.id)}`, 'DELETE').then(() => undefined)) }}>Delete</button></div><small>Priority {connection.priority} · {connection.credentialConfigured ? 'credential stored' : 'no credential'} · position {(connectionPage - 1) * PAGE_SIZE + index + 1}</small>{connection.connectionProxy && <small className="connection-proxy">{connectionProxyText(connection)}</small>}</article>)}</div>}<Pager label="Connection" page={connectionPage} total={selectedConnections.length} onPage={setConnectionPage} /></section>
 
       <section className="detail-panel" aria-labelledby="models-title"><div className="section-heading"><div><h3 id="models-title">Models</h3><p>{modelList.total.toLocaleString()} configured model{modelList.total === 1 ? '' : 's'}{builtinModels.length > 0 && ` · ${builtinModels.length.toLocaleString()} built-in`}</p></div></div><form className="provider-inline-form" onSubmit={event => void addManualModel(event)}><input required aria-label="Model ID" placeholder="Model ID" value={manual.id} onChange={event => setManual({ ...manual,id:event.target.value })} /><input aria-label="Display name" placeholder="Display name" value={manual.name} onChange={event => setManual({ ...manual,name:event.target.value })} /><input aria-label="Context window" type="number" min="0" placeholder="Context" value={manual.contextWindow} onChange={event => setManual({ ...manual,contextWindow:event.target.value })} /><input aria-label="Capabilities" placeholder="Capabilities, comma-separated" value={manual.capabilities} onChange={event => setManual({ ...manual,capabilities:event.target.value })} /><button className="button-secondary" type="submit">Add manual model</button></form>{modelList.error && <p className="auth-error" role="alert">{modelList.error}</p>}{modelList.items.map(model => <div className="model-row" key={model.id}><code>{model.id}</code><span>{model.name || '—'}</span><small>{model.contextWindow ? `${model.contextWindow.toLocaleString()} tokens` : model.capabilities.join(', ')}</small><span className={`state-tag${model.disabled ? ' state-warn' : ''}`}>{model.disabled ? 'Disabled' : 'Available'}</span><button className="button-ghost" type="button" onClick={() => void action(`model-${model.id}`, 'Model status updated.', () => send('/models/disabled','PATCH',{providerId:selected,modelId:model.id,disabled:!model.disabled}).then(() => undefined))}>{model.disabled ? 'Enable' : 'Disable'}</button>{model.custom && <button className="button-danger" type="button" onClick={() => { if (window.confirm(`Delete custom model “${model.id}”? Its aliases and pricing override are removed. If a built-in model has this ID, it reverts to the built-in entry. Combos that use it must be edited first.`)) void action(`model-delete-${model.id}`, 'Custom model deleted.', () => send('/models','DELETE',{providerId:selected,modelId:model.id}).then(() => undefined)) }}>Delete</button>}</div>)}<Pager label="Model" page={modelList.page} total={modelList.total} loading={modelList.loading} onPage={modelList.setPage} />{builtinModels.length > 0 && <><h4 className="subsection-title">Built-in catalog</h4>{builtinPage.map(id => { const off = disabledIDs.has(id); return <div className="model-row" key={id}><code>{id}</code><span className="state-tag">Built-in</span><span className={`state-tag${off ? ' state-warn' : ''}`}>{off ? 'Disabled' : 'Available'}</span><button className="button-ghost" type="button" disabled={busy !== ''} onClick={() => void action(`model-${id}`, 'Model status updated.', () => send('/models/disabled','PATCH',{providerId:selected,modelId:id,disabled:!off}).then(() => undefined))}>{off ? 'Enable' : 'Disable'}</button></div> })}<Pager label="Built-in model" page={seedPage} total={builtinModels.length} onPage={setSeedPage} /></>}</section>
 

@@ -74,7 +74,11 @@ type oauthFlow struct {
 	// identityOptional is the flow's IdentityOptional: a credential that names no
 	// account is saved without an identity instead of refused.
 	identityOptional bool
-	expiresAt        time.Time
+	// target is the connection a Reauthenticate started for (#215). The sign-in
+	// then renews that connection's credential and nothing else: an answer for
+	// another account is refused rather than added or written over another row.
+	target    string
+	expiresAt time.Time
 }
 
 // oauthFlows holds pending attempts in process memory, like admin sessions: a
@@ -353,17 +357,33 @@ func (h *Handler) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		// Meta carries operator-supplied provider parameters (GitLab's base URL and
 		// client id, Kiro's region and start URL).
 		Meta map[string]string `json:"meta"`
+		// ConnectionID starts a Reauthenticate of that connection (#215). Its name
+		// and identity are the connection's own, so none are read from the body.
+		ConnectionID string `json:"connectionId"`
 	}
 	if !decodeJSON(w, r, 8<<10, &body) {
-		return
-	}
-	name, identity, ok := onboardingAccount(w, provider.flow, body.Name, body.Identity)
-	if !ok {
 		return
 	}
 	session, ok := h.sessionFor(r)
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthenticated", "admin session is required")
+		return
+	}
+	target := strings.TrimSpace(body.ConnectionID)
+	if target != "" {
+		connection, found, err := h.providerConnection(r.Context(), providerID, target)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "oauth_start_failed", "could not start sign-in")
+			return
+		}
+		if !found {
+			writeError(w, http.StatusNotFound, "connection_not_found", "no connection of this provider has that id")
+			return
+		}
+		body.Name, body.Identity = connection.Name, connection.Identity
+	}
+	name, identity, ok := onboardingAccount(w, provider.flow, body.Name, body.Identity)
+	if !ok {
 		return
 	}
 	// Resolve the redirect only for flows that send one. Zed's native-app
@@ -411,7 +431,7 @@ func (h *Handler) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	expiresAt, ok := h.oauth.begin(state, oauthFlow{
 		sessionID: session.ID, provider: providerID, verifier: verifier,
 		name: name, identity: identity, identityOptional: provider.flow.IdentityOptional,
-		extra: request.Extra, meta: body.Meta,
+		extra: request.Extra, meta: body.Meta, target: target,
 	})
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "oauth_busy", "too many sign-ins in progress; try again shortly")
@@ -774,6 +794,9 @@ func (h *Handler) saveOnboardedConnection(w http.ResponseWriter, r *http.Request
 		h.connectionMu.Lock()
 		defer h.connectionMu.Unlock()
 	}
+	if flow.target != "" {
+		return h.saveReauthenticated(w, r, providerID, flow.target, identity, result)
+	}
 	if providerID == codexProviderID && result.Secret.AuthType != credentials.AuthTypeAccessToken {
 		match, found, err := h.codexMatch(r.Context(), identity, result.Secret.ProviderData)
 		if err != nil {
@@ -798,7 +821,7 @@ func (h *Handler) saveOnboardedConnection(w http.ResponseWriter, r *http.Request
 				return nil, persisted, false
 			}
 			h.clearConnectionHealth(connection.ID)
-			return connectionJSON(connection), true, true
+			return onboardedJSON(connection, onboardedUpdated), true, true
 		}
 	}
 	if name == "" {
@@ -822,7 +845,113 @@ func (h *Handler) saveOnboardedConnection(w http.ResponseWriter, r *http.Request
 		}
 		return nil, persisted, false
 	}
-	return connectionJSON(connection), true, true
+	return onboardedJSON(connection, onboardedAdded), true, true
+}
+
+// What a sign-in or import did, reported with the saved connection so the
+// operator sees whether an account was added or an existing one renewed (#215).
+const (
+	// onboardedAdded: no stored connection was this account; a new one was made.
+	onboardedAdded = "added"
+	// onboardedUpdated: the account was already connected (the reference's
+	// duplicate rule, codexMatch); that row took the new credential in place.
+	onboardedUpdated = "updated"
+	// onboardedReauthenticated: the operator renewed this connection on purpose.
+	onboardedReauthenticated = "reauthenticated"
+)
+
+// onboardedJSON is the saved connection plus what the save did. Codex adds the
+// ChatGPT plan the sign-in reported (chatgptPlanType, not a credential), so the
+// account's plan is visible before any quota read.
+func onboardedJSON(connection credentials.Connection, outcome string) map[string]any {
+	saved := connectionJSON(connection)
+	saved["outcome"] = outcome
+	if plan := connection.Secret.ProviderData["chatgptPlanType"]; plan != "" && connection.ProviderID == codexProviderID {
+		saved["plan"] = plan
+	}
+	return saved
+}
+
+// providerConnection finds one of a provider's connections by id. A connection
+// of another provider reads as absent, so a Reauthenticate cannot be pointed at it.
+func (h *Handler) providerConnection(ctx context.Context, providerID, id string) (credentials.Connection, bool, error) {
+	connections, err := h.opts.Credentials.ListConnections(ctx, providerID)
+	if err != nil {
+		return credentials.Connection{}, false, err
+	}
+	for _, connection := range connections {
+		if connection.ID == id {
+			return connection, true, nil
+		}
+	}
+	return credentials.Connection{}, false, nil
+}
+
+// saveReauthenticated renews the target connection's credential with a sign-in
+// result, and only when the result is that connection's account (sameAccount).
+// Another account is refused and nothing is saved, so a Reauthenticate never
+// adds a row or overwrites a different one. Name, priority, enabled state, proxy
+// and identity are kept, as for a duplicate update.
+func (h *Handler) saveReauthenticated(w http.ResponseWriter, r *http.Request, providerID, targetID, identity string, result onboarding.Result) (map[string]any, bool, bool) {
+	target, found, err := h.providerConnection(r.Context(), providerID, targetID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
+		return nil, false, false
+	}
+	if !found {
+		writeError(w, http.StatusConflict, "connection_not_found", "the connection being reauthenticated no longer exists; nothing was saved")
+		return nil, false, false
+	}
+	merge := mergeConnectionSecret
+	if providerID == codexProviderID {
+		merge = func(existing, update credentials.Secret) credentials.Secret {
+			return codexMergedSecret(existing, update, onboarding.CarriesAll)
+		}
+	}
+	if !sameAccount(providerID, target, identity, result) {
+		writeError(w, http.StatusConflict, "oauth_account_mismatch", "a different account signed in; nothing was saved. Sign in as the account this connection belongs to, or use Add connection for a new one")
+		return nil, false, false
+	}
+	target.Secret = result.Secret
+	connection, persisted, err := h.publishMergedConnection(r.Context(), target, merge)
+	if err != nil {
+		if persisted {
+			writeError(w, http.StatusInternalServerError, "connection_publish_failed", "connection saved but could not be published to the runtime")
+		} else {
+			writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
+		}
+		return nil, persisted, false
+	}
+	h.clearConnectionHealth(connection.ID)
+	return onboardedJSON(connection, onboardedReauthenticated), true, true
+}
+
+// sameAccount reports whether a sign-in result is the target connection's
+// account. identity is the save's identity, which falls back to the target's own
+// when the provider reports none: such a provider cannot tell accounts apart, so
+// the operator's choice of connection stands. Codex reports its account, so only
+// what it reported counts. A ChatGPT account id on either side must be on both
+// and equal (the reference keeps a different workspace distinct,
+// connectionsRepo.js:244-247), and an email on both must be equal; with neither
+// an account id nor two emails there is nothing to confirm. A bare access token
+// (codexTokenOnly) is never taken as a Reauthenticate: it would turn the row into
+// one that can no longer refresh or be matched.
+func sameAccount(providerID string, target credentials.Connection, identity string, result onboarding.Result) bool {
+	if providerID != codexProviderID {
+		return identity != "" && identity == target.Identity
+	}
+	if result.Secret.AuthType == credentials.AuthTypeAccessToken {
+		return false
+	}
+	reported := strings.TrimSpace(result.Identity)
+	account, stored := result.Secret.ProviderData["chatgptAccountId"], target.Secret.ProviderData["chatgptAccountId"]
+	if account != "" || stored != "" {
+		if account != stored {
+			return false
+		}
+		return reported == "" || target.Identity == "" || reported == target.Identity
+	}
+	return reported != "" && reported == target.Identity
 }
 
 // parseOAuthInput accepts what the operator can copy: a bare code, Claude's
@@ -1044,7 +1173,10 @@ func (h *Handler) handleOAuthBulkImport(w http.ResponseWriter, r *http.Request) 
 		Index int    `json:"index"`
 		OK    bool   `json:"ok"`
 		ID    string `json:"id,omitempty"`
-		Error string `json:"error,omitempty"`
+		// Outcome is onboardedAdded or onboardedUpdated (a duplicate of a stored
+		// account took the item in place), so a batch says which rows are new.
+		Outcome string `json:"outcome,omitempty"`
+		Error   string `json:"error,omitempty"`
 	}
 	results := make([]itemResult, 0, len(raw))
 	saved, failed := 0, 0
@@ -1088,13 +1220,17 @@ func (h *Handler) handleOAuthBulkImport(w http.ResponseWriter, r *http.Request) 
 		// Stored and registered per item, but the snapshot is recompiled once after
 		// the loop: each refresh recompiles every provider, so doing it per item made
 		// one paste cost thousands of recompiles.
-		connection, err := h.storeImportedConnection(r.Context(), providerID, name, account)
+		connection, updated, err := h.storeImportedConnection(r.Context(), providerID, name, account)
 		if err != nil {
 			results = append(results, itemResult{Index: index, Error: err.Error()})
 			failed++
 			continue
 		}
-		results = append(results, itemResult{Index: index, OK: true, ID: connection.ID})
+		outcome := onboardedAdded
+		if updated {
+			outcome = onboardedUpdated
+		}
+		results = append(results, itemResult{Index: index, OK: true, ID: connection.ID, Outcome: outcome})
 		saved++
 	}
 	if saved > 0 {
@@ -1232,7 +1368,8 @@ func (h *Handler) publishMergedConnection(ctx context.Context, connection creden
 // storeImportedConnection writes one imported credential and registers it with the
 // runtime, without recompiling the snapshot. Bulk import calls it per item and
 // publishes once; a single import goes through publishConnection, which does both.
-func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name string, account onboarding.BulkAccount) (credentials.Connection, error) {
+// updated reports that a stored duplicate took the item instead of a new row.
+func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name string, account onboarding.BulkAccount) (_ credentials.Connection, updated bool, _ error) {
 	if providerID == codexProviderID {
 		// Held from before the node is resolved: builtinNode creates the node on
 		// first use, and two first imports racing there would each create one.
@@ -1241,12 +1378,12 @@ func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name 
 	}
 	node, err := h.builtinNode(ctx, providerID)
 	if err != nil {
-		return credentials.Connection{}, err
+		return credentials.Connection{}, false, err
 	}
 	if providerID == codexProviderID {
 		match, found, err := h.codexMatch(ctx, account.Identity, account.Secret.ProviderData)
 		if err != nil {
-			return credentials.Connection{}, err
+			return credentials.Connection{}, false, err
 		}
 		if found {
 			// {...existing, ...item} (connectionsRepo.js:283): the keys of the
@@ -1261,7 +1398,7 @@ func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name 
 				// The reference sorts a zero or null priority as 999, after the rest
 				// of the pool (connectionsRepo.js:159).
 				if priority, err = h.codexLastPriority(ctx, match.ID); err != nil {
-					return credentials.Connection{}, err
+					return credentials.Connection{}, false, err
 				}
 			}
 			stored, err := h.updateConnection(ctx, match.ID, func(existing credentials.Connection) (credentials.Connection, error) {
@@ -1276,16 +1413,16 @@ func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name 
 				return existing, nil
 			})
 			if err != nil {
-				return credentials.Connection{}, err
+				return credentials.Connection{}, false, err
 			}
 			stored.ProviderID = node.ProviderID
 			h.clearConnectionHealth(stored.ID)
-			return stored, nil
+			return stored, true, nil
 		}
 	}
 	existing, err := h.opts.Credentials.ListConnections(ctx, providerID)
 	if err != nil {
-		return credentials.Connection{}, err
+		return credentials.Connection{}, false, err
 	}
 	priority := len(existing)
 	if account.Priority != 0 {
@@ -1298,13 +1435,13 @@ func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name 
 		Priority: priority,
 	})
 	if err != nil {
-		return credentials.Connection{}, err
+		return credentials.Connection{}, false, err
 	}
 	stored.ProviderID = node.ProviderID
 	if err := h.register(ctx, stored); err != nil {
-		return credentials.Connection{}, err
+		return credentials.Connection{}, false, err
 	}
-	return stored, nil
+	return stored, false, nil
 }
 
 // accountLabel is the reference's label for a connection that names no account:

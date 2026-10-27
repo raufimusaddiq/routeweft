@@ -7,11 +7,11 @@
 export type SignInMode = 'browser' | 'device' | 'import'
 export type Completion = 'code' | 'redirect-url' | 'token' | 'callback'
 export type SignInMethod = { mode: SignInMode; authKind: string; resolvesIdentity: boolean; metaKeys?: string[]; completion?: Completion; loopbackRedirect?: string }
-export type ProviderAuth = { auth: string; authModes: string[]; signInMethods?: SignInMethod[] }
+export type ProviderAuth = { auth: string; authModes: string[]; signInMethods?: SignInMethod[]; bulkImport?: boolean }
 
 export type ConnectMethod = {
   id: string
-  kind: SignInMode | 'manual'
+  kind: SignInMode | 'manual' | 'bulk'
   label: string
   authKind: string
   // The identity field is shown only when the method cannot learn it.
@@ -39,6 +39,9 @@ export function connectMethods(provider: ProviderAuth, providerName: string): Co
     id: method.mode, kind: method.mode, label: flowLabel(method, providerName), authKind: method.authKind,
     askIdentity: !method.resolvesIdentity, metaKeys: method.metaKeys ?? [], completion: method.completion, loopbackRedirect: method.loopbackRedirect,
   }))
+  // Bulk import is its own journey (many exported accounts at once), offered only
+  // where the server says its endpoint takes the provider.
+  if (provider.bulkImport) flows.push({ id: 'bulk', kind: 'bulk', label: 'Bulk import accounts', authKind: 'oauth', askIdentity: false, metaKeys: [] })
   const [primary, ...rest] = modes
   if (primary === 'oauth') return [...flows, ...modes.map(manual)]
   return [manual(primary), ...flows, ...rest.map(manual)]
@@ -96,6 +99,10 @@ export const SIGN_IN_CODES: Record<string, Partial<Record<SignInStep, AttemptAft
   oauth_sign_in_rejected: { poll: 'ended' },
   // Consumed, then the redirect could not be resolved.
   oauth_redirect_unconfigured: { callback: 'ended' },
+  // A Reauthenticate (#215) consumed its state, then found another account
+  // signed in, or its connection deleted meanwhile; nothing was saved.
+  oauth_account_mismatch: { callback: 'ended' },
+  connection_not_found: { callback: 'ended' },
   // Save failures: a callback already consumed the state; a poll released it.
   oauth_exchange_failed: { callback: 'ended', poll: 'open' },
   oauth_identity_unresolved: { callback: 'ended', poll: 'open' },

@@ -189,9 +189,12 @@ type providerReadModel struct {
 	// SignInMethods describes each sign-in mode on its own, so the dashboard can
 	// offer them as separate choices with only that mode's fields. SignInModes and
 	// MetaKeys are the earlier union view of the same tables.
-	SignInMethods   []signInMethodReadModel `json:"signInMethods,omitempty"`
-	ConfiguredNodes int                     `json:"configuredNodes"`
-	EnabledAccounts int                     `json:"enabledAccounts"`
+	SignInMethods []signInMethodReadModel `json:"signInMethods,omitempty"`
+	// BulkImport means POST /oauth/{id}/bulk-import accepts this provider, by the
+	// rule that endpoint applies, so the dashboard offers it only where it works.
+	BulkImport      bool `json:"bulkImport,omitempty"`
+	ConfiguredNodes int  `json:"configuredNodes"`
+	EnabledAccounts int  `json:"enabledAccounts"`
 	// Readiness is the build's immutable capability for this provider (SPEC §36).
 	// It is not derived from ConfiguredNodes or EnabledAccounts: enabling is a
 	// preference, and a stored credential is account state.
@@ -268,6 +271,9 @@ FROM provider_nodes n LEFT JOIN provider_connections c ON c.node_id=n.id GROUP B
 		count := counts[spec.ID]
 		item := providerReadModel{ID: spec.ID, Auth: string(spec.Auth), DefaultBaseURL: safeURL(spec.DefaultBaseURL), ModelCatalog: string(spec.ModelCatalog), PassthroughModels: spec.PassthroughModels, StaticModels: spec.StaticModels(), ReportsUsage: spec.ReportsUsage, ConfiguredNodes: count[0], EnabledAccounts: count[1], Readiness: readinessOf(spec.Readiness)}
 		item.FlowType, item.SignInModes, item.MetaKeys, item.SignInMethods = h.signInModes(spec.ID)
+		if flow, ok := h.importFlowFor(spec.ID); ok && flow.Bulk != nil && specAllowsOAuth(spec) {
+			item.BulkImport = true
+		}
 		for _, transport := range spec.Transports {
 			item.Transports = append(item.Transports, string(transport))
 		}
