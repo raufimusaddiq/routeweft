@@ -37,6 +37,12 @@ image test of `chatCore.js` and the buffered answer path (`translateNonStreaming
 Chat, Responses and Messages clients, with the clock and session fixed, and writes
 `internal/protocol/gemini/testdata/antigravity_image_pin.json` (PARITY 6.26). It needs `ORACLE_DIR`.
 
+`compat/parity/generate-gemini-image-answers.mjs` evaluates the pinned buffered answer path
+(`translateNonStreamingResponse`) and the stream (`translateResponse` over `gemini-to-openai.js`,
+`openai-responses.js` and `openai-to-claude.js`) for an image answer from each Gemini-family wire
+to Chat, Responses and Messages clients, with the clock fixed, and writes
+`internal/ingress/testdata/gemini_image_answers_pin.json` (PARITY 6.27). It needs `ORACLE_DIR`.
+
 CI runs this as the `parity` PR job, alongside existing Go/UI/container jobs.
 No test may update golden files from its actual output or turn a missing oracle
 into a passing dedicated gate. Ordinary unit tests remain usable without v1.
