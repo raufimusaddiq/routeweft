@@ -938,12 +938,23 @@ Per identity:
 - callers wait for one refresh rather than stampeding;
 - a successful refresh updates in-memory credentials immediately;
 - rotated refresh token is committed durably before success is considered stable;
-- a refresh that a newer install (re-registration, startup or on-demand load,
+- a refresh that a newer install of a different credential (re-registration,
   import) lands during is discarded, and the installed credential is checked like
   any request's: served if valid, otherwise refreshed once from its own refresh
   token for the refresher and every waiter, never served expired (#250; the
   reference adopts the latest stored credential and then checks its expiry,
   `src/sse/services/tokenRefresh.js:175-197`);
+- a re-registration whose credential equals the one held (the startup seed, the
+  quota poll, autoping and the Codex credits reset all `Load` the provider) is
+  not a new install: it applies changed metadata but keeps the generation, so a
+  refresh in flight still commits its rotation and the spent refresh token is
+  never used again. Every path that publishes a stored row (`Load`, the control
+  API's create paths, an update of a connection not yet held) seeds it: a
+  connection not held is added atomically with the check, and one held is read
+  again under its install lock, so a row read before a refresh committed never
+  reverts it (#252; the reference reads the latest stored row before quota
+  work, `src/app/api/usage/[connectionId]/route.js:25-28`, and adopts a stored
+  credential only when it is newer, `src/sse/services/tokenRefresh.js:177-191`);
 - credential identity/dedup keys are provider-defined and must not collapse distinct accounts.
 
 Inference resolves the provider-declared credential through the memory-first
