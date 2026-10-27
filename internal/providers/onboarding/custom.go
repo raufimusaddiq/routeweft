@@ -25,6 +25,11 @@ import (
 // so a region value cannot become an SSRF vector.
 var awsRegionPattern = regexp.MustCompile(`^[a-z]{2}-[a-z]+-\d{1,2}$`)
 
+// ErrKiroDeviceMethod means a device sign-in named a method other than AWS
+// Builder ID or IAM Identity Center (a social method belongs to the browser
+// sign-in), and is refused rather than started as a Builder ID.
+var ErrKiroDeviceMethod = errors.New("kiro device sign-in needs authMethod builder-id or idc")
+
 // kiroFlow mirrors src/lib/oauth/providers/kiro.js: AWS SSO OIDC needs a client
 // registration before the device authorization, and the client id/secret must be
 // stored for refresh.
@@ -37,8 +42,12 @@ func kiroFlow() Flow {
 	scopes := []string{"codewhisperer:completions", "codewhisperer:analysis", "codewhisperer:conversations"}
 	grantTypes := []string{"urn:ietf:params:oauth:grant-type:device_code", "refresh_token"}
 	return Flow{
-		Provider: "kiro",
-		MetaKeys: []string{"region", "startUrl", "authMethod"},
+		Provider:          "kiro",
+		MetaKeys:          []string{"region", "startUrl", "authMethod"},
+		AuthMethods:       []string{"builder-id", "idc"},
+		DefaultAuthMethod: "builder-id",
+		// Google and GitHub sign in through a browser beside this device flow.
+		Browser: browserFlow(kiroSocialFlow()),
 		// clientId/clientSecret are minted by Kiro's own AWS SSO client registration
 		// and carried in AuthRequest.Extra; they are never operator input.
 		RedirectSource: RedirectUnused,
@@ -49,9 +58,11 @@ func kiroFlow() Flow {
 			if !awsRegionPattern.MatchString(region) {
 				return AuthRequest{}, fmt.Errorf("kiro region is invalid")
 			}
-			authMethod := "builder-id"
-			if p.Meta["authMethod"] == "idc" {
-				authMethod = "idc"
+			// The handler admits only AuthMethods; anything else here is refused
+			// rather than signed in as a Builder ID the operator did not choose.
+			authMethod := metaOr(p, "authMethod", "builder-id")
+			if authMethod != "builder-id" && authMethod != "idc" {
+				return AuthRequest{}, ErrKiroDeviceMethod
 			}
 			registerBody, err := json.Marshal(map[string]any{
 				"clientName": clientName,
@@ -163,9 +174,9 @@ func kiroFlow() Flow {
 				"authMethod":   metaOr(p, "authMethod", "builder-id"),
 				"startUrl":     p.Meta["startUrl"],
 			}
-			if document.ProfileARN != "" {
-				providerData["profileArn"] = document.ProfileARN
-			}
+			// Builder ID and IDC tokens usually arrive without a profile ARN; the pin
+			// lists the account's profiles then (providers/index.js:175-179).
+			providerData = kiroProfilePatch(ctx, p.Client, providerData, document.AccessToken, document.ProfileARN)
 			identity := ""
 			if claims := jwtClaims(document.AccessToken); claims != nil {
 				if value, ok := claims["email"].(string); ok {

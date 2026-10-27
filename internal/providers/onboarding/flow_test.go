@@ -546,8 +546,8 @@ func TestKiroRefreshUsesStoredClientCredentials(t *testing.T) {
 	if next.AccessToken != "fixture-access" {
 		t.Fatalf("secret=%+v", next)
 	}
-	if !strings.Contains(stub.last().URL.String(), "oidc.eu-west-1.amazonaws.com") {
-		t.Fatalf("refresh used %q", stub.last().URL.String())
+	if !strings.Contains(stub.requests[0].URL.String(), "oidc.eu-west-1.amazonaws.com") {
+		t.Fatalf("refresh used %q", stub.requests[0].URL.String())
 	}
 
 	connection.Secret.ProviderData["region"] = "evil.example.com/"

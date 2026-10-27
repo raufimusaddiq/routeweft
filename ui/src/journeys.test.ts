@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { browserJourney, checkedNote, copilotNote, DEVICE_DEADLINE_GRACE_MS, DEVICE_REQUEST_TIMEOUT_MS, requestBound, deviceCopyItems, deviceJourney, devicePollDelay, devicePollingOver, identityPrompt, importJourney, loopbackHint, projectNote, validProjectId } from './journeys.ts'
+import { browserJourney, checkedNote, copilotNote, profileArnNote, validProfileArn, DEVICE_DEADLINE_GRACE_MS, DEVICE_REQUEST_TIMEOUT_MS, requestBound, deviceCopyItems, deviceJourney, devicePollDelay, devicePollingOver, identityPrompt, importJourney, loopbackHint, projectNote, validProjectId } from './journeys.ts'
 import { connectMethods, type ProviderAuth } from './signIn.ts'
 
 const origin = 'https://routeweft.example.test/callback'
@@ -219,4 +219,54 @@ test('an answered request clears its bound, so it never aborts later', () => {
   timers.fire()
   assert.equal(bound.signal.aborted, false)
   assert.equal(bound.timedOut(), false)
+})
+
+// #219: Kiro's Google and GitHub sign-in are two real browser methods, each fixed
+// to its auth method, beside the AWS SSO device code and the import.
+const kiro: ProviderAuth = { id: 'kiro', auth: 'oauth', authModes: ['oauth', 'api-key'], signInMethods: [
+  { mode: 'device', authKind: 'oauth', resolvesIdentity: false, metaKeys: ['region', 'startUrl', 'authMethod'] },
+  { mode: 'browser', authKind: 'oauth', resolvesIdentity: false, variant: 'google', completion: 'redirect-url' },
+  { mode: 'browser', authKind: 'oauth', resolvesIdentity: false, variant: 'github', completion: 'redirect-url' },
+  { mode: 'import', authKind: 'api-key', resolvesIdentity: false },
+] }
+
+test('Kiro lists Sign in with Google and Sign in with GitHub, each fixed to its method', () => {
+  const methods = connectMethods(kiro, 'Kiro')
+  assert.deepEqual(methods.map(method => method.id), ['device', 'browser-google', 'browser-github', 'import', 'manual-oauth', 'manual-api-key'])
+  const google = methods.find(method => method.id === 'browser-google')!
+  const github = methods.find(method => method.id === 'browser-github')!
+  assert.equal(google.label, 'Sign in with Google')
+  assert.equal(github.label, 'Sign in with GitHub')
+  assert.deepEqual(google.fixedMeta, { authMethod: 'google' })
+  assert.deepEqual(github.fixedMeta, { authMethod: 'github' })
+  // No field to type the method, and the account is asked for: Kiro's tokens do not name it.
+  assert.deepEqual(google.metaKeys, [])
+  assert.equal(google.askIdentity, true)
+  assert.equal(methods.find(method => method.id === 'device')!.fixedMeta, undefined)
+})
+
+test('the Kiro social journey explains the kiro:// address it pastes back', () => {
+  for (const [variant, who] of [['google', 'Google'], ['github', 'GitHub']] as const) {
+    const journey = browserJourney('kiro', { completion: 'redirect-url', variant })
+    assert.match(journey.hint, new RegExp(`Sign in with ${who}`))
+    assert.match(journey.hint, /kiro:\/\/kiro\.kiroAgent\/authenticate-success\?code=…&state=…/)
+    assert.match(journey.before.join(' '), /nothing on this server receives it/)
+    assert.match(journey.before.join(' '), /renews that connection/)
+    assert.equal(journey.pasteLabel, 'Address from the browser')
+    assert.equal(journey.masked, false)
+    assert.deepEqual(journey.requiredMeta, [])
+  }
+  assert.match(deviceJourney('kiro').before.join(' '), /Sign in with Google or Sign in with GitHub/)
+})
+
+test('a Kiro connection saved without a profile ARN says it cannot serve yet and how to recover', () => {
+  assert.match(profileArnNote({ providerId: 'kiro', profileArnMissing: true }) ?? '', /requests are refused until the connection has one.*profile ARN.*Reauthenticate/s)
+  assert.equal(profileArnNote({ providerId: 'kiro', profileArnMissing: false }), null)
+  assert.equal(profileArnNote({ providerId: 'kiro' }), null)
+  assert.equal(profileArnNote({ providerId: 'github', profileArnMissing: true }), null)
+  assert.equal(validProfileArn('arn:aws:codewhisperer:us-east-1:123456789012:profile/ABC_def-1'), true)
+  assert.equal(validProfileArn(' arn:aws:codewhisperer:eu-central-1:123456789012:profile/X '), true)
+  for (const bad of ['', 'arn:aws:codewhisperer:us-east-1:1234:profile/X', 'arn:aws:iam::123456789012:role/x', 'arn:aws:codewhisperer:us-east-1:123456789012:profile/', 'arn:aws:codewhisperer:us-east-1:123456789012:profile/a b']) {
+    assert.equal(validProfileArn(bad), false, bad)
+  }
 })
