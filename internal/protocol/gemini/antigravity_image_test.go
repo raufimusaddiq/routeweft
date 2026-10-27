@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // antigravityImagePin is what compat/parity/generate-antigravity-image.mjs
@@ -312,5 +313,72 @@ func TestAntigravityImageStreamRefusesABrokenBody(t *testing.T) {
 	cancel()
 	if err := AntigravityImageStreamToChat(ctx, strings.NewReader(antigravityImageAnswer), io.Discard, options); err == nil {
 		t.Error("a cancelled stream was answered")
+	}
+}
+
+// splitText keeps every piece within the size and never cuts a UTF-8 sequence;
+// the pieces join back to the text.
+func TestSplitText(t *testing.T) {
+	for _, c := range []struct {
+		text string
+		size int
+	}{
+		{"", 4}, {"abc", 4}, {"abcd", 4}, {"abcde", 4}, {"aé€😀bc", 3}, {"😀😀", 2}, {strings.Repeat("x", 10), 3},
+	} {
+		pieces := splitText(c.text, c.size)
+		if strings.Join(pieces, "") != c.text {
+			t.Errorf("%q/%d: %q", c.text, c.size, pieces)
+		}
+		for _, piece := range pieces {
+			if len(piece) > c.size && utf8.RuneCountInString(piece) > 1 {
+				t.Errorf("%q/%d: piece %q is too long", c.text, c.size, piece)
+			}
+			if !utf8.ValidString(piece) && c.size >= 4 {
+				t.Errorf("%q/%d: piece %q cuts a character", c.text, c.size, piece)
+			}
+		}
+	}
+}
+
+// An image far above the 4 MiB event limit of a re-read stream leaves in
+// events each within it, and the content joins back to the pin's text.
+func TestAntigravityLargeImageStreamsInPieces(t *testing.T) {
+	data := strings.Repeat("QUJD", 6<<20) // 24 MiB of base64
+	answer := `{"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"a cat"},{"inlineData":{"mimeType":"image/png","data":"` + data + `"}}]},"finishReason":"STOP"}]}}`
+	want := "a cat\n![image](data:image/png;base64," + data + ")\n"
+	options := ResponseOptions{Model: "gemini-3.1-flash-image", Wire: AntigravityProtocol, ImagesAsText: true}
+	var stream bytes.Buffer
+	if err := AntigravityImageStreamToChat(context.Background(), strings.NewReader(answer), &stream, options); err != nil {
+		t.Fatal(err)
+	}
+	var joined strings.Builder
+	events := 0
+	for _, line := range strings.Split(stream.String(), "\n") {
+		if len(line) >= 4<<20 {
+			t.Fatalf("an event of %d bytes", len(line))
+		}
+		payload, ok := strings.CutPrefix(line, "data: ")
+		if !ok || payload == "[DONE]" {
+			continue
+		}
+		var chunk map[string]any
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			t.Fatal(err)
+		}
+		text, _ := at(chunk, "choices.0.delta.content").(string)
+		joined.WriteString(text)
+		events++
+	}
+	if joined.String() != want || events < 13 {
+		t.Errorf("joined %d bytes over %d events, want %d bytes", joined.Len(), events, len(want))
+	}
+	whole, err := GeminiResponseToChat([]byte(answer), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var message map[string]any
+	_ = json.Unmarshal(whole, &message)
+	if got, _ := at(message, "choices.0.message.content").(string); got != want {
+		t.Errorf("buffered content is %d bytes, want %d", len(got), len(want))
 	}
 }

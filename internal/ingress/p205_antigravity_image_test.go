@@ -153,3 +153,66 @@ func TestWholeAnswerUsageScanner(t *testing.T) {
 		}
 	}
 }
+
+// clientText joins the answer text a streaming client received: Chat content
+// deltas, Responses output_text deltas or Messages text deltas.
+func clientText(t *testing.T, body string) string {
+	t.Helper()
+	var text strings.Builder
+	for _, line := range strings.Split(body, "\n") {
+		payload, ok := strings.CutPrefix(line, "data: ")
+		if !ok || payload == "[DONE]" {
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(payload), &event); err != nil {
+			t.Fatalf("client event: %v", err)
+		}
+		switch event["type"] {
+		case "response.output_text.delta":
+			text.WriteString(event["delta"].(string))
+		case "content_block_delta":
+			if delta, _ := event["delta"].(map[string]any); delta["type"] == "text_delta" {
+				text.WriteString(delta["text"].(string))
+			}
+		case nil:
+			if choices, _ := event["choices"].([]any); len(choices) > 0 {
+				delta, _ := choices[0].(map[string]any)["delta"].(map[string]any)
+				if content, ok := delta["content"].(string); ok {
+					text.WriteString(content)
+				}
+			}
+		}
+	}
+	return text.String()
+}
+
+// An image above the 4 MiB event limit and below the 32 MiB response limit
+// reaches every streaming client whole, Responses and Messages included,
+// whose legs read the Chat stream again (PARITY 6.26).
+func TestAntigravityLargeImageReachesEveryStreamingClient(t *testing.T) {
+	for _, size := range []int{6 << 20, 24 << 20} {
+		data := strings.Repeat("QUJD", size/4)
+		answer := `{"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"a cat"},{"inlineData":{"mimeType":"image/png","data":"` + data + `"}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":1290,"totalTokenCount":1297}}}`
+		want := "a cat\n![image](data:image/png;base64," + data + ")\n"
+		for _, client := range clientWires {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, answer)
+			}))
+			s := newServing(t, routing.ProviderRef{ProviderID: "antigravity", Protocol: "antigravity", BaseURL: upstream.URL, UpstreamModel: "gemini-3.1-flash-image", APIToken: "ya29.fixture",
+				Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{ProjectID: "fixture-project"}}})
+			w := s.call(client, true)
+			upstream.Close()
+			if w.Code != http.StatusOK {
+				t.Fatalf("%s/%d: %d", client, size, w.Code)
+			}
+			if got := clientText(t, w.Body.String()); got != want {
+				t.Errorf("%s/%d MiB: client joined %d bytes, want %d", client, size>>20, len(got), len(want))
+			}
+			if outcomes := s.outcomes(); len(outcomes) != 1 || outcomes[0].Status != http.StatusOK || outcomes[0].UsageUnobserved || outcomes[0].OutputTokens != 1290 {
+				t.Errorf("%s/%d MiB: outcomes %+v", client, size>>20, outcomes)
+			}
+		}
+	}
+}

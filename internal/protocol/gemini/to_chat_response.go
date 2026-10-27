@@ -219,7 +219,9 @@ func (s *responseState) part(part map[string]any, scope string) ([]map[string]an
 		}
 		url := "data:" + mediaType + ";base64," + concerns.Text(data["data"])
 		if s.options.ImagesAsText {
-			deltas = append(deltas, map[string]any{"content": "\n![image](" + url + ")\n"})
+			for _, piece := range splitText("\n![image]("+url+")\n", imageTextChunk) {
+				deltas = append(deltas, map[string]any{"content": piece})
+			}
 		} else {
 			deltas = append(deltas, map[string]any{"images": []any{map[string]any{
 				"type": "image_url", "image_url": map[string]any{"url": url},

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/raufimusaddiq/routeweft/internal/protocol/concerns"
 )
@@ -194,6 +195,32 @@ func antigravityImageEnvelope(fields map[string]json.RawMessage, config map[stri
 	envelope["requestType"] = AntigravityImageRequestType
 	out, err := json.Marshal(envelope)
 	return out, nil, err
+}
+
+// imageTextChunk bounds one content delta of an image written as text. A Chat
+// stream that a Responses or Messages client reads is parsed again, one event
+// at most 4 MiB (concerns.ReadEvents), and a picture is often larger, so its
+// text goes in pieces, which every Chat consumer joins back. The pin sends
+// one JSON body (chatCore.js:149-154) and never splits; the pieces are this
+// gateway's framing, and the text they join to is the pin's.
+const imageTextChunk = 2 << 20
+
+// splitText cuts text into pieces of at most size bytes, never inside a UTF-8
+// sequence, so each piece is valid text on its own.
+func splitText(text string, size int) []string {
+	var pieces []string
+	for len(text) > size {
+		cut := size
+		for cut > 0 && !utf8.RuneStart(text[cut]) {
+			cut--
+		}
+		if cut == 0 {
+			cut = size
+		}
+		pieces = append(pieces, text[:cut])
+		text = text[cut:]
+	}
+	return append(pieces, text)
 }
 
 // AntigravityImageStreamToChat answers a streaming client from the one JSON body
