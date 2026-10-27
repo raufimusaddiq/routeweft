@@ -1393,8 +1393,11 @@ provider routes do: only a JSON `true` enables, a non-string URL or no-proxy lis
 reads as empty, and both are trimmed. Enabling needs a URL that passes the pool
 member checks (`invalid_connection_proxy`, `proxy_host_blocked`). A body with
 `proxyPoolId` sets the binding; a body with neither kind of field is the pool
-assignment it always was, so a missing `proxyPoolId` unbinds. The response
-redacts the URL. `GET /admin/v1/connections` reports the connection's own proxy
+assignment it always was, so a missing `proxyPoolId` unbinds. Everything is
+validated first, then the binding and the connection's own proxy are written in
+one transaction and published as one snapshot, as the pin's route writes them
+once (`providers/[id]/route.js:109-117,135-158`): a failed write, an unknown
+pool included, changes neither. The response redacts the URL. `GET /admin/v1/connections` reports the connection's own proxy
 when it is enabled, as `connectionProxy: {url, noProxy?}` with the URL redacted.
 
 Mutations publish through `RefreshPoolBindings` and return `configRevision`.

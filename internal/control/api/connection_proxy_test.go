@@ -2,13 +2,19 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/discovery"
 	"github.com/raufimusaddiq/routeweft/internal/proxy"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
@@ -215,3 +221,232 @@ func (r *connectionRecorder) Do(request *http.Request) (*http.Response, error) {
 }
 
 func (r *connectionRecorder) connections() []string { return append([]string(nil), r.seen...) }
+
+// publications records every snapshot a proxy write publishes, through the
+// store's publisher and the pool-binding refresh alike.
+type publications struct {
+	manager *runtime.Manager
+	mu      sync.Mutex
+	seen    []*runtime.RuntimeSnapshot
+}
+
+func (p *publications) record(before uint64) {
+	snapshot, err := p.manager.Load()
+	if err != nil || snapshot.ConfigRevision() == before {
+		return
+	}
+	p.mu.Lock()
+	p.seen = append(p.seen, snapshot)
+	p.mu.Unlock()
+}
+
+func (p *publications) RefreshPoolBindings(ctx context.Context) (*runtime.RuntimeSnapshot, error) {
+	before := p.revision()
+	snapshot, err := p.manager.RefreshPoolBindings(ctx)
+	if err == nil {
+		p.record(before)
+	}
+	return snapshot, err
+}
+
+func (p *publications) revision() uint64 {
+	snapshot, _ := p.manager.Load()
+	return snapshot.ConfigRevision()
+}
+
+func (p *publications) reset() []*runtime.RuntimeSnapshot {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	seen := p.seen
+	p.seen = nil
+	return seen
+}
+
+// recordPublications installs the recorder on the store and the API.
+func recordPublications(env *codexEnv, manager *runtime.Manager) *publications {
+	recorder := &publications{manager: manager}
+	env.creds.SetPublisher(func(ctx context.Context, change func(*credentials.Configuration) error, persist func(*sql.Tx) error) error {
+		before := recorder.revision()
+		err := manager.UpdateProviders(ctx, change, persist)
+		if err == nil {
+			recorder.record(before)
+		}
+		return err
+	})
+	env.h.opts.PoolBindings = recorder
+	return recorder
+}
+
+// proxyFixture is one connection bound to the pool named by want, plus a
+// pool to switch to.
+func proxyFixture(t *testing.T) (env *codexEnv, manager *runtime.Manager, id, poolA, poolB string) {
+	t.Helper()
+	env, manager = connectionProxyEnv(t)
+	id, _ = codexBulkOp("once@example.invalid", "acct-once", "once")(t, env)
+	pools := make([]string, 2)
+	for i := range pools {
+		recorder := doJSON(t, env.mux, env.cookie, http.MethodPost, "/admin/v1/proxy-pools", `{"name":"edge-`+strconv.Itoa(i)+`","members":[{"url":"http://203.0.113.`+strconv.Itoa(10+i)+`:3128"}]}`)
+		var created struct {
+			ID string `json:"id"`
+		}
+		if recorder.Code != http.StatusCreated || json.Unmarshal(recorder.Body.Bytes(), &created) != nil {
+			t.Fatalf("pool status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+		pools[i] = created.ID
+	}
+	seed := doJSON(t, env.mux, env.cookie, http.MethodPost, "/admin/v1/connections/"+id+"/proxy", `{"proxyPoolId":"`+pools[0]+`","connectionProxyEnabled":true,"connectionProxyUrl":"http://seed.example:3128"}`)
+	if seed.Code != http.StatusOK {
+		t.Fatalf("seed status=%d body=%s", seed.Code, seed.Body.String())
+	}
+	return env, manager, id, pools[0], pools[1]
+}
+
+// One request is one published change: no snapshot shows the new binding
+// with the old connection proxy or the reverse (providers/[id]/route.js:158
+// is one write).
+func TestSetConnectionProxyPublishesOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name, body  string
+		pool, proxy string // "" pool means unbound; "B" stands for the second pool
+	}{
+		{"pool and connection proxy", `{"proxyPoolId":"B","connectionProxyEnabled":true,"connectionProxyUrl":"http://next.example:3128"}`, "B", "http://next.example:3128"},
+		{"unbind and disable", `{"proxyPoolId":"","connectionProxyEnabled":false}`, "", ""},
+		{"connection proxy alone", `{"connectionProxyEnabled":true,"connectionProxyUrl":"http://next.example:3128"}`, "A", "http://next.example:3128"},
+		{"pool alone", `{"proxyPoolId":"B"}`, "B", "http://seed.example:3128"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env, manager, id, poolA, poolB := proxyFixture(t)
+			names := map[string]string{"A": poolA, "B": poolB, "": ""}
+			recorder := recordPublications(env, manager)
+			body := strings.ReplaceAll(tc.body, `"proxyPoolId":"B"`, `"proxyPoolId":"`+poolB+`"`)
+			response := doJSON(t, env.mux, env.cookie, http.MethodPost, "/admin/v1/connections/"+id+"/proxy", body)
+			if response.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			seen := recorder.reset()
+			if len(seen) != 1 {
+				t.Fatalf("published %d snapshots, want 1", len(seen))
+			}
+			legacy, _ := seen[0].LegacyConnectionProxy(id)
+			if seen[0].ConnectionPool(id) != names[tc.pool] || legacy.URL != tc.proxy {
+				t.Fatalf("published pool=%q proxy=%q, want %q %q", seen[0].ConnectionPool(id), legacy.URL, names[tc.pool], tc.proxy)
+			}
+		})
+	}
+}
+
+// A write that fails changes nothing and publishes nothing: an unknown pool
+// fails the transaction's foreign key, after the connection proxy validated.
+func TestSetConnectionProxyFailedWriteChangesNothing(t *testing.T) {
+	for _, body := range []string{
+		`{"proxyPoolId":"no-such-pool","connectionProxyEnabled":true,"connectionProxyUrl":"http://next.example:3128"}`,
+		`{"proxyPoolId":"no-such-pool","connectionProxyEnabled":false}`,
+		`{"proxyPoolId":"no-such-pool"}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			env, manager, id, poolA, _ := proxyFixture(t)
+			recorder := recordPublications(env, manager)
+			response := doJSON(t, env.mux, env.cookie, http.MethodPost, "/admin/v1/connections/"+id+"/proxy", body)
+			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"proxy_assignment_failed"`) {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			if seen := recorder.reset(); len(seen) != 0 {
+				t.Fatalf("a failed write published %d snapshots", len(seen))
+			}
+			snapshot := loadSnapshot(t, manager)
+			legacy, _ := snapshot.LegacyConnectionProxy(id)
+			stored, err := env.creds.GetConnection(context.Background(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if snapshot.ConnectionPool(id) != poolA || legacy.URL != "http://seed.example:3128" || stored.ProxyPoolID != poolA || stored.Secret.ProviderData["connectionProxyUrl"] != "http://seed.example:3128" || stored.Secret.ProviderData["connectionProxyEnabled"] != "true" {
+				t.Fatalf("after a failed write: pool=%q proxy=%q stored pool=%q data=%v", snapshot.ConnectionPool(id), legacy.URL, stored.ProxyPoolID, stored.Secret.ProviderData)
+			}
+		})
+	}
+}
+
+// Concurrent writes of two whole configurations never interleave: every
+// published snapshot, and the stored row at the end, pairs pool A with proxy
+// a and pool B with proxy b.
+func TestSetConnectionProxyConcurrentWritesStayWhole(t *testing.T) {
+	env, manager, id, poolA, poolB := proxyFixture(t)
+	recorder := recordPublications(env, manager)
+	bodies := map[string]string{
+		poolA: `{"proxyPoolId":"` + poolA + `","connectionProxyEnabled":true,"connectionProxyUrl":"http://a.example:3128"}`,
+		poolB: `{"proxyPoolId":"` + poolB + `","connectionProxyEnabled":true,"connectionProxyUrl":"http://b.example:3128"}`,
+	}
+	pairs := map[string]string{poolA: "http://a.example:3128", poolB: "http://b.example:3128"}
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		pool := poolA
+		if i%2 == 1 {
+			pool = poolB
+		}
+		wg.Add(1)
+		go func(body string) {
+			defer wg.Done()
+			r := httptest.NewRequest(http.MethodPost, "/admin/v1/connections/"+id+"/proxy", strings.NewReader(body))
+			r.AddCookie(env.cookie)
+			w := httptest.NewRecorder()
+			env.mux.ServeHTTP(w, r)
+			if w.Code != http.StatusOK {
+				t.Errorf("status=%d body=%s", w.Code, w.Body.String())
+			}
+		}(bodies[pool])
+	}
+	wg.Wait()
+	seen := recorder.reset()
+	if len(seen) == 0 {
+		t.Fatal("nothing was published")
+	}
+	for _, snapshot := range append(seen, loadSnapshot(t, manager)) {
+		legacy, _ := snapshot.LegacyConnectionProxy(id)
+		if pairs[snapshot.ConnectionPool(id)] != legacy.URL {
+			t.Fatalf("snapshot %d pairs pool %q with proxy %q", snapshot.ConfigRevision(), snapshot.ConnectionPool(id), legacy.URL)
+		}
+	}
+	stored, err := env.creds.GetConnection(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pairs[stored.ProxyPoolID] != stored.Secret.ProviderData["connectionProxyUrl"] {
+		t.Fatalf("stored pool %q with proxy %q", stored.ProxyPoolID, stored.Secret.ProviderData["connectionProxyUrl"])
+	}
+}
+
+// A store failure on the write that carries the connection proxy leaves the
+// binding as it was too: the two are not applied one after the other.
+func TestSetConnectionProxyStoreFailureIsAllOrNothing(t *testing.T) {
+	env, manager, id, poolA, poolB := proxyFixture(t)
+	recorder := recordPublications(env, manager)
+	env.creds.SetPublisher(func(ctx context.Context, change func(*credentials.Configuration) error, persist func(*sql.Tx) error) error {
+		return manager.UpdateProviders(ctx, func(config *credentials.Configuration) error {
+			if err := change(config); err != nil {
+				return err
+			}
+			for _, connection := range config.Connections {
+				if connection.ID == id && connection.Settings.ConnectionProxyURL != "http://seed.example:3128" {
+					return errors.New("injected store failure")
+				}
+			}
+			return nil
+		}, persist)
+	})
+	response := doJSON(t, env.mux, env.cookie, http.MethodPost, "/admin/v1/connections/"+id+"/proxy", `{"proxyPoolId":"`+poolB+`","connectionProxyEnabled":true,"connectionProxyUrl":"http://next.example:3128"}`)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if seen := recorder.reset(); len(seen) != 0 {
+		t.Fatalf("a failed write published %d snapshots", len(seen))
+	}
+	snapshot := loadSnapshot(t, manager)
+	legacy, _ := snapshot.LegacyConnectionProxy(id)
+	stored, err := env.creds.GetConnection(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.ConnectionPool(id) != poolA || legacy.URL != "http://seed.example:3128" || stored.ProxyPoolID != poolA || stored.Secret.ProviderData["connectionProxyUrl"] != "http://seed.example:3128" {
+		t.Fatalf("partial write: pool=%q proxy=%q stored pool=%q url=%q", snapshot.ConnectionPool(id), legacy.URL, stored.ProxyPoolID, stored.Secret.ProviderData["connectionProxyUrl"])
+	}
+}

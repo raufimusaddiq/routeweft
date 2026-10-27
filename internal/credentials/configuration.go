@@ -35,6 +35,9 @@ var errNoChange = errors.New("provider configuration unchanged")
 
 func (s *Store) SetPublisher(publish Publisher) { s.publish = publish }
 
+// Publishes reports whether writes publish the runtime snapshot themselves.
+func (s *Store) Publishes() bool { return s.publish != nil }
+
 func (s *Store) update(ctx context.Context, change func(*Configuration) error, persist func(*sql.Tx) error) error {
 	if s.publish != nil {
 		err := s.publish(ctx, change, persist)

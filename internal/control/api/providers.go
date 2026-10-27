@@ -1146,11 +1146,17 @@ func (h *Handler) handleSetConnectionProxy(w http.ResponseWriter, r *http.Reques
 	id := r.PathValue("id")
 	h.connectionMu.Lock()
 	var err error
-	if hasPool {
+	if !hasLegacy {
 		err = h.opts.Credentials.SetConnectionProxy(r.Context(), id, poolID)
-	}
-	if err == nil && hasLegacy {
+	} else {
+		// The binding and the connection's own proxy are one write, as the pin's
+		// route makes them (providers/[id]/route.js:135-158): one transaction,
+		// one published snapshot, so no request sees one without the other and a
+		// failed write (an unknown pool fails its foreign key) changes neither.
 		_, err = h.updateConnection(r.Context(), id, func(existing credentials.Connection) (credentials.Connection, error) {
+			if hasPool {
+				existing.ProxyPoolID = poolID
+			}
 			data := make(map[string]string, len(existing.Secret.ProviderData)+3)
 			for key, value := range existing.Secret.ProviderData {
 				data[key] = value
@@ -1171,7 +1177,10 @@ func (h *Handler) handleSetConnectionProxy(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "proxy_assignment_failed", "proxy assignment could not be saved")
 		return
 	}
-	if h.opts.PoolBindings != nil {
+	// A store with a publisher has published the write, bindings included
+	// (runtime.Manager.UpdateProviders); only a standalone store needs the
+	// bindings republished.
+	if h.opts.PoolBindings != nil && !h.opts.Credentials.Publishes() {
 		if _, err := h.opts.PoolBindings.RefreshPoolBindings(r.Context()); err != nil {
 			writeError(w, http.StatusInternalServerError, "proxy_publish_failed", "proxy assignment saved but runtime publication failed")
 			return
