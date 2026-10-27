@@ -9,7 +9,8 @@
 // legs, chained as translator/index.js:191-240 chains them: gemini-to-openai.js
 // (one registration per Gemini-family format, :159-162), then openai-responses.js
 // (:709) or openai-to-claude.js (:265). Everything is read with `git show` at the
-// pin; nothing is sent and no credential is used. The Go tests read the file this
+// pin, with the clock fixed in both (a module parameter shadows Date); nothing is
+// sent and no credential is used. The Go tests read the file this
 // writes; no test regenerates it.
 import { writeFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -76,7 +77,7 @@ const nonStreaming = await load('open-sse/handlers/chatCore/nonStreamingHandler.
   addBufferToUsage: value => value, filterUsageForFormat: value => value, createErrorResult() {}, upstreamResponseHeaders: () => ({}), HTTP_STATUS: {},
   parseSSEToOpenAIResponse() {}, unwrapClineEnvelope: body => body, buildRequestDetail() {}, extractRequestConfig() {}, extractUsageFromResponse() {},
   saveUsageStats() {}, formatDoneLine() {}, appendRequestLog() {}, saveRequestDetail() {}, decloakToolNames: body => body, restoreToolNames: body => body,
-  rewriteResponsesCustomToolOutput() {}, PROVIDERS: {},
+  rewriteResponsesCustomToolOutput() {}, PROVIDERS: {}, Date: FakeDate,
 });
 
 const candidate = parts => ({ candidates: [{ content: { role: 'model', parts }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 7, candidatesTokenCount: 3, totalTokenCount: 10 }, responseId: 'r1', modelVersion: 'gemini-2.5-flash-image' });
