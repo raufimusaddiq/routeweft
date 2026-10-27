@@ -83,7 +83,7 @@ func codexImportFlow() Flow {
 		Import: func(_ context.Context, p Params) (Result, error) {
 			token := strings.TrimSpace(p.Input)
 			if token == "" {
-				return Result{}, fmt.Errorf("codex access token is required")
+				return Result{}, invalidInput("codex access token is required")
 			}
 			// import-token/route.js:29-66: the profile email, top-level email or
 			// preferred_username; only when none exists, extractCodexAccountInfo's
@@ -140,11 +140,11 @@ func grokCLIImportFlow() Flow {
 				DisplayName      string          `json:"displayName"`
 			}
 			if err := json.Unmarshal([]byte(strings.TrimSpace(p.Input)), &account); err != nil {
-				return Result{}, fmt.Errorf("grok-cli import expects a JSON account object")
+				return Result{}, invalidInput("grok-cli import expects a JSON account object")
 			}
 			access := firstNonEmpty(account.AccessToken, account.AccessTokenCamel)
 			if access == "" {
-				return Result{}, fmt.Errorf("grok-cli import requires an access token")
+				return Result{}, invalidInput("grok-cli import requires an access token")
 			}
 			refresh := firstNonEmpty(account.RefreshToken, account.RefreshCamel)
 			idToken := firstNonEmpty(account.IDToken, account.IDTokenCamel)
@@ -194,7 +194,7 @@ func iflowCookieFlow() Flow {
 		Import: func(ctx context.Context, p Params) (Result, error) {
 			cookie := strings.TrimSpace(p.Input)
 			if !strings.Contains(cookie, "BXAuth=") {
-				return Result{}, fmt.Errorf("iflow cookie must contain BXAuth")
+				return Result{}, invalidInput("iflow cookie must contain BXAuth")
 			}
 			if !strings.HasSuffix(cookie, ";") {
 				cookie += ";"
@@ -289,11 +289,11 @@ func kiroAPIKeyFlow() Flow {
 func kiroAPIKeyImport(ctx context.Context, p Params) (Result, error) {
 	apiKey := strings.TrimSpace(p.Input)
 	if apiKey == "" {
-		return Result{}, fmt.Errorf("kiro API key is required")
+		return Result{}, invalidInput("kiro API key is required")
 	}
 	region := metaOr(p, "region", "us-east-1")
 	if !awsRegionPattern.MatchString(region) {
-		return Result{}, fmt.Errorf("kiro region is invalid")
+		return Result{}, invalidInput("kiro region is invalid")
 	}
 	var catalog struct {
 		Models []json.RawMessage `json:"models"`
@@ -404,7 +404,7 @@ func parseXiaomiInput(p Params) (xiaomiAccount, error) {
 			} `json:"xiaomi"`
 		}
 		if err := json.Unmarshal([]byte(input), &document); err != nil {
-			return xiaomiAccount{}, fmt.Errorf("xiaomi-mimo import expects a key or a JSON object")
+			return xiaomiAccount{}, invalidInput("xiaomi-mimo import expects a key or a JSON object")
 		}
 		account = xiaomiAccount{
 			session: map[string]string{
@@ -418,11 +418,11 @@ func parseXiaomiInput(p Params) (xiaomiAccount, error) {
 		}
 	}
 	if !strings.HasPrefix(account.key, "sk-") {
-		return xiaomiAccount{}, fmt.Errorf("xiaomi-mimo key must start with sk-")
+		return xiaomiAccount{}, invalidInput("xiaomi-mimo key must start with sk-")
 	}
 	for _, value := range account.session {
 		if !credentials.ValidMimoCookieValue(value) {
-			return xiaomiAccount{}, fmt.Errorf("xiaomi-mimo account credential contains an invalid cookie value")
+			return xiaomiAccount{}, invalidInput("xiaomi-mimo account credential contains an invalid cookie value")
 		}
 	}
 	return account, nil

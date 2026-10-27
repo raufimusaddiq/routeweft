@@ -226,16 +226,16 @@ func cursorFlow() Flow {
 			}
 			machineID := strings.TrimSpace(p.Meta["machineId"])
 			if token == "" {
-				return Result{}, fmt.Errorf("cursor import requires an access token")
+				return Result{}, invalidInput("cursor import requires an access token")
 			}
 			if machineID == "" {
 				return Result{}, ErrCursorMachineIDRequired
 			}
 			if len(token) < 50 {
-				return Result{}, fmt.Errorf("cursor token appears too short")
+				return Result{}, invalidInput("cursor token appears too short")
 			}
 			if !cursorMachineID.MatchString(strings.ReplaceAll(machineID, "-", "")) {
-				return Result{}, fmt.Errorf("cursor machine id must be a UUID")
+				return Result{}, invalidInput("cursor machine id must be a UUID")
 			}
 			// email, then subject (extractUserInfo, services/cursor.js:131-153).
 			identity, userID := "", ""

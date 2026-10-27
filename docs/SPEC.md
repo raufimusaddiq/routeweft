@@ -1025,6 +1025,34 @@ reports its index, status and saved connection id, and no credential is echoed.
 A provider may offer a browser or device flow *and* an import mode (codex, grok-cli, iflow, kiro, xiaomi-mimo, cursor); the
 import endpoint resolves the import flow independently of the browser one.
 
+Specialized credential import (#218). `input` is at most 64 KiB (`import_too_large`,
+413): a whole exported file (a Kiro IDE token or CLIProxyAPI export, a MiMo
+`auth.json`, a full iFlow cookie string) fits; a pasted code stays at 4 KiB. A JSON
+document (input starting `{` or `[`) may carry line breaks and tabs; any other
+control character is `import_invalid`. A malformed paste or a missing field the
+mode requires (Cursor's token length and machine-id shape, Kiro's refresh token or
+CLIProxyAPI fields and Microsoft token endpoint, a MiMo key without `sk-`, a cookie
+without `BXAuth`, a Grok account without `access_token`) is `400 import_invalid`
+with fixed text that never quotes the input, and nothing reaches the provider;
+Cursor without a machine id stays `oauth_meta_required`. A credential the provider
+refuses (invalid, expired or revoked) is `502 oauth_exchange_failed` without the
+provider's text. Outside Codex, an import of an account already stored on the
+provider's built-in node follows the reference's insert
+(`connectionsRepo.js:228-261`): an oauth credential with the same identity and the
+same username, or none on both sides, updates that row in place (`outcome:
+updated`), replacing its tokens and provider data whole and keeping its name,
+priority, enabled flag and proxy pool; a MiMo API key for the same account merges
+its provider data (`xiaomi-mimo/api-key/route.js:66-95`). Where the reference would
+keep a second row instead (another credential mode, another username, an iFlow
+cookie or Kiro API key, which never dedup), the built-in node's one-connection-per-
+identity rule answers `409 identity_conflict` and the stored row is unchanged. The
+same rules apply per bulk item; a bulk array element that is not an object fails
+alone ("item is not an object", `bulk-import/route.js:62-64`), and an item's store
+failure is reported with fixed text, never the store's own message. A credential
+that had already expired is stored as given, as the reference stores it; the saved
+connection and the bulk item carry `expired: true` and `refreshable` (whether a
+refresh token came with it).
+
 Onboarding golden path (#215). Every saved sign-in, import and bulk item says
 what it did: the connection a callback, poll or import returns carries
 `outcome` (`added`; `updated` when the Codex duplicate rule below, or a device

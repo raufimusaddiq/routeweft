@@ -93,6 +93,13 @@ Code's `auth.json` goes in the Xiaomi import as-is. Both pass through the
 admin-session-gated, size-bounded `/import` endpoint, are sealed at rest, and are
 never echoed.
 
+#218 makes this the dashboard's own journey: each import names where its file or
+value lives on the operator's computer (Cursor's `state.vscdb` keys, Kiro's
+`~/.aws/sso/cache`, MiMo's `auth.json`, iFlow's `BXAuth` cookie, GitLab's PAT
+scopes), takes a file the operator chooses in the browser or a masked paste, and
+checks its shape before sending it. The browser reads only the file the operator
+picked; the server still reads no host path.
+
 What is **not** on this host, and left named rather than invented:
 
 - **MiMo Desktop's account-session `passToken`.** It lives in Desktop's Chromium cookie

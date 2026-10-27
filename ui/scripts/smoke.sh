@@ -7,6 +7,7 @@
 #
 #   npm ci
 #   npm install --no-save --no-package-lock playwright-core@1.49.1
+#   npx playwright-core install firefox   # import masking runs in Firefox too
 #   npm run smoke
 #
 # scripts/smoke-cleanup-check.sh verifies that every exit path stops the preview.
@@ -40,4 +41,5 @@ done
 node scripts/shell-smoke.cjs
 node scripts/oauth-journeys-smoke.cjs
 node scripts/device-approval-smoke.cjs
+node scripts/import-masking-smoke.cjs
 

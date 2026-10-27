@@ -26,8 +26,14 @@ const (
 	oauthMaxPerSession = 8
 	oauthMaxPending    = 256
 	oauthMaxInput      = 4096
-	oauthMaxNameLength = 200
-	oauthStateEntropy  = 32
+	// oauthMaxImportInput bounds one imported credential (#218). An import can be
+	// a whole exported file (a Kiro CLIProxyAPI or IDE token JSON, a Xiaomi
+	// auth.json, a full iFlow cookie string), which a Microsoft token pair alone
+	// can push past the 4 KiB a pasted code is held to. 64 KiB is far past any
+	// real credential file and still bounds what a flow parses.
+	oauthMaxImportInput = 64 << 10
+	oauthMaxNameLength  = 200
+	oauthStateEntropy   = 32
 	// oauthMaxBulkItems bounds one bulk import. Each accepted item costs a
 	// connection write and, historically, a full snapshot recompile; without a cap
 	// a 1 MiB paste is thousands of serial recompiles on the control plane. 100
@@ -976,6 +982,10 @@ const (
 func onboardedJSON(connection credentials.Connection, outcome string) map[string]any {
 	saved := connectionJSON(connection)
 	saved["outcome"] = outcome
+	// An import may carry a credential that had already expired (#218).
+	if expired, refreshable := importExpiry(connection.Secret, time.Now()); expired {
+		saved["expired"], saved["refreshable"] = true, refreshable
+	}
 	if plan := connection.Secret.ProviderData["chatgptPlanType"]; plan != "" && connection.ProviderID == codexProviderID {
 		saved["plan"] = plan
 	}
@@ -1180,7 +1190,9 @@ func (h *Handler) handleOAuthImport(w http.ResponseWriter, r *http.Request) {
 		Input    string            `json:"input"`
 		Meta     map[string]string `json:"meta"`
 	}
-	if !decodeJSON(w, r, 32<<10, &body) {
+	// The input plus its JSON escaping (a pasted file's quotes and newlines), the
+	// name, identity and meta.
+	if !decodeJSON(w, r, 3*oauthMaxImportInput, &body) {
 		return
 	}
 	// Same rule as /start and /device.
@@ -1188,10 +1200,19 @@ func (h *Handler) handleOAuthImport(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// The same bounds /callback applies to pasted input: an import payload becomes a
-	// header value or a form body, so a control character must not reach it.
-	if strings.TrimSpace(body.Input) == "" || len(body.Input) > oauthMaxInput || strings.IndexFunc(body.Input, unicode.IsControl) >= 0 {
+	// An import payload becomes a header value or a form body, so a control
+	// character must not reach it. A JSON document (an exported file, pasted or
+	// chosen) is parsed by its flow, never sent as is, so its line breaks and tabs
+	// are allowed; nothing else is.
+	switch {
+	case strings.TrimSpace(body.Input) == "":
 		writeError(w, http.StatusBadRequest, "oauth_code_missing", "a credential to import is required")
+		return
+	case len(body.Input) > oauthMaxImportInput:
+		writeError(w, http.StatusRequestEntityTooLarge, "import_too_large", fmt.Sprintf("the credential is larger than %d KiB; import only the account's own token or file", oauthMaxImportInput>>10))
+		return
+	case !importInputClean(body.Input):
+		writeError(w, http.StatusBadRequest, "import_invalid", "the credential contains control characters; paste it exactly as it was issued")
 		return
 	}
 	if _, ok := h.sessionFor(r); !ok {
@@ -1209,14 +1230,53 @@ func (h *Handler) handleOAuthImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "oauth_meta_required", err.Error())
 		return
 	}
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "oauth_exchange_failed", "the provider did not accept the credential")
+	// A malformed paste or file is the operator's to correct, and its message is
+	// fixed text; anything else is the provider's answer, reported without detail
+	// (an invalid, expired or revoked credential).
+	var inputErr *onboarding.InputError
+	if errors.As(err, &inputErr) {
+		writeError(w, http.StatusBadRequest, "import_invalid", inputErr.Error())
 		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "oauth_exchange_failed", "the provider did not accept the credential; it may be invalid, expired or revoked")
+		return
+	}
+	// The same account imported again updates its connection, as the reference's
+	// insert does (importMatch). Codex keeps its own rule in saveOnboardedResult.
+	if providerID != codexProviderID {
+		h.connectionMu.Lock()
+		defer h.connectionMu.Unlock()
+		if h.saveImportedDuplicate(w, r, providerID, firstNonEmptyTrimmed(result.Identity, identity), result) {
+			return
+		}
 	}
 	flowState := oauthFlow{name: name, identity: identity, identityOptional: flow.IdentityOptional}
 	if saved, _, ok := h.saveOnboardedConnection(w, r, providerID, flowState, result); ok {
 		writeJSON(w, http.StatusOK, saved)
 	}
+}
+
+// importInputClean reports whether an import payload is free of control
+// characters, allowing a JSON document's line breaks and tabs.
+func importInputClean(input string) bool {
+	document := strings.HasPrefix(strings.TrimSpace(input), "{") || strings.HasPrefix(strings.TrimSpace(input), "[")
+	return strings.IndexFunc(input, func(r rune) bool {
+		if document && (r == '\n' || r == '\r' || r == '\t') {
+			return false
+		}
+		return unicode.IsControl(r)
+	}) < 0
+}
+
+// firstNonEmptyTrimmed is the first value that is not blank, trimmed.
+func firstNonEmptyTrimmed(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 // newVerifier mints one PKCE verifier.
@@ -1312,11 +1372,21 @@ func (h *Handler) handleOAuthBulkImport(w http.ResponseWriter, r *http.Request) 
 		// Outcome is onboardedAdded or onboardedUpdated (a duplicate of a stored
 		// account took the item in place), so a batch says which rows are new.
 		Outcome string `json:"outcome,omitempty"`
-		Error   string `json:"error,omitempty"`
+		// Expired marks an item stored with a credential that had already expired
+		// (#218); Refreshable says whether a refresh token came with it.
+		Expired     bool   `json:"expired,omitempty"`
+		Refreshable *bool  `json:"refreshable,omitempty"`
+		Error       string `json:"error,omitempty"`
 	}
 	results := make([]itemResult, 0, len(raw))
 	saved, failed := 0, 0
 	for index, item := range raw {
+		if item == nil {
+			// The reference fails the item, not the paste (bulk-import/route.js:62-64).
+			results = append(results, itemResult{Index: index, Error: "item is not an object"})
+			failed++
+			continue
+		}
 		account, err := flow.Bulk(item)
 		if err != nil {
 			results = append(results, itemResult{Index: index, Error: err.Error()})
@@ -1342,7 +1412,7 @@ func (h *Handler) handleOAuthBulkImport(w http.ResponseWriter, r *http.Request) 
 		if name == "" {
 			label, err := h.accountLabel(r.Context(), providerID)
 			if err != nil {
-				results = append(results, itemResult{Index: index, Error: err.Error()})
+				results = append(results, itemResult{Index: index, Error: bulkSaveError})
 				failed++
 				continue
 			}
@@ -1358,7 +1428,13 @@ func (h *Handler) handleOAuthBulkImport(w http.ResponseWriter, r *http.Request) 
 		// one paste cost thousands of recompiles.
 		connection, updated, err := h.storeImportedConnection(r.Context(), providerID, name, account)
 		if err != nil {
-			results = append(results, itemResult{Index: index, Error: err.Error()})
+			// The store's own text names tables and constraints; the item gets a
+			// fixed reason instead (#218).
+			message := bulkSaveError
+			if errors.Is(err, errImportConflict) {
+				message = importConflictMessage
+			}
+			results = append(results, itemResult{Index: index, Error: message})
 			failed++
 			continue
 		}
@@ -1366,7 +1442,11 @@ func (h *Handler) handleOAuthBulkImport(w http.ResponseWriter, r *http.Request) 
 		if updated {
 			outcome = onboardedUpdated
 		}
-		results = append(results, itemResult{Index: index, OK: true, ID: connection.ID, Outcome: outcome})
+		item := itemResult{Index: index, OK: true, ID: connection.ID, Outcome: outcome}
+		if expired, refreshable := importExpiry(account.Secret, time.Now()); expired {
+			item.Expired, item.Refreshable = true, &refreshable
+		}
+		results = append(results, item)
 		saved++
 	}
 	if saved > 0 {
@@ -1378,7 +1458,24 @@ func (h *Handler) handleOAuthBulkImport(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"total": len(raw), "success": saved, "failed": failed, "results": results})
 }
 
+// bulkObjects decodes each element as an account object, nil where it is not one.
+func bulkObjects(elements []json.RawMessage) []map[string]any {
+	items := make([]map[string]any, len(elements))
+	for index, element := range elements {
+		var object map[string]any
+		if json.Unmarshal(element, &object) == nil {
+			items[index] = object
+		}
+	}
+	return items
+}
+
+// bulkSaveError is a bulk item's reason when the store refused it for any
+// reason other than a duplicate.
+const bulkSaveError = "the account could not be saved"
+
 // decodeBulkBody normalizes the three accepted shapes into a slice of objects.
+// An array element that is not an object is nil, so it fails alone.
 func decodeBulkBody(w http.ResponseWriter, r *http.Request) ([]map[string]any, bool) {
 	var body json.RawMessage
 	if !decodeJSON(w, r, 1<<20, &body) {
@@ -1392,20 +1489,25 @@ func decodeBulkBody(w http.ResponseWriter, r *http.Request) ([]map[string]any, b
 	var items []map[string]any
 	switch trimmed[0] {
 	case '[':
-		if err := json.Unmarshal(trimmed, &items); err != nil {
+		var elements []json.RawMessage
+		if err := json.Unmarshal(trimmed, &elements); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_request", "the body must be a JSON array of account objects")
 			return nil, false
 		}
+		items = bulkObjects(elements)
 	case '{':
 		var wrapped struct {
-			Accounts []map[string]any `json:"accounts"`
+			Accounts json.RawMessage `json:"accounts"`
 		}
 		if err := json.Unmarshal(trimmed, &wrapped); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_request", "the body must be a JSON account object")
 			return nil, false
 		}
-		if wrapped.Accounts != nil {
-			items = wrapped.Accounts
+		var elements []json.RawMessage
+		// Only an array under accounts wraps a batch; anything else there is one
+		// account object (the reference's Array.isArray(body.accounts)).
+		if json.Unmarshal(wrapped.Accounts, &elements) == nil && elements != nil {
+			items = bulkObjects(elements)
 		} else {
 			var single map[string]any
 			if err := json.Unmarshal(trimmed, &single); err != nil {
@@ -1506,15 +1608,36 @@ func (h *Handler) publishMergedConnection(ctx context.Context, connection creden
 // publishes once; a single import goes through publishConnection, which does both.
 // updated reports that a stored duplicate took the item instead of a new row.
 func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name string, account onboarding.BulkAccount) (_ credentials.Connection, updated bool, _ error) {
-	if providerID == codexProviderID {
-		// Held from before the node is resolved: builtinNode creates the node on
-		// first use, and two first imports racing there would each create one.
-		h.connectionMu.Lock()
-		defer h.connectionMu.Unlock()
-	}
+	// Held from before the node is resolved: builtinNode creates the node on
+	// first use, and two first imports racing there would each create one. It
+	// also keeps a concurrent import of the same account from inserting between
+	// the duplicate lookup and the write.
+	h.connectionMu.Lock()
+	defer h.connectionMu.Unlock()
 	node, err := h.builtinNode(ctx, providerID)
 	if err != nil {
 		return credentials.Connection{}, false, err
+	}
+	if providerID != codexProviderID {
+		// The reference's insert updates the stored account (importMatch). The
+		// bulk route sends neither a name, a priority nor isActive
+		// (grok-cli/bulk-import/route.js:90-99), so those stay as stored.
+		match, found, err := h.importMatch(ctx, providerID, account.Identity, account.AuthKind, account.Secret.ProviderData)
+		if err != nil {
+			return credentials.Connection{}, false, err
+		}
+		if found {
+			stored, err := h.updateConnection(ctx, match.ID, func(existing credentials.Connection) (credentials.Connection, error) {
+				existing.Secret = importedSecret(providerID, existing.Secret, account.Secret)
+				return existing, nil
+			})
+			if err != nil {
+				return credentials.Connection{}, false, err
+			}
+			stored.ProviderID = node.ProviderID
+			h.clearConnectionHealth(stored.ID)
+			return stored, true, nil
+		}
 	}
 	if providerID == codexProviderID {
 		match, found, err := h.codexMatch(ctx, account.Identity, account.Secret.ProviderData)

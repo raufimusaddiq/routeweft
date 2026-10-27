@@ -225,8 +225,10 @@ func TestCodexDuplicateHandlingMatchesReference(t *testing.T) {
 			signInOp(mail, "acct-1", "a1"), manualOp("codex", mail), "refuse"},
 		{"other provider, manual form duplicate", "unchanged: UNIQUE kept off the Codex node", "claude",
 			manualOp("claude", mail), manualOp("claude", mail), "refuse"},
-		{"other provider, bulk duplicate", "unchanged: UNIQUE kept off the Codex node", "grok-cli",
-			bulkOp("grok-cli", `{"access_token":"g1","email":"`+mail+`"}`), bulkOp("grok-cli", `{"access_token":"g2","email":"`+mail+`"}`), "refuse"},
+		// The reference's insert updates an oauth row with the same email and no
+		// username on either side (#218); the node's UNIQUE is unchanged.
+		{"other provider, bulk duplicate", "connectionsRepo.js:228-261", "grok-cli",
+			bulkOp("grok-cli", `{"access_token":"g1","email":"`+mail+`"}`), bulkOp("grok-cli", `{"access_token":"g2","email":"`+mail+`"}`), "update"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
