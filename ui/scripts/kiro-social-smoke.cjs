@@ -34,6 +34,9 @@ const paste = (state, extra = 'code=kiro-code-sentinel') => `kiro://kiro.kiroAge
   const starts = [];
   const callbacks = [];
   const cancels = [];
+  const patches = [];
+  // The GitHub sign-in saves without a profile ARN (#219 review).
+  let missingProfile = false;
   const json = (route, status, body) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   const fail = (route, status, code, message) => json(route, status, { error: { code, message } });
   const providerItems = [{ id: 'kiro', transports: ['kiro'], auth: 'oauth', authModes: ['oauth', 'api-key'], modelCatalog: 'dynamic', passthroughModels: false, reportsUsage: false, flowType: 'device_code', signInModes: METHODS.map(m => m.mode), signInMethods: METHODS, configuredNodes: 1, enabledAccounts: 3, readiness: { status: 'ready', served: true } }];
@@ -67,8 +70,10 @@ const paste = (state, extra = 'code=kiro-code-sentinel') => `kiro://kiro.kiroAge
       if (mode === 'denied') return fail(route, 400, 'oauth_denied', 'the provider did not approve the sign-in; start again');
       const start = starts.at(-1);
       if (start.connectionId) return json(route, 200, { ...connections[0], outcome: 'reauthenticated' });
-      return json(route, 200, { ...row('conn-new', start.identity, start.meta.authMethod), identity: start.identity, outcome: 'added' });
+      return json(route, 200, { ...row('conn-new', start.identity, start.meta.authMethod), identity: start.identity, outcome: 'added', profileArnMissing: missingProfile });
     }
+    const patch = path.match(/^\/connections\/([^/]+)$/);
+    if (patch && method === 'PATCH') { patches.push({ id: patch[1], body: route.request().postDataJSON() }); return json(route, 200, { id: patch[1] }); }
     if (method === 'GET') return json(route, 200, { items: [], page: 1, pageSize: 100, total: 0 });
     return fail(route, 404, 'not_found', 'not stubbed');
   });
@@ -132,7 +137,9 @@ const paste = (state, extra = 'code=kiro-code-sentinel') => `kiro://kiro.kiroAge
     await result.getByText('Failed', { exact: true }).waitFor();
     assert.match(await result.textContent(), /did not approve the sign-in/);
 
-    // A paste from another attempt keeps it; the right one connects.
+    // A paste from another attempt keeps it; the right one connects. GitHub's
+    // sign-in finds no profile ARN: saved, but not reported as usable.
+    missingProfile = variant === 'github';
     await form.getByLabel('Stable account identity').fill(`named-${variant}@example.test`);
     callbackModes.push('mismatch');
     await start.click();
@@ -142,10 +149,28 @@ const paste = (state, extra = 'code=kiro-code-sentinel') => `kiro://kiro.kiroAge
     assert.equal(await pasteField.count(), 1, `${variant}: a wrong-state paste keeps the attempt`);
     await pasteField.fill(paste(`kiro-state-${states}`));
     await form.getByRole('button', { name: 'Finish sign-in', exact: true }).click();
-    await result.getByText('Connected', { exact: true }).waitFor();
+    await result.getByText(missingProfile ? 'Not usable yet' : 'Connected', { exact: true }).waitFor();
     assert.deepEqual(callbacks.at(-1), { state: `kiro-state-${states}`, input: paste(`kiro-state-${states}`) });
     assert.match(await form.locator('[aria-label="Signed-in account"]').textContent(), new RegExp(`named-${variant}@example\\.test`));
     seen.connected = await result.textContent();
+    if (missingProfile) {
+      assert.equal(await result.getByText('Connected', { exact: true }).count(), 0, 'an ARN-less connection is not reported connected');
+      await result.getByText('Not usable yet', { exact: true }).waitFor();
+      const profile = form.locator('[aria-label="Kiro profile"]');
+      assert.match(await profile.textContent(), /requests are refused until the connection has one/);
+      assert.equal(await result.getByText(/Use Check connection to send a test request/).count(), 0);
+      await profile.getByLabel('Profile ARN').fill('not-an-arn');
+      await profile.getByText(/A profile ARN looks like/).waitFor();
+      assert.equal(await profile.getByRole('button', { name: 'Save profile ARN' }).isDisabled(), true);
+      await form.screenshot({ path: join(artifacts, 'kiro-github-profile-missing.png') });
+      const arn = 'arn:aws:codewhisperer:us-east-1:000000000000:profile/FIXTURE';
+      await profile.getByLabel('Profile ARN').fill(arn);
+      await profile.getByRole('button', { name: 'Save profile ARN' }).click();
+      await result.getByText('Connected', { exact: true }).waitFor();
+      assert.deepEqual(patches.at(-1), { id: 'conn-new', body: { secret: { providerData: { profileArn: arn } } } });
+      assert.equal(await form.locator('[aria-label="Kiro profile"]').count(), 0);
+      missingProfile = false;
+    }
     await form.getByRole('button', { name: 'Done', exact: true }).click();
     await form.waitFor({ state: 'detached' });
     report[variant] = seen;
@@ -174,6 +199,7 @@ const paste = (state, extra = 'code=kiro-code-sentinel') => `kiro://kiro.kiroAge
   report.starts = starts.length;
   report.callbacks = callbacks.length;
   report.cancels = cancels.length;
+  report.patches = patches.length;
   writeFileSync(join(artifacts, 'kiro-social-report.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(`kiro social: ${starts.length} starts, ${callbacks.length} callbacks, ${cancels.length} cancels`);
   await chrome.close();

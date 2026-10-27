@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { browserJourney, checkedNote, copilotNote, DEVICE_DEADLINE_GRACE_MS, DEVICE_REQUEST_TIMEOUT_MS, requestBound, deviceCopyItems, deviceJourney, devicePollDelay, devicePollingOver, identityPrompt, importJourney, loopbackHint, projectNote, validProjectId } from './journeys.ts'
+import { browserJourney, checkedNote, copilotNote, profileArnNote, validProfileArn, DEVICE_DEADLINE_GRACE_MS, DEVICE_REQUEST_TIMEOUT_MS, requestBound, deviceCopyItems, deviceJourney, devicePollDelay, devicePollingOver, identityPrompt, importJourney, loopbackHint, projectNote, validProjectId } from './journeys.ts'
 import { connectMethods, type ProviderAuth } from './signIn.ts'
 
 const origin = 'https://routeweft.example.test/callback'
@@ -257,4 +257,16 @@ test('the Kiro social journey explains the kiro:// address it pastes back', () =
     assert.deepEqual(journey.requiredMeta, [])
   }
   assert.match(deviceJourney('kiro').before.join(' '), /Sign in with Google or Sign in with GitHub/)
+})
+
+test('a Kiro connection saved without a profile ARN says it cannot serve yet and how to recover', () => {
+  assert.match(profileArnNote({ providerId: 'kiro', profileArnMissing: true }) ?? '', /requests are refused until the connection has one.*profile ARN.*Reauthenticate/s)
+  assert.equal(profileArnNote({ providerId: 'kiro', profileArnMissing: false }), null)
+  assert.equal(profileArnNote({ providerId: 'kiro' }), null)
+  assert.equal(profileArnNote({ providerId: 'github', profileArnMissing: true }), null)
+  assert.equal(validProfileArn('arn:aws:codewhisperer:us-east-1:123456789012:profile/ABC_def-1'), true)
+  assert.equal(validProfileArn(' arn:aws:codewhisperer:eu-central-1:123456789012:profile/X '), true)
+  for (const bad of ['', 'arn:aws:codewhisperer:us-east-1:1234:profile/X', 'arn:aws:iam::123456789012:role/x', 'arn:aws:codewhisperer:us-east-1:123456789012:profile/', 'arn:aws:codewhisperer:us-east-1:123456789012:profile/a b']) {
+    assert.equal(validProfileArn(bad), false, bad)
+  }
 })

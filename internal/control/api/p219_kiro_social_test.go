@@ -15,6 +15,8 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
+	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
 // #219: Kiro's Google and GitHub sign-in (social-authorize/route.js,
@@ -32,9 +34,13 @@ type kiroSocialFixture struct {
 	reportARN bool
 	// exchangeStatus is the token exchange's status (0 means 200).
 	exchangeStatus int
-	seen           []string
-	bodies         []string
-	auth           []string
+	// lookupStatus is the profile lookup's status (0 means 200); lookupEmpty
+	// makes a 200 lookup list no profile.
+	lookupStatus int
+	lookupEmpty  bool
+	seen         []string
+	bodies       []string
+	auth         []string
 }
 
 func (f *kiroSocialFixture) Do(request *http.Request) (*http.Response, error) {
@@ -66,6 +72,12 @@ func (f *kiroSocialFixture) Do(request *http.Request) (*http.Response, error) {
 		// Kiro's social tokens are opaque, not JWTs: the account is not readable.
 		return respond(200, fmt.Sprintf(`{"accessToken":"fixture-social-access-%s","refreshToken":"fixture-social-refresh-%s","expiresIn":1800%s}`, sent.Code, sent.Code, arn))
 	case "https://codewhisperer.us-east-1.amazonaws.com/ListAvailableProfiles":
+		if f.lookupStatus != 0 && f.lookupStatus != 200 {
+			return respond(f.lookupStatus, `{"message":"denied"}`)
+		}
+		if f.lookupEmpty {
+			return respond(200, `{"profiles":[]}`)
+		}
 		return respond(200, `{"profiles":[{"arn":"  "},{"arn":"`+kiroSocialARN+`"}]}`)
 	case "https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken":
 		return respond(200, `{"accessToken":"fixture-social-access-rotated","refreshToken":"fixture-social-refresh-rotated","expiresIn":3600}`)
@@ -215,7 +227,7 @@ func TestKiroSocialSignInSucceeds(t *testing.T) {
 				t.Fatalf("start reached the network: %v", rig.fixture.requests())
 			}
 			status, answer, body := rig.callback(t, started.State, "kiro://kiro.kiroAgent/authenticate-success?code=one&state="+started.State)
-			if status != http.StatusOK || answer["outcome"] != "added" || answer["identity"] != "person@example.invalid" || answer["authKind"] != "oauth" {
+			if status != http.StatusOK || answer["outcome"] != "added" || answer["identity"] != "person@example.invalid" || answer["authKind"] != "oauth" || answer["profileArnMissing"] != false {
 				t.Fatalf("callback: %d %s", status, body)
 			}
 			if strings.Contains(body, "fixture-social") {
@@ -468,5 +480,82 @@ func TestKiroSocialProfileARNFallbackAndDurableRefresh(t *testing.T) {
 	if next.AccessToken != "fixture-social-access-rotated" || next.RefreshToken != "fixture-social-refresh-rotated" ||
 		next.ProviderData["authMethod"] != "google" || next.ProviderData["profileArn"] != kiroSocialARN || !next.Expiry.Equal(rig.now.Add(time.Hour)) {
 		t.Fatalf("refreshed %+v", next)
+	}
+}
+
+// #219 review: when neither the exchange nor the profile lookup yields a profile
+// ARN, the credential is still saved (the pin saves it as active,
+// social-exchange/route.js:40-52, and its refresh fills the ARN,
+// tokenRefresh/providers.js:316-324), but the sign-in result says the connection
+// cannot serve yet, because the wire refuses a Kiro connection without one. Naming
+// the ARN on the connection makes it servable; a Reauthenticate whose lookup
+// succeeds does too.
+func TestKiroSocialMissingProfileARNIsSurfacedAndRecoverable(t *testing.T) {
+	servable := func(t *testing.T, rig *kiroSocialRig) error {
+		t.Helper()
+		stored := rig.stored(t)
+		if len(stored) != 1 {
+			t.Fatalf("stored %d connections", len(stored))
+		}
+		_, err := wire.ResolveTarget(routing.ProviderRef{
+			ProviderID: "kiro", Protocol: "kiro", APIToken: stored[0].Secret.AccessToken,
+			BaseURL:    "https://codewhisperer.us-east-1.amazonaws.com",
+			Connection: routing.ConnectionMetadata{Settings: stored[0].Settings},
+		}, "generateAssistantResponse")
+		return err
+	}
+	for _, tc := range []struct {
+		name   string
+		status int
+		empty  bool
+	}{{"lookup refused", http.StatusForbidden, false}, {"lookup lists no profile", 0, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newKiroSocialRig(t)
+			rig.fixture.lookupStatus, rig.fixture.lookupEmpty = tc.status, tc.empty
+			saved := rig.signIn(t, "google", "person@example.invalid", "one")
+			if saved["outcome"] != "added" || saved["profileArnMissing"] != true {
+				t.Fatalf("sign-in without a profile reported %v", saved)
+			}
+			if stored := rig.stored(t); stored[0].Secret.ProviderData["profileArn"] != "" || stored[0].Secret.RefreshToken == "" {
+				t.Fatalf("stored %+v", stored[0].Secret.ProviderData)
+			}
+			if err := servable(t, rig); err == nil || !strings.Contains(err.Error(), "profileArn") {
+				t.Fatalf("an ARN-less connection was servable: %v", err)
+			}
+
+			// Recovery 1: the operator names the ARN; only it changes.
+			id := saved["id"].(string)
+			patch := doJSON(t, rig.mux, rig.cookie, http.MethodPatch, "/admin/v1/connections/"+id, `{"secret":{"providerData":{"profileArn":"`+kiroSocialARN+`"}}}`)
+			if patch.Code != http.StatusOK {
+				t.Fatalf("name the profile: %d %s", patch.Code, patch.Body.String())
+			}
+			stored := rig.stored(t)
+			if stored[0].Secret.ProviderData["profileArn"] != kiroSocialARN || stored[0].Secret.ProviderData["authMethod"] != "google" || stored[0].Secret.AccessToken != "fixture-social-access-one" {
+				t.Fatalf("after naming the profile: %+v", stored[0].Secret.ProviderData)
+			}
+			if err := servable(t, rig); err != nil {
+				t.Fatalf("a connection with a profile is not servable: %v", err)
+			}
+		})
+	}
+
+	// Recovery 2: a Reauthenticate whose lookup now finds the profile.
+	rig := newKiroSocialRig(t)
+	rig.fixture.lookupEmpty = true
+	saved := rig.signIn(t, "github", "person@example.invalid", "one")
+	if saved["profileArnMissing"] != true {
+		t.Fatalf("first sign-in %v", saved)
+	}
+	rig.fixture.lookupEmpty = false
+	status, started, body := rig.start(t, `{"connectionId":"`+saved["id"].(string)+`"}`)
+	if status != http.StatusOK {
+		t.Fatalf("reauthenticate: %d %s", status, body)
+	}
+	status, answer, body := rig.callback(t, started.State, "kiro://kiro.kiroAgent/authenticate-success?code=two&state="+started.State)
+	if status != http.StatusOK || answer["outcome"] != "reauthenticated" || answer["profileArnMissing"] != false {
+		t.Fatalf("reauthenticate: %d %s", status, body)
+	}
+	if err := servable(t, rig); err != nil {
+		t.Fatalf("after reauthenticate: %v", err)
 	}
 }

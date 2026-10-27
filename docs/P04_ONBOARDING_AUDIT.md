@@ -93,6 +93,13 @@ Code's `auth.json` goes in the Xiaomi import as-is. Both pass through the
 admin-session-gated, size-bounded `/import` endpoint, are sealed at rest, and are
 never echoed.
 
+#218 makes this the dashboard's own journey: each import names where its file or
+value lives on the operator's computer (Cursor's `state.vscdb` keys, Kiro's
+`~/.aws/sso/cache`, MiMo's `auth.json`, iFlow's `BXAuth` cookie, GitLab's PAT
+scopes), takes a file the operator chooses in the browser or a masked paste, and
+checks its shape before sending it. The browser reads only the file the operator
+picked; the server still reads no host path.
+
 What is **not** on this host, and left named rather than invented:
 
 - **MiMo Desktop's account-session `passToken`.** It lives in Desktop's Chromium cookie
@@ -150,7 +157,7 @@ flow. The pin's flow and what Routeweft now does, step by step:
 | `connectionsRepo.js:228-283`: an oauth sign-in with a stored email renews that row | `Flow.RenewsSameAccount` → the device rule (`deviceMatch`): same identity is `updated` in place, another is `added`. |
 | `KiroAuthModal.js:243-273`: the Google/GitHub buttons are rendered with `hidden` | Shown, as "Sign in with Google" and "Sign in with GitHub", because every step behind them is wired and tested (`p219_kiro_social_test.go`). Each is fixed to its method; there is no field to retype it. |
 | no pin equivalent | Reauthenticate renews a Google/GitHub connection with the method that made it (`signInMethod` on the connection read model) and refuses any other Kiro connection (`oauth_reauth_unsupported`), so a Builder ID row is never rewritten as a social one. |
-| `tokenRefresh/providers.js:316-324`, `providers/index.js:175-179`: look up a missing ARN (`fetchKiroProfileArn`) | `kiro.go:kiroProfilePatch` / `kiroProfileARN` on refresh, device approval, token import and social sign-in; a stored ARN is never replaced or looked up; best effort, as in the pin. The pin's social exchange stores a missing ARN as missing and fills it at the first refresh; Routeweft looks it up at sign-in too, because `wire/kiro.go:kiroTarget` refuses to serve a Kiro connection without one. |
+| `tokenRefresh/providers.js:316-324`, `providers/index.js:175-179`: look up a missing ARN (`fetchKiroProfileArn`) | `kiro.go:kiroProfilePatch` / `kiroProfileARN` on refresh, device approval, token import and social sign-in; a stored ARN is never replaced or looked up; best effort, as in the pin. The pin's social exchange stores a missing ARN as missing (`social-exchange/route.js:40-52`, `testStatus: "active"`), serves without the profile header (`open-sse/executors/kiro.js:276-279`) and fills it at the first refresh; Routeweft looks it up at sign-in too, because `wire/kiro.go:kiroTarget` refuses to serve a Kiro connection without one. When the lookup also finds none, the credential is still saved (as in the pin, so the refresh can retry), but the result carries `profileArnMissing` and the dashboard reports **Not usable yet** with the recovery: name the ARN (`PATCH /connections/{id}` `secret.providerData.profileArn`), or Reauthenticate (`TestKiroSocialMissingProfileARNIsSurfacedAndRecoverable`). |
 
 AWS SSO (Builder ID and IDC), API-key, token import, CLIProxyAPI (`external_idp`)
 and their refresh branches are unchanged; the parity gate still reads `device_code`

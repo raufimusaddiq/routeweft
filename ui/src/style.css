@@ -290,6 +290,10 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .oauth-panel a.button-secondary { justify-self: start; text-decoration: none; }
 .oauth-actions { display: flex; gap: 8px; }
 .oauth-panel textarea.bulk-input { width: 100%; min-height: 160px; resize: vertical; font-family: var(--font-mono); }
+.file-pick { position: relative; overflow: hidden; }
+.file-pick input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.file-pick:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+.import-privacy { color: var(--text-muted); font-size: var(--t-body); }
 .bulk-results { display: grid; gap: 4px; margin: 6px 0 0; padding: 0; list-style: none; color: var(--text-muted); font-size: var(--t-body); }
 .journey-notes { display: grid; gap: 6px; margin: 0; padding-left: 18px; color: var(--text-muted); font-size: var(--t-body); }
 .journey-project { display: grid; gap: 10px; }

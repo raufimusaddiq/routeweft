@@ -191,6 +191,19 @@ export function projectNote(result: ProjectState): string | null {
   return null
 }
 
+// A Kiro connection the sign-in found no CodeWhisperer profile for (#219): it is
+// saved, as the reference saves it, but Routeweft refuses to serve it until it
+// has a profile ARN, so the result says so and how to recover.
+export function profileArnNote(result: { providerId?: string; profileArnMissing?: boolean }): string | null {
+  if (result.providerId !== 'kiro' || !result.profileArnMissing) return null
+  return 'Kiro reported no CodeWhisperer profile for this account and the profile lookup found none, so requests are refused until the connection has one. Paste the profile ARN from the Kiro IDE below, or sign in to the Kiro IDE once to create the profile and Reauthenticate. The next token refresh also looks it up again.'
+}
+
+// A CodeWhisperer profile ARN: arn:aws:codewhisperer:<region>:<account>:profile/<id>.
+export function validProfileArn(value: string): boolean {
+  return /^arn:aws:codewhisperer:[a-z]{2}(-[a-z]+)+-\d+:\d{12}:profile\/[A-Za-z0-9_-]+$/.test(value.trim())
+}
+
 // A Google Cloud project id: 6-30 lowercase letters, digits and hyphens,
 // starting with a letter, optionally behind an organization domain
 // ("example.com:my-project"). Checked before it is saved so a typo is caught here.

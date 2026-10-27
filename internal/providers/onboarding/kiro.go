@@ -367,7 +367,7 @@ func kiroImport(ctx context.Context, p Params) (Result, error) {
 	}
 	var document map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(input), &document); err != nil {
-		return Result{}, errors.New("kiro import expects a JSON object")
+		return Result{}, invalidInput("kiro import expects a JSON object")
 	}
 	// Only the endpoint or the auth method marks a CLIProxyAPI export. An access
 	// token does not: kiro-auth-token.json carries one beside its refresh token, and
@@ -401,7 +401,7 @@ func jsonString(document map[string]json.RawMessage, keys ...string) string {
 func kiroTokenImport(ctx context.Context, p Params, document map[string]json.RawMessage) (Result, error) {
 	refresh := jsonString(document, "refreshToken", "refresh_token")
 	if refresh == "" {
-		return Result{}, errors.New("kiro refresh token is required")
+		return Result{}, invalidInput("kiro refresh token is required")
 	}
 	clientID, clientSecret := jsonString(document, "clientId", "client_id"), jsonString(document, "clientSecret", "client_secret")
 	idc := clientID != "" && clientSecret != ""
@@ -472,28 +472,28 @@ func kiroEmail(accessToken string) string {
 // restricted to Microsoft hosts.
 func kiroCLIProxyImport(p Params, document map[string]json.RawMessage) (Result, error) {
 	if method := jsonString(document, "auth_method", "authMethod"); method != "" && method != "external_idp" {
-		return Result{}, errors.New("only external_idp Kiro auth is supported by this importer")
+		return Result{}, invalidInput("only external_idp Kiro auth is supported by this importer")
 	}
 	access := jsonString(document, "access_token", "accessToken")
 	refresh := jsonString(document, "refresh_token", "refreshToken")
 	clientID := jsonString(document, "client_id", "clientId")
 	endpoint, err := validateMicrosoftTokenEndpoint(jsonString(document, "token_endpoint", "tokenEndpoint"))
 	if err != nil {
-		return Result{}, err
+		return Result{}, invalidInput(err.Error())
 	}
 	profileARN := jsonString(document, "profile_arn", "profileArn")
 	scope := kiroScope(document)
 	switch {
 	case access == "":
-		return Result{}, errors.New("access_token is required")
+		return Result{}, invalidInput("access_token is required")
 	case refresh == "":
-		return Result{}, errors.New("refresh_token is required")
+		return Result{}, invalidInput("refresh_token is required")
 	case clientID == "":
-		return Result{}, errors.New("client_id is required")
+		return Result{}, invalidInput("client_id is required")
 	case scope == "":
-		return Result{}, errors.New("scopes is required")
+		return Result{}, invalidInput("scopes is required")
 	case profileARN == "":
-		return Result{}, errors.New("profile_arn is required")
+		return Result{}, invalidInput("profile_arn is required")
 	}
 	identity := jsonString(document, "email")
 	if claims := jwtClaims(access); identity == "" && claims != nil {

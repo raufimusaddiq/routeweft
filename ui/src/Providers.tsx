@@ -8,7 +8,8 @@ import { READINESS_LABEL, readinessNote, readinessStatus, type Readiness } from 
 import { attemptExpired, attemptStillOpen, cancelResult, connectMethods, phaseForError, type AttemptPhase, type Completion, type ConnectMethod, type SignInMethod, type SignInMode } from './signIn'
 import { bulkSummary, canReauthenticate, closeSignInWindow, duplicateNote, openSignInWindow, outcomeMessage, parseBulkInput, reauthMethod, sendSignInWindow, signInURL, type BulkResponse, type SignInWindow } from './onboarding'
 import { quotaLine, quotaQuery, type QuotaItem } from './quotaView'
-import { browserJourney, checkedNote, copilotNote, DEVICE_REQUEST_TIMEOUT_MS, deviceCopyItems, deviceJourney, devicePollDelay, devicePollingOver, identityPrompt, importJourney, projectNote, requestBound, validProjectId } from './journeys'
+import { browserJourney, checkedNote, copilotNote, DEVICE_REQUEST_TIMEOUT_MS, deviceCopyItems, deviceJourney, devicePollDelay, devicePollingOver, identityPrompt, importJourney, profileArnNote, projectNote, requestBound, validProfileArn, validProjectId } from './journeys'
+import { BULK_MAX_BYTES, IMPORT_MAX_BYTES, expiredNote, importShapes, missingMeta as missingImportMeta, readBulkFiles, readCredentialFile, savedReadinessNote } from './credentialImport'
 
 function ReadinessTag({ provider }: { provider: { readiness?: Readiness } }) {
   const status = readinessStatus(provider)
@@ -16,7 +17,7 @@ function ReadinessTag({ provider }: { provider: { readiness?: Readiness } }) {
 }
 type Provider = { id: string; transports: string[]; auth: string; authModes: string[]; defaultBaseURL?: string; modelCatalog: string; passthroughModels: boolean; staticModels?: string[]; reportsUsage: boolean; flowType?: string; signInModes?: SignInMode[]; metaKeys?: string[]; signInMethods?: SignInMethod[]; bulkImport?: boolean; configuredNodes: number; enabledAccounts: number; readiness?: Readiness }
 type Node = { id: string; kind: string; providerId: string; name: string; prefix?: string; baseUrl?: string; transports: string[] }
-type Connection = { id: string; nodeId: string; providerId: string; name: string; authKind: string; identity: string; enabled: boolean; priority: number; proxyPoolId?: string; connectionProxy?: ConnectionProxy; credentialConfigured: boolean; signInMethod?: string; outcome?: string; plan?: string; project?: string; projectMissing?: boolean; copilotMissing?: boolean }
+type Connection = { id: string; nodeId: string; providerId: string; name: string; authKind: string; identity: string; enabled: boolean; priority: number; proxyPoolId?: string; connectionProxy?: ConnectionProxy; credentialConfigured: boolean; signInMethod?: string; outcome?: string; plan?: string; project?: string; projectMissing?: boolean; profileArnMissing?: boolean; copilotMissing?: boolean; expired?: boolean; refreshable?: boolean }
 type Model = { providerId: string; id: string; name?: string; contextWindow?: number; capabilities: string[]; disabled: boolean; custom?: boolean }
 type Alias = { alias: string; providerId: string; modelId: string }
 type Pricing = { providerId: string; modelId: string; inputPerMTok?: number; outputPerMTok?: number; cacheReadPerMTok?: number; cacheWritePerMTok?: number }
@@ -131,6 +132,15 @@ export function Providers({ onUnauthorized }: Props) {
   // gitlab, …), so one state made the second field overwrite the first.
   const [oauthInput, setOauthInput] = useState('')
   const [importInput, setImportInput] = useState('')
+  // The import's shape (Kiro's API key, IDE token file or CLIProxyAPI export), the
+  // chosen file's name and size (never its contents), whether the masked field is
+  // revealed, and a problem found before sending (#218).
+  const [importShapeId, setImportShapeId] = useState('')
+  const [importFile, setImportFile] = useState('')
+  const [importShown, setImportShown] = useState(false)
+  const [importError, setImportError] = useState('')
+  const [bulkFile, setBulkFile] = useState('')
+  const [bulkShown, setBulkShown] = useState(false)
   // The sign-in window opened in the click that started the attempt, and whether
   // the browser refused it (the panel then points at the link instead).
   const popupRef = useRef<SignInWindow | null>(null)
@@ -145,6 +155,8 @@ export function Providers({ onUnauthorized }: Props) {
   const [afterLogin, setAfterLogin] = useState<{ check?: string; quota?: string }>({})
   // The Code Assist project an operator names after a Google sign-in found none.
   const [projectInput, setProjectInput] = useState('')
+  // The profile ARN an operator names after a Kiro sign-in found none (#219).
+  const [profileArnInput, setProfileArnInput] = useState('')
   const [deviceFlow, setDeviceFlow] = useState<DeviceFlow | null>(null)
   // Which device value was last copied ('code' or 'link'), or why copying failed.
   const [copied, setCopied] = useState('')
@@ -283,6 +295,9 @@ export function Providers({ onUnauthorized }: Props) {
   // The provider's own wording and preconditions for its device approval (#217).
   const device = method?.kind === 'device' ? deviceJourney(selected, metaInput) : null
   const deviceMissingMeta = device ? device.requiredMeta.filter(key => !(metaInput[key] ?? '').trim()) : []
+  const shapes = method?.kind === 'import' ? importShapes(selected) : []
+  const importShape = shapes.find(shape => shape.id === importShapeId) ?? shapes[0]
+  const importMissing = importShape ? missingImportMeta(importShape, metaInput) : []
   const selectedNode = nodes.find(node => node.kind === 'generic' && node.providerId === selected)
   const selectedConnections = connections.filter(connection => connection.providerId === selected).sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name))
   const modelList = usePagedList<Model>('models', selected, reload, onUnauthorized)
@@ -523,7 +538,13 @@ export function Providers({ onUnauthorized }: Props) {
     setOauthFlow(null)
     setOauthInput('')
     setImportInput('')
+    setImportShapeId('')
+    setImportFile('')
+    setImportShown(false)
+    setImportError('')
     setBulkInput('')
+    setBulkFile('')
+    setBulkShown(false)
     setBulkError('')
     setBulkResult(null)
     setAfterLogin({})
@@ -570,7 +591,11 @@ export function Providers({ onUnauthorized }: Props) {
   // An import has no attempt to track: the credential is validated and stored in
   // one request.
   async function importOnly() {
-    if (!selectedProvider || !importInput.trim() || (askIdentity && !account.identity.trim())) return
+    if (!selectedProvider || !importShape || !importInput.trim() || importMissing.length > 0 || (askIdentity && !account.identity.trim())) return
+    // The shape is checked here first, so a wrong file is named before it is sent.
+    const problem = importShape.check(importInput, metaInput)
+    setImportError(problem ?? '')
+    if (problem) return
     setOutcome(null)
     await action('oauth-import', '', async () => {
       try {
@@ -593,6 +618,7 @@ export function Providers({ onUnauthorized }: Props) {
   // cleared as soon as the server may hold it, whatever the answer.
   async function importBulk() {
     if (!selectedProvider || !bulkInput.trim()) return
+    if (new Blob([bulkInput]).size > BULK_MAX_BYTES) { setBulkError('The pasted accounts are larger than 1 MB; import them in smaller batches.'); return }
     const parsed = parseBulkInput(bulkInput)
     setBulkResult(null)
     if ('error' in parsed) { setBulkError(parsed.error); return }
@@ -604,8 +630,28 @@ export function Providers({ onUnauthorized }: Props) {
         // No answer: part of the batch may have been saved.
         if (errorCodeOf(cause) === undefined && !(cause instanceof RequestError)) throw new Error('No answer from the server; some accounts may have been saved. Check the connections below before importing again.')
         throw cause
-      } finally { setBulkInput('') }
+      } finally { setBulkInput(''); setBulkFile('') }
     })
+  }
+
+  // A file the operator chose for an import. Its contents go into the masked field
+  // (and stay there, masked, until sent or the panel closes); only its name and
+  // size are shown.
+  async function chooseImportFile(files: FileList | null) {
+    const file = files?.[0]
+    if (!file) return
+    const read = await readCredentialFile(file, IMPORT_MAX_BYTES)
+    if ('error' in read) { setImportError(read.error); setImportFile(''); return }
+    setImportInput(read.text); setImportFile(read.label); setImportShown(false); setImportError('')
+  }
+
+  // Exported account files for bulk import, joined into one array.
+  async function chooseBulkFiles(files: FileList | null) {
+    if (!files?.length) return
+    const read = await readBulkFiles(Array.from(files), BULK_MAX_BYTES)
+    setBulkResult(null)
+    if ('error' in read) { setBulkError(read.error); setBulkFile(''); return }
+    setBulkInput(JSON.stringify(read.accounts)); setBulkFile(read.label); setBulkError('')
   }
 
   // After a sign-in: check the saved connection and read its quota, without
@@ -639,6 +685,18 @@ export function Providers({ onUnauthorized }: Props) {
       await send(`/connections/${encodeURIComponent(connection.id)}`, 'PATCH', { secret: { providerData: { projectId: project } } })
       setOutcome(current => current?.connection?.id === connection.id ? { ...current, connection: { ...current.connection, project, projectMissing: false } } : current)
       setProjectInput('')
+    })
+  }
+
+  // Names the CodeWhisperer profile of a Kiro connection whose sign-in found none.
+  // Only the ARN is sent; the server keeps the stored credential.
+  async function saveProfileArn(connection: Connection) {
+    const profileArn = profileArnInput.trim()
+    if (!validProfileArn(profileArn)) return
+    await action(`profile-${connection.id}`, '', async () => {
+      await send(`/connections/${encodeURIComponent(connection.id)}`, 'PATCH', { secret: { providerData: { profileArn } } })
+      setOutcome(current => current?.connection?.id === connection.id ? { ...current, connection: { ...current.connection, profileArnMissing: false } } : current)
+      setProfileArnInput('')
     })
   }
 
@@ -796,10 +854,13 @@ export function Providers({ onUnauthorized }: Props) {
           })}
         </div>}
         {outcome && <div className="wide-field oauth-panel" role={outcome.phase === 'success' ? 'status' : 'alert'} aria-label="Sign-in result">
-          <p><span className={`state-tag ${outcome.phase === 'success' ? 'state-good' : 'state-warn'}`}>{ATTEMPT_LABEL[outcome.phase]}</span> {outcome.message}</p>
+          <p><span className={`state-tag ${outcome.phase === 'success' && !outcome.connection?.profileArnMissing ? 'state-good' : 'state-warn'}`}>{outcome.phase === 'success' && outcome.connection?.profileArnMissing ? 'Not usable yet' : ATTEMPT_LABEL[outcome.phase]}</span> {outcome.message}</p>
           {outcome.connection && <dl className="ed-facts" aria-label="Signed-in account"><Fact label="Account" value={outcome.connection.identity || outcome.connection.name} />{outcome.connection.plan && <Fact label="Plan" value={outcome.connection.plan} />}{outcome.connection.project && <Fact label="Code Assist project" value={outcome.connection.project} />}</dl>}
-          {outcome.connection && outcome.phase === 'success' && <p>{checkedNote(outcome.connection.providerId)}</p>}
+          {outcome.connection && outcome.phase === 'success' && !outcome.connection.profileArnMissing && <p>{checkedNote(outcome.connection.providerId)}</p>}
+          {outcome.connection && profileArnNote(outcome.connection) && <div className="journey-project" role="group" aria-label="Kiro profile"><p role="alert">{profileArnNote(outcome.connection)}</p><label>Profile ARN<input value={profileArnInput} placeholder="arn:aws:codewhisperer:us-east-1:123456789012:profile/ABC" autoComplete="off" spellCheck={false} onChange={event => setProfileArnInput(event.target.value)} /></label>{profileArnInput.trim() && !validProfileArn(profileArnInput) && <small role="alert">A profile ARN looks like arn:aws:codewhisperer:region:account:profile/id.</small>}<div className="oauth-actions"><button className="button-secondary" type="button" disabled={busy !== '' || !validProfileArn(profileArnInput)} onClick={() => void saveProfileArn(outcome.connection!)}>{busy === `profile-${outcome.connection.id}` ? 'Saving…' : 'Save profile ARN'}</button></div></div>}
           {outcome.connection && copilotNote(outcome.connection) && <p role="alert">{copilotNote(outcome.connection)}</p>}
+          {outcome.connection && expiredNote(outcome.connection) && <p role="alert"><span className="state-tag state-warn">Expired</span> {expiredNote(outcome.connection)}</p>}
+          {outcome.connection && selectedProvider && savedReadinessNote(readinessStatus(selectedProvider), providerLabel(outcome.connection.providerId)) && <p role="note"><span className="state-tag state-warn">{READINESS_LABEL[readinessStatus(selectedProvider)]}</span> {savedReadinessNote(readinessStatus(selectedProvider), providerLabel(outcome.connection.providerId))}</p>}
           {outcome.connection && projectNote(outcome.connection) && <div className="journey-project" role="group" aria-label="Code Assist project"><p role="alert">{projectNote(outcome.connection)}</p><label>Project ID<input value={projectInput} placeholder="my-gcp-project" autoComplete="off" spellCheck={false} onChange={event => setProjectInput(event.target.value)} /></label>{projectInput.trim() && !validProjectId(projectInput) && <small role="alert">A project ID is 6 to 30 lowercase letters, digits or hyphens, starting with a letter.</small>}<div className="oauth-actions"><button className="button-secondary" type="button" disabled={busy !== '' || !validProjectId(projectInput)} onClick={() => void saveProject(outcome.connection!)}>{busy === `project-${outcome.connection.id}` ? 'Saving…' : 'Save project'}</button></div></div>}
           {outcome.connection && <div className="oauth-actions"><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void checkSignedIn(outcome.connection!)}>{busy === `signed-check-${outcome.connection.id}` ? 'Checking…' : 'Check connection'}</button><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void readSignedInQuota(outcome.connection!)}>{busy === `signed-quota-${outcome.connection.id}` ? 'Reading…' : 'Read quota'}</button></div>}
           {afterLogin.check && <p role="status">{afterLogin.check}</p>}{afterLogin.quota && <p role="status">Quota: {afterLogin.quota}</p>}
@@ -818,14 +879,27 @@ export function Providers({ onUnauthorized }: Props) {
               <div className="oauth-actions">{deviceCopyItems(deviceFlow).some(item => item.key === 'link') && <a className="button-secondary" href={deviceFlow.verificationUrl} target="_blank" rel="noopener noreferrer">Open {providerLabel(deviceFlow.provider)} sign-in page</a>}<button className="button-ghost" type="button" disabled={busy === 'oauth-cancel'} onClick={() => void cancelAttempt()}>{busy === 'oauth-cancel' ? 'Cancelling…' : 'Cancel sign-in'}</button></div>
               <p role="status"><span className="state-tag">Pending</span> Waiting for approval{deviceFlow.expiresAt ? `; the code expires at ${new Date(deviceFlow.expiresAt).toLocaleTimeString()}` : ''}.</p>{pastExpiry && <p>The time limit has passed. A sign-in approved before it may still be saving, so this waits for the server's answer.</p>}{attemptNote && <p role="alert">{attemptNote}</p>}{pollStalled && <div><button className="button-secondary" type="button" onClick={() => { setAttemptNote(''); setPollStalled(false) }}>Check again</button></div>}</>}
         </div>}
-        {method.kind === 'import' && !outcome?.connection && <div className="wide-field oauth-panel" role="group" aria-label={method.label}>
-          <p>{importJourney(selected).note ?? `Paste the credential ${providerLabel(selected)} issued. It is validated with the provider before it is stored${askIdentity ? '' : ', and the account is read from it'}.`}</p>
-          <label>{method.authKind === 'cookie' ? 'Cookie' : method.authKind === 'api-key' ? 'API key or token' : 'Token'}<input type="password" autoComplete="off" spellCheck={false} value={importInput} onChange={event => setImportInput(event.target.value)} /></label>
-          <div className="oauth-actions"><button className="button-primary" type="button" disabled={busy !== '' || !importInput.trim() || (askIdentity && !account.identity.trim())} onClick={() => void importOnly()}>{busy === 'oauth-import' ? 'Saving…' : 'Import credential'}</button></div>
+        {method.kind === 'import' && !outcome?.connection && importShape && <div className="wide-field oauth-panel" role="group" aria-label={method.label}>
+          {shapes.length > 1 && <fieldset className="access-picker"><legend>What you have</legend><div className="access-modes" role="radiogroup" aria-label="Import shape">
+            {shapes.map(shape => <label key={shape.id}><input type="radio" name="import-shape" checked={shape.id === importShape.id} onChange={() => { setImportShapeId(shape.id); setImportInput(''); setImportFile(''); setImportError('') }} /><span><strong>{shape.label}</strong></span></label>)}
+          </div></fieldset>}
+          {importShape.steps.length > 0 ? <ol className="journey-notes" aria-label={`Where to find the ${importShape.label}`}>{importShape.steps.map(step => <li key={step}>{step}</li>)}</ol>
+            : <p>{importJourney(selected).note ?? `Paste the credential ${providerLabel(selected)} issued. It is validated with the provider before it is stored${askIdentity ? '' : ', and the account is read from it'}.`}</p>}
+          <p className="import-privacy">Routeweft never reads credentials from this server’s disk or your computer on its own; only what you paste or choose here is sent, then sealed at rest.</p>
+          {importShape.json ? <>
+            <label>{importShape.field}<MaskedCredential shown={importShown} value={importInput} onChange={value => { setImportInput(value); setImportFile(''); setImportError('') }} /></label>
+            <div className="oauth-actions"><label className="button-secondary file-pick">Choose file…<input type="file" accept=".json,application/json,text/plain" onChange={event => { void chooseImportFile(event.target.files); event.target.value = '' }} /></label><button className="button-ghost" type="button" aria-pressed={importShown} disabled={!importInput} onClick={() => setImportShown(value => !value)}>{importShown ? 'Hide' : 'Show'}</button></div>
+            {importFile && <p role="status">Loaded {importFile}. Its contents are masked above.</p>}
+          </> : <label>{importShape.field}<input type="password" autoComplete="off" spellCheck={false} value={importInput} onChange={event => { setImportInput(event.target.value); setImportError('') }} /></label>}
+          {importMissing.length > 0 && <p role="note">Enter the {importMissing.map(key => META_FIELDS.find(field => field.key === key)?.label ?? key).join(' and ')} above to import.</p>}
+          {importError && <p role="alert">{importError}</p>}
+          <div className="oauth-actions"><button className="button-primary" type="button" disabled={busy !== '' || !importInput.trim() || importMissing.length > 0 || (askIdentity && !account.identity.trim())} onClick={() => void importOnly()}>{busy === 'oauth-import' ? 'Saving…' : 'Import credential'}</button></div>
         </div>}
         {method.kind === 'bulk' && !outcome?.connection && <div className="wide-field oauth-panel" role="group" aria-label={method.label}>
-          <p>Paste accounts exported from {providerLabel(selected)}: a JSON array of objects with accessToken, and ideally refreshToken and idToken. Each is stored sealed. {duplicateNote(selected) ? 'An account that is already connected updates its connection instead of adding a duplicate.' : ''}</p>
-          <label>Exported accounts (JSON)<textarea className="bulk-input" autoComplete="off" spellCheck={false} value={bulkInput} onChange={event => { setBulkInput(event.target.value); setBulkError('') }} /></label>
+          <p>Paste accounts exported from {providerLabel(selected)}, or choose one or more exported .json files: a JSON array of objects with accessToken, and ideally refreshToken and idToken (snake_case or camelCase). Each is stored sealed; each item is reported on its own, so a bad item does not stop the rest. An account that is already connected updates its connection instead of adding a duplicate.</p>
+          <label>Exported accounts (JSON)<MaskedCredential shown={bulkShown} value={bulkInput} onChange={value => { setBulkInput(value); setBulkFile(''); setBulkError('') }} /></label>
+          <div className="oauth-actions"><label className="button-secondary file-pick">Choose files…<input type="file" multiple accept=".json,application/json" onChange={event => { void chooseBulkFiles(event.target.files); event.target.value = '' }} /></label><button className="button-ghost" type="button" aria-pressed={bulkShown} disabled={!bulkInput} onClick={() => setBulkShown(value => !value)}>{bulkShown ? 'Hide' : 'Show'}</button></div>
+          {bulkFile && <p role="status">Loaded {bulkFile}. The accounts are masked above.</p>}
           {bulkError && <p role="alert">{bulkError}</p>}
           <div className="oauth-actions"><button className="button-primary" type="button" disabled={busy !== '' || !bulkInput.trim()} onClick={() => void importBulk()}>{busy === 'bulk-import' ? 'Importing…' : 'Import all'}</button></div>
           {bulkResult && <div role="status" aria-label="Bulk import result"><p><strong>{bulkResult.headline}</strong></p><ul className="bulk-results">{bulkResult.rows.map(row => <li key={row.item}><span className={`state-tag ${row.ok ? 'state-good' : 'state-warn'}`}>{row.ok ? 'Saved' : 'Failed'}</span> Item {row.item}: {row.text}</li>)}</ul></div>}
@@ -857,4 +931,16 @@ export function Providers({ onUnauthorized }: Props) {
       <section className="detail-panel" aria-labelledby="pricing-title"><div className="section-heading"><div><h3 id="pricing-title">Pricing overrides</h3><p>Rates per million tokens. Empty fields stay unset.</p></div></div><form className="provider-inline-form pricing-form" onSubmit={event => void addPricing(event)}><input required list="provider-model-choices" aria-label="Pricing model" placeholder="Model ID" value={price.modelId} onChange={event => setPrice({...price,modelId:event.target.value})} /><input aria-label="Input price per million" type="number" min="0" step="any" placeholder="Input / MTok" value={price.input} onChange={event => setPrice({...price,input:event.target.value})} /><input aria-label="Output price per million" type="number" min="0" step="any" placeholder="Output / MTok" value={price.output} onChange={event => setPrice({...price,output:event.target.value})} /><input aria-label="Cache read price per million" type="number" min="0" step="any" placeholder="Cache read" value={price.cacheRead} onChange={event => setPrice({...price,cacheRead:event.target.value})} /><input aria-label="Cache write price per million" type="number" min="0" step="any" placeholder="Cache write" value={price.cacheWrite} onChange={event => setPrice({...price,cacheWrite:event.target.value})} /><button className="button-secondary" type="submit">Save rates</button></form>{priceList.error && <p className="auth-error" role="alert">{priceList.error}</p>}{priceList.items.map(item => <div className="model-row" key={item.modelId}><code>{item.modelId}</code><span>in {item.inputPerMTok ?? '—'} · out {item.outputPerMTok ?? '—'}</span><span>cache {item.cacheReadPerMTok ?? '—'} / {item.cacheWritePerMTok ?? '—'}</span><button className="button-danger" type="button" onClick={() => void action(`price-${item.modelId}`,'Pricing override deleted.',() => send('/pricing','DELETE',{providerId:selected,modelId:item.modelId}).then(() => undefined))}>Delete</button></div>)}<Pager label="Pricing" page={priceList.page} total={priceList.total} loading={priceList.loading} onPage={priceList.setPage} /></section>
     </>}</section></div>
   </div>
+}
+
+// A credential field that may hold a whole JSON file (#218). Masked, it is a
+// native password field, which every browser masks (a CSS text-security rule is
+// Chromium- and WebKit-only). The browser drops line breaks from what that field
+// displays, which in JSON is only whitespace, and the text as pasted or read from
+// the file stays in state, so what is sent is unchanged. Shown, it is a plain
+// multi-line field the operator asked to see.
+function MaskedCredential({ shown, value, onChange }: { shown: boolean; value: string; onChange: (value: string) => void }) {
+  return shown
+    ? <textarea className="bulk-input" autoComplete="off" spellCheck={false} value={value} onChange={event => onChange(event.target.value)} />
+    : <input type="password" autoComplete="off" spellCheck={false} value={value} onChange={event => onChange(event.target.value)} />
 }

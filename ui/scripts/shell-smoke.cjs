@@ -117,6 +117,10 @@ const { join } = require('node:path');
     { id: 'codex', bulkImport: true, transports: ['openai-responses'], auth: 'oauth', authModes: [], modelCatalog: 'static', passthroughModels: false, reportsUsage: true, flowType: 'authorization_code_pkce', signInModes: ['browser', 'import'], signInMethods: [{ mode: 'browser', authKind: 'oauth', resolvesIdentity: true, completion: 'redirect-url', loopbackRedirect: 'http://localhost:1455/auth/callback' }, { mode: 'import', authKind: 'oauth', resolvesIdentity: true }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'ready', served: true } },
     { id: 'github', transports: ['openai-chat'], auth: 'oauth', authModes: [], modelCatalog: 'static', passthroughModels: false, reportsUsage: true, flowType: 'device_code', signInModes: ['device'], signInMethods: [{ mode: 'device', authKind: 'oauth', resolvesIdentity: false }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'ready', served: true } },
     { id: 'kimchi', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key', 'oauth'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, flowType: 'browser_token', signInModes: ['browser'], signInMethods: [{ mode: 'browser', authKind: 'oauth', resolvesIdentity: false, completion: 'token' }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'ready', served: true } },
+    // #218: specialized imports. Cursor is import-only and unavailable in this
+    // build; Kiro's import takes a key, an IDE token file or a CLIProxyAPI export.
+    { id: 'cursor', transports: ['cursor'], auth: 'oauth', authModes: [], modelCatalog: 'static', passthroughModels: false, reportsUsage: false, flowType: 'import_token', signInModes: ['import'], metaKeys: ['machineId'], signInMethods: [{ mode: 'import', authKind: 'oauth', resolvesIdentity: true, metaKeys: ['machineId'] }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'unavailable', served: false, reason: 'smoke fixture: no ingress binding' } },
+    { id: 'kiro', transports: ['anthropic'], auth: 'oauth', authModes: ['oauth', 'api-key'], modelCatalog: 'static', passthroughModels: false, reportsUsage: true, flowType: 'device_code', signInModes: ['import'], metaKeys: ['region'], signInMethods: [{ mode: 'import', authKind: 'api-key', resolvesIdentity: false, metaKeys: ['region'] }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'ready', served: true } },
   ];
   const fulfillCancel = (route, mode) => {
     if (mode === 'abort') return route.abort('failed');
@@ -149,6 +153,8 @@ const { join } = require('node:path');
   let signInProviders = false;
   let signInExpiresAt = '';
   const signInStarts = [];
+  // #218: bodies the specialized import panels sent.
+  const credentialImports = [];
   const signInCancels = [];
   const signInCallbacks = [];
   const signInPatches = [];
@@ -265,7 +271,7 @@ const { join } = require('node:path');
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: createdKeyID, revoked: true, configRevision: 10 }) });
   }
   if (url.pathname === '/admin/v1/providers' && method === 'GET') {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [...(signInProviders ? signInFixtureProviders : []), { id: 'openai', transports: ['openai-chat','openai-responses'], auth: 'api-key', authModes: ['api-key'], defaultBaseURL: 'https://api.openai.com/v1', modelCatalog: 'static', passthroughModels: false, reportsUsage: false, configuredNodes: 1, enabledAccounts: 1, readiness: { status: 'ready', served: true } }, { id: 'openrouter', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'unavailable', served: false, reason: 'smoke fixture: wire not bound' } }], page: 1, pageSize: 100, total: signInProviders ? 5 : 2 }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [...(signInProviders ? signInFixtureProviders : []), { id: 'openai', transports: ['openai-chat','openai-responses'], auth: 'api-key', authModes: ['api-key'], defaultBaseURL: 'https://api.openai.com/v1', modelCatalog: 'static', passthroughModels: false, reportsUsage: false, configuredNodes: 1, enabledAccounts: 1, readiness: { status: 'ready', served: true } }, { id: 'openrouter', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'unavailable', served: false, reason: 'smoke fixture: wire not bound' } }], page: 1, pageSize: 100, total: signInProviders ? 7 : 2 }) });
   }
   if (url.pathname === '/admin/v1/oauth/codex/start' && method === 'POST') {
     signInStarts.push(route.request().postDataJSON());
@@ -303,6 +309,13 @@ const { join } = require('node:path');
     // A ChatGPT account whose tokens name no email is saved without an identity
     // and labelled "Account N", as the reference does (#239).
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-codex', nodeId: 'node-codex', providerId: 'codex', name: 'Account 1', authKind: 'oauth', identity: '', enabled: true, priority: 0, credentialConfigured: true, outcome: 'added', plan: 'plus' }) });
+  }
+  if ((url.pathname === '/admin/v1/oauth/cursor/import' || url.pathname === '/admin/v1/oauth/kiro/import') && method === 'POST') {
+    const body = route.request().postDataJSON();
+    credentialImports.push(body);
+    if (url.pathname.includes('cursor')) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-cursor', nodeId: 'node-cursor', providerId: 'cursor', name: 'cursor@example.test', authKind: 'oauth', identity: 'cursor@example.test', enabled: true, priority: 0, credentialConfigured: true, outcome: 'added' }) });
+    if (credentialImports.filter(item => item.identity === 'kiro@example.test').length === 1) return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: { code: 'identity_conflict', message: 'this account is already connected, with a different credential mode or username; edit or delete that connection first' } }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-kiro', nodeId: 'node-kiro', providerId: 'kiro', name: 'kiro@example.test', authKind: 'oauth', identity: 'kiro@example.test', enabled: true, priority: 0, credentialConfigured: true, outcome: 'updated', expired: true, refreshable: true }) });
   }
   if (url.pathname === '/admin/v1/oauth/codex/bulk-import' && method === 'POST') {
     bulkImports.push(route.request().postDataJSON());
@@ -791,6 +804,65 @@ const { join } = require('node:path');
   assert.equal(await signInForm.getByLabel('Exported accounts (JSON)').inputValue(), '', 'the pasted export is cleared once sent');
   assert.equal((await page.content()).includes(bulkSecret), false, 'no pasted token stays in the page');
   await signInForm.getByRole('button', { name: 'Close', exact: true }).click();
+  await signInForm.waitFor({ state: 'detached' });
+  // #218: Cursor's import names where its token and machine id live, waits for the
+  // machine id, checks the token before sending it, and says after the save that
+  // this build does not serve Cursor.
+  await page.fill('#provider-filter', 'cursor');
+  await page.locator('.provider-option', { hasText: 'cursor' }).first().click();
+  await page.getByRole('button', { name: 'Add connection', exact: true }).click();
+  await signInForm.waitFor();
+  await signInForm.getByText(/state\.vscdb/).first().waitFor();
+  await signInForm.getByText(/storage\.serviceMachineId/).first().waitFor();
+  await signInForm.getByText(/never reads credentials from this server’s disk or your computer on its own/).waitFor();
+  const cursorSecret = 'smoke-cursor-secret-' + 'c'.repeat(40);
+  await signInForm.getByLabel('Access token').fill('smoke-short');
+  const importButton = signInForm.getByRole('button', { name: 'Import credential', exact: true });
+  assert.equal(await importButton.isDisabled(), true, 'Cursor waits for its machine id');
+  await signInForm.getByText('Enter the Machine id above to import.').waitFor();
+  await signInForm.getByLabel('Machine id').fill('0123abcd-0123-4abc-8def-0123456789ab');
+  await importButton.click();
+  await signInForm.getByText(/at least 50 characters/).waitFor();
+  assert.equal(credentialImports.length, 0, 'a short token is refused before it is sent');
+  await signInForm.getByLabel('Access token').fill(cursorSecret);
+  await importButton.click();
+  await signInForm.getByText('Connected', { exact: true }).waitFor();
+  assert.deepEqual(credentialImports[0], { input: cursorSecret, meta: { machineId: '0123abcd-0123-4abc-8def-0123456789ab' } });
+  report.cursorReadiness = await signInForm.getByText(/does not route requests to Cursor yet/).textContent();
+  assert.equal((await page.content()).includes(cursorSecret), false, 'the imported token does not stay in the page');
+  await signInForm.getByRole('button', { name: 'Done', exact: true }).click();
+  await signInForm.waitFor({ state: 'detached' });
+  // Kiro: the import offers its three shapes; a chosen CLIProxyAPI file is masked
+  // and named by file name and size only; a wrong endpoint is named before
+  // anything is sent; a collision and an expired credential are reported.
+  await page.fill('#provider-filter', 'kiro');
+  await page.locator('.provider-option', { hasText: 'kiro' }).first().click();
+  await page.getByRole('button', { name: 'Add connection', exact: true }).click();
+  await signInForm.waitFor();
+  report.kiroShapes = await signInForm.locator('[aria-label="Import shape"] label').allTextContents();
+  assert.deepEqual(report.kiroShapes, ['API key', 'Kiro IDE token file', 'CLIProxyAPI export (Microsoft)']);
+  await signInForm.getByLabel('CLIProxyAPI export (Microsoft)').check();
+  await signInForm.getByLabel('Stable account identity').fill('kiro@example.test');
+  const kiroSecret = 'smoke-kiro-refresh-secret';
+  const kiroFile = (endpoint) => JSON.stringify({ auth_method: 'external_idp', access_token: 'smoke-kiro-access', refresh_token: kiroSecret, client_id: 'c', profile_arn: 'arn:aws:codewhisperer:us-east-1:0:profile/X', scopes: ['s'], token_endpoint: endpoint }, null, 2);
+  await signInForm.locator('input[type="file"]').setInputFiles({ name: 'kiro-cliproxy.json', mimeType: 'application/json', buffer: Buffer.from(kiroFile('https://evil.example.test/token')) });
+  await signInForm.getByText(/^Loaded kiro-cliproxy\.json \(\d+ B\)/).waitFor();
+  const kiroField = signInForm.getByLabel('CLIProxyAPI auth file (JSON)');
+  assert.equal(await kiroField.getAttribute('type'), 'password', 'a chosen file is masked by a password field in every browser');
+  await importButton.click();
+  await signInForm.getByText(/must be an https Microsoft login address/).waitFor();
+  assert.equal(credentialImports.length, 1, 'a file with a foreign token endpoint is refused before it is sent');
+  await signInForm.locator('input[type="file"]').setInputFiles({ name: 'kiro-cliproxy.json', mimeType: 'application/json', buffer: Buffer.from(kiroFile('https://login.microsoftonline.com/common/oauth2/v2.0/token')) });
+  await importButton.click();
+  await page.getByText(/already connected, with a different credential mode or username/).first().waitFor();
+  assert.equal(credentialImports.length, 2);
+  assert.match(credentialImports[1].input, /\n/, 'the file is sent with its line breaks');
+  await importButton.click();
+  await signInForm.getByText('Connected', { exact: true }).waitFor();
+  report.kiroExpired = await signInForm.getByText(/had already expired/).textContent();
+  assert.match(report.kiroExpired, /refresh token/);
+  assert.equal((await page.content()).includes(kiroSecret), false, 'no imported secret stays in the page');
+  await signInForm.getByRole('button', { name: 'Done', exact: true }).click();
   await signInForm.waitFor({ state: 'detached' });
   // Device sign-in: a failed cancel leaves the poll running, and a cancel that
   // meets a save in progress claims neither cancelled nor saved until the poll says.

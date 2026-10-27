@@ -437,6 +437,18 @@ func (r *Registry) OnboardingFlows() map[string]string {
 // operator's browser never reaches.
 var ErrRedirectOriginUnset = errors.New("provider redirect origin is not configured; set the public origin")
 
+// InputError is an import the operator can correct before anything is sent to
+// the provider: the pasted credential or file is malformed or lacks a field its
+// mode requires (#218). Its message is fixed text that never quotes the input, so
+// the API returns it as given, unlike a provider's rejection, which is reported
+// without detail.
+type InputError struct{ message string }
+
+func (e *InputError) Error() string { return e.message }
+
+// invalidInput returns an InputError. The message must never carry credential text.
+func invalidInput(message string) error { return &InputError{message: message} }
+
 // DefaultRedirectURI builds the redirect a provider registered. Providers whose
 // client registration pins a loopback port use it; every other provider uses the
 // configured public origin, and an unset origin is an error rather than a guess.
