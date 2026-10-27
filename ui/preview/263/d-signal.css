@@ -1,0 +1,84 @@
+/* PREVIEW ONLY (#263, phase 1, round 2): direction D, "Signal". Not imported by the app; capture.cjs
+   injects it over the built style.css. A poster: a black rail, oversized raw titles and headline
+   numbers, pill and circle geometry pushed to the extreme, one pink slab with an asymmetric 10px x
+   6px hard shadow, stamped tilted tags, open page with wide negative space and no boxes around data.
+   Colours: pink slab, yellow highlighter, cyan live. */
+:root {
+  --paper: #f7f6f0; --bg: #f7f6f0; --surface: #ffffff; --sidebar: #111111;
+  --surface-2: #ecebe3; --surface-3: #d4d2c8;
+  --ink: #111111; --ink-hover: #333333; --text-main: #111111;
+  --text-muted: #45443f; --text-subtle: #45443f;
+  --border: #111111; --border-subtle: #d4d2c8;
+  --danger: #b0001a; --success: #0b6b2e; --warning: #7a5200; --info: #1f4f8a;
+  --live: #00727f; --focus: #00727f;
+  --slab: #ff5fa2; --highlight: #ffd60a; --highlight-ink: #111111;
+  --outline: #111111; --shadow-ink: #111111;
+  --hard: 10px 6px 0 var(--shadow-ink); --hard-sm: 5px 3px 0 var(--shadow-ink);
+  --accent-bg: #ff5fa2; --accent-fg: #111111; --accent-muted: #3a0a20; --accent-rule: #111111;
+  --accent-control: #111111; --accent-raised: #ff7fb5; --accent-danger: #111111;
+  --accent-success: #111111; --accent-warning: #111111; --accent-focus: #111111; --accent-live: #111111;
+  --t-poster: 64px; --t-poster-lead: 44px; --t-poster-statement: 36px;
+}
+:root[data-theme="dark"] {
+  --paper: #111111; --bg: #111111; --surface: #1b1b1b; --sidebar: #000000;
+  --surface-2: #262626; --surface-3: #3a3a3a;
+  --ink: #f7f6f0; --ink-hover: #d6d4cc; --text-main: #f7f6f0;
+  --text-muted: #b5b3aa; --text-subtle: #b5b3aa;
+  --border: #f7f6f0; --border-subtle: #333333;
+  --danger: #ff6b6b; --success: #5fd38a; --warning: #ffc14d; --info: #8dbff2;
+  --live: #4fd1e0; --focus: #4fd1e0;
+  --slab: #ff6fae; --highlight: #ffd60a; --highlight-ink: #111111;
+  --outline: #f7f6f0; --shadow-ink: #f7f6f0;
+  --accent-bg: #ff6fae; --accent-fg: #111111; --accent-muted: #3a0a20; --accent-rule: #111111;
+  --accent-control: #111111; --accent-raised: #ff8fbf; --accent-danger: #111111;
+  --accent-success: #111111; --accent-warning: #111111; --accent-focus: #111111; --accent-live: #111111;
+}
+/* A black rail in both themes; the active page is a yellow pill. */
+.sidebar { --text-main: #f7f6f0; --text-muted: #c9c7bd; --ink: #f7f6f0; --surface: #111111; --surface-2: #2a2a2a; --border: #c9c7bd; --border-subtle: #333333; --live: #ffd60a; --focus: #ffd60a; color: #f7f6f0; border-right: 0; }
+.nav-link { border-radius: 999px; padding-inline: 16px; }
+.nav-link-active { color: #111111; background: #ffd60a; font-weight: 700; }
+.nav-link-active::before { left: 7px; background: #111111; }
+.mobile-header { color: #f7f6f0; background: #111111; --text-main: #f7f6f0; }
+.mobile-menu { color: #f7f6f0; }
+/* Poster type: raw, oversized, tight. */
+h1 { font-size: var(--t-poster); font-weight: 700; line-height: .95; letter-spacing: -.055em; }
+.ed-headline { font-size: var(--t-poster-lead); font-weight: 400; line-height: 1.05; letter-spacing: -.035em; }
+.ed-statement { font-size: var(--t-poster-statement); font-weight: 400; line-height: 1.1; letter-spacing: -.03em; }
+.ed-headline strong, .ed-statement strong { padding: 0 .22em; border-radius: 999px; color: var(--highlight-ink); background: var(--highlight); font-weight: 700; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.ed-now-value { font-size: 56px; letter-spacing: -.05em; }
+.nav-group h2, th, .ed-label, .ed-fact dt, .eyebrow, .ed-kicker, .sidebar-footer label { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .08em; }
+.page-intro { padding-bottom: 40px; }
+.ed-statement-row { border-top: 6px solid var(--ink); }
+.ed-facts, .ed-watch, .ed-group { border-top: 6px solid var(--ink); }
+thead th, .ed-table thead th { border-bottom: 4px solid var(--ink); }
+/* The one slab: pink, round, an asymmetric hard shadow. */
+.accent-surface { border: 3px solid var(--outline); border-radius: 32px; box-shadow: var(--hard); padding: 22px 28px; }
+/* Pills and circles: controls, tags, bars, status marks. */
+.button-primary, .button-secondary, .button-danger, .button-ghost:not(.sign-out) { border: 3px solid var(--outline); border-radius: 999px; padding-inline: 18px; font-weight: 700; box-shadow: var(--hard-sm); }
+.button-danger { border-color: var(--danger); }
+.button-primary:active, .button-secondary:active, .button-danger:active { transform: translate(5px, 3px); box-shadow: none; }
+:is(input, select) { border: 3px solid var(--border); border-radius: 999px; padding-inline: 14px; }
+textarea { border: 3px solid var(--border); border-radius: 20px; }
+.state-tag { display: inline-block; border: 2px solid currentColor; border-radius: 999px; padding: 2px 9px; font-family: var(--font-mono); font-weight: 700; text-transform: uppercase; letter-spacing: .06em; transform: rotate(-3deg); }
+.dot { width: 10px; height: 10px; border-radius: 50%; }
+.ed-bar { height: 10px; border-radius: 999px; overflow: hidden; }
+.provider-option { border-radius: 22px; border-bottom-color: transparent; }
+.provider-option-selected { border-left: 0; padding-left: 12px; color: var(--highlight-ink); background: var(--highlight); --text-muted: #2b2b2b; --success: #0b5a26; --warning: #5c3d00; --danger: #8a0014; }
+.empty-state, .empty-keys, .inline-notice, .secret-panel { border: 3px solid var(--outline); border-radius: 24px; box-shadow: var(--hard-sm); }
+.page-error, .auth-error { border: 3px solid var(--danger); border-radius: 24px; box-shadow: var(--hard-sm); }
+@media (max-width: 700px) {
+  :root { --t-poster: 40px; --t-poster-lead: 30px; --t-poster-statement: 26px; }
+  .ed-now-value { font-size: 40px; }
+  .accent-surface { border-radius: 24px; padding: 18px 20px; }
+}
+/* Inside the slab the outline is the slab's own ink, so a control keeps 3:1 in dark too. */
+.accent-surface :is(.button-primary, .button-secondary, input, select) { border-color: var(--accent-fg); box-shadow: 5px 3px 0 var(--accent-fg); }
+/* On a phone a poster title must not squeeze the sign-out control (its nowrap text would spill past 320px):
+   the row wraps and sign-out drops under a long title. */
+@media (max-width: 700px) {
+  .page-heading-row { flex-wrap: wrap; row-gap: 8px; }
+  .page-heading-row .sign-out { flex: none; }
+}
+/* Dark: the black rail and header sit on a near-black page (1.1:1), so a 3px paper rule draws their edge. */
+:root[data-theme="dark"] .sidebar { border-right: 3px solid #f7f6f0; }
+:root[data-theme="dark"] .mobile-header { border-bottom: 3px solid #f7f6f0; }
