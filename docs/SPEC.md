@@ -2153,10 +2153,19 @@ the last test, error and model count:
   credential entry that held the old access token; other provider data is
   kept. A relink replaces only the credential fields it names and keeps every
   stored access, refresh and ID token and cookie it does not name: a
-  cookie-only relink keeps the stored tokens (iflow keeps the API key minted
-  from its cookie as the access token, `onboarding/manual.go:251-260`), an
-  access-token relink keeps the refresh and ID tokens and cookie, and an
+  cookie-only relink keeps the stored tokens, an access-token relink keeps
+  the refresh and ID tokens and cookie, and an
   ID-token or refresh-token edit keeps the access token and its expiry. A
+  cookie-only relink of a provider that serves with a key minted from its
+  cookie (iflow: the cookie flow mints the API key and stores it as the access
+  token and `ProviderData.apiKey`, `onboarding/manual.go:189-275`, and the
+  resolver prefers that key over the cookie) re-runs the provider's cookie
+  flow with the new cookie, as the reference's `iflow/cookie/route.js:29-119`
+  does, and saves what it mints: the new key, its copy and `expireTime`, and
+  only the `BXAuth` cookie. A cookie the provider refuses answers
+  `502 relink_rejected`, one without `BXAuth` `400 relink_invalid`, and
+  neither changes the stored credential. A provider that serves with the
+  cookie itself (grok-web, perplexity-web) has its cookie replaced as typed. A
   relink resets the connection even when the operator types the stored key
   again: it is `untested`, its last test, error and model count are cleared
   and a check started before it is refused, so the dashboard's "Credential
@@ -2168,7 +2177,9 @@ the last test, error and model count:
   `POST /admin/v1/providers/test-batch` record `active` (clearing the error)
   with the time and the listed model count, or `failed` with the error and the
   time, keeping the last confirmed model count: a failed probe's listing is not
-  a count of usable models. A canceled
+  a count of usable models. A pass that listed no models (a provider with no
+  listing, or a failed listing after which the check ran on the supplied
+  model) also keeps the last confirmed count rather than recording 0. A canceled
   test and a disabled connection record nothing. A result is recorded only
   against the `credential_revision` read with the credential it tested. Only a
   replacement increments it: a manual relink, or a save whose credential
@@ -2197,8 +2208,10 @@ the last test, error and model count:
   the answer and the stored row: the access, refresh and ID tokens, the cookie,
   and provider-data values under credential keys (the provider's named
   credential, keys the log redaction treats as secret, proxy URLs). Provider
-  metadata such as project, region, account ids and plan is not redacted.
-  Unsaved node validation applies the same redaction.
+  metadata such as project, region, account ids and plan is not redacted. A
+  value shorter than 8 characters is replaced only where it stands alone, with
+  no letter or digit on either side, so a short credential is still removed
+  but cannot rewrite an ordinary word that contains it. Unsaved node validation applies the same redaction.
 - A save that fails (invalid account id, unknown proxy pool, store error)
   leaves the stored credential, its runtime registration and its lifecycle
   unchanged. Deleting the connection deletes its lifecycle with the row.

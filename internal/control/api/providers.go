@@ -15,6 +15,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/cloudflare"
 	"github.com/raufimusaddiq/routeweft/internal/providers/discovery"
+	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/proxy"
@@ -258,6 +259,18 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.AccountID == nil {
 			body.AccountID = &old.AccountID
+		}
+		minted, mints, err := h.cookieMintedSecret(r.Context(), old.ProviderID, credentials.AuthKind(body.AuthKind), body.Secret)
+		var inputErr *onboarding.InputError
+		switch {
+		case errors.As(err, &inputErr):
+			writeError(w, http.StatusBadRequest, "relink_invalid", inputErr.Error())
+			return
+		case err != nil:
+			writeError(w, http.StatusBadGateway, "relink_rejected", "the provider did not accept the cookie; it may be invalid, expired or revoked")
+			return
+		case mints:
+			body.Secret = minted
 		}
 		body.Secret = relinkedSecret(old.Secret, body.Secret)
 	}
@@ -1416,6 +1429,33 @@ func relinkedSecret(stored, edit credentials.Secret) credentials.Secret {
 		}
 	}
 	return edit
+}
+
+// cookieMintedSecret renews the credential a cookie connection serves with when
+// a relink names a new cookie. iflow serves with the API key its cookie flow
+// mints (onboarding/manual.go, the pin's iflow/cookie/route.js:29-119) and the
+// resolver prefers that key over the cookie, so replacing the cookie alone
+// would keep the old key serving. The relink therefore re-runs the provider's
+// cookie import with the new cookie and takes everything it mints: the key, its
+// provider-data copy and expiry, and the retained BXAuth cookie. mints is false
+// for an edit that is not a cookie-only relink of such a provider (a cookie
+// provider that serves with the cookie itself, grok-web or perplexity-web, has
+// no cookie import flow), and the edit is then saved as typed.
+func (h *Handler) cookieMintedSecret(ctx context.Context, providerID string, kind credentials.AuthKind, edit credentials.Secret) (credentials.Secret, bool, error) {
+	if kind != credentials.AuthCookie || strings.TrimSpace(edit.Cookie) == "" || strings.TrimSpace(edit.AccessToken) != "" {
+		return edit, false, nil
+	}
+	flow, ok := h.importFlowFor(providerID)
+	if !ok || flow.AuthKind != credentials.AuthCookie || flow.Import == nil {
+		return edit, false, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	result, err := flow.Import(ctx, onboarding.Params{Input: edit.Cookie, Client: h.opts.OAuthClient})
+	if err != nil {
+		return credentials.Secret{}, true, err
+	}
+	return result.Secret, true, nil
 }
 
 // replacesCredential reports whether a form edit carries credential material,

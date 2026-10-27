@@ -58,6 +58,10 @@ type validationResult struct {
 	Status          int    `json:"status,omitempty"`
 	UpstreamStatus  int    `json:"upstreamStatus,omitempty"`
 	Error           string `json:"error,omitempty"`
+	// unlisted is a check that listed no models (the provider has no listing,
+	// or it failed and the check ran on a supplied model): its count is not a
+	// count of the models the credential can use.
+	unlisted bool
 }
 
 func (h *Handler) activeRevision() uint64 {
@@ -105,7 +109,7 @@ func (h *Handler) validateConnection(ctx context.Context, c credentials.Connecti
 	discoveryCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	models, err := h.fetchConnectionModels(discoveryCtx, c, node)
 	cancel()
-	result.ModelsAvailable = len(models)
+	result.ModelsAvailable, result.unlisted = len(models), err != nil || models == nil
 	var status *discovery.StatusError
 	if errors.As(err, &status) && (status.Status == 401 || status.Status == 403) {
 		result.Status, result.Error = status.Status, "provider rejected credentials"

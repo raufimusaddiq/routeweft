@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
@@ -27,7 +29,7 @@ func (h *Handler) recordValidation(ctx context.Context, c credentials.Connection
 	}
 	// c was read with its credential revision; a relink since then makes the
 	// store refuse this result (ErrCredentialChanged).
-	err := h.opts.Credentials.RecordValidation(context.WithoutCancel(ctx), c.ID, c.CredentialRevision, credentials.Validation{OK: result.OK, Error: result.Error, ModelsAvailable: result.ModelsAvailable})
+	err := h.opts.Credentials.RecordValidation(context.WithoutCancel(ctx), c.ID, c.CredentialRevision, credentials.Validation{OK: result.OK, Error: result.Error, ModelsAvailable: result.ModelsAvailable, Unlisted: result.unlisted})
 	// A replaced or deleted connection is expected to refuse the result; any
 	// other failure leaves the stored status behind the check and is logged.
 	if err != nil && !errors.Is(err, credentials.ErrCredentialChanged) && !errors.Is(err, credentials.ErrNotFound) {
@@ -114,14 +116,50 @@ func secretValues(secret credentials.Secret, credentialName string) []string {
 	return values
 }
 
+// shortCredential is the length under which a credential value is redacted
+// only where it stands alone: a value that short also occurs inside ordinary
+// words ("ab" in "unavailable"), which a substring replacement would rewrite.
+const shortCredential = 8
+
 // redactValues replaces each non-blank value, longest first so a token that
-// contains another is removed whole. No length is too short to be a secret.
+// contains another is removed whole. No length is too short to be a secret: a
+// short value is replaced wherever it stands alone, not touching a letter or
+// digit on either side, and a longer one wherever it occurs.
 func redactValues(text string, values []string) string {
 	sort.Slice(values, func(i, j int) bool { return len(values[i]) > len(values[j]) })
 	for _, value := range values {
-		if value = strings.TrimSpace(value); value != "" {
+		switch value = strings.TrimSpace(value); {
+		case value == "":
+		case len(value) < shortCredential:
+			text = replaceStandalone(text, value)
+		default:
 			text = strings.ReplaceAll(text, value, redactedCredential)
 		}
 	}
 	return text
+}
+
+// replaceStandalone replaces each occurrence of value in text that has no
+// letter or digit immediately before or after it.
+func replaceStandalone(text, value string) string {
+	edge := func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }
+	var out strings.Builder
+	for start := 0; ; {
+		i := strings.Index(text[start:], value)
+		if i < 0 {
+			out.WriteString(text[start:])
+			return out.String()
+		}
+		i += start
+		end := i + len(value)
+		before, _ := utf8.DecodeLastRuneInString(text[:i])
+		after, _ := utf8.DecodeRuneInString(text[end:])
+		out.WriteString(text[start:i])
+		if (i == 0 || edge(before)) && (end == len(text) || edge(after)) {
+			out.WriteString(redactedCredential)
+		} else {
+			out.WriteString(value)
+		}
+		start = end
+	}
 }

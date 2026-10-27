@@ -227,12 +227,14 @@ func TestRecordValidationRedactsEchoedCredential(t *testing.T) {
 	if want := "denied [redacted] refresh [redacted] copilot [redacted] region us"; result.Error != want {
 		t.Fatalf("redacted=%q, want %q", result.Error, want)
 	}
-	// No credential is too short to redact; metadata is not a credential.
+	// No credential is too short to redact where it stands alone, but a short
+	// one inside an ordinary word leaves the word alone ("ak" in "make", "pt" in
+	// "accepted", "k7" in "k70"); metadata is not a credential.
 	short := c
 	short.Secret = credentials.Secret{AccessToken: "k7", Cookie: "c=1x", ProviderData: map[string]string{"apiKey": "ak", "mimoPassToken": "pt", "projectId": "proj-9"}}
-	shortResult := validationResult{Error: "bad key k7 cookie c=1x api ak pass pt project proj-9"}
+	shortResult := validationResult{Error: "bad key k7 cookie c=1x api ak pass pt project proj-9; make k70 not accepted (ak)"}
 	h.recordValidation(context.Background(), short, &shortResult)
-	if want := "bad key [redacted] cookie [redacted] api [redacted] pass [redacted] project proj-9"; shortResult.Error != want {
+	if want := "bad key [redacted] cookie [redacted] api [redacted] pass [redacted] project proj-9; make k70 not accepted ([redacted])"; shortResult.Error != want {
 		t.Fatalf("short redacted=%q, want %q", shortResult.Error, want)
 	}
 	status, err := creds.GetConnectionStatus(context.Background(), c.ID)
@@ -598,13 +600,15 @@ func TestUpgradedRowMetadataEditDuringCheckKeepsItsResult(t *testing.T) {
 	}
 }
 
-// A relink replaces only the credential field it names. A cookie-only relink of
-// an iflow connection, which keeps the key minted from its cookie as the access
-// token and as ProviderData["apiKey"] (onboarding/manual.go:251-260), keeps
-// that key: dropping it would break the connection with no way back. An
-// access-token relink keeps the stored cookie.
-func TestCookieRelinkKeepsTheStoredKey(t *testing.T) {
-	env := newImportEnv(t, map[string]string{})
+// A cookie relink of iflow mints a new key from the new cookie, as its cookie
+// flow does (iflow/cookie/route.js:29-119): iflow serves with the minted key,
+// which the resolver prefers over the cookie, so keeping the old key would
+// leave it serving. The minted key replaces the access token and its
+// ProviderData["apiKey"] copy, with its expiry, and only BXAuth is kept. A
+// cookie the provider refuses changes nothing. An access-token relink keeps
+// the stored cookie.
+func TestCookieRelinkMintsANewKey(t *testing.T) {
+	env := newImportEnv(t, map[string]string{"apikey": `{"success":true,"data":{"name":"flow-key","apiKey":"sk-iflow-minted","expireTime":"2027-01-01"}}`})
 	mux, creds, cookie := env.mux, env.creds, env.cookie
 	node, err := creds.PutNode(context.Background(), credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "iflow", Name: "iflow"})
 	if err != nil {
@@ -615,17 +619,30 @@ func TestCookieRelinkKeepsTheStoredKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"cookie":"BXAuth=new;"}}`)
+	recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"cookie":"BXAuth=new; tracking=1"}}`)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("cookie relink: %d %s", recorder.Code, recorder.Body.String())
 	}
-	assertNoSecret(t, "cookie relink response", recorder.Body.String(), "stored-api-key", "BXAuth=")
+	assertNoSecret(t, "cookie relink response", recorder.Body.String(), "sk-iflow-minted", "stored-api-key", "BXAuth=")
 	got := connectionByID(t, creds, c.ID).Secret
-	if got.Cookie != "BXAuth=new;" || got.AccessToken != "stored-api-key" || got.ProviderData["apiKey"] != "stored-api-key" || got.ProviderData["expireTime"] != "2026-12-01" {
-		t.Fatalf("cookie relink: cookie=%v access=%v apiKey=%v expire=%q", got.Cookie == "BXAuth=new;", got.AccessToken == "stored-api-key", got.ProviderData["apiKey"] == "stored-api-key", got.ProviderData["expireTime"])
+	if got.Cookie != "BXAuth=new;" || got.AccessToken != "sk-iflow-minted" || got.ProviderData["apiKey"] != "sk-iflow-minted" || got.ProviderData["expireTime"] != "2027-01-01" {
+		t.Fatalf("cookie relink: cookie=%v access=%v apiKey=%v expire=%q", got.Cookie == "BXAuth=new;", got.AccessToken == "sk-iflow-minted", got.ProviderData["apiKey"] == "sk-iflow-minted", got.ProviderData["expireTime"])
 	}
-	if view := listedConnection(t, mux, cookie, c.ID, "stored-api-key", "BXAuth="); view.TestStatus != credentials.StatusUntested {
+	if view := listedConnection(t, mux, cookie, c.ID, "sk-iflow-minted", "BXAuth="); view.TestStatus != credentials.StatusUntested {
 		t.Fatalf("cookie relink status: %+v", view)
+	}
+	// A refused cookie, or one without BXAuth, is reported and saves nothing.
+	env.exchange.status = http.StatusUnauthorized
+	if recorder = doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"cookie":"BXAuth=revoked;"}}`); recorder.Code != http.StatusBadGateway || relinkErrorCode(recorder) != "relink_rejected" {
+		t.Fatalf("refused cookie: %d %s", recorder.Code, recorder.Body.String())
+	}
+	env.exchange.status = 0
+	if recorder = doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"cookie":"session=1"}}`); recorder.Code != http.StatusBadRequest || relinkErrorCode(recorder) != "relink_invalid" {
+		t.Fatalf("cookie without BXAuth: %d %s", recorder.Code, recorder.Body.String())
+	}
+	assertNoSecret(t, "refused relink responses", recorder.Body.String(), "BXAuth=", "session=1")
+	if after := connectionByID(t, creds, c.ID).Secret; after.Cookie != "BXAuth=new;" || after.AccessToken != "sk-iflow-minted" {
+		t.Fatalf("a refused relink changed the credential: cookie=%v access=%v", after.Cookie == "BXAuth=new;", after.AccessToken == "sk-iflow-minted")
 	}
 	recorder = doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"accessToken":"new-api-key"}}`)
 	if recorder.Code != http.StatusOK {
@@ -634,6 +651,30 @@ func TestCookieRelinkKeepsTheStoredKey(t *testing.T) {
 	got = connectionByID(t, creds, c.ID).Secret
 	if got.Cookie != "BXAuth=new;" || got.AccessToken != "new-api-key" || got.ProviderData["apiKey"] != "new-api-key" {
 		t.Fatalf("key relink: cookie=%v access=%v apiKey=%v", got.Cookie == "BXAuth=new;", got.AccessToken == "new-api-key", got.ProviderData["apiKey"] == "new-api-key")
+	}
+}
+
+// A cookie relink of a provider that serves with the cookie itself (grok-web)
+// replaces the cookie and calls nothing.
+func TestCookieRelinkOfACookieServedProviderReplacesTheCookie(t *testing.T) {
+	exchange := &routeExchange{routes: map[string]string{}}
+	h, mux, creds, cookie := newOnboardingAPI(t, exchange)
+	addBuiltinSpecs(h, "grok-web")
+	env := &importEnv{mux: mux, creds: creds, cookie: cookie, exchange: exchange}
+	node, err := env.creds.PutNode(context.Background(), credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "grok-web", Name: "grok-web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := env.creds.PutConnection(context.Background(), credentials.Connection{NodeID: node.ID, Name: "grok", Identity: "grok@example.invalid", AuthKind: credentials.AuthCookie, Enabled: true, Secret: credentials.Secret{Cookie: "sso=old"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := len(env.exchange.seenURLs)
+	if recorder := doJSON(t, env.mux, env.cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"cookie":"sso=new"}}`); recorder.Code != http.StatusOK {
+		t.Fatalf("cookie relink: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if got := connectionByID(t, env.creds, c.ID).Secret; got.Cookie != "sso=new" || got.AccessToken != "" || len(env.exchange.seenURLs) != calls {
+		t.Fatalf("cookie relink: cookie=%v access=%v calls=%d", got.Cookie == "sso=new", got.AccessToken != "", len(env.exchange.seenURLs)-calls)
 	}
 }
 
@@ -756,4 +797,44 @@ func TestSameKeyRelinkResetsTheResult(t *testing.T) {
 	if view = listedConnection(t, mux, cookie, c.ID, key); view.TestStatus != credentials.StatusFailed || view.LastError != "after" {
 		t.Fatalf("rename reset the result: %+v", view)
 	}
+}
+
+// A passing check that listed no models (the listing failed, so it ran on the
+// model the operator supplied) keeps the confirmed count instead of recording 0.
+func TestUnlistedPassKeepsTheConfirmedModelCount(t *testing.T) {
+	var unlisted atomic.Bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if r.URL.Path == "/models" {
+			if unlisted.Load() {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = io.WriteString(w, `{"data":[{"id":"relink-a"},{"id":"relink-b"},{"id":"relink-c"}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"OK"}}]}`)
+	}))
+	defer upstream.Close()
+	_, mux, store, creds, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	c := workflowAccount(t, creds, "unlisted", upstream.URL, "unlisted@example.invalid")
+	if code := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"relink-a"}`).Code; code != http.StatusOK {
+		t.Fatalf("listed pass: %d", code)
+	}
+	unlisted.Store(true)
+	if code := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"relink-a"}`).Code; code != http.StatusOK {
+		t.Fatalf("unlisted pass: %d", code)
+	}
+	view := listedConnection(t, mux, cookie, c.ID)
+	if view.TestStatus != credentials.StatusActive || view.LastTestedAt == "" || view.ModelsAvailable == nil || *view.ModelsAvailable != 3 {
+		t.Fatalf("unlisted pass reported a count it did not list: %+v", view)
+	}
+}
+
+// relinkErrorCode is an error answer's code.
+func relinkErrorCode(recorder *httptest.ResponseRecorder) string {
+	var body map[string]any
+	_ = json.Unmarshal(recorder.Body.Bytes(), &body)
+	return apiErrorCode(body)
 }

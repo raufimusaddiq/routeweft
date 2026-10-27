@@ -39,7 +39,10 @@ type Validation struct {
 	OK              bool
 	Error           string
 	ModelsAvailable int
-	At              time.Time
+	// Unlisted is a check that listed no models, so ModelsAvailable confirms
+	// nothing and the stored count is kept.
+	Unlisted bool
+	At       time.Time
 }
 
 // ErrCredentialChanged reports a validation result for a credential that has
@@ -63,11 +66,12 @@ func (s *Store) RecordValidation(ctx context.Context, id string, revision int64,
 	if !v.OK {
 		status, lastError, lastErrorAt = StatusFailed, strings.TrimSpace(v.Error), stamp
 	}
-	// A pass records the model count it listed. A failure keeps the last
-	// confirmed count: a failed probe's listing (often none) is not a count of
-	// the models the credential can use.
+	// A pass records the model count it listed. A failure, and a pass that
+	// listed nothing (a provider with no listing, or a check that ran on a
+	// supplied model after the listing failed), keep the last confirmed count:
+	// neither is a count of the models the credential can use.
 	query, args := "UPDATE provider_connections SET test_status=?,last_tested_at=?,last_error=?,last_error_at=?,models_available=? WHERE id=? AND credential_revision=?", []any{status, stamp, lastError, lastErrorAt, v.ModelsAvailable, id, revision}
-	if !v.OK {
+	if !v.OK || v.Unlisted {
 		query, args = "UPDATE provider_connections SET test_status=?,last_tested_at=?,last_error=?,last_error_at=? WHERE id=? AND credential_revision=?", []any{status, stamp, lastError, lastErrorAt, id, revision}
 	}
 	err := requireAffected(s.db.ExecContext(ctx, query, args...))
