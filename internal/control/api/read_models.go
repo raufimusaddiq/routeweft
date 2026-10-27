@@ -318,6 +318,12 @@ func (h *Handler) providerNodes(w http.ResponseWriter, r *http.Request) error {
 
 func (h *Handler) connections(w http.ResponseWriter, r *http.Request) error {
 	where, args := providerFilter(r, "n.provider_id")
+	// The per-connection proxy lives in the sealed provider data; the compiled
+	// snapshot holds the effective one, so the list never opens a secret.
+	var snapshot *runtime.RuntimeSnapshot
+	if h.opts.Runtime != nil {
+		snapshot, _ = h.opts.Runtime.Load()
+	}
 	return h.sqlList(w, r, `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,COALESCE(c.identity,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.secret_blob IS NOT NULL AND c.secret_blob!='',c.created_at,c.updated_at,c.account_id
 FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where+` ORDER BY n.provider_id,c.priority,c.name,c.id`, `SELECT COUNT(*) FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where, func(rows *sql.Rows) (any, error) {
 		var item struct {
@@ -334,6 +340,9 @@ FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where+` ORD
 			CreatedAt            string `json:"createdAt"`
 			UpdatedAt            string `json:"updatedAt"`
 			AccountID            string `json:"accountId,omitempty"`
+			// ConnectionProxy is the LiteRouter per-connection proxy in force when
+			// no usable pool is bound, its URL without credentials.
+			ConnectionProxy *connectionProxyView `json:"connectionProxy,omitempty"`
 		}
 		var enabled, credential int
 		if err := rows.Scan(&item.ID, &item.NodeID, &item.ProviderID, &item.Name, &item.AuthKind, &item.Identity, &enabled, &item.Priority, &item.ProxyPoolID, &credential, &item.CreatedAt, &item.UpdatedAt, &item.AccountID); err != nil {
@@ -341,8 +350,16 @@ FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where+` ORD
 		}
 		item.Enabled = enabled != 0
 		item.CredentialConfigured = credential != 0
+		if legacy, ok := snapshot.LegacyConnectionProxy(item.ID); ok {
+			item.ConnectionProxy = &connectionProxyView{URL: safeURL(legacy.URL), NoProxy: strings.Join(legacy.NoProxy, ",")}
+		}
 		return item, nil
 	}, args...)
+}
+
+type connectionProxyView struct {
+	URL     string `json:"url"`
+	NoProxy string `json:"noProxy,omitempty"`
 }
 
 func (h *Handler) models(w http.ResponseWriter, r *http.Request, systemOne bool) error {

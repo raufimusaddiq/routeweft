@@ -15,6 +15,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/claude"
 	"github.com/raufimusaddiq/routeweft/internal/providers/codex"
+	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
 const PingHistorySetting = "quotaAutoPingHistory"
@@ -236,7 +237,8 @@ func SendPing(ctx context.Context, client PingHTTPClient, provider string, crede
 	} else if provider != "claude" {
 		return ErrNotConfigured
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(body))
+	// The ping leaves through the connection's proxy (quotaAutoPing.js:198-212).
+	request, err := http.NewRequestWithContext(transport.WithConnection(ctx, credential.ConnectionID), http.MethodPost, endpoint, strings.NewReader(body))
 	if err != nil {
 		return err
 	}

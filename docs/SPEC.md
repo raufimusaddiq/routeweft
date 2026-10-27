@@ -1260,7 +1260,23 @@ Proxy support:
 - global outbound proxy;
 - no-proxy;
 - per-connection proxy pool;
+- per-connection proxy (LiteRouter `providerSpecificData.connectionProxyEnabled`,
+  `connectionProxyUrl`, `connectionNoProxy`; PARITY §6.24);
 - no-auth provider rotation where configured.
+
+A connection's outbound proxy is, in order: a member of its bound pool when the
+pool is enabled and has an enabled member; else its own proxy when
+`connectionProxyEnabled` is the JSON `true` and the URL is not blank; else the
+global proxy. Only the connection's own no-proxy list bypasses its own proxy, and
+a bypassed host takes the global proxy under the global no-proxy list. The global
+no-proxy list bypasses a pool member. A value without a scheme and host is an
+http proxy. A proxy that fails, or a stored URL that cannot be used, fails the
+request; nothing falls back to a direct connection.
+
+The same policy applies to all outbound work made for a connection, not only
+inference: token refresh, usage reads, quota auto-ping, Codex reset credits,
+connection checks, model tests and model discovery. Work made for no connection
+(sign-in, helpers) uses the direct SSRF-protected client.
 
 Outbound URL validation and redirects use the same SSRF policy for inference, provider tests, model discovery, Headroom/PXPIPE, and other server-side fetches.
 
@@ -1379,7 +1395,21 @@ PUT    /admin/v1/proxy-pools/{id}       replaces fields and members; member {id}
 DELETE /admin/v1/proxy-pools/{id}       409 proxy_pool_in_use while any connection is bound to it
 POST   /admin/v1/proxy-pools/{id}/test  {memberId?}; per-member classified result
 POST   /admin/v1/settings/proxy-test    {url?}; tests url, else the global outbound proxy (400 if disabled)
+POST   /admin/v1/connections/{id}/proxy {proxyPoolId?, connectionProxyEnabled?, connectionProxyUrl?, connectionNoProxy?}
 ```
+
+`POST /admin/v1/connections/{id}/proxy` binds a pool and sets the connection's
+own proxy. Any of the three `connectionProxy*` keys sets all three, as the pin's
+provider routes do: only a JSON `true` enables, a non-string URL or no-proxy list
+reads as empty, and both are trimmed. Enabling needs a URL that passes the pool
+member checks (`invalid_connection_proxy`, `proxy_host_blocked`). A body with
+`proxyPoolId` sets the binding; a body with neither kind of field is the pool
+assignment it always was, so a missing `proxyPoolId` unbinds. Everything is
+validated first, then the binding and the connection's own proxy are written in
+one transaction and published as one snapshot, as the pin's route writes them
+once (`providers/[id]/route.js:109-117,135-158`): a failed write, an unknown
+pool included, changes neither. The response redacts the URL. `GET /admin/v1/connections` reports the connection's own proxy
+when it is enabled, as `connectionProxy: {url, noProxy?}` with the URL redacted.
 
 Mutations publish through `RefreshPoolBindings` and return `configRevision`.
 Proxy hosts and test destinations pass the shared SSRF policy; redirects are not

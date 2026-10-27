@@ -39,6 +39,7 @@ type RuntimeSnapshot struct {
 	combos              map[string]Combo
 	poolBindings        map[string]string
 	poolPools           map[string]proxyPoolEntry
+	connectionProxies   map[string]ConnectionProxy
 	proxyEnabled        bool
 	proxyURL            string
 	noProxy             []string
@@ -65,6 +66,27 @@ func (s *RuntimeSnapshot) ConnectionPool(connectionID string) string {
 		return ""
 	}
 	return s.poolBindings[connectionID]
+}
+
+// ConnectionProxy is one connection's compiled LiteRouter per-connection proxy
+// (providerSpecificData.connectionProxyUrl/connectionNoProxy). It is compiled
+// only when connectionProxyEnabled is true and the URL is not blank, the
+// pin's own condition (src/lib/network/connectionProxy.js:39-56,151-154).
+type ConnectionProxy struct {
+	URL     string
+	NoProxy []string
+}
+
+// LegacyConnectionProxy returns the per-connection proxy imported or set for
+// one connection. A usable bound pool takes precedence; the proxy binder
+// decides that.
+func (s *RuntimeSnapshot) LegacyConnectionProxy(connectionID string) (ConnectionProxy, bool) {
+	if s == nil {
+		return ConnectionProxy{}, false
+	}
+	proxy, ok := s.connectionProxies[connectionID]
+	proxy.NoProxy = append([]string(nil), proxy.NoProxy...)
+	return proxy, ok
 }
 
 // ProxyMember is one compiled proxy pool endpoint. The pool's ordered members

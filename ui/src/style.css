@@ -304,6 +304,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .connection-actions { display: flex; flex-wrap: wrap; grid-column: 1 / -1; gap: 6px; }
 .connection-actions button, .model-row button { min-height: var(--control-height); padding-inline: 9px; font-size: var(--t-body); }
 .connection-row > small { grid-column: 1 / -1; color: var(--text-subtle); font-size: var(--t-body); }
+.connection-row > small.connection-proxy { overflow-wrap: anywhere; }
 .provider-inline-form { display: flex; flex-wrap: wrap; gap: 7px; margin: 12px 0; }
 .provider-inline-form input, .provider-inline-form select { flex: 1 1 130px; }
 .provider-inline-form button { min-height: var(--control-height); }

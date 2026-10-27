@@ -1938,7 +1938,7 @@ Oracle: `/opt/9router` @ `1c3b9f47`. In the pin a connection is one `providerCon
 |---|---|---|---|---|
 | 1 Region / project / account IDs | `projectId` top-level (`connectionsRepo.js:8`) and `providerSpecificData.{region,projectId,accountId,workspaceId,chatgptAccountId,location,orgId,...}`. Readers: Codex account header `executors/codex.js:234-240` (workspaceId, else chatgptAccountId, else accountId), Vertex `executors/vertex.js:71-74,94,103`, Cloudflare `executors/default.js:159`, Codex usage `services/usage/codex.js:32` | Sealed `ProviderData`, allowlist projection `plan.go:12-21`; `AccountID` column (`v5.go:6`, read at `wire/cloudflare.go:30`); `ProjectID` read at `wire/targets.go:290-312` | Same intent. **One real gap:** `chatgptAccountId` was stored at onboarding (`onboarding/pkce.go:420`) and used for usage (`quota/observer.go:116`) but never sent on inference, so a second Codex account could bind to the wrong ChatGPT account. Not closed: Vertex `location` and the project-scoped Gemini-on-Vertex path (`vertex.js:86-109`); Routeweft has no such URL (`targets.go` only builds the partner path), owner P02 | `ProviderSettings.ChatGPTAccountID`; `wire/targets.go` `codexHeaders` sends `ChatGPT-Account-ID` with v1's precedence. Tests `TestCodexAccountBindingHeader`, `TestChatGPTAccountIDProjectsIntoServingSettings` |
 | 2 Cloud credentials and signing | Plaintext in the row: `apiKey`/`accessToken`/`refreshToken` (`connectionsRepo.js:6-7`). Vertex service-account JSON rides in `apiKey` and is parsed per request (`vertex.js:13,67-69`, `tokenRefresh.js:63`); Kiro SSO `clientId`/`clientSecret` (`tokenRefresh/providers.js:326-331`). The pin has no AWS SigV4 (no match in `open-sse` or `src`) | Sealed secret, never in a snapshot or the browser (`store.go:73-85,279-296`; D03). Kiro client id/secret refresh exists (`onboarding/refresh.go:337`). No Vertex SA/ADC token minting (already recorded for `vertex-partner`, §3) | Storage difference is intentional (D03). Signing/minting is not implemented and not touched: it is credential-handling work for P02, and C06 is not the PR to introduce it (AGENTS §12) | none |
-| 3 Proxy / no-proxy / relay | `connectionProxyEnabled/Url`, `connectionNoProxy`, `connectionProxyPoolId`, `strictProxy`, `vercelRelayUrl` per connection (`handlers/chatCore.js:365-370`; behavior `utils/proxyFetch.js:63-146`) | `proxy_pool_id` column (`v1.go:60`), `SetConnectionProxy` (`store.go:436`), pool members resolved to a `transport.ProxyPolicy` with the global proxy and the global no-proxy list (`internal/proxy/policy.go:38`) | **Intended: pool binding only.** PRD-ROUTE-005 lists "per-connection pool binding" and a global no-proxy list, not a per-connection URL, no-proxy string or relay. Ad-hoc per-connection URLs would also bypass the single SSRF policy (PRD-SEC-002). Divergence: a v1 connection with `connectionProxyUrl` has no equivalent and must be recreated as a pool. `strictProxy` and the Vercel relay stay with R08 (D12 boundary) | none |
+| 3 Proxy / no-proxy / relay | `connectionProxyEnabled/Url`, `connectionNoProxy`, `connectionProxyPoolId`, `strictProxy`, `vercelRelayUrl` per connection (`handlers/chatCore.js:365-370`; behavior `utils/proxyFetch.js:63-146`) | `proxy_pool_id` column (`v1.go:60`), `SetConnectionProxy` (`store.go:436`), pool members resolved to a `transport.ProxyPolicy` with the global proxy and the global no-proxy list (`internal/proxy/policy.go:38`) | **Superseded by #249 (§6.24):** the per-connection URL and no-proxy list are now served with the pin's precedence, through the same SSRF dial guard as pool members, so the SSRF reason no longer holds and dropping them narrowed an imported connection. `strictProxy` and the Vercel relay stay with R08 (D12 boundary) | #249 |
 | 4 Default model, priorities | `priority` column plus renumbering to 1..N on delete/reorder (`connectionsRepo.js:190-203,350,364`); sort `(priority\|\|999)` (`:159`). `globalPriority` and `defaultModel` are stored (`:6`, `api/providers/[id]/route.js:122-123`) with no routing reader; `defaultModel` is read only by the Claude-compatible connection test (`api/providers/[id]/test/testUtils.js:514`), `globalPriority` only displayed (`ConnectionRow.js:185`) | `priority` column (`v1.go:59`), `SetConnectionPriority`/`MoveConnection` (`store.go:366-376`), ordered `priority,name,id` (`store.go:335`). Delete does not renumber, so priorities can have gaps | Same routing order (only relative order is read; gaps are harmless). `globalPriority` has no consumer in either product and is not stored. `defaultModel` is not stored: Routeweft's probe picks the model from the snapshot (`runtime/providers.go:139`) | none |
 | 5 Rate-limit / cooldown / session metadata | Persisted on the row: `rateLimitedUntil`, `backoffLevel`, `modelLock_<model>` (`accountFallback.js:102`), `testStatus`, `lastError*`, `consecutiveUseCount` (`src/sse/services/auth.js:29-42`); cleared when a connection goes `active` (`connectionsRepo.js:64-82`) | `RuntimeState` cooldowns, quota observations and RR cursors, process-local and non-durable by design (AGENTS §3, `state.go:10-15`). No durable test-status or last-error column exists | **Intended:** health and cooldown are volatile; a restart clears them, which v1 would have kept. No durable `testStatus`/`lastError` answer exists. It must live in `RuntimeState` (volatile) or a column added by a migration reviewed under C05/U06; C06 does not invent one. Not closed: the v1 reset-on-activation (`:64-82`), whose only Routeweft analogue is the per-provider availability reset (`api/workflows.go:347`) | `RuntimeState.ForgetAccount`, called on connection delete (`api/providers.go:337`). Test `TestConnectionDeleteRetention` |
 | 6 Aliases, custom capabilities, pricing | Not connection state. Global `kv` scopes `modelAliases`, `customModels` (key `provider\|id\|type`), `pricing` keyed by provider (`aliasRepo.js:5-6,20`, `pricingRepo.js:5`). Deleting a *node* deletes its `customModels` (`nodesRepo.js:104-117`); deleting a connection touches none of them | `model_aliases`, `custom_models`, `disabled_models`, `pricing_overrides` keyed by provider/model (`v1.go:78-120`), also not connection-scoped | Same scope, no mapping needed; a connection delete correctly leaves them. **Gap:** `DeleteGenericNode` (`store.go:198-221`) removes the node and its connections but not its `custom_models` rows (v1 does). Owner R06/C06 follow-up | none |
@@ -2701,3 +2701,72 @@ unknown", never as Ready (`readiness.test.ts`).
 **Hidden providers.** `trae`, `windsurf` and `devin-cli` are untouched (D06).
 
 R11: product decision: none of the five is promoted; each remaining prerequisite above is serving work or an owner decision, not a waiver, and no provider is removed or downgraded (#229, #76).
+
+## 6.24 LiteRouter per-connection proxy (#249)
+
+Oracle: pin `1c3b9f47`. A LiteRouter connection can carry its own proxy in
+`providerSpecificData`: `connectionProxyEnabled`, `connectionProxyUrl`,
+`connectionNoProxy`. Routeweft kept the keys on import but never used them, so an
+imported connection that was meant to leave through a proxy left directly
+(C06 row 3 had recorded this as intended; that row is superseded).
+
+### Pin behavior, verified at the pin
+
+| Rule | Pin evidence |
+|---|---|
+| Only a JSON `true` enables; URL and no-proxy are trimmed strings | `src/lib/network/connectionProxy.js:39-56` |
+| Order: a usable pool (exists, `isActive === true`, has a URL), else the connection proxy when enabled with a URL, else none | `connectionProxy.js:58-165` (pool `:92-144`, legacy `:151-165`) |
+| An unusable or missing pool falls to the connection proxy | `connectionProxy.js:98-106,151-165` |
+| Only `connectionNoProxy` bypasses the connection proxy; the global `NO_PROXY` is not consulted for it | `open-sse/utils/proxyFetch.js:62-73` |
+| A bypassed host takes the global (env) proxy under the global no-proxy list | `proxyFetch.js:29-43,112-114` |
+| No-proxy list: comma separated, trimmed, case-insensitive; `*`, `.suffix` (subdomains and apex), bare name (itself and subdomains) | `proxyFetch.js:11-24` |
+| A value that is not a URL (`127.0.0.1:7890`) is an http proxy | `proxyFetch.js:48-60` |
+| Inference resolves it per selected connection | `src/sse/services/auth.js:193,207-215`; `open-sse/handlers/chatCore.js:365-370` |
+| Inference-time token refresh passes it | `chatCore.js:473-474` |
+| Usage read and its refresh | `src/app/api/usage/[connectionId]/route.js:160-183` |
+| Codex reset credits | `src/app/api/usage/[connectionId]/codex-reset-credits/route.js:66-75` |
+| Quota auto-ping (refresh and usage) | `src/shared/services/quotaAutoPing.js:96-103,198-211` |
+| Antigravity quota | `src/sse/services/antigravityQuota.js:107-112` |
+| Connection test | `src/app/api/providers/[id]/test/testUtils.js:455-475,865-889` |
+| Model listing (Grok CLI) | `src/app/api/providers/[id]/models/route.js:463-474` |
+| Written by the provider routes: any of the three keys sets all three, enabling needs a URL | `src/app/api/providers/[id]/route.js:9-34,109-112,143-147`; create `src/app/api/providers/route.js:15-29` |
+| Import keeps it: Codex stores the item's object as given, Grok spreads it | `src/app/api/oauth/codex/bulk-import/route.js:77-94`; `src/app/api/oauth/grok-cli/bulk-import/route.js:84-88` |
+| Dashboard shows `Legacy: <url>` when no pool is bound | `src/app/(dashboard)/dashboard/providers/[id]/ConnectionRow.js:15-24` |
+
+### Routeweft
+
+| Part | Where | Test |
+|---|---|---|
+| Keys projected from the sealed provider data | `credentials.projectSettings`, `routing.ProviderSettings` | `TestImportedCodexConnectionProxyIsServed` |
+| Compiled once per snapshot, disabled connections included (a test or usage read of one still uses it) | `runtime.compileConnectionProxies`, `RuntimeSnapshot.LegacyConnectionProxy` | same |
+| Precedence pool member > connection proxy > global | `proxy.Binder.binding`, `proxy.Resolver.Policy` | `TestBinderLegacyConnectionProxy` (one row per case, on the wire) |
+| Connection no-proxy owns the connection proxy; a bypassed host takes the global proxy under the global list | `transport.ProxyPolicy.ConnectionOwnsNoProxy/ConnectionNoProxy` | same |
+| Side paths: refresh, usage reads, auto-ping, Codex reset credits, connection check, model test, discovery | `transport.WithConnection` at each site; `transport.ConnectionRouter` over the binder (`app.connectionClient`) | `TestSidePathsCarryTheConnection`, `TestQuotaWorkCarriesTheConnection`, `TestRefreshCarriesTheConnection`, `TestConnectionRouterUsesConnectionProxy`, `TestImportedCodexConnectionProxyEndToEnd` |
+| Write: `POST /admin/v1/connections/{id}/proxy` takes the three keys with the pin's normalization | `api.connectionProxyUpdate`, `handleSetConnectionProxy` | `TestSetConnectionProxyLegacyFields` |
+| Read: the connections list reports the proxy in force, URL without userinfo/query/fragment | `api.connections` (`connectionProxy`) | `TestImportedCodexConnectionProxyIsServed` |
+| Dashboard note on the connection row | `ui/src/connectionProxy.ts` | `connectionProxy.test.ts` |
+| Drift gate over the pin's callers and rules | `internal/parity/connection_proxy_test.go` | `TestConnectionProxyCallersAreCovered`, `TestConnectionProxySemanticsMatchPin` |
+
+### Siblings audited
+
+- **Codex bulk import** already kept the keys (`codexItemProviderData`, `TestCodexBulkKeepsExportedProviderData`). Correct before #249.
+- **Grok CLI bulk import** dropped every non-string value, so `connectionProxyEnabled: true` was lost. Fixed: non-strings are kept as their JSON text, as Codex does (`TestGrokBulkKeepsNonStringProviderData`). Its existing string handling (trimmed, blanks dropped) is unchanged.
+- **Usage reads** were tagged with no connection: `quota.Service.refreshConnection` built the credential without `ConnectionID`. Fixed. The end-to-end test found this; the unit row alone did not.
+- **Pools on side paths.** Before #249, refresh, usage, auto-ping, reset credits, tests and discovery used a fixed client that honored neither pools nor the global proxy. They now take the connection's compiled policy, so pools and the global proxy apply there too, as in the pin.
+- **`/v1/models`** is served from the snapshot with no per-connection fetch, so the pin's per-connection listing there (`src/app/api/v1/models/route.js:125`) has no Routeweft equivalent to route.
+- **Sign-in** (no connection exists yet) and the Headroom/PXPIPE helpers stay on the direct client, as before.
+
+### Divergences kept, with reasons
+
+- **Fail closed on a proxy failure.** The pin retries direct when the proxy fails and `strictProxy` is off (`proxyFetch.js:116-127`), and forces `strictProxy: false` on usage and auto-ping (`usage route.js:166`, `quotaAutoPing.js:102`). Routeweft never falls back to direct, for pools (already) and for the connection proxy: the operator set the proxy to hide the server's address. A stored URL Routeweft cannot use (bad scheme, no host) refuses the request instead of dialing direct (`TestBinderInvalidConnectionProxyRefuses`).
+- **`strictProxy`, relay pools and the missing-pool strict flag** (`connectionProxy.js:84-104,111-126`) stay with R08 (D12 boundary); Routeweft pools have no strict or relay type.
+- **A `providerSpecificData.proxyPoolId`** names a v1 pool. Routeweft pools are recreated by hand (V1_MIGRATION §1), so the key is not a binding. The pin treats an unknown id as a missing pool and falls to the connection proxy; Routeweft does the same, without the strict flag (R08).
+- **JSON type of `connectionProxyEnabled`.** Every pin read of the stored flag is `=== true` (`connectionProxy.js:40-41`, `chatCore.js:367`, `ConnectionRow.js:17`), and the pin stores an imported object as given (`codex/bulk-import/route.js:77-93`, `grok-cli/bulk-import/route.js:84-88`), so a string `"true"` never enables it. Both Routeweft imports store this key as its JSON text (`onboarding.typedProviderData`): a boolean `true` as `true`, a string `"true"` as `"\"true\""`. Only `true` compiles as enabled (`TestBulkImportKeepsConnectionProxyFlagType`, `TestImportedConnectionProxyFlagKeepsItsType`). The admin API writes `"true"`/`"false"` from a JSON boolean only. Residual, not detectable: a Codex row imported before #249 stored a string `"true"` verbatim, the same as a boolean, and now reads as enabled. The pin's own writers always store a boolean (`providers/[id]/route.js:17`, `providers/route.js:16`), so only a hand-edited export produces one.
+- **`localhost:8080` style values.** JS parses `localhost:` as a scheme, so the pin passes that value to its proxy agent unchanged, where it fails and goes direct. Routeweft reads any value without a scheme and host as `http://…`, so the request goes through the proxy.
+- **The connection test** in the pin first probes the proxy itself (`testUtils.js:867-879`); Routeweft sends the test request through it, so a dead proxy fails the test with a classified network error instead of a separate proxy message.
+- **Header budget.** A connection with a proxy is probed through the inference transport, so its probe has the inference header timeout, not the model-probe budget.
+
+### Security boundary
+
+The proxy address is dialed through the same SSRF dial guard as pool members and the global proxy (`transport.dialGuard`; metadata always blocked, private addresses only with `AllowPrivateUpstreams`), and every destination is still checked by `destinationGuard`. API writes run the pool member checks (`proxy.ValidateURL`, `checkProxyHost`). The URL can carry proxy credentials: it lives only in the sealed provider data and the server-side snapshot. Responses and the dashboard get it through `safeURL` (no userinfo, query or fragment). Nothing logs it; a transport error can name the proxy host and port, never its credentials.
+

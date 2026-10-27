@@ -944,8 +944,17 @@ one immutable snapshot. No separate reload command is needed.
 - Global outbound proxy enable/URL/no-proxy changes apply at the next inference
   client selection. Disabling the global proxy preserves the saved URL but stops
   using it. Explicitly bound pools remain independent. Existing upstream requests
-  keep their transport. Helper, quota and OAuth clients do not inherit these
-  settings.
+  keep their transport. Work made for a connection (token refresh, usage reads,
+  auto-ping, reset credits, connection checks, model tests, discovery) uses that
+  connection's proxy policy, global proxy included. Sign-in and helper clients do
+  not inherit these settings.
+- A connection's own proxy (imported from LiteRouter, or set with
+  `POST /admin/v1/connections/{id}/proxy`) applies at the next client selection.
+  A usable bound pool takes precedence; the dashboard connection row says
+  "Connection proxy …" when one is set. To stop using it, post
+  `{"connectionProxyEnabled": false}`, which clears the URL too, or bind a pool.
+  If its proxy is down or its URL is unusable, that connection's requests fail
+  and routing moves to the next account; they never go out directly (SPEC §20).
 - Observability enable/disable applies when a record is accepted. Disabling
   stops new Usage/detail records; it does not erase stored records or discard
   already queued events. The background worker stays available for re-enabling.
