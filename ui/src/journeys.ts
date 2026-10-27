@@ -10,6 +10,7 @@ import type { Completion } from './signIn'
 // The part of a browser method the journey reads (signIn.ConnectMethod).
 export type JourneyMethod = {
   completion?: Completion
+  variant?: string
   loopbackRedirect?: string
   redirectUri?: string
   redirectUnconfigured?: boolean
@@ -138,6 +139,21 @@ export function browserJourney(provider: string, method: JourneyMethod, meta: Re
         before: before('The address Xiaomi returns carries the account’s key encrypted to a key this server made for this sign-in alone, so it can finish only this attempt.'),
         hint: `Sign in on Xiaomi MiMo. Your browser then returns to ${returnsTo(method, 'u=')}. Copy that full address and paste it below.`,
       }
+    case 'kiro': {
+      // Kiro's Google and GitHub sign-in (#219). Kiro's login page returns only to
+      // the Kiro IDE's own URL scheme, so the operator copies that address back.
+      const who = method.variant === 'github' ? 'GitHub' : 'Google'
+      return {
+        ...base,
+        before: before(
+          `Kiro signs you in with ${who} on Kiro’s own login page. Afterwards it sends your browser to kiro://kiro.kiroAgent/authenticate-success, the Kiro IDE’s own address: no page loads, and nothing on this server receives it.`,
+          'Kiro does not report which account signed in, so name it above. Signing in again with an account that is already connected renews that connection instead of adding a second one.',
+        ),
+        hint: `Sign in with ${who}. Your browser is then sent to kiro://kiro.kiroAgent/authenticate-success?code=…&state=…; if it offers to open Kiro, decline. Copy that full address and paste it below. If the address bar does not show it, open the browser’s developer tools (Network) before signing in and copy the authenticate-success address from there.`,
+        pasteLabel: 'Address from the browser',
+        masked: false,
+      }
+    }
     case 'zed': {
       const port = (meta.nativeAppPort ?? '').trim() || '58443'
       return {
@@ -173,6 +189,19 @@ export type ProjectState = { project?: string; projectMissing?: boolean }
 export function projectNote(result: ProjectState): string | null {
   if (result.projectMissing) return 'Google reported no Code Assist project for this account, and every request needs one. Name the project below, or set up Gemini Code Assist for this account (signing in to the Gemini CLI once does) and Reauthenticate.'
   return null
+}
+
+// A Kiro connection the sign-in found no CodeWhisperer profile for (#219): it is
+// saved, as the reference saves it, but Routeweft refuses to serve it until it
+// has a profile ARN, so the result says so and how to recover.
+export function profileArnNote(result: { providerId?: string; profileArnMissing?: boolean }): string | null {
+  if (result.providerId !== 'kiro' || !result.profileArnMissing) return null
+  return 'Kiro reported no CodeWhisperer profile for this account and the profile lookup found none, so requests are refused until the connection has one. Paste the profile ARN from the Kiro IDE below, or sign in to the Kiro IDE once to create the profile and Reauthenticate. The next token refresh also looks it up again.'
+}
+
+// A CodeWhisperer profile ARN: arn:aws:codewhisperer:<region>:<account>:profile/<id>.
+export function validProfileArn(value: string): boolean {
+  return /^arn:aws:codewhisperer:[a-z]{2}(-[a-z]+)+-\d+:\d{12}:profile\/[A-Za-z0-9_-]+$/.test(value.trim())
 }
 
 // A Google Cloud project id: 6-30 lowercase letters, digits and hyphens,
@@ -238,7 +267,7 @@ export function deviceJourney(provider: string, meta: Record<string, string> = {
           idc
             ? 'IAM Identity Center: enter your organization’s AWS SSO start URL and the region its Identity Center runs in (us-east-1 when blank).'
             : 'AWS Builder ID: sign in with a personal Builder ID. For an organization’s IAM Identity Center, choose idc as the AWS SSO method and enter its start URL and region.',
-          'Kiro can also be connected by importing a token or an API key: choose that method instead.',
+          'A Google or GitHub account signs in with Sign in with Google or Sign in with GitHub instead. Kiro can also be connected by importing a token or an API key.',
         ),
         requiredMeta: idc ? ['startUrl'] : [],
       }

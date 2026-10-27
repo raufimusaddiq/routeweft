@@ -90,7 +90,9 @@ func TestKiroRefreshPicksTheEndpointFromTheCredentialShape(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := stub.last().URL.String(); got != tc.wantURL {
+			// A token without a profile ARN is followed by the profile lookup
+			// (kiroProfilePatch); the refresh itself is the first request.
+			if got := stub.requests[0].URL.String(); got != tc.wantURL {
 				t.Fatalf("refresh went to %q, want %q", got, tc.wantURL)
 			}
 			for _, want := range tc.wantBody {
@@ -206,8 +208,8 @@ func TestKiroTokenImportProvesTheTokenByRefreshing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if idc.last().URL.Host != "oidc.eu-west-1.amazonaws.com" {
-		t.Fatalf("idc import refreshed at %s", idc.last().URL.Host)
+	if len(idc.requests) != 1 || idc.last().URL.Host != "oidc.eu-west-1.amazonaws.com" {
+		t.Fatalf("idc import refreshed at %s after %d requests; a pasted profile ARN needs no lookup", idc.last().URL.Host, len(idc.requests))
 	}
 	data := result.Secret.ProviderData
 	if data["authMethod"] != "idc" || data["clientId"] != "fixture-client" || data["clientSecret"] != "fixture-secret" || data["region"] != "eu-west-1" || data["profileArn"] != fixtureProfileARN {
@@ -470,7 +472,7 @@ func TestKiroImportAcceptsTheFilesTheAuditNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("kiro-auth-token.json was refused: %v", err)
 	}
-	if !strings.HasSuffix(file.last().URL.Path, "/refreshToken") || result.Secret.AccessToken != "fixture-access" || result.Secret.ProviderData["profileArn"] != fixtureProfileARN {
+	if len(file.requests) != 1 || !strings.HasSuffix(file.last().URL.Path, "/refreshToken") || result.Secret.AccessToken != "fixture-access" || result.Secret.ProviderData["profileArn"] != fixtureProfileARN {
 		t.Fatalf("file import: %+v url=%s", result.Secret, file.last().URL)
 	}
 
@@ -483,8 +485,9 @@ func TestKiroImportAcceptsTheFilesTheAuditNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if idc.last().URL.Host != "oidc.eu-west-1.amazonaws.com" {
-		t.Fatalf("snake_case idc refreshed at %s, not the regional endpoint", idc.last().URL.Host)
+	// No profile ARN was pasted, so the refresh is followed by the profile lookup.
+	if idc.requests[0].URL.Host != "oidc.eu-west-1.amazonaws.com" || idc.last().URL.String() != kiroProfilesEndpoint {
+		t.Fatalf("snake_case idc refreshed at %s, not the regional endpoint", idc.requests[0].URL.Host)
 	}
 	data := result.Secret.ProviderData
 	if data["authMethod"] != "idc" || data["clientId"] != "fixture-client" || data["clientSecret"] != "fixture-secret" || data["region"] != "eu-west-1" {

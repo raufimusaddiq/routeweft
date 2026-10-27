@@ -6,7 +6,7 @@
 
 export type SignInMode = 'browser' | 'device' | 'import'
 export type Completion = 'code' | 'redirect-url' | 'token' | 'callback'
-export type SignInMethod = { mode: SignInMode; authKind: string; resolvesIdentity: boolean; infersIdentity?: boolean; metaKeys?: string[]; completion?: Completion; loopbackRedirect?: string; redirectUri?: string; redirectUnconfigured?: boolean }
+export type SignInMethod = { mode: SignInMode; authKind: string; resolvesIdentity: boolean; infersIdentity?: boolean; variant?: string; metaKeys?: string[]; completion?: Completion; loopbackRedirect?: string; redirectUri?: string; redirectUnconfigured?: boolean }
 export type ProviderAuth = { id?: string; auth: string; authModes: string[]; signInMethods?: SignInMethod[]; bulkImport?: boolean }
 
 export type ConnectMethod = {
@@ -19,6 +19,10 @@ export type ConnectMethod = {
   askIdentity: boolean
   identityOptional?: boolean
   metaKeys: string[]
+  // The auth method a browser method is fixed to (Kiro's google or github), sent
+  // as meta.authMethod; the operator is offered no field for it (#219).
+  variant?: string
+  fixedMeta?: Record<string, string>
   completion?: Completion
   loopbackRedirect?: string
   redirectUri?: string
@@ -30,7 +34,15 @@ const IMPORT_LABELS: Record<string, string> = { cookie: 'Import cookie', 'api-ke
 const PROVIDER_IMPORT_LABELS: Record<string, string> = { gitlab: 'Import personal access token' }
 const MANUAL_LABELS: Record<string, string> = { 'api-key': 'API key', cookie: 'Cookie / session', none: 'No authentication', oauth: 'Paste OAuth tokens' }
 
+// The account provider a browser variant signs in with (Kiro's social login).
+const VARIANT_LABELS: Record<string, string> = { google: 'Google', github: 'GitHub' }
+
+export function variantLabel(variant: string): string {
+  return VARIANT_LABELS[variant] ?? variant
+}
+
 function flowLabel(method: SignInMethod, provider: string, id?: string): string {
+  if (method.mode === 'browser' && method.variant) return `Sign in with ${variantLabel(method.variant)}`
   if (method.mode === 'browser') return `Sign in with ${provider}`
   if (method.mode === 'device') return `Sign in with ${provider} (device code)`
   return (id && PROVIDER_IMPORT_LABELS[id]) || IMPORT_LABELS[method.authKind] || 'Import token'
@@ -42,7 +54,8 @@ export function connectMethods(provider: ProviderAuth, providerName: string): Co
   const modes = provider.authModes.length ? provider.authModes : [provider.auth]
   const manual = (mode: string): ConnectMethod => ({ id: `manual-${mode}`, kind: 'manual', label: MANUAL_LABELS[mode] ?? mode, authKind: mode, askIdentity: true, metaKeys: [] })
   const flows = (provider.signInMethods ?? []).map((method): ConnectMethod => ({
-    id: method.mode, kind: method.mode, label: flowLabel(method, providerName, provider.id), authKind: method.authKind,
+    id: method.variant ? `${method.mode}-${method.variant}` : method.mode, kind: method.mode, label: flowLabel(method, providerName, provider.id), authKind: method.authKind,
+    variant: method.variant, fixedMeta: method.variant ? { authMethod: method.variant } : undefined,
     askIdentity: !method.resolvesIdentity && !method.infersIdentity, identityOptional: Boolean(method.infersIdentity) && !method.resolvesIdentity,
     metaKeys: method.metaKeys ?? [], completion: method.completion, loopbackRedirect: method.loopbackRedirect,
     redirectUri: method.redirectUri, redirectUnconfigured: method.redirectUnconfigured,

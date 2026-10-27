@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { bulkSummary, canReauthenticate, closeSignInWindow, duplicateNote, openSignInWindow, outcomeMessage, parseBulkInput, sendSignInWindow, signInURL, type SignInWindow, type WindowOpener } from './onboarding.ts'
+import { bulkSummary, canReauthenticate, closeSignInWindow, duplicateNote, openSignInWindow, outcomeMessage, parseBulkInput, reauthMethod, sendSignInWindow, signInURL, type SignInWindow, type WindowOpener } from './onboarding.ts'
 import { connectMethods, type ProviderAuth } from './signIn.ts'
 import { quotaLine } from './quotaView.ts'
 
@@ -79,6 +79,23 @@ test('Reauthenticate is offered for OAuth connections of a provider with a brows
   assert.equal(canReauthenticate(browser, { authKind: 'api-key' }), false)
   assert.equal(canReauthenticate([{ mode: 'import', authKind: 'oauth', resolvesIdentity: true }], { authKind: 'oauth' }), false)
   assert.equal(canReauthenticate(undefined, { authKind: 'oauth' }), false)
+})
+
+// #219: where the browser sign-ins are variants (Kiro's Google and GitHub), only
+// a connection one of them made is offered Reauthenticate, and it renews with the
+// variant that made it; the server refuses the rest (oauth_reauth_unsupported).
+test('Reauthenticate a Kiro connection only with the method that made it', () => {
+  const methods = [
+    { mode: 'device' as const, authKind: 'oauth', resolvesIdentity: false },
+    { mode: 'browser' as const, authKind: 'oauth', resolvesIdentity: false, variant: 'google' },
+    { mode: 'browser' as const, authKind: 'oauth', resolvesIdentity: false, variant: 'github' },
+  ]
+  assert.equal(reauthMethod(methods, { authKind: 'oauth', signInMethod: 'github' })?.variant, 'github')
+  assert.equal(canReauthenticate(methods, { authKind: 'oauth', signInMethod: 'google' }), true)
+  for (const signInMethod of ['builder-id', 'idc', 'imported', 'external_idp', undefined]) {
+    assert.equal(canReauthenticate(methods, { authKind: 'oauth', signInMethod }), false, String(signInMethod))
+  }
+  assert.equal(canReauthenticate(methods, { authKind: 'api-key', signInMethod: 'google' }), false)
 })
 
 test('bulk import is its own choice, only where the server offers it', () => {
