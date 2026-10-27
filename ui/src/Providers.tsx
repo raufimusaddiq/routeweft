@@ -8,7 +8,7 @@ import { READINESS_LABEL, readinessNote, readinessStatus, type Readiness } from 
 import { attemptExpired, attemptStillOpen, cancelResult, connectMethods, phaseForError, type AttemptPhase, type Completion, type ConnectMethod, type SignInMethod, type SignInMode } from './signIn'
 import { bulkSummary, canReauthenticate, closeSignInWindow, duplicateNote, openSignInWindow, outcomeMessage, parseBulkInput, sendSignInWindow, signInURL, type BulkResponse, type SignInWindow } from './onboarding'
 import { quotaLine, quotaQuery, type QuotaItem } from './quotaView'
-import { browserJourney, checkedNote, identityPrompt, importJourney, projectNote, validProjectId } from './journeys'
+import { browserJourney, checkedNote, copilotNote, deviceCopyItems, deviceJourney, devicePollDelay, devicePollingOver, identityPrompt, importJourney, projectNote, validProjectId } from './journeys'
 
 function ReadinessTag({ provider }: { provider: { readiness?: Readiness } }) {
   const status = readinessStatus(provider)
@@ -16,7 +16,7 @@ function ReadinessTag({ provider }: { provider: { readiness?: Readiness } }) {
 }
 type Provider = { id: string; transports: string[]; auth: string; authModes: string[]; defaultBaseURL?: string; modelCatalog: string; passthroughModels: boolean; staticModels?: string[]; reportsUsage: boolean; flowType?: string; signInModes?: SignInMode[]; metaKeys?: string[]; signInMethods?: SignInMethod[]; bulkImport?: boolean; configuredNodes: number; enabledAccounts: number; readiness?: Readiness }
 type Node = { id: string; kind: string; providerId: string; name: string; prefix?: string; baseUrl?: string; transports: string[] }
-type Connection = { id: string; nodeId: string; providerId: string; name: string; authKind: string; identity: string; enabled: boolean; priority: number; proxyPoolId?: string; connectionProxy?: ConnectionProxy; credentialConfigured: boolean; outcome?: string; plan?: string; project?: string; projectMissing?: boolean }
+type Connection = { id: string; nodeId: string; providerId: string; name: string; authKind: string; identity: string; enabled: boolean; priority: number; proxyPoolId?: string; connectionProxy?: ConnectionProxy; credentialConfigured: boolean; outcome?: string; plan?: string; project?: string; projectMissing?: boolean; copilotMissing?: boolean }
 type Model = { providerId: string; id: string; name?: string; contextWindow?: number; capabilities: string[]; disabled: boolean; custom?: boolean }
 type Alias = { alias: string; providerId: string; modelId: string }
 type Pricing = { providerId: string; modelId: string; inputPerMTok?: number; outputPerMTok?: number; cacheReadPerMTok?: number; cacheWritePerMTok?: number }
@@ -144,6 +144,8 @@ export function Providers({ onUnauthorized }: Props) {
   // The Code Assist project an operator names after a Google sign-in found none.
   const [projectInput, setProjectInput] = useState('')
   const [deviceFlow, setDeviceFlow] = useState<DeviceFlow | null>(null)
+  // Which device value was last copied ('code' or 'link'), or why copying failed.
+  const [copied, setCopied] = useState('')
   // Operator input a flow needs beyond name/identity: GitLab's self-hosted
   // application client id and base URL, Kiro's region, Cursor's machine id.
   const [metaInput, setMetaInput] = useState<Record<string, string>>({})
@@ -190,18 +192,35 @@ export function Providers({ onUnauthorized }: Props) {
     // Cancel and unmount end the in-flight poll request, not just the next tick.
     const controller = new AbortController()
     const flow = deviceFlow
-    const delay = Math.max(flow.intervalSeconds, 2) * 1000
-    const timer = window.setTimeout(async function poll() {
+    // The server reports the interval in force with every pending answer, longer
+    // after a provider's slow_down, so the next poll waits that long.
+    let delay = devicePollDelay(flow.intervalSeconds)
+    // Each run polls at least once, so Check again still asks the server.
+    let polled = false
+    let timer = window.setTimeout(async function poll() {
       if (cancelled) return
+      // The server ends the attempt at its deadline; a browser that has heard
+      // nothing well past it stops on its own rather than poll forever.
+      if (polled && devicePollingOver(flow.expiresAt, Date.now())) {
+        setPollStalled(true)
+        setAttemptNote('The time limit passed without an answer from the server. Check again to ask once more, or cancel the sign-in.')
+        return
+      }
+      polled = true
       try {
-        const result = await send(`/oauth/${encodeURIComponent(flow.provider)}/poll`, 'POST', { state: flow.state }, controller.signal) as { status: string; connection?: Connection }
+        const result = await send(`/oauth/${encodeURIComponent(flow.provider)}/poll`, 'POST', { state: flow.state }, controller.signal) as { status: string; connection?: Connection; intervalSeconds?: number }
         if (cancelled) return
         failures = 0
         if (result.status === 'connected') {
           signedIn(result.connection); await load(); setReload(value => value + 1)
           return
         }
-        window.setTimeout(poll, delay)
+        if (result.intervalSeconds !== undefined) {
+          const next = devicePollDelay(result.intervalSeconds)
+          if (next > delay) setAttemptNote(`${providerLabel(flow.provider)} asked this dashboard to check less often; it now checks every ${next / 1000} seconds.`)
+          delay = next
+        }
+        timer = window.setTimeout(poll, delay)
       } catch (cause) {
         // An abort is the operator ending the sign-in, not a failure to report.
         if (cancelled || (cause instanceof DOMException && cause.name === 'AbortError')) return
@@ -213,7 +232,7 @@ export function Providers({ onUnauthorized }: Props) {
         const code = errorCodeOf(cause)
         if (attemptStillOpen(code, 'poll')) {
           const unreachable = code === undefined || code === 'oauth_poll_failed'
-          if (unreachable && ++failures < DEVICE_POLL_RETRIES) { window.setTimeout(poll, delay); return }
+          if (unreachable && ++failures < DEVICE_POLL_RETRIES) { timer = window.setTimeout(poll, delay); return }
           setPollStalled(true)
           setAttemptNote(unreachable
             ? 'The server or the provider could not be reached. The sign-in may still be open or saving; check again.'
@@ -254,6 +273,9 @@ export function Providers({ onUnauthorized }: Props) {
   const journey = method?.kind === 'browser' ? browserJourney(selected, method, metaInput) : null
   const missingMeta = journey ? journey.requiredMeta.filter(key => !(metaInput[key] ?? '').trim()) : []
   const cannotStart = Boolean(method?.redirectUnconfigured) || missingMeta.length > 0
+  // The provider's own wording and preconditions for its device approval (#217).
+  const device = method?.kind === 'device' ? deviceJourney(selected, metaInput) : null
+  const deviceMissingMeta = device ? device.requiredMeta.filter(key => !(metaInput[key] ?? '').trim()) : []
   const selectedNode = nodes.find(node => node.kind === 'generic' && node.providerId === selected)
   const selectedConnections = connections.filter(connection => connection.providerId === selected).sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name))
   const modelList = usePagedList<Model>('models', selected, reload, onUnauthorized)
@@ -504,9 +526,20 @@ export function Providers({ onUnauthorized }: Props) {
     setPollStalled(false)
   }
 
+  // Copies the device code or link. Clipboard access can be refused (an insecure
+  // origin, a denied permission); the value stays on screen to copy by hand.
+  async function copyDeviceValue(key: string, value: string) {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopied(key)
+    } catch {
+      setCopied('failed')
+    }
+  }
+
   async function startDevice() {
-    if (!selectedProvider || (askIdentity && !account.identity.trim())) return
-    endAttempt(); setOutcome(null)
+    if (!selectedProvider || deviceMissingMeta.length > 0 || (askIdentity && !account.identity.trim())) return
+    endAttempt(); setOutcome(null); setCopied('')
     await action('device-start', '', async () => {
       const flow = await send(`/oauth/${encodeURIComponent(selected)}/device`, 'POST', { ...signInAccount(), meta: flowMeta() }) as Omit<DeviceFlow, 'provider'>
       setDeviceFlow({ ...flow, provider: selected })
@@ -745,6 +778,7 @@ export function Providers({ onUnauthorized }: Props) {
           <p><span className={`state-tag ${outcome.phase === 'success' ? 'state-good' : 'state-warn'}`}>{ATTEMPT_LABEL[outcome.phase]}</span> {outcome.message}</p>
           {outcome.connection && <dl className="ed-facts" aria-label="Signed-in account"><Fact label="Account" value={outcome.connection.identity || outcome.connection.name} />{outcome.connection.plan && <Fact label="Plan" value={outcome.connection.plan} />}{outcome.connection.project && <Fact label="Code Assist project" value={outcome.connection.project} />}</dl>}
           {outcome.connection && outcome.phase === 'success' && <p>{checkedNote(outcome.connection.providerId)}</p>}
+          {outcome.connection && copilotNote(outcome.connection) && <p role="alert">{copilotNote(outcome.connection)}</p>}
           {outcome.connection && projectNote(outcome.connection) && <div className="journey-project" role="group" aria-label="Code Assist project"><p role="alert">{projectNote(outcome.connection)}</p><label>Project ID<input value={projectInput} placeholder="my-gcp-project" autoComplete="off" spellCheck={false} onChange={event => setProjectInput(event.target.value)} /></label>{projectInput.trim() && !validProjectId(projectInput) && <small role="alert">A project ID is 6 to 30 lowercase letters, digits or hyphens, starting with a letter.</small>}<div className="oauth-actions"><button className="button-secondary" type="button" disabled={busy !== '' || !validProjectId(projectInput)} onClick={() => void saveProject(outcome.connection!)}>{busy === `project-${outcome.connection.id}` ? 'Saving…' : 'Save project'}</button></div></div>}
           {outcome.connection && <div className="oauth-actions"><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void checkSignedIn(outcome.connection!)}>{busy === `signed-check-${outcome.connection.id}` ? 'Checking…' : 'Check connection'}</button><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void readSignedInQuota(outcome.connection!)}>{busy === `signed-quota-${outcome.connection.id}` ? 'Reading…' : 'Read quota'}</button></div>}
           {afterLogin.check && <p role="status">{afterLogin.check}</p>}{afterLogin.quota && <p role="status">Quota: {afterLogin.quota}</p>}
@@ -752,9 +786,16 @@ export function Providers({ onUnauthorized }: Props) {
             <div className="oauth-actions"><button className="button-primary" type="button" disabled={busy !== ''} onClick={() => void saveNickname(outcome.connection!)}>{nickname.trim() ? 'Save nickname' : 'Done'}</button></div></>
             : outcome.phase === 'success' && <div className="oauth-actions"><button className="button-primary" type="button" onClick={() => void closeAccount()}>Done</button></div>}
         </div>}
-        {method.kind === 'device' && !outcome?.connection && <div className="wide-field oauth-panel" role="group" aria-label={method.label}>
-          {!deviceFlow ? <><p>Approve this dashboard on the provider's page with a one-time code. The account is read from the provider.</p><div><button className="button-primary" type="button" disabled={busy !== '' || (askIdentity && !account.identity.trim())} onClick={() => void startDevice()}>{busy === 'device-start' ? 'Starting…' : method.label}</button></div></>
-            : <><p>Open the page below and confirm this code. This dashboard finishes the connection on its own once you approve.</p><p><code className="technical-value" aria-label="Device code">{deviceFlow.userCode}</code></p><div className="oauth-actions"><a className="button-secondary" href={deviceFlow.verificationUrl} target="_blank" rel="noopener noreferrer">Open {providerLabel(deviceFlow.provider)} sign-in page</a><button className="button-ghost" type="button" disabled={busy === 'oauth-cancel'} onClick={() => void cancelAttempt()}>{busy === 'oauth-cancel' ? 'Cancelling…' : 'Cancel sign-in'}</button></div><p role="status"><span className="state-tag">Pending</span> Waiting for approval{deviceFlow.expiresAt ? `; the code expires at ${new Date(deviceFlow.expiresAt).toLocaleTimeString()}` : ''}.</p>{pastExpiry && <p>The time limit has passed. A sign-in approved before it may still be saving, so this waits for the server's answer.</p>}{attemptNote && <p role="alert">{attemptNote}</p>}{pollStalled && <div><button className="button-secondary" type="button" onClick={() => { setAttemptNote(''); setPollStalled(false) }}>Check again</button></div>}</>}
+        {method.kind === 'device' && device && !outcome?.connection && <div className="wide-field oauth-panel" role="group" aria-label={method.label}>
+          {!deviceFlow ? <><p>Approve this dashboard on the provider's page with a one-time code.{askIdentity ? '' : ' The account is read from the provider.'}</p>
+            {device.before.length > 0 && <ul className="journey-notes" aria-label={`Before you approve ${providerLabel(selected)}`}>{device.before.map(note => <li key={note}>{note}</li>)}</ul>}
+            {deviceMissingMeta.length > 0 && <p role="note">Enter the {deviceMissingMeta.map(key => key === 'startUrl' ? 'AWS SSO start URL' : key).join(' and ')} above to start.</p>}
+            <div><button className="button-primary" type="button" disabled={busy !== '' || deviceMissingMeta.length > 0 || (askIdentity && !account.identity.trim())} onClick={() => void startDevice()}>{busy === 'device-start' ? 'Starting…' : method.label}</button></div></>
+            : <><p>{deviceJourney(deviceFlow.provider, metaInput).approve}</p>
+              <dl className="device-values" aria-label="Device approval">{deviceCopyItems(deviceFlow).map(item => <div key={item.key}><dt>{item.label}</dt><dd><code className="technical-value" aria-label={item.key === 'code' ? 'Device code' : 'Sign-in page address'}>{item.value}</code><button className="button-ghost" type="button" aria-label={`Copy ${item.label.toLowerCase()}`} onClick={() => void copyDeviceValue(item.key, item.value)}><span className="material-symbols" aria-hidden="true">{copied === item.key ? 'check' : 'content_copy'}</span>{copied === item.key ? 'Copied' : 'Copy'}</button></dd></div>)}</dl>
+              {copied === 'failed' && <p role="alert">This browser did not allow copying; select the value and copy it by hand.</p>}
+              <div className="oauth-actions">{deviceCopyItems(deviceFlow).some(item => item.key === 'link') && <a className="button-secondary" href={deviceFlow.verificationUrl} target="_blank" rel="noopener noreferrer">Open {providerLabel(deviceFlow.provider)} sign-in page</a>}<button className="button-ghost" type="button" disabled={busy === 'oauth-cancel'} onClick={() => void cancelAttempt()}>{busy === 'oauth-cancel' ? 'Cancelling…' : 'Cancel sign-in'}</button></div>
+              <p role="status"><span className="state-tag">Pending</span> Waiting for approval{deviceFlow.expiresAt ? `; the code expires at ${new Date(deviceFlow.expiresAt).toLocaleTimeString()}` : ''}.</p>{pastExpiry && <p>The time limit has passed. A sign-in approved before it may still be saving, so this waits for the server's answer.</p>}{attemptNote && <p role="alert">{attemptNote}</p>}{pollStalled && <div><button className="button-secondary" type="button" onClick={() => { setAttemptNote(''); setPollStalled(false) }}>Check again</button></div>}</>}
         </div>}
         {method.kind === 'import' && !outcome?.connection && <div className="wide-field oauth-panel" role="group" aria-label={method.label}>
           <p>{importJourney(selected).note ?? `Paste the credential ${providerLabel(selected)} issued. It is validated with the provider before it is stored${askIdentity ? '' : ', and the account is read from it'}.`}</p>

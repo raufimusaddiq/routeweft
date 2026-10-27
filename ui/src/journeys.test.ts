@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { browserJourney, checkedNote, identityPrompt, importJourney, loopbackHint, projectNote, validProjectId } from './journeys.ts'
+import { browserJourney, checkedNote, copilotNote, DEVICE_DEADLINE_GRACE_MS, deviceCopyItems, deviceJourney, devicePollDelay, devicePollingOver, identityPrompt, importJourney, loopbackHint, projectNote, validProjectId } from './journeys.ts'
 import { connectMethods, type ProviderAuth } from './signIn.ts'
 
 const origin = 'https://routeweft.example.test/callback'
@@ -103,4 +103,73 @@ test('every provider in #216 has its own journey', () => {
     const plain = browserJourney('some-other-provider', { completion: 'code', redirectUri: origin })
     assert.notDeepEqual(journey, plain, `${provider} uses the generic journey`)
   }
+})
+
+// --- #217 device approval ----------------------------------------------------
+
+const DEVICE_PROVIDERS = ['github', 'grok-cli', 'kimi', 'kilocode', 'codebuddy-cn', 'codebuddy-intl', 'kiro', 'qoder']
+
+test('every device provider has its own approval notes and says a second sign-in of the same account renews it', () => {
+  const seen = new Set<string>()
+  for (const provider of DEVICE_PROVIDERS) {
+    const journey = deviceJourney(provider)
+    assert.ok(journey.before.length >= 2, provider)
+    assert.match(journey.before.join(' '), /already connected renews that connection instead of adding a second one/)
+    seen.add(journey.before[0])
+  }
+  // No provider falls back to another's wording.
+  assert.equal(seen.size, DEVICE_PROVIDERS.length)
+})
+
+test('CodeBuddy regions name their own host and point at the other region', () => {
+  const cn = deviceJourney('codebuddy-cn').before.join(' ')
+  const intl = deviceJourney('codebuddy-intl').before.join(' ')
+  assert.match(cn, /copilot\.tencent\.com/)
+  assert.match(cn, /signs in with CodeBuddy \(Intl\) instead/)
+  assert.match(intl, /www\.codebuddy\.ai/)
+  assert.match(intl, /signs in with CodeBuddy \(CN\) instead/)
+  assert.match(cn, /same account on both is two connections/)
+  assert.match(deviceJourney('codebuddy-cn').approve, /shows no code/)
+})
+
+test('Kiro offers Builder ID or IAM Identity Center, and Identity Center needs its start URL', () => {
+  const builder = deviceJourney('kiro')
+  assert.match(builder.before.join(' '), /AWS Builder ID.*choose idc/s)
+  assert.deepEqual(builder.requiredMeta, [])
+  const idc = deviceJourney('kiro', { authMethod: 'idc' })
+  assert.match(idc.before.join(' '), /start URL and the region/)
+  assert.deepEqual(idc.requiredMeta, ['startUrl'])
+  assert.match(builder.before.join(' '), /importing a token or an API key/)
+})
+
+test('Qoder says a stored connection does not make it served', () => {
+  assert.match(deviceJourney('qoder').before.join(' '), /does not make Qoder served/)
+})
+
+test('GitHub explains the Copilot token, and the result flags an account without one', () => {
+  assert.match(deviceJourney('github').before.join(' '), /mints the Copilot token/)
+  assert.equal(copilotNote({ providerId: 'github', copilotMissing: false }), null)
+  assert.equal(copilotNote({ providerId: 'kimi', copilotMissing: true }), null)
+  assert.match(copilotNote({ providerId: 'github', copilotMissing: true }) ?? '', /no Copilot token/)
+})
+
+test('the code and link are offered for copying as given; a missing code or a non-web link is not', () => {
+  assert.deepEqual(deviceCopyItems({ userCode: 'WXYZ-1234', verificationUrl: 'https://github.com/login/device' }).map(item => item.key), ['code', 'link'])
+  assert.deepEqual(deviceCopyItems({ userCode: '', verificationUrl: 'https://example.invalid/codebuddy' }).map(item => item.key), ['link'])
+  assert.deepEqual(deviceCopyItems({ userCode: 'C', verificationUrl: 'javascript:alert(1)' }).map(item => item.key), ['code'])
+})
+
+test('polling follows the server interval within 2 to 30 seconds and stops on its own past the deadline', () => {
+  assert.equal(devicePollDelay(5), 5000)
+  assert.equal(devicePollDelay(10), 10000)
+  assert.equal(devicePollDelay(1), 2000)
+  assert.equal(devicePollDelay(90), 30000)
+  assert.equal(devicePollDelay(undefined), 5000)
+  const deadline = '2026-10-27T12:05:00Z'
+  const at = Date.parse(deadline)
+  assert.equal(devicePollingOver(deadline, at), false)
+  assert.equal(devicePollingOver(deadline, at + DEVICE_DEADLINE_GRACE_MS), false)
+  assert.equal(devicePollingOver(deadline, at + DEVICE_DEADLINE_GRACE_MS + 1), true)
+  assert.equal(devicePollingOver(undefined, at), false)
+  assert.equal(devicePollingOver('not a date', at), false)
 })

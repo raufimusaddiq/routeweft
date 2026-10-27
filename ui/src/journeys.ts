@@ -189,3 +189,98 @@ export function identityPrompt(providerLabel: string, mode: 'required' | 'option
     ? `${providerLabel} does not report which account signed in, so name it here, for example its email.`
     : `${providerLabel} usually reports the account. If it does not, the sign-in stops without saving and asks for this, so you can fill it now if you know it.`
 }
+
+// --- Device approval (#217) ---------------------------------------------------
+
+// What the device approval screen says for one provider: what to know before the
+// code is requested, how to approve once it is shown, and which operator fields
+// the start cannot do without. Pure, like browserJourney: the screen promises
+// only steps the server takes.
+export type DeviceJourney = {
+  before: string[]
+  approve: string
+  requiredMeta: string[]
+}
+
+const DEVICE_APPROVE = 'Open the page below and confirm this code. This dashboard finishes the connection on its own once you approve.'
+const SAME_ACCOUNT = 'Approving with an account that is already connected renews that connection instead of adding a second one; another account is added beside it.'
+
+// The journey for one provider's device method. meta is the operator's current
+// input (Kiro's AWS SSO method decides whether a start URL is needed).
+export function deviceJourney(provider: string, meta: Record<string, string> = {}): DeviceJourney {
+  const base: DeviceJourney = { before: [SAME_ACCOUNT], approve: DEVICE_APPROVE, requiredMeta: [] }
+  const before = (...notes: string[]) => [...notes, SAME_ACCOUNT]
+  switch (provider) {
+    case 'github':
+      return { ...base, before: before('After you approve, Routeweft reads the GitHub account and mints the Copilot token requests use. An account without a Copilot subscription is still connected, and the result says no Copilot token was issued.') }
+    case 'grok-cli':
+      return { ...base, before: before('This is the Grok CLI device sign-in on auth.x.ai. The account’s email and subscription tier are read from xAI after you approve. For the xAI API browser sign-in, choose xAI instead.') }
+    case 'kimi':
+      return { ...base, before: before('Kimi does not report which account approved, so name it above. The device id this sign-in uses is stored with the connection: Kimi’s refresh and quota need the same one.') }
+    case 'kilocode':
+      return { ...base, before: before('Kilo reports the approving account’s email and organization. Kilo’s free models are listed live from its gateway, not from this build.'), approve: 'Open the page below; Kilo shows the same code there. Confirm it, and this dashboard finishes the connection on its own.' }
+    case 'codebuddy-cn':
+    case 'codebuddy-intl': {
+      const intl = provider === 'codebuddy-intl'
+      const here = intl ? 'CodeBuddy international (www.codebuddy.ai)' : 'CodeBuddy China (copilot.tencent.com)'
+      const other = intl ? 'An account on copilot.tencent.com signs in with CodeBuddy (CN) instead' : 'An account on codebuddy.ai signs in with CodeBuddy (Intl) instead'
+      return {
+        ...base,
+        before: before(`This is ${here}. ${other}: the two regions are separate providers, and the same account on both is two connections.`, 'CodeBuddy does not report which account signed in, so name it above.'),
+        approve: 'Open the page below and sign in. CodeBuddy shows no code to confirm; this dashboard finishes the connection on its own once you approve.',
+      }
+    }
+    case 'kiro': {
+      const idc = (meta.authMethod ?? '').trim() === 'idc'
+      return {
+        ...base,
+        before: before(
+          idc
+            ? 'IAM Identity Center: enter your organization’s AWS SSO start URL and the region its Identity Center runs in (us-east-1 when blank).'
+            : 'AWS Builder ID: sign in with a personal Builder ID. For an organization’s IAM Identity Center, choose idc as the AWS SSO method and enter its start URL and region.',
+          'Kiro can also be connected by importing a token or an API key: choose that method instead.',
+        ),
+        requiredMeta: idc ? ['startUrl'] : [],
+      }
+    }
+    case 'qoder':
+      return { ...base, before: before('Saving a Qoder connection does not make Qoder served: this build does not route requests to Qoder yet, whatever accounts are stored. Its readiness above says so.') }
+  }
+  return base
+}
+
+// The code and link the operator copies. A provider may show no code (CodeBuddy)
+// or put it in the link (verification_uri_complete); both are shown as given.
+export function deviceCopyItems(flow: { userCode?: string; verificationUrl?: string }): Array<{ key: 'code' | 'link'; label: string; value: string }> {
+  const items: Array<{ key: 'code' | 'link'; label: string; value: string }> = []
+  if (flow.userCode?.trim()) items.push({ key: 'code', label: 'Code', value: flow.userCode.trim() })
+  if (flow.verificationUrl && /^https?:\/\//i.test(flow.verificationUrl)) items.push({ key: 'link', label: 'Sign-in page', value: flow.verificationUrl })
+  return items
+}
+
+// The browser waits this long past the server's deadline for an answer before it
+// stops polling on its own. The server ends the attempt at the deadline, so this
+// only bounds a server that never answers; an approval saving right at the limit
+// still has time to report.
+export const DEVICE_DEADLINE_GRACE_MS = 60_000
+
+// Whether the browser should stop polling an attempt on its own.
+export function devicePollingOver(expiresAt: string | undefined, now: number): boolean {
+  if (!expiresAt) return false
+  const deadline = Date.parse(expiresAt)
+  return Number.isFinite(deadline) && now > deadline + DEVICE_DEADLINE_GRACE_MS
+}
+
+// The delay before the next poll: the interval the server last reported, never
+// below two seconds (the server's own floor) nor above thirty (its slow_down cap).
+export function devicePollDelay(intervalSeconds: number | undefined): number {
+  const seconds = Number.isFinite(intervalSeconds) ? Number(intervalSeconds) : 5
+  return Math.min(Math.max(seconds, 2), 30) * 1000
+}
+
+// What a GitHub sign-in reported about Copilot (#217): an account the Copilot
+// token mint refused is connected but cannot serve until it has Copilot.
+export function copilotNote(result: { providerId?: string; copilotMissing?: boolean }): string | null {
+  if (result.providerId !== 'github' || !result.copilotMissing) return null
+  return 'GitHub issued no Copilot token for this account, so it has no Copilot entitlement Routeweft could see. Requests fail until the account has a Copilot subscription. Once it has one, sign in again with a device code: this connection is renewed in place.'
+}

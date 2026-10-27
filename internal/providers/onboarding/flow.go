@@ -280,7 +280,10 @@ type Result struct {
 type PollResult struct {
 	Done    bool
 	Pending bool
-	Result  Result
+	// SlowDown is a pending answer that also asks for a longer interval (RFC 8628
+	// slow_down); the handler lengthens the attempt's interval.
+	SlowDown bool
+	Result   Result
 	// Denied and Expired distinguish the two terminal rejections the reference
 	// reports separately, so the dashboard can tell "you said no" from "the code
 	// timed out". Pending is never an error.
