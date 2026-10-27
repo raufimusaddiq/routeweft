@@ -73,3 +73,12 @@ textarea { border: 3px solid var(--border); border-radius: 20px; }
 }
 /* Inside the slab the outline is the slab's own ink, so a control keeps 3:1 in dark too. */
 .accent-surface :is(.button-primary, .button-secondary, input, select) { border-color: var(--accent-fg); box-shadow: 5px 3px 0 var(--accent-fg); }
+/* On a phone a poster title must not squeeze the sign-out control (its nowrap text would spill past 320px):
+   the row wraps and sign-out drops under a long title. */
+@media (max-width: 700px) {
+  .page-heading-row { flex-wrap: wrap; row-gap: 8px; }
+  .page-heading-row .sign-out { flex: none; }
+}
+/* Dark: the black rail and header sit on a near-black page (1.1:1), so a 3px paper rule draws their edge. */
+:root[data-theme="dark"] .sidebar { border-right: 3px solid #f7f6f0; }
+:root[data-theme="dark"] .mobile-header { border-bottom: 3px solid #f7f6f0; }

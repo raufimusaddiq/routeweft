@@ -34,7 +34,7 @@ This document records binding architecture/build choices so implementation agent
 | BDR-024 | Product requirements freeze gates Codex implementation | Accepted |
 | BDR-025 | OpenAI Chat Completions is the conversion hub | Accepted |
 | BDR-026 | Model capabilities are generated from the parity pin | Accepted |
-| BDR-027 | Retro neo-brutalist visual language (supersedes BDR-015's visual part) | Accepted; direction pending owner approval of #263 previews |
+| BDR-027 | Retro neo-brutalist visual language (supersedes BDR-015's visual part) | Accepted; direction D (Signal) chosen by owner 2026-10-27 |
 
 ## BDR-001 — Standalone product
 
@@ -358,48 +358,51 @@ supersedes only the visual part of BDR-015: "cool neutral flat surfaces,
 ink-on-paper primary actions, ruled sections instead of cards, 0/2px geometry"
 and UI_STYLE's "No gradient, blur, glass, shadow or glow anywhere".
 
-Borrowed traits: flat fills; a crisp ink outline only where a box means
-something; depth as a hard offset shadow with no blur; tinted paper; a few
-pastels that each mean one thing; one highlighter colour; light and dark set the
-same token names.
+Direction (owner, Suhu, 2026-10-27): **D "Signal"**, a poster. A black rail with
+a yellow pill for the active page, oversized titles (64px, 40px on a phone) and
+headline numbers, pill geometry, one pink slab with an asymmetric 10x6px hard
+shadow, stamped tilted tags, and the data left open with wide negative space.
 
-Kept as Routeweft's own, not borrowed: the weave mark; square 0/2px geometry
-(Richmod and Antares are rounded); Space Grotesk prose with JetBrains Mono for
-technical values; cyan `--live` for current data; the editorial layout of
-UI_STYLE §1 and §5; the 11/12/16/28px type scale. Excluded: Richmod's Fraunces
-and cream/teal palette, Antares' cobalt action colour, marker gradient, pills,
-rotated tags and two-tone focus halo.
+Borrowed traits: flat fills; a crisp ink outline only on objects that mean
+something; depth as a hard offset shadow with no blur; tinted paper; few colours
+that each mean one thing; one highlighter colour; pills and stamped tags (from
+Antares); light and dark set the same token names.
+
+Kept as Routeweft's own: the weave mark; Space Grotesk prose with JetBrains Mono
+for technical values and labels; cyan `--live` for current data; the editorial
+layout of UI_STYLE §1 and §5; the black rail; its own pink, yellow and cyan
+palette; the asymmetric shadow; a square status mark beside a word. Excluded:
+Richmod's Fraunces and cream/teal palette, Antares' cobalt action colour, marker
+gradient and two-tone focus halo.
 
 Still forbidden: blur, glass, glow, backdrop filters, gradients and soft
 shadows. `box-shadow` is allowed only as the hard-offset tokens `--hard` and
 `--hard-sm`.
 
-`docs/UI_STYLE.md` carries the tokens and the acceptance checks. Phase 1 of #263
-records the contract and an isolated preview (`ui/preview/263/`). The direction
-is the owner's choice from those screenshots, and the token tables follow that
-choice before phase 2. The owner judged round 1 (A, B) "not brutal enough"
-(2026-10-27), so round 2 adds C and D. Options, with the guards each rewrites
-(file:line in `ui/preview/263/README.md`):
+Considered and not chosen (previews and measurements in `ui/preview/263/`):
 
-- A "Loom": square, linen paper, 4px shadow, lime marker. Fewest changes, but
-  judged too soft. Rewrites the error-border assert (`shell-smoke.cjs:1553`).
-- B "Patchwork": rounded tiles, pills, pastel patches. Still soft. Rewrites the
-  radius guard (`shell-smoke.cjs:55-58`, `:74`) and the error-border assert.
-- C "Ledger" (recommended): square everything, a heavy black ruled grid,
-  inverted heads and nav block, a vermilion slab with an 8px hard shadow, mono
-  capital labels, stamped tags. The hardest surface that keeps Routeweft's
-  square identity; rewrites only the error-border assert.
-- D "Signal": a poster with a black rail, oversized 64px titles, pills and
-  circles, a pink slab with an asymmetric 10x6px shadow, open data. The most
-  anti-mainstream; rewrites the radius guard and the type-scale guard
-  (`shell-smoke.cjs:60`, `:77-79`, `:1558`).
+- A "Loom": square, linen paper, 4px shadow, lime marker. Fewest guard changes
+  (only the error-border assert, `shell-smoke.cjs:1553`), but judged not brutal
+  enough.
+- B "Patchwork": rounded tiles, pills, pastel patches. Judged not brutal enough;
+  rewrites the radius guard (`shell-smoke.cjs:55-58`, `:74`) and the error-border
+  assert.
+- C "Ledger": square everything, a heavy black ruled grid, inverted heads and nav
+  block, a vermilion slab with an 8px hard shadow. The coding agent recommended
+  it for keeping the square identity and the type scale (one guard change); the
+  owner chose the bolder poster.
 
-The "kept as Routeweft's own" list above (square geometry, the type scale)
-holds for A and C. Choosing B or D revises it in the same PR that records the
-choice. Until
-phase 2 lands, `ui/src/style.css` still implements the BDR-015 values and the
-smoke guards enforce them; each later phase changes code, guards and this
+What D costs: it rewrites the radius guard and the type-scale guard, and the
+error-state, accent-surface, active-nav, focus, theme-color and favicon checks
+take D's values. `docs/UI_STYLE.md` §2 carries D's tokens with their measured
+contrast, and §12 specifies every guard change and the new assertions (3:1
+control boundaries, the menu button against its header, shell edges, shadows,
+titles at 320px) for phase 2. The phase 1 previews showed a 10px round status
+mark; #263 froze "square dot plus word", so the contract keeps the square
+unless the owner lifts that freeze.
+
+Until phase 2 lands, `ui/src/style.css` still implements the BDR-015 values and
+the smoke guards enforce them; each later phase changes code, guards and the
 contract together. Navigation, routes, features, aria, 44px targets, status
 never shown by colour alone and no horizontal overflow at 320px are unchanged.
 This decision authorizes no API, backend or product-scope change.
-
