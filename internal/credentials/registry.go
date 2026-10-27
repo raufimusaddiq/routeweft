@@ -69,6 +69,10 @@ type refreshCall struct {
 	done   chan struct{}
 	secret Secret
 	err    error
+	// update marks the slot Registry.Update holds. It carries no result: a waiter
+	// checks the credential again once it is released and refreshes it if the
+	// update left it expired, or failed and left the expired one in place.
+	update bool
 }
 
 // NewRegistry builds an empty credential registry over the durable store.
@@ -134,7 +138,7 @@ func (r *Registry) Register(connection Connection, exchanger Exchanger) {
 // single step with refresh: change receives the connection as stored now and
 // returns what to store. A refresh already in flight commits first, so change
 // reads its rotated credential; new refreshes wait until the result is written
-// and published; and the write and the publication happen under the install
+// and published, then check the credential again (Secret); and the write and the publication happen under the install
 // lock with a generation bump, so no refresh can rotate the credential between
 // the read and the write or commit over the result. It is the reference's
 // read-merge-write in one transaction (connectionsRepo.js:210,266-286) against a
@@ -153,7 +157,7 @@ func (r *Registry) Update(ctx context.Context, connectionID string, change func(
 	}
 	// Take the refresh slot: wait out a refresh in flight, then hold one that
 	// would start, so its exchange cannot spend the refresh token read below.
-	hold := &refreshCall{done: make(chan struct{})}
+	hold := &refreshCall{done: make(chan struct{}), update: true}
 	for {
 		current.mu.Lock()
 		call := current.inflight
@@ -198,9 +202,9 @@ func (r *Registry) Update(ctx context.Context, connectionID string, change func(
 		current.seeded = true
 		current.generation++
 	}
-	// Callers that waited on the held slot get the credential now published.
+	// Callers that waited on the held slot check the credential again and
+	// refresh it if it is not valid (Secret).
 	current.inflight = nil
-	hold.secret = current.current
 	current.mu.Unlock()
 	close(hold.done)
 	return updated, err
@@ -261,19 +265,29 @@ func (r *Registry) Secret(ctx context.Context, connectionID string) (Secret, err
 		return Secret{}, err
 	}
 	current.mu.Lock()
-	if r.validLocked(current) {
-		secret := current.current
-		current.mu.Unlock()
-		return secret, nil
-	}
-	if call := current.inflight; call != nil {
+	for {
+		if r.validLocked(current) {
+			secret := current.current
+			current.mu.Unlock()
+			return secret, nil
+		}
+		call := current.inflight
+		if call == nil {
+			break
+		}
 		current.mu.Unlock()
 		select {
 		case <-call.done:
-			return call.secret, call.err
 		case <-ctx.Done():
 			return Secret{}, ctx.Err()
 		}
+		if !call.update {
+			return call.secret, call.err
+		}
+		// An update released the slot: check what it left, as the reference
+		// checks every request's credential against the latest stored one
+		// (tokenRefresh.js:175-196, called per request at chat.js:287).
+		current.mu.Lock()
 	}
 	exchanger := current.exchanger
 	if exchanger == nil {

@@ -1122,8 +1122,12 @@ Codex duplicate handling follows the same pin (#241, `connectionsRepo.js:226-292
   a deleted connection. An update of a stored connection (a matching sign-in or
   bulk item, or an edit) is also one step with that connection's credential
   refresh: a refresh in flight commits first and the update merges onto its
-  rotated credential, a refresh that would start waits for the update, and the
-  write and its runtime publication happen together (`Registry.Update`). The
+  rotated credential, a refresh that would start waits for the update and then
+  checks the credential again, refreshing it if the update left it expired or
+  failed, and the write and its runtime publication happen together
+  (`Registry.Update`). The reference checks every request's credential against
+  the latest stored one and refreshes it when due (`tokenRefresh.js:175-196`,
+  `chat.js:287`). The
   reference's update and refresh are each one read-merge-write transaction
   (`:210,266-286`; `:334-352`).
 - Migration v12 drops `UNIQUE(node_id, identity)` and keeps it by trigger for

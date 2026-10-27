@@ -552,3 +552,81 @@ func TestRefreshWaitsForUpdate(t *testing.T) {
 		t.Fatalf("durable after update: %+v %v", loaded.Secret, err)
 	}
 }
+
+// Requests that find an expired credential while an update holds the refresh
+// slot check it again when the update is done: whether the update succeeded but
+// left the token expired (an edit that does not touch it, an import of an
+// expired one) or failed and left the old one, they refresh it, once for all of
+// them, and none is handed the expired credential (#241).
+func TestRefreshWaitersRecheckAfterUpdate(t *testing.T) {
+	for name, change := range map[string]func(Connection) (Connection, error){
+		"update keeps the expired token": func(stored Connection) (Connection, error) {
+			stored.Name = "renamed"
+			return stored, nil
+		},
+		"update stores another expired token": func(stored Connection) (Connection, error) {
+			stored.Secret.AccessToken = "imported-expired"
+			stored.Secret.Expiry = time.Now().Add(-time.Hour)
+			return stored, nil
+		},
+		"update fails": func(Connection) (Connection, error) {
+			return Connection{}, errors.New("change refused")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			store, _ := testStore(t)
+			node := seedNode(t, store, "codex")
+			connection, err := store.PutConnection(ctx, Connection{NodeID: node.ID, Name: "primary", AuthKind: AuthOAuth, Identity: "acct", Enabled: true, Secret: Secret{AccessToken: "expired", RefreshToken: "r0", Expiry: time.Now().Add(-time.Minute)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			registry := NewRegistry(store, nil)
+			var exchanges atomic.Int32
+			registry.Register(connection, func(_ context.Context, current Secret) (Secret, error) {
+				exchanges.Add(1)
+				return Secret{AccessToken: "fresh", RefreshToken: "r1", Expiry: time.Now().Add(time.Hour)}, nil
+			})
+			inChange, release := make(chan struct{}), make(chan struct{})
+			updated := make(chan error, 1)
+			go func() {
+				_, err := registry.Update(ctx, connection.ID, func(stored Connection) (Connection, error) {
+					close(inChange)
+					<-release
+					return change(stored)
+				})
+				updated <- err
+			}()
+			<-inChange
+			const waiters = 4
+			got := make(chan Secret, waiters)
+			for i := 0; i < waiters; i++ {
+				go func() {
+					secret, err := registry.Secret(ctx, connection.ID)
+					if err != nil {
+						t.Errorf("secret: %v", err)
+					}
+					got <- secret
+				}()
+			}
+			time.Sleep(50 * time.Millisecond)
+			if exchanges.Load() != 0 {
+				t.Fatal("a refresh started while the update held the slot")
+			}
+			close(release)
+			<-updated
+			for i := 0; i < waiters; i++ {
+				if secret := <-got; secret.AccessToken != "fresh" {
+					t.Fatalf("waiter got access %q, want the refreshed credential", secret.AccessToken)
+				}
+			}
+			if n := exchanges.Load(); n != 1 {
+				t.Fatalf("exchanges=%d, want one shared refresh", n)
+			}
+			loaded, err := store.GetConnection(ctx, connection.ID)
+			if err != nil || loaded.Secret.AccessToken != "fresh" || loaded.Secret.RefreshToken != "r1" {
+				t.Fatalf("durable after refresh: %+v %v", loaded.Secret, err)
+			}
+		})
+	}
+}
