@@ -10,7 +10,7 @@ const { join } = require('node:path');
 const out = process.argv[2] || '/tmp/routeweft-263-preview';
 const wanted = process.argv.slice(3);
 const directions = [
-  { key: 'current', label: 'Current contract (BDR-015), for comparison', css: '' },
+  { key: 'current', label: process.env.ROUTEWEFT_PREVIEW_LABEL || 'Current contract (BDR-015), for comparison', css: '' },
   { key: 'a', label: 'PREVIEW #263 · Direction A "Loom" · not shipped', css: readFileSync(join(__dirname, 'a-loom.css'), 'utf8') },
   { key: 'b', label: 'PREVIEW #263 · Direction B "Patchwork" · not shipped', css: readFileSync(join(__dirname, 'b-patchwork.css'), 'utf8') },
   { key: 'c', label: 'PREVIEW #263 · Direction C "Ledger" · not shipped', css: readFileSync(join(__dirname, 'c-ledger.css'), 'utf8') },
