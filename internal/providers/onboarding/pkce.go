@@ -671,6 +671,8 @@ func xaiFlow() Flow {
 		FixedPort:      56121,
 		FixedHost:      "127.0.0.1",
 		CallbackPath:   "/callback",
+		// The id token's email, when it carries one (xai.js:87-88).
+		InfersIdentity: true,
 		Authorize: func(ctx context.Context, p Params) (AuthRequest, error) {
 			authorizeURL, _, err := xaiEndpoints(ctx, p.Client)
 			if err != nil {
@@ -781,6 +783,8 @@ func geminiCLIFlow() Flow {
 		Provider:   "gemini-cli",
 		Type:       FlowAuthorizationCode,
 		Completion: CompletionCode,
+		// The userinfo email, when Google answers (gemini-cli.js:43-46,80).
+		InfersIdentity: true,
 		Authorize: func(_ context.Context, p Params) (AuthRequest, error) {
 			clientID, _, err := googleClient()
 			if err != nil {
@@ -821,7 +825,7 @@ func geminiCLIFlow() Flow {
 			}, &user); err == nil {
 				identity = user.Email
 			}
-			if project := cloudCodeProject(ctx, p.Client, tokens.AccessToken, false); project != "" {
+			if project, _ := cloudCodeProject(ctx, p.Client, tokens.AccessToken, false); project != "" {
 				providerData["projectId"] = project
 			}
 			if len(providerData) == 0 {
@@ -842,26 +846,97 @@ func geminiCLIFlow() Flow {
 }
 
 // cloudCodeProject resolves the Code Assist project id that the quota and
-// inference paths need, so it is captured once at sign-in. Both flows send the
+// inference paths need, so it is captured once at sign-in, and the account's
+// default tier, which Antigravity's onboarding names. Both flows send the
 // host client metadata; they differ as the reference's do: gemini-cli adds
 // mode 1 (src/lib/oauth/providers/gemini-cli.js:51-63), antigravity sends the
 // metadata alone with the IDE user agent and x-request-source
-// (antigravity.js:61-67,82-86).
-func cloudCodeProject(ctx context.Context, client HTTPClient, accessToken string, antigravity bool) string {
+// (antigravity.js:61-67,82-86). The tier is the first default allowedTiers id,
+// else "legacy-tier" (antigravity.js:80,90-97).
+func cloudCodeProject(ctx context.Context, client HTTPClient, accessToken string, antigravity bool) (project, tier string) {
 	var body struct {
-		Project json.RawMessage `json:"cloudaicompanionProject"`
+		Project      json.RawMessage `json:"cloudaicompanionProject"`
+		AllowedTiers []struct {
+			ID        string `json:"id"`
+			IsDefault bool   `json:"isDefault"`
+		} `json:"allowedTiers"`
 	}
+	tier = "legacy-tier"
+	if err := postJSONTarget(ctx, client, cloudCodeLoadURL, cloudCodeHeaders(accessToken, antigravity), cloudCodeRequest(antigravity, ""), &body); err != nil {
+		return "", tier
+	}
+	for _, allowed := range body.AllowedTiers {
+		if allowed.IsDefault && strings.TrimSpace(allowed.ID) != "" {
+			tier = strings.TrimSpace(allowed.ID)
+			break
+		}
+	}
+	return jsonProjectID(body.Project), tier
+}
+
+const (
+	cloudCodeLoadURL    = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+	cloudCodeOnboardURL = "https://cloudcode-pa.googleapis.com/v1internal:onboardUser"
+)
+
+// cloudCodeHeaders are the loadCodeAssist/onboardUser headers of each flow.
+func cloudCodeHeaders(accessToken string, antigravity bool) map[string]string {
 	headers := map[string]string{"Authorization": "Bearer " + accessToken}
-	request := `{"metadata":` + cloudcode.ClientMetadata() + `,"mode":1}`
 	if antigravity {
 		headers["User-Agent"] = cloudcode.AntigravityUserAgent
 		headers["x-request-source"] = "local"
-		request = `{"metadata":` + cloudcode.ClientMetadata() + `}`
 	}
-	if err := postJSONTarget(ctx, client, "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", headers, request, &body); err != nil {
-		return ""
+	return headers
+}
+
+// cloudCodeRequest is the request body: the client metadata, gemini-cli's mode,
+// and the tier an onboarding asks for.
+func cloudCodeRequest(antigravity bool, tier string) string {
+	switch {
+	case tier != "":
+		encoded, _ := json.Marshal(tier)
+		return `{"tierId":` + string(encoded) + `,"metadata":` + cloudcode.ClientMetadata() + `}`
+	case antigravity:
+		return `{"metadata":` + cloudcode.ClientMetadata() + `}`
+	default:
+		return `{"metadata":` + cloudcode.ClientMetadata() + `,"mode":1}`
 	}
-	return jsonProjectID(body.Project)
+}
+
+// antigravityOnboardAttempts and antigravityOnboardDelay bound the background
+// onboarding as the reference does: ten tries, five seconds apart, stopping at
+// the first answer that says done or at a request that fails outright
+// (antigravity.js:105-121). Variables so a test need not wait.
+var (
+	antigravityOnboardAttempts = 10
+	antigravityOnboardDelay    = 5 * time.Second
+)
+
+// onboardAntigravityUser finishes an Antigravity account's Code Assist
+// onboarding. It runs after the sign-in has answered, holds no lock and saves
+// nothing: its failure leaves the connection as stored, and the next request
+// reports whatever Google still requires.
+func onboardAntigravityUser(ctx context.Context, client HTTPClient, accessToken, tier string) {
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(antigravityOnboardAttempts+1)*(antigravityOnboardDelay+20*time.Second))
+	defer cancel()
+	for attempt := 0; attempt < antigravityOnboardAttempts; attempt++ {
+		var result struct {
+			Done bool `json:"done"`
+		}
+		status, err := postJSONTargetWithHeaders(ctx, client, cloudCodeOnboardURL, cloudCodeHeaders(accessToken, true), cloudCodeRequest(true, tier), &result)
+		// No answer, or a success the reference could not parse, ends it.
+		if err != nil && (status == 0 || status >= 200 && status < 300) {
+			return
+		}
+		if status >= 200 && status < 300 && result.Done {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(antigravityOnboardDelay):
+		}
+	}
 }
 
 // jsonProjectID accepts a bare id or an object with an id field.
@@ -896,6 +971,8 @@ func antigravityFlow() Flow {
 		Provider:   "antigravity",
 		Type:       FlowAuthorizationCode,
 		Completion: CompletionCode,
+		// The userinfo email, when Google answers (antigravity.js:70-76,133).
+		InfersIdentity: true,
 		Authorize: func(_ context.Context, p Params) (AuthRequest, error) {
 			clientID, _, err := googleClient()
 			if err != nil {
@@ -936,15 +1013,23 @@ func antigravityFlow() Flow {
 			}, &user); err == nil {
 				identity = user.Email
 			}
-			if project := cloudCodeProject(ctx, p.Client, tokens.AccessToken, true); project != "" {
+			project, tier := cloudCodeProject(ctx, p.Client, tokens.AccessToken, true)
+			var afterSave func(context.Context)
+			if project != "" {
 				providerData["projectId"] = project
+				// The reference finishes the account's Code Assist onboarding in
+				// the background once a project is known, without holding up the
+				// save (antigravity.js:103-124).
+				client, accessToken := p.Client, tokens.AccessToken
+				afterSave = func(ctx context.Context) { onboardAntigravityUser(ctx, client, accessToken, tier) }
 			}
 			if len(providerData) == 0 {
 				providerData = nil
 			}
 			return Result{
-				AuthKind: credentials.AuthOAuth,
-				Identity: identity,
+				AuthKind:  credentials.AuthOAuth,
+				Identity:  identity,
+				AfterSave: afterSave,
 				Secret: credentials.Secret{
 					AccessToken:  tokens.AccessToken,
 					RefreshToken: tokens.RefreshToken,

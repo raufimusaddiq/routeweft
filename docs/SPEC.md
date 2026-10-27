@@ -1064,6 +1064,48 @@ outcome or error. After a sign-in the result shows the account and plan and
 offers a connection check and the account's quota read, and no credential
 field.
 
+Provider-aware browser journeys (#216). The sign-in screen is shared; each
+provider's browser method keeps its own completion and preconditions, which the
+read model states and the dashboard words per provider (`ui/src/journeys.ts`):
+
+- A browser `signInMethod` carries `redirectUri` when the flow sends this
+  server's public origin (Google, GitLab, Cline, ClinePass, iFlow, Kimchi,
+  Xiaomi): the address the provider returns the browser to, which a GitLab OAuth
+  application registers. With no public origin it carries
+  `redirectUnconfigured` instead and the dashboard does not offer the start.
+  `infersIdentity` marks a method that reads the account from the provider best
+  effort (Gemini CLI, Antigravity, xAI, Cline, ClinePass, Kimchi, Zed, Xiaomi
+  MiMo): `/start` does not require an identity for it, as the reference asks for
+  none, and a result without one answers `502 oauth_identity_unresolved` before
+  anything is saved, so the next attempt asks. Claude reports no account and
+  still requires one.
+- `input` may be a callback URL whose `token` query parameter carries the
+  credential (Kimchi), read wherever `code` is absent, as the reference does; its
+  `state`, when present, must still be this attempt's.
+- xAI returns the browser to `http://127.0.0.1:56121/callback`, a port on the
+  operator's own computer that Routeweft never listens on; the copied code xAI
+  shows instead of redirecting is accepted bare.
+- GitLab: the instance is `baseUrl` (gitlab.com when blank); a public OAuth
+  application sends only its client id (PKCE), a confidential one also its
+  secret; a start without a client id answers `400 oauth_client_id_required`.
+  The personal access token import is the alternative without an application.
+- Cline and ClinePass exchange a code that is not a token bundle as the
+  reference reads the answer: camelCase fields under `data` or at the top level,
+  the email under `data.userInfo`, an hour's lifetime when no `expiresAt` is
+  given. The stored access token is the bare WorkOS JWT; the `workos:` prefix is
+  added where it is sent.
+- Zed and Xiaomi MiMo callbacks carry a token encrypted to a key minted for that
+  attempt and held server-side, so a pasted address finishes only its attempt.
+- A Gemini CLI or Antigravity result carries `project` (the Code Assist project
+  its sign-in found) and `projectMissing`; requests refuse a connection without
+  one, so the dashboard asks for a project id and saves only
+  `secret.providerData.projectId` through `PATCH /connections/{id}`, which keeps
+  the stored credential. When a project is found, Antigravity then calls
+  `onboardUser` for the account's default tier (else `legacy-tier`) in the
+  background, at most ten times five seconds apart, stopping when it reports
+  done, as the reference does; it saves nothing and a failure leaves the
+  connection as stored.
+
 An import's `input` is one masked field, so a flow whose import needs several
 secrets takes JSON in it rather than extra plain-text fields. Kiro: a bare string is
 an API key (proven against the Amazon Q model catalog); a JSON object with
