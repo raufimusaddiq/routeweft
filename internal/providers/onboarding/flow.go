@@ -110,6 +110,14 @@ type Flow struct {
 	// with no email (connectionsRepo.js:228-264 never dedups one). Such a
 	// connection is never matched to another.
 	IdentityOptional bool
+	// InfersIdentity means the flow usually reads the account from the provider
+	// (a user-info call, an id-token claim) but cannot promise to: the lookup is
+	// best effort. The operator is not asked for an identity up front, as the
+	// reference asks for none (OAuthModal.js), and a sign-in that comes back
+	// without one is refused before anything is saved (oauth_identity_unresolved),
+	// so the next attempt asks. ResolvesIdentity is the stronger promise and
+	// implies this.
+	InfersIdentity bool
 	// RedirectSource says where the flow's redirect URI comes from. It is the
 	// single declaration that decides whether the handler must resolve one, so a
 	// flow cannot consume a URI the handler never builds, or demand one it discards.
@@ -183,6 +191,12 @@ type Carries struct {
 // CarriesAll is a credential that sets every key, as a sign-in does.
 var CarriesAll = Carries{RefreshToken: true, IDToken: true, Expiry: true}
 
+// AsksIdentityUpFront reports whether a sign-in must name its account before it
+// starts: only when the flow neither resolves nor usually infers one.
+func (f Flow) AsksIdentityUpFront() bool {
+	return !f.ResolvesIdentity && !f.InfersIdentity
+}
+
 // ImportKeys is the operator input the flow's Import step reads.
 func (f Flow) ImportKeys() []string {
 	if f.ImportMetaKeys != nil {
@@ -255,6 +269,11 @@ type Result struct {
 	// AuthKind is the credential mode to store. Most flows store oauth; a PAT,
 	// cookie or API-key import stores its own kind.
 	AuthKind credentials.AuthKind
+	// AfterSave is provider work the reference starts once a sign-in has its
+	// tokens and does not wait for (Antigravity's Code Assist onboarding). The
+	// handler runs it in the background after the connection is saved, on a
+	// context the request's end does not cancel. It saves nothing.
+	AfterSave func(context.Context)
 }
 
 // PollResult is one device-code poll outcome.

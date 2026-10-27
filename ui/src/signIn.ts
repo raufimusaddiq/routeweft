@@ -6,28 +6,34 @@
 
 export type SignInMode = 'browser' | 'device' | 'import'
 export type Completion = 'code' | 'redirect-url' | 'token' | 'callback'
-export type SignInMethod = { mode: SignInMode; authKind: string; resolvesIdentity: boolean; metaKeys?: string[]; completion?: Completion; loopbackRedirect?: string }
-export type ProviderAuth = { auth: string; authModes: string[]; signInMethods?: SignInMethod[]; bulkImport?: boolean }
+export type SignInMethod = { mode: SignInMode; authKind: string; resolvesIdentity: boolean; infersIdentity?: boolean; metaKeys?: string[]; completion?: Completion; loopbackRedirect?: string; redirectUri?: string; redirectUnconfigured?: boolean }
+export type ProviderAuth = { id?: string; auth: string; authModes: string[]; signInMethods?: SignInMethod[]; bulkImport?: boolean }
 
 export type ConnectMethod = {
   id: string
   kind: SignInMode | 'manual' | 'bulk'
   label: string
   authKind: string
-  // The identity field is shown only when the method cannot learn it.
+  // The identity field is required only when the method cannot learn it, and
+  // offered as optional when the method usually learns it (#216).
   askIdentity: boolean
+  identityOptional?: boolean
   metaKeys: string[]
   completion?: Completion
   loopbackRedirect?: string
+  redirectUri?: string
+  redirectUnconfigured?: boolean
 }
 
 const IMPORT_LABELS: Record<string, string> = { cookie: 'Import cookie', 'api-key': 'Import API key' }
+// A provider whose import is a named alternative to its browser sign-in.
+const PROVIDER_IMPORT_LABELS: Record<string, string> = { gitlab: 'Import personal access token' }
 const MANUAL_LABELS: Record<string, string> = { 'api-key': 'API key', cookie: 'Cookie / session', none: 'No authentication', oauth: 'Paste OAuth tokens' }
 
-function flowLabel(method: SignInMethod, provider: string): string {
+function flowLabel(method: SignInMethod, provider: string, id?: string): string {
   if (method.mode === 'browser') return `Sign in with ${provider}`
   if (method.mode === 'device') return `Sign in with ${provider} (device code)`
-  return IMPORT_LABELS[method.authKind] ?? 'Import token'
+  return (id && PROVIDER_IMPORT_LABELS[id]) || IMPORT_LABELS[method.authKind] || 'Import token'
 }
 
 // The provider's primary mode comes first so a dual-auth provider whose default is
@@ -36,8 +42,10 @@ export function connectMethods(provider: ProviderAuth, providerName: string): Co
   const modes = provider.authModes.length ? provider.authModes : [provider.auth]
   const manual = (mode: string): ConnectMethod => ({ id: `manual-${mode}`, kind: 'manual', label: MANUAL_LABELS[mode] ?? mode, authKind: mode, askIdentity: true, metaKeys: [] })
   const flows = (provider.signInMethods ?? []).map((method): ConnectMethod => ({
-    id: method.mode, kind: method.mode, label: flowLabel(method, providerName), authKind: method.authKind,
-    askIdentity: !method.resolvesIdentity, metaKeys: method.metaKeys ?? [], completion: method.completion, loopbackRedirect: method.loopbackRedirect,
+    id: method.mode, kind: method.mode, label: flowLabel(method, providerName, provider.id), authKind: method.authKind,
+    askIdentity: !method.resolvesIdentity && !method.infersIdentity, identityOptional: Boolean(method.infersIdentity) && !method.resolvesIdentity,
+    metaKeys: method.metaKeys ?? [], completion: method.completion, loopbackRedirect: method.loopbackRedirect,
+    redirectUri: method.redirectUri, redirectUnconfigured: method.redirectUnconfigured,
   }))
   // Bulk import is its own journey (many exported accounts at once), offered only
   // where the server says its endpoint takes the provider.

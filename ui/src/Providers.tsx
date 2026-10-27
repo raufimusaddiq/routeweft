@@ -8,6 +8,7 @@ import { READINESS_LABEL, readinessNote, readinessStatus, type Readiness } from 
 import { attemptExpired, attemptStillOpen, cancelResult, connectMethods, phaseForError, type AttemptPhase, type Completion, type ConnectMethod, type SignInMethod, type SignInMode } from './signIn'
 import { bulkSummary, canReauthenticate, closeSignInWindow, duplicateNote, openSignInWindow, outcomeMessage, parseBulkInput, sendSignInWindow, signInURL, type BulkResponse, type SignInWindow } from './onboarding'
 import { quotaLine, quotaQuery, type QuotaItem } from './quotaView'
+import { browserJourney, checkedNote, identityPrompt, importJourney, projectNote, validProjectId } from './journeys'
 
 function ReadinessTag({ provider }: { provider: { readiness?: Readiness } }) {
   const status = readinessStatus(provider)
@@ -15,7 +16,7 @@ function ReadinessTag({ provider }: { provider: { readiness?: Readiness } }) {
 }
 type Provider = { id: string; transports: string[]; auth: string; authModes: string[]; defaultBaseURL?: string; modelCatalog: string; passthroughModels: boolean; staticModels?: string[]; reportsUsage: boolean; flowType?: string; signInModes?: SignInMode[]; metaKeys?: string[]; signInMethods?: SignInMethod[]; bulkImport?: boolean; configuredNodes: number; enabledAccounts: number; readiness?: Readiness }
 type Node = { id: string; kind: string; providerId: string; name: string; prefix?: string; baseUrl?: string; transports: string[] }
-type Connection = { id: string; nodeId: string; providerId: string; name: string; authKind: string; identity: string; enabled: boolean; priority: number; proxyPoolId?: string; connectionProxy?: ConnectionProxy; credentialConfigured: boolean; outcome?: string; plan?: string }
+type Connection = { id: string; nodeId: string; providerId: string; name: string; authKind: string; identity: string; enabled: boolean; priority: number; proxyPoolId?: string; connectionProxy?: ConnectionProxy; credentialConfigured: boolean; outcome?: string; plan?: string; project?: string; projectMissing?: boolean }
 type Model = { providerId: string; id: string; name?: string; contextWindow?: number; capabilities: string[]; disabled: boolean; custom?: boolean }
 type Alias = { alias: string; providerId: string; modelId: string }
 type Pricing = { providerId: string; modelId: string; inputPerMTok?: number; outputPerMTok?: number; cacheReadPerMTok?: number; cacheWritePerMTok?: number }
@@ -67,18 +68,6 @@ function providerLabel(id: string): string {
 // Consecutive transient poll failures tolerated before the panel gives up.
 const DEVICE_POLL_RETRIES = 5
 type DeviceFlow = { provider: string; state: string; userCode: string; verificationUrl: string; intervalSeconds: number; expiresAt?: string }
-const OAUTH_HINTS: Record<Completion, string> = {
-  code: 'Sign in on the provider page, then copy the code it shows and paste it below.',
-  'redirect-url': 'Sign in on the provider page. Your browser then goes to an address on localhost that will not load; copy that full address from the address bar and paste it below.',
-  token: 'Paste the token, cookie or key the provider issued. It is validated before it is stored.',
-  callback: 'Sign in on the provider page. Your browser then goes to a local address that will not load; copy that full address and paste it below.',
-}
-// A pinned loopback redirect is a port on the operator's own computer. Routeweft
-// never listens there (a server cannot receive a request for the browser's own
-// localhost), so the operator is told the page will not load and why.
-function loopbackHint(redirect: string): string {
-  return `Sign in on the provider page. Your browser is then sent to ${redirect}. That address is on the computer running this browser, not on the Routeweft server, so the page will not load; that is expected. Copy the full address from the address bar and paste it below.`
-}
 const ATTEMPT_LABEL: Record<AttemptPhase, string> = { success: 'Connected', expired: 'Expired', cancelled: 'Cancelled', failed: 'Failed', closed: 'Closed' }
 const EMPTY_ACCOUNT = { name: '', identity: '', accessToken: '', refreshToken: '', cookie: '' }
 // Shown for an attempt the server no longer holds. Gone does not say whether an
@@ -152,6 +141,8 @@ export function Providers({ onUnauthorized }: Props) {
   const [bulkResult, setBulkResult] = useState<ReturnType<typeof bulkSummary> | null>(null)
   // What the operator learned about a just-saved account: a connection check and its quota.
   const [afterLogin, setAfterLogin] = useState<{ check?: string; quota?: string }>({})
+  // The Code Assist project an operator names after a Google sign-in found none.
+  const [projectInput, setProjectInput] = useState('')
   const [deviceFlow, setDeviceFlow] = useState<DeviceFlow | null>(null)
   // Operator input a flow needs beyond name/identity: GitLab's self-hosted
   // application client id and base URL, Kiro's region, Cursor's machine id.
@@ -257,6 +248,12 @@ export function Providers({ onUnauthorized }: Props) {
   const attemptProvider = (oauthFlow ?? deviceFlow)?.provider
   const attemptElsewhere = attemptProvider !== undefined && attemptProvider !== selected
   const askIdentity = method?.kind === 'manual' || Boolean(method?.askIdentity) || needIdentity
+  // A method that usually learns the account offers the field as optional (#216).
+  const identityOptional = !askIdentity && Boolean(method?.identityOptional)
+  // The provider's own wording and preconditions for its browser sign-in.
+  const journey = method?.kind === 'browser' ? browserJourney(selected, method, metaInput) : null
+  const missingMeta = journey ? journey.requiredMeta.filter(key => !(metaInput[key] ?? '').trim()) : []
+  const cannotStart = Boolean(method?.redirectUnconfigured) || missingMeta.length > 0
   const selectedNode = nodes.find(node => node.kind === 'generic' && node.providerId === selected)
   const selectedConnections = connections.filter(connection => connection.providerId === selected).sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name))
   const modelList = usePagedList<Model>('models', selected, reload, onUnauthorized)
@@ -353,7 +350,7 @@ export function Providers({ onUnauthorized }: Props) {
   // The identity is sent only when the method asks for it; the name is never asked
   // before a sign-in, and is offered as a nickname once the provider has answered.
   function signInAccount() {
-    return askIdentity ? { identity: account.identity } : {}
+    return askIdentity || (identityOptional && account.identity.trim()) ? { identity: account.identity } : {}
   }
 
   function signedIn(connection?: Connection) {
@@ -579,6 +576,18 @@ export function Providers({ onUnauthorized }: Props) {
     } finally { setBusy('') }
   }
 
+  // Names the Code Assist project of a Google connection whose sign-in found none.
+  // Only the project is sent; the server keeps the stored credential.
+  async function saveProject(connection: Connection) {
+    const project = projectInput.trim()
+    if (!validProjectId(project)) return
+    await action(`project-${connection.id}`, '', async () => {
+      await send(`/connections/${encodeURIComponent(connection.id)}`, 'PATCH', { secret: { providerData: { projectId: project } } })
+      setOutcome(current => current?.connection?.id === connection.id ? { ...current, connection: { ...current.connection, project, projectMissing: false } } : current)
+      setProjectInput('')
+    })
+  }
+
   async function finishOAuth() {
     if (!oauthFlow || !oauthInput.trim()) return
     const flow = oauthFlow
@@ -719,7 +728,7 @@ export function Providers({ onUnauthorized }: Props) {
           {methods.map(item => <label key={item.id}><input type="radio" name="connect-method" checked={item.id === method.id} onChange={() => { resetSecrets(); setMethodId(item.id) }} /><span><strong>{item.label}</strong></span></label>)}
         </div></fieldset>}
         {method.kind === 'manual' && <><label>Account name<input required value={account.name} onChange={event => setAccount({ ...account, name: event.target.value })} /></label><label>Stable account identity<input required value={account.identity} onChange={event => setAccount({ ...account, identity: event.target.value })} /></label></>}
-        {method.kind !== 'manual' && askIdentity && !reauthTarget && !pending && !outcome?.connection && <label className="wide-field">Stable account identity<input required value={account.identity} onChange={event => setAccount({ ...account, identity: event.target.value })} /><small>{providerLabel(selected)} does not report which account signed in, so name it here, for example its email.</small></label>}
+        {method.kind !== 'manual' && (askIdentity || identityOptional) && !reauthTarget && !pending && !outcome?.connection && <label className="wide-field">{askIdentity ? 'Stable account identity' : 'Account identity (optional)'}<input required={askIdentity} value={account.identity} onChange={event => setAccount({ ...account, identity: event.target.value })} /><small>{identityPrompt(providerLabel(selected), askIdentity ? 'required' : 'optional')}</small></label>}
         {method.kind !== 'manual' && method.metaKeys.length > 0 && !pending && !outcome?.connection && <div className="wide-field oauth-panel" role="group" aria-label="Sign-in parameters">
           <p>Only fill what this provider requires. Leave the rest blank.</p>
           {method.metaKeys.map(key => {
@@ -734,7 +743,9 @@ export function Providers({ onUnauthorized }: Props) {
         </div>}
         {outcome && <div className="wide-field oauth-panel" role={outcome.phase === 'success' ? 'status' : 'alert'} aria-label="Sign-in result">
           <p><span className={`state-tag ${outcome.phase === 'success' ? 'state-good' : 'state-warn'}`}>{ATTEMPT_LABEL[outcome.phase]}</span> {outcome.message}</p>
-          {outcome.connection && <dl className="ed-facts" aria-label="Signed-in account"><Fact label="Account" value={outcome.connection.identity || outcome.connection.name} />{outcome.connection.plan && <Fact label="Plan" value={outcome.connection.plan} />}</dl>}
+          {outcome.connection && <dl className="ed-facts" aria-label="Signed-in account"><Fact label="Account" value={outcome.connection.identity || outcome.connection.name} />{outcome.connection.plan && <Fact label="Plan" value={outcome.connection.plan} />}{outcome.connection.project && <Fact label="Code Assist project" value={outcome.connection.project} />}</dl>}
+          {outcome.connection && outcome.phase === 'success' && <p>{checkedNote(outcome.connection.providerId)}</p>}
+          {outcome.connection && projectNote(outcome.connection) && <div className="journey-project" role="group" aria-label="Code Assist project"><p role="alert">{projectNote(outcome.connection)}</p><label>Project ID<input value={projectInput} placeholder="my-gcp-project" autoComplete="off" spellCheck={false} onChange={event => setProjectInput(event.target.value)} /></label>{projectInput.trim() && !validProjectId(projectInput) && <small role="alert">A project ID is 6 to 30 lowercase letters, digits or hyphens, starting with a letter.</small>}<div className="oauth-actions"><button className="button-secondary" type="button" disabled={busy !== '' || !validProjectId(projectInput)} onClick={() => void saveProject(outcome.connection!)}>{busy === `project-${outcome.connection.id}` ? 'Saving…' : 'Save project'}</button></div></div>}
           {outcome.connection && <div className="oauth-actions"><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void checkSignedIn(outcome.connection!)}>{busy === `signed-check-${outcome.connection.id}` ? 'Checking…' : 'Check connection'}</button><button className="button-secondary" type="button" disabled={busy !== ''} onClick={() => void readSignedInQuota(outcome.connection!)}>{busy === `signed-quota-${outcome.connection.id}` ? 'Reading…' : 'Read quota'}</button></div>}
           {afterLogin.check && <p role="status">{afterLogin.check}</p>}{afterLogin.quota && <p role="status">Quota: {afterLogin.quota}</p>}
           {outcome.connection ? <><label>Nickname (optional)<input value={nickname} placeholder={outcome.connection.name} maxLength={200} onChange={event => setNickname(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void saveNickname(outcome.connection!) } }} /></label>
@@ -746,7 +757,7 @@ export function Providers({ onUnauthorized }: Props) {
             : <><p>Open the page below and confirm this code. This dashboard finishes the connection on its own once you approve.</p><p><code className="technical-value" aria-label="Device code">{deviceFlow.userCode}</code></p><div className="oauth-actions"><a className="button-secondary" href={deviceFlow.verificationUrl} target="_blank" rel="noopener noreferrer">Open {providerLabel(deviceFlow.provider)} sign-in page</a><button className="button-ghost" type="button" disabled={busy === 'oauth-cancel'} onClick={() => void cancelAttempt()}>{busy === 'oauth-cancel' ? 'Cancelling…' : 'Cancel sign-in'}</button></div><p role="status"><span className="state-tag">Pending</span> Waiting for approval{deviceFlow.expiresAt ? `; the code expires at ${new Date(deviceFlow.expiresAt).toLocaleTimeString()}` : ''}.</p>{pastExpiry && <p>The time limit has passed. A sign-in approved before it may still be saving, so this waits for the server's answer.</p>}{attemptNote && <p role="alert">{attemptNote}</p>}{pollStalled && <div><button className="button-secondary" type="button" onClick={() => { setAttemptNote(''); setPollStalled(false) }}>Check again</button></div>}</>}
         </div>}
         {method.kind === 'import' && !outcome?.connection && <div className="wide-field oauth-panel" role="group" aria-label={method.label}>
-          <p>Paste the credential {providerLabel(selected)} issued. It is validated with the provider before it is stored{askIdentity ? '' : ', and the account is read from it'}.</p>
+          <p>{importJourney(selected).note ?? `Paste the credential ${providerLabel(selected)} issued. It is validated with the provider before it is stored${askIdentity ? '' : ', and the account is read from it'}.`}</p>
           <label>{method.authKind === 'cookie' ? 'Cookie' : method.authKind === 'api-key' ? 'API key or token' : 'Token'}<input type="password" autoComplete="off" spellCheck={false} value={importInput} onChange={event => setImportInput(event.target.value)} /></label>
           <div className="oauth-actions"><button className="button-primary" type="button" disabled={busy !== '' || !importInput.trim() || (askIdentity && !account.identity.trim())} onClick={() => void importOnly()}>{busy === 'oauth-import' ? 'Saving…' : 'Import credential'}</button></div>
         </div>}
@@ -759,10 +770,12 @@ export function Providers({ onUnauthorized }: Props) {
         </div>}
         {method.kind === 'browser' && !outcome?.connection && <div className="wide-field oauth-panel" role="group" aria-label={method.label}>
           {reauthTarget && <p role="note">Renewing “{reauthTarget.name}”{reauthTarget.identity ? ` (${reauthTarget.identity})` : ''}. Sign in as that account: another account is refused and nothing is saved.</p>}
-          {!oauthFlow ? reauthTarget ? <div><button className="button-primary" type="button" disabled={busy !== ''} onClick={() => void startOAuth(reauthTarget)}>{busy === 'oauth-start' ? 'Starting…' : 'Reauthenticate'}</button></div>
-            : <><p>Sign in on the provider's page instead of copying tokens by hand.{askIdentity ? '' : ' The account is read from the provider, and you can name it afterwards.'}</p>{duplicateNote(selected) && <p>{duplicateNote(selected)}</p>}<div><button className="button-primary" type="button" disabled={busy !== '' || (askIdentity && !account.identity.trim())} onClick={() => void startOAuth()}>{busy === 'oauth-start' ? 'Starting…' : method.label}</button></div></>
-            : <><p>{method.loopbackRedirect && oauthFlow.completion === 'redirect-url' ? loopbackHint(method.loopbackRedirect) : OAUTH_HINTS[oauthFlow.completion]}</p>{popupBlocked ? <p role="alert">Your browser blocked the sign-in window. Open the sign-in page with the button below; the rest is the same.</p> : <p>The sign-in page opened in a new window. If you cannot see it, open it with the button below.</p>}<div><a className="button-secondary" href={signInURL(oauthFlow.authorizeUrl) ?? undefined} target="_blank" rel="noopener noreferrer">Open {providerLabel(oauthFlow.provider)} sign-in page</a></div>
-              <label>{oauthFlow.completion === 'code' ? 'Code from the provider' : oauthFlow.completion === 'token' ? 'Token, cookie or key' : 'Address from the browser'}<input type={oauthFlow.completion === 'code' || oauthFlow.completion === 'token' ? 'password' : 'text'} autoComplete="off" spellCheck={false} value={oauthInput} onChange={event => setOauthInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void finishOAuth() } }} /></label>
+          {!oauthFlow && journey && journey.before.length > 0 && <ul className="journey-notes" aria-label={`Before you sign in to ${providerLabel(selected)}`}>{journey.before.map(note => <li key={note}>{note}</li>)}</ul>}
+          {!oauthFlow && missingMeta.length > 0 && <p role="note">Enter the {missingMeta.map(key => key === 'clientId' ? 'application client id' : key).join(' and ')} above to start.</p>}
+          {!oauthFlow ? reauthTarget ? <div><button className="button-primary" type="button" disabled={busy !== '' || cannotStart} onClick={() => void startOAuth(reauthTarget)}>{busy === 'oauth-start' ? 'Starting…' : 'Reauthenticate'}</button></div>
+            : <><p>Sign in on the provider's page instead of copying tokens by hand.{askIdentity ? '' : ' The account is read from the provider, and you can name it afterwards.'}</p>{duplicateNote(selected) && <p>{duplicateNote(selected)}</p>}<div><button className="button-primary" type="button" disabled={busy !== '' || cannotStart || (askIdentity && !account.identity.trim())} onClick={() => void startOAuth()}>{busy === 'oauth-start' ? 'Starting…' : method.label}</button></div></>
+            : <><p>{journey?.hint}</p>{popupBlocked ? <p role="alert">Your browser blocked the sign-in window. Open the sign-in page with the button below; the rest is the same.</p> : <p>The sign-in page opened in a new window. If you cannot see it, open it with the button below.</p>}<div><a className="button-secondary" href={signInURL(oauthFlow.authorizeUrl) ?? undefined} target="_blank" rel="noopener noreferrer">Open {providerLabel(oauthFlow.provider)} sign-in page</a></div>
+              <label>{journey?.pasteLabel ?? 'Address from the browser'}<input type={journey?.masked ? 'password' : 'text'} autoComplete="off" spellCheck={false} value={oauthInput} onChange={event => setOauthInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void finishOAuth() } }} /></label>
               <div className="oauth-actions"><button className="button-primary" type="button" disabled={busy !== '' || !oauthInput.trim()} onClick={() => void finishOAuth()}>{busy === 'oauth-finish' ? 'Finishing…' : 'Finish sign-in'}</button><button className="button-ghost" type="button" disabled={busy === 'oauth-cancel'} onClick={() => void cancelAttempt()}>{busy === 'oauth-cancel' ? 'Cancelling…' : 'Cancel sign-in'}</button></div>
               <p role="status"><span className="state-tag">Pending</span> Waiting for the provider's answer{oauthFlow.expiresAt ? `; this sign-in expires at ${new Date(oauthFlow.expiresAt).toLocaleTimeString()}` : ''}.</p>{pastExpiry && <p>The time limit has passed, so the server will most likely refuse this sign-in. Finish or cancel it to get the server's answer.</p>}{attemptNote && <p role="alert">{attemptNote}</p>}</>}
         </div>}

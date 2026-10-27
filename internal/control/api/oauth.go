@@ -332,7 +332,7 @@ func onboardingAccount(w http.ResponseWriter, flow onboarding.Flow, rawName, raw
 		writeError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("account name and identity must be at most %d characters", oauthMaxNameLength))
 		return "", "", false
 	}
-	if !flow.ResolvesIdentity && identity == "" {
+	if flow.AsksIdentityUpFront() && identity == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "a stable account identity is required for this provider")
 		return "", "", false
 	}
@@ -414,6 +414,10 @@ func (h *Handler) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	// (SPEC 19.1), so it answers with its own code instead of a generic 500.
 	if errors.Is(err, onboarding.ErrGoogleClientUnset) {
 		writeError(w, http.StatusServiceUnavailable, "oauth_google_client_unconfigured", err.Error())
+		return
+	}
+	if errors.Is(err, onboarding.ErrGitLabClientIDRequired) {
+		writeError(w, http.StatusBadRequest, "oauth_client_id_required", err.Error())
 		return
 	}
 	if errors.Is(err, onboarding.ErrIflowClientUnset) {
@@ -752,6 +756,18 @@ func (h *Handler) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request) 
 // saveOAuthConnection persists a completed sign-in as a new enabled connection,
 // last in routing order, and answers the request. Shared by both flows.
 func (h *Handler) saveOnboardedConnection(w http.ResponseWriter, r *http.Request, providerID string, flow oauthFlow, result onboarding.Result) (saved map[string]any, persisted, ok bool) {
+	saved, persisted, ok = h.saveOnboardedResult(w, r, providerID, flow, result)
+	// Work the provider starts once the account is connected (Antigravity's Code
+	// Assist onboarding) runs after the answer, as the reference's does not hold
+	// up its save; the request ending does not cancel it.
+	if ok && result.AfterSave != nil {
+		go result.AfterSave(context.WithoutCancel(r.Context()))
+	}
+	return saved, persisted, ok
+}
+
+// saveOnboardedResult stores one sign-in result and reports what the save did.
+func (h *Handler) saveOnboardedResult(w http.ResponseWriter, r *http.Request, providerID string, flow oauthFlow, result onboarding.Result) (saved map[string]any, persisted, ok bool) {
 	if result.Secret.Empty() {
 		writeError(w, http.StatusBadGateway, "oauth_exchange_failed", "the provider returned no usable credential; start again")
 		return nil, persisted, false
@@ -869,8 +885,20 @@ func onboardedJSON(connection credentials.Connection, outcome string) map[string
 	if plan := connection.Secret.ProviderData["chatgptPlanType"]; plan != "" && connection.ProviderID == codexProviderID {
 		saved["plan"] = plan
 	}
+	// A Code Assist provider is unusable without the project its sign-in
+	// discovers (wire/cloudcode.go refuses a request without one), so the result
+	// names it, or says none was found, rather than leaving that to the first
+	// failed request (#216). The project id is a label, not a credential.
+	if cloudCodeProviders[connection.ProviderID] {
+		project := strings.TrimSpace(connection.Secret.ProviderData["projectId"])
+		saved["project"] = project
+		saved["projectMissing"] = project == ""
+	}
 	return saved
 }
+
+// cloudCodeProviders sign in with Google and serve through a Code Assist project.
+var cloudCodeProviders = map[string]bool{"gemini-cli": true, "antigravity": true}
 
 // providerConnection finds one of a provider's connections by id. A connection
 // of another provider reads as absent, so a Reauthenticate cannot be pointed at it.
@@ -955,7 +983,8 @@ func sameAccount(providerID string, target credentials.Connection, identity stri
 }
 
 // parseOAuthInput accepts what the operator can copy: a bare code, Claude's
-// "code#state", or the whole redirect URL (or its query) from Codex. It returns
+// "code#state", or the whole redirect URL (or its query) from Codex, carrying a
+// code or, for Kimchi, a token. It returns
 // only values to act on; provider error text is reduced to the denied flag.
 func parseOAuthInput(input string) (code string, denied bool, state string) {
 	input = strings.TrimSpace(input)
@@ -974,7 +1003,13 @@ func parseOAuthInput(input string) (code string, denied bool, state string) {
 		if query.Get("error") != "" {
 			return "", true, query.Get("state")
 		}
-		return cleanCode(query.Get("code")), false, query.Get("state")
+		// A browser-token provider returns the credential as token=, which the
+		// reference reads wherever code is absent (OAuthModal.js:713-733).
+		code := query.Get("code")
+		if code == "" {
+			code = query.Get("token")
+		}
+		return cleanCode(code), false, query.Get("state")
 	}
 	if head, tail, found := strings.Cut(input, "#"); found {
 		return cleanCode(head), false, tail

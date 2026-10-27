@@ -38,4 +38,5 @@ for _ in $(seq 1 60); do
   sleep 0.5
 done
 node scripts/shell-smoke.cjs
+node scripts/oauth-journeys-smoke.cjs
 

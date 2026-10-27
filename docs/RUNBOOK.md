@@ -698,7 +698,10 @@ Actions:
    connection's row use **Reauthenticate** (browser sign-in providers), which
    renews that connection in place and refuses a different account, saving
    nothing; a Codex sign-in or bulk item for an already connected account also
-   updates its row rather than adding one (SPEC §19.1);
+   updates its row rather than adding one (SPEC §19.1). A Gemini CLI or
+   Antigravity connection whose requests fail with "has no projectId" needs its
+   Code Assist project: name it on the sign-in result, or Reauthenticate once
+   the account has one (SPEC §19.1, #216);
 6. confirm RuntimeState reflects new credential;
 7. run a minimal provider test.
 

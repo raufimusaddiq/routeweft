@@ -286,8 +286,10 @@ func postJSONTargetWithHeadersAuth(ctx context.Context, client HTTPClient, endpo
 // The access token arrives encrypted against the generated public key.
 func zedFlow() Flow {
 	return Flow{
-		Provider:       "zed",
-		MetaKeys:       []string{"nativeAppPort"},
+		Provider: "zed",
+		MetaKeys: []string{"nativeAppPort"},
+		// /client/users/me names the email when it answers (zed.js:47).
+		InfersIdentity: true,
 		RedirectSource: RedirectUnused,
 		Type:           FlowAuthorizationCode,
 		Completion:     CompletionCallback,
@@ -401,11 +403,13 @@ func decryptZedToken(encrypted, privateKey string) (string, error) {
 // and the route that drives it: the callback carries ?u=<encrypted payload>.
 func xiaomiFlow() Flow {
 	return Flow{
-		Provider:     "xiaomi-mimo",
-		MetaKeys:     []string{"keyName"},
-		Type:         FlowAuthorizationCode,
-		Completion:   CompletionCallback,
-		CallbackPath: "/",
+		Provider: "xiaomi-mimo",
+		MetaKeys: []string{"keyName"},
+		// The decrypted payload names its uid, the identity "<uid>@xiaomi".
+		InfersIdentity: true,
+		Type:           FlowAuthorizationCode,
+		Completion:     CompletionCallback,
+		CallbackPath:   "/",
 		Authorize: func(_ context.Context, p Params) (AuthRequest, error) {
 			// The ECDH keypair is minted here and the private half rides in Extra, so
 			// the encrypted callback can be decrypted. Only the public half leaves the

@@ -88,7 +88,8 @@ test('every code the sign-in endpoints answer is classified', () => {
   }
   const codes = (source: string) => [...source.matchAll(/writeError\(w, http\.\w+, "([a-z_]+)"/g)].map(match => match[1])
   const shared = [...codes(body(api, 'requireSession')), ...codes(body(api, 'decodeJSON'))]
-  const helpers = [...codes(body(oauth, 'oauthProviderFor')), ...codes(body(oauth, 'saveOnboardedConnection'))]
+  // saveOnboardedConnection delegates the save, and every answer of it, to saveOnboardedResult.
+  const helpers = [...codes(body(oauth, 'oauthProviderFor')), ...codes(body(oauth, 'saveOnboardedConnection')), ...codes(body(oauth, 'saveOnboardedResult'))]
   const answered: Record<SignInStep, string[]> = {
     // Only /start sets a Reauthenticate target, so only a callback reaches saveReauthenticated.
     callback: [...shared, ...helpers, ...codes(body(oauth, 'saveReauthenticated')), ...codes(body(oauth, 'flowRedirectURI')), ...codes(body(oauth, 'handleOAuthCallback'))],
