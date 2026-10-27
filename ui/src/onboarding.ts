@@ -112,7 +112,7 @@ export function parseBulkInput(text: string): BulkParse {
   return { accounts }
 }
 
-export type BulkItem = { index: number; ok: boolean; id?: string; outcome?: string; error?: string }
+export type BulkItem = { index: number; ok: boolean; id?: string; outcome?: string; expired?: boolean; refreshable?: boolean; error?: string }
 export type BulkResponse = { total?: number; success: number; failed: number; results: BulkItem[] }
 export type BulkRow = { item: number; text: string; ok: boolean }
 
@@ -124,10 +124,15 @@ export function bulkSummary(response: BulkResponse): { headline: string; rows: B
   const parts = [`${added} added`]
   if (updated) parts.push(`${updated} already connected and updated`)
   if (response.failed) parts.push(`${response.failed} failed`)
+  const stale = response.results.filter(item => item.ok && item.expired).length
+  if (stale) parts.push(`${stale} saved with an expired credential`)
+  // An item stored with an already-expired credential says so (#218): it was
+  // saved, as the reference saves it, but may not serve requests.
+  const expired = (item: BulkItem) => !item.expired ? '' : item.refreshable ? '; its credential had expired and is renewed with its refresh token before use' : '; its credential had expired and has no refresh token, so it cannot serve requests until replaced'
   const rows = response.results.map(item => ({
     item: item.index + 1,
     ok: item.ok,
-    text: item.ok ? (item.outcome === 'updated' ? 'already connected; its connection took the new credential' : 'added as a new connection') : `failed: ${item.error || 'not imported'}`,
+    text: item.ok ? (item.outcome === 'updated' ? 'already connected; its connection took the new credential' : 'added as a new connection') + expired(item) : `failed: ${item.error || 'not imported'}`,
   }))
   return { headline: `${parts.join(', ')}.`, rows }
 }

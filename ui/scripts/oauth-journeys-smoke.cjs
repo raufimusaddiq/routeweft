@@ -274,8 +274,9 @@ const SENTINELS = ['claude-code-sentinel', 'xai-code-sentinel', 'gemini-code-sen
   await select('gitlab');
   await page.getByRole('button', { name: 'Add connection', exact: true }).click();
   await form.getByRole('radio', { name: 'Import personal access token', exact: true }).check();
-  report.gitlabPAT = await form.locator('[aria-label="Import personal access token"] p').textContent();
-  assert.match(report.gitlabPAT, /personal access token with the api scope/);
+  // #218: the PAT import lists where to create the token and its scopes.
+  report.gitlabPAT = await form.locator('[aria-label="Import personal access token"] ol').textContent();
+  assert.match(report.gitlabPAT, /personal access token .* with the scopes api, read_user and ai_features/);
   assert.equal(await form.getByLabel('Application client id').count(), 0, 'the PAT does not ask for the OAuth application');
   await close();
 

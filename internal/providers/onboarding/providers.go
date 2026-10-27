@@ -204,7 +204,7 @@ func gitlabFlow() Flow {
 func gitlabPAT(ctx context.Context, p Params) (Result, error) {
 	token := strings.TrimSpace(p.Input)
 	if token == "" {
-		return Result{}, fmt.Errorf("gitlab personal access token is required")
+		return Result{}, invalidInput("gitlab personal access token is required")
 	}
 	base := strings.TrimSuffix(metaOr(p, "baseUrl", "https://gitlab.com"), "/")
 	var user struct {
@@ -239,12 +239,29 @@ func gitlabPAT(ctx context.Context, p Params) (Result, error) {
 		DisplayName: display,
 		Secret: credentials.Secret{
 			AccessToken: token,
-			ProviderData: map[string]string{
+			// The pin keeps the account's username, email and name beside the
+			// instance (gitlab/pat/route.js:46-52); the username is what tells two
+			// accounts with one email apart (connectionsRepo.js:250-259).
+			ProviderData: nonEmptyData(map[string]string{
 				"baseUrl":  base,
 				"authKind": "personal_access_token",
-			},
+				"username": user.Username,
+				"email":    firstNonEmpty(user.Email, user.PublicEmail),
+				"name":     user.Name,
+			}),
 		},
 	}, nil
+}
+
+// nonEmptyData drops blank values, which the pin stores as "" but which carry
+// nothing here.
+func nonEmptyData(data map[string]string) map[string]string {
+	for key, value := range data {
+		if strings.TrimSpace(value) == "" {
+			delete(data, key)
+		}
+	}
+	return data
 }
 
 // metaOr reads one operator-supplied parameter, falling back to a default.
