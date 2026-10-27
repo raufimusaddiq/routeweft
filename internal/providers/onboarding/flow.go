@@ -255,10 +255,6 @@ type Result struct {
 	// AuthKind is the credential mode to store. Most flows store oauth; a PAT,
 	// cookie or API-key import stores its own kind.
 	AuthKind credentials.AuthKind
-	// NeverDeduped is the reference's access_token connection, which is always
-	// inserted and never matched to an existing row (connectionsRepo.js:264): the
-	// Codex token import (import-token/route.js:73).
-	NeverDeduped bool
 }
 
 // PollResult is one device-code poll outcome.

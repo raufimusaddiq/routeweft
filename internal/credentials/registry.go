@@ -268,6 +268,10 @@ func (r *Registry) refresh(ctx context.Context, connectionID string, stored Secr
 	// metadata serving snapshots carry (azureEndpoint, region, baseUrl, ...), so a
 	// timer-driven refresh must never drop keys the exchange did not mention.
 	refreshed.ProviderData = carryProviderData(stored.ProviderData, refreshed.ProviderData)
+	// Nor does an exchange know how the connection was signed in (#241).
+	if refreshed.AuthType == "" {
+		refreshed.AuthType = stored.AuthType
+	}
 	current.installMu.Lock()
 	defer current.installMu.Unlock()
 	// Still current under the install lock: nothing has replaced this generation
@@ -329,13 +333,19 @@ func (r *Registry) Import(ctx context.Context, connectionID, identity string, se
 	current.mu.Lock()
 	current.generation++
 	current.mu.Unlock()
-	// Nil provider data in an import means "no provider-field change", as in PATCH.
-	if secret.ProviderData == nil {
+	// Nil provider data in an import means "no provider-field change", as in PATCH,
+	// and an import never changes how the connection was signed in (#241).
+	if secret.ProviderData == nil || secret.AuthType == "" {
 		existing, err := r.store.GetConnection(ctx, connectionID)
 		if err != nil {
 			return err
 		}
-		secret.ProviderData = carryProviderData(existing.Secret.ProviderData, nil)
+		if secret.ProviderData == nil {
+			secret.ProviderData = carryProviderData(existing.Secret.ProviderData, nil)
+		}
+		if secret.AuthType == "" {
+			secret.AuthType = existing.Secret.AuthType
+		}
 	}
 	if err := r.store.RotateSecret(ctx, connectionID, secret); err != nil {
 		return err

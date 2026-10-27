@@ -408,3 +408,37 @@ func TestRefreshAndImportCarryProviderDataForward(t *testing.T) {
 	}
 	check("import", "imported", "westus")
 }
+
+// How a Codex connection was signed in (Secret.AuthType, #241) survives a
+// refresh and an import, whose exchangers and payloads never carry it.
+func TestRefreshAndImportCarryAuthTypeForward(t *testing.T) {
+	ctx := context.Background()
+	store, _ := testStore(t)
+	node := seedNode(t, store, "codex")
+	connection, err := store.PutConnection(ctx, Connection{NodeID: node.ID, Name: "primary", AuthKind: AuthOAuth, Identity: "acct", Enabled: true, Secret: Secret{AccessToken: "stale", RefreshToken: "r0", Expiry: time.Now().Add(-time.Minute), AuthType: AuthTypeOAuth}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := NewRegistry(store, nil)
+	registry.Register(connection, func(context.Context, Secret) (Secret, error) {
+		return Secret{AccessToken: "fresh", Expiry: time.Now().Add(time.Hour)}, nil
+	})
+	if _, err := registry.Secret(ctx, connection.ID); err != nil {
+		t.Fatal(err)
+	}
+	check := func(stage, token string) {
+		t.Helper()
+		loaded, err := store.GetConnection(ctx, connection.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loaded.Secret.AccessToken != token || loaded.Secret.AuthType != AuthTypeOAuth {
+			t.Fatalf("%s: durable secret token=%q authType=%q", stage, loaded.Secret.AccessToken, loaded.Secret.AuthType)
+		}
+	}
+	check("refresh", "fresh")
+	if err := registry.Import(ctx, connection.ID, "acct", Secret{AccessToken: "imported", ProviderData: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	check("import", "imported")
+}

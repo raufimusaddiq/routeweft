@@ -774,7 +774,7 @@ func (h *Handler) saveOnboardedConnection(w http.ResponseWriter, r *http.Request
 		h.connectionMu.Lock()
 		defer h.connectionMu.Unlock()
 	}
-	if providerID == codexProviderID && !result.NeverDeduped {
+	if providerID == codexProviderID && result.Secret.AuthType != credentials.AuthTypeAccessToken {
 		match, found, err := h.codexMatch(r.Context(), identity, result.Secret.ProviderData)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
@@ -1330,6 +1330,9 @@ func (h *Handler) publishBindings(ctx context.Context) error {
 // Nil provider data leaves all existing provider fields unchanged.
 func mergeConnectionSecret(existing, update credentials.Secret) credentials.Secret {
 	data := update.ProviderData
+	if update.AuthType == "" {
+		update.AuthType = existing.AuthType
+	}
 	if update.Empty() {
 		// Same material rule as sealSecret: an ID token alone is a real update.
 		idToken := update.IDToken

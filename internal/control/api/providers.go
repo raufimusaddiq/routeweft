@@ -212,6 +212,9 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, 1<<20, &body) {
 		return
 	}
+	// How a connection was signed in is recorded by onboarding only; the form can
+	// neither set it nor clear it (mergeConnectionSecret keeps the stored one).
+	body.Secret.AuthType = ""
 	// The Codex identity check below and the save it allows are one step, as are
 	// an edit's read of the stored row and its write (connectionMu).
 	h.connectionMu.Lock()

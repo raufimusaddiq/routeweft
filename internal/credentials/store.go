@@ -82,7 +82,21 @@ type Secret struct {
 	Cookie       string            `json:"cookie,omitempty"`
 	Expiry       time.Time         `json:"expiry,omitempty"`
 	ProviderData map[string]string `json:"providerData,omitempty"`
+	// AuthType is the reference's authType for a connection whose sign-in path
+	// sets one apart from its auth kind: a Codex token import or pasted raw token
+	// is AuthTypeAccessToken, never matched as a duplicate, while a Codex sign-in
+	// or bulk item is AuthTypeOAuth (#241). It is written only by those paths,
+	// carried across refresh, import and edits, and empty on every connection
+	// stored before it existed. It is sealed with the credential; no request
+	// sets it.
+	AuthType string `json:"authType,omitempty"`
 }
+
+// The reference authTypes a Codex connection records (Secret.AuthType).
+const (
+	AuthTypeOAuth       = "oauth"
+	AuthTypeAccessToken = "access_token"
+)
 
 // Empty reports whether the secret holds no credential material at all. A
 // refresh must never replace a durable credential with an empty payload

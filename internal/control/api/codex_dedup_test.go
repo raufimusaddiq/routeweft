@@ -95,6 +95,12 @@ func codexBulkOp(email, account, access string) codexOp {
 	return bulkOp("codex", `{"accessToken":"`+unsignedJWT(codexClaims(email, account, "plus"))+`","refreshToken":"refresh-`+access+`"}`)
 }
 
+// exportedTokenRowOp bulk-imports a token-import row as the reference exports
+// it: providerSpecificData still says authMethod access_token.
+func exportedTokenRowOp(email, account string) codexOp {
+	return bulkOp("codex", `{"accessToken":"`+unsignedJWT(codexClaims(email, account, "plus"))+`","name":"ChatGPT Access Token","providerSpecificData":{"authMethod":"access_token","chatgptAccountId":"`+account+`","chatgptPlanType":"plus"}}`)
+}
+
 func tokenImportOp(email, account string) codexOp {
 	return func(t *testing.T, env *codexEnv) (string, int) {
 		recorder := doJSON(t, env.mux, env.cookie, http.MethodPost, "/admin/v1/oauth/codex/import", `{"input":"`+unsignedJWT(codexClaims(email, account, "plus"))+`"}`)
@@ -209,6 +215,12 @@ func TestCodexDuplicateHandlingMatchesReference(t *testing.T) {
 			rawTokenSignInOp(mail, "acct-1"), rawTokenSignInOp(mail, "acct-1"), "insert"},
 		{"raw token sign-in then sign-in, same email same account", "connectionsRepo.js:232", "codex",
 			rawTokenSignInOp(mail, "acct-1"), signInOp(mail, "acct-1", "a2"), "insert"},
+		{"bulk re-import of an exported token-import row, then sign-in", "bulk-import/route.js:106-108 stores authType oauth; connectionsRepo.js:239-242", "codex",
+			exportedTokenRowOp(mail, "acct-1"), signInOp(mail, "acct-1", "a2"), "update"},
+		{"bulk re-import of an exported token-import row, twice", "bulk-import/route.js:106-108, connectionsRepo.js:239-242", "codex",
+			exportedTokenRowOp(mail, "acct-1"), exportedTokenRowOp(mail, "acct-1"), "update"},
+		{"token import then bulk, same email same account", "connectionsRepo.js:232", "codex",
+			tokenImportOp(mail, "acct-1"), codexBulkOp(mail, "acct-1", "a2"), "insert"},
 		{"manual form, same codex identity", "Routeweft-only form; providers/route.js:179-181", "codex",
 			signInOp(mail, "acct-1", "a1"), manualOp("codex", mail), "refuse"},
 		{"other provider, manual form duplicate", "unchanged: UNIQUE kept off the Codex node", "claude",
@@ -564,5 +576,101 @@ func TestCodexRawTokenSignIn(t *testing.T) {
 	want := map[string]string{"authMethod": "access_token", "chatgptAccountId": "acct-1", "chatgptPlanType": "plus"}
 	if got.Identity != "raw@example.invalid" || got.Name != "raw@example.invalid" || got.Secret.AccessToken != token || got.Secret.RefreshToken != "" || fmt.Sprint(got.Secret.ProviderData) != fmt.Sprint(want) {
 		t.Fatalf("raw token connection: %+v", got)
+	}
+}
+
+// Connections stored before Secret.AuthType existed carry no record of how they
+// were signed in. One whose providerSpecificData says authMethod access_token
+// may be a token import or a bulk re-import of an exported one; both stored the
+// same payload, so it is never matched and a sign-in or bulk item adds a row
+// beside it (codexTokenOnly). One without that authMethod is matched as before.
+func TestCodexLegacyAccessTokenRowsAreNotMatched(t *testing.T) {
+	env := newCodexEnv(t)
+	ctx := context.Background()
+	const mail = "shared@example.invalid"
+	node, err := env.h.builtinNode(ctx, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	put := func(name string, secret credentials.Secret) credentials.Connection {
+		stored, err := env.creds.PutConnection(ctx, credentials.Connection{NodeID: node.ID, Name: name, AuthKind: credentials.AuthOAuth, Identity: mail, Enabled: true, Secret: secret})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return connectionByID(t, env.creds, stored.ID)
+	}
+	legacy := map[string]string{"authMethod": "access_token", "chatgptAccountId": "acct-1", "chatgptPlanType": "plus"}
+	tokenOnly := put("legacy token", credentials.Secret{AccessToken: "legacy-1", ProviderData: legacy})
+	withRefresh := put("legacy bulk", credentials.Secret{AccessToken: "legacy-2", RefreshToken: "legacy-r", ProviderData: legacy})
+
+	signedIn := codexSignIn(t, env.mux, env.cookie, env.exchange, codexReply(mail, "acct-1", "a3", "r3"))
+	if bulk, _ := codexBulkOp(mail, "acct-1", "a4")(t, env); bulk != signedIn["id"] {
+		t.Fatalf("bulk item did not update the sign-in row: %s vs %v", bulk, signedIn["id"])
+	}
+	for _, before := range []credentials.Connection{tokenOnly, withRefresh} {
+		after := connectionByID(t, env.creds, before.ID)
+		if after.Name != before.Name || after.Secret.AccessToken != before.Secret.AccessToken || after.Secret.RefreshToken != before.Secret.RefreshToken ||
+			fmt.Sprint(after.Secret.ProviderData) != fmt.Sprint(before.Secret.ProviderData) || after.Secret.AuthType != "" {
+			t.Fatalf("legacy connection rewritten: before=%+v after=%+v", before, after)
+		}
+	}
+	if got := env.count(t, "codex"); got != 3 {
+		t.Fatalf("connections=%d, want 3", got)
+	}
+}
+
+// The manual form can neither set nor clear how a connection was signed in: a
+// token import stays one after an edit that claims oauth, and a bulk row whose
+// exported data says authMethod access_token stays matchable after an edit that
+// replaces its token.
+func TestCodexManualEditKeepsAuthType(t *testing.T) {
+	env := newCodexEnv(t)
+	const mail = "shared@example.invalid"
+	tokenRow, _ := tokenImportOp(mail, "acct-1")(t, env)
+	bulkRow, _ := exportedTokenRowOp("other@example.invalid", "acct-2")(t, env)
+	for id, body := range map[string]string{
+		tokenRow: `{"secret":{"accessToken":"edited-1","authType":"oauth"}}`,
+		bulkRow:  `{"secret":{"accessToken":"edited-2","authType":"access_token"}}`,
+	} {
+		if recorder := doJSON(t, env.mux, env.cookie, http.MethodPatch, "/admin/v1/connections/"+id, body); recorder.Code != http.StatusOK {
+			t.Fatalf("patch status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+	}
+	if got := connectionByID(t, env.creds, tokenRow).Secret; got.AuthType != credentials.AuthTypeAccessToken || got.AccessToken != "edited-1" {
+		t.Fatalf("token import after edit: authType=%q", got.AuthType)
+	}
+	if got := connectionByID(t, env.creds, bulkRow).Secret; got.AuthType != credentials.AuthTypeOAuth || got.AccessToken != "edited-2" {
+		t.Fatalf("bulk row after edit: authType=%q", got.AuthType)
+	}
+	if saved := codexSignIn(t, env.mux, env.cookie, env.exchange, codexReply(mail, "acct-1", "a3", "r3")); saved["id"] == tokenRow {
+		t.Fatal("sign-in matched the token import")
+	}
+	if saved := codexSignIn(t, env.mux, env.cookie, env.exchange, codexReply("other@example.invalid", "acct-2", "a4", "r4")); saved["id"] != bulkRow {
+		t.Fatalf("sign-in did not update the bulk row: %v", saved["id"])
+	}
+}
+
+// Every Codex onboarding path records how it signed in: sign-in and bulk oauth,
+// token import and a pasted raw token access_token (connectionsRepo.js:232,264;
+// bulk-import/route.js:106-108; import-token/route.js:73; [provider]/[action]/route.js:438).
+func TestCodexOnboardingRecordsAuthType(t *testing.T) {
+	env := newCodexEnv(t)
+	for name, tc := range map[string]struct {
+		op   codexOp
+		want string
+	}{
+		"sign-in":        {signInOp("a@example.invalid", "acct-a", "a1"), credentials.AuthTypeOAuth},
+		"bulk":           {codexBulkOp("b@example.invalid", "acct-b", "b1"), credentials.AuthTypeOAuth},
+		"exported token": {exportedTokenRowOp("c@example.invalid", "acct-c"), credentials.AuthTypeOAuth},
+		"token import":   {tokenImportOp("d@example.invalid", "acct-d"), credentials.AuthTypeAccessToken},
+		"raw token":      {rawTokenSignInOp("e@example.invalid", "acct-e"), credentials.AuthTypeAccessToken},
+	} {
+		id, status := tc.op(t, env)
+		if id == "" {
+			t.Fatalf("%s: status=%d", name, status)
+		}
+		if got := connectionByID(t, env.creds, id).Secret.AuthType; got != tc.want {
+			t.Fatalf("%s: authType=%q, want %q", name, got, tc.want)
+		}
 	}
 }

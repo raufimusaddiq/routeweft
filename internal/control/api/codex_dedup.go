@@ -17,8 +17,7 @@ const codexProviderID = "codex"
 // non-empty chatgptAccountId. Any other case, including a missing account id on
 // either side, inserts. The reference's access_token connections (the Codex
 // token import and a raw token pasted as a sign-in code) are never an existing
-// match (connectionsRepo.js:232,264); here they are the rows stored with
-// authMethod "access_token". The reference has one pool per provider, so every
+// match (connectionsRepo.js:232,264; codexTokenOnly). The reference has one pool per provider, so every
 // built-in Codex node is searched (a database may hold more than one from
 // concurrent first sign-ins) and no Generic node is. When more than one row
 // matches, the reference's all.find takes the first in table order, which is
@@ -45,7 +44,7 @@ func (h *Handler) codexMatch(ctx context.Context, identity string, data map[stri
 	}
 	matches := map[string]credentials.Connection{}
 	for _, connection := range existing {
-		if !builtin[connection.NodeID] || connection.AuthKind != credentials.AuthOAuth || connection.Secret.ProviderData["authMethod"] == "access_token" {
+		if !builtin[connection.NodeID] || connection.AuthKind != credentials.AuthOAuth || codexTokenOnly(connection.Secret) {
 			continue
 		}
 		if connection.Identity == identity && connection.Secret.ProviderData["chatgptAccountId"] == account {
@@ -65,6 +64,25 @@ func (h *Handler) codexMatch(ctx context.Context, identity string, data map[stri
 		}
 	}
 	return credentials.Connection{}, false, nil
+}
+
+// codexTokenOnly reports whether a stored Codex connection is the reference's
+// access_token connection, which is never the existing side of a match
+// (connectionsRepo.js:232,264). Onboarding records it (Secret.AuthType): a token
+// import or pasted raw token is access_token, a sign-in or bulk item oauth even
+// when the item's providerSpecificData says authMethod access_token
+// (bulk-import/route.js:106-108). A connection stored before the record existed
+// has none, and one with authMethod access_token could have come from either a
+// token import or a bulk item, which store the same payload; it is treated as a
+// token import, so a sign-in adds a row beside it rather than rewriting it.
+func codexTokenOnly(secret credentials.Secret) bool {
+	switch secret.AuthType {
+	case credentials.AuthTypeAccessToken:
+		return true
+	case credentials.AuthTypeOAuth:
+		return false
+	}
+	return secret.ProviderData["authMethod"] == "access_token"
 }
 
 // codexMergedSecret is {...existing, ...incoming} (connectionsRepo.js:283) over
@@ -88,6 +106,9 @@ func codexMergedSecret(existing, incoming credentials.Secret, carries onboarding
 	}
 	if len(incoming.ProviderData) > 0 {
 		merged.ProviderData = incoming.ProviderData
+	}
+	if incoming.AuthType != "" {
+		merged.AuthType = incoming.AuthType
 	}
 	return merged
 }

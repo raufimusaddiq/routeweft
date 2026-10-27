@@ -1085,7 +1085,22 @@ Codex duplicate handling follows the same pin (#241, `connectionsRepo.js:226-292
 - A token import, and a raw access token pasted where the sign-in code goes
   (`[provider]/[action]/route.js:414-454`, stored without an exchange), are the
   reference's `access_token` connection: each always inserts and is never the
-  existing side of a match (`:232,264`, `import-token/route.js:73`).
+  existing side of a match (`:232,264`, `import-token/route.js:73`). Routeweft
+  stores every Codex connection with auth kind `oauth`, so onboarding records
+  the reference's `authType` inside the sealed credential: `access_token` for
+  these two, `oauth` for a sign-in and for every bulk item, even one whose
+  exported `providerSpecificData.authMethod` is `access_token`
+  (`bulk-import/route.js:106-108`). Refresh, import and edits keep it, and no
+  request can set it. A connection stored before it existed has none; if its
+  `authMethod` is `access_token` it may be a token import or a bulk re-import of
+  one, which stored identical payloads, so it is treated as a token import and
+  never matched (a sign-in adds a row beside it). Nothing records which path
+  created such a row, so this cannot be resolved for stored rows.
+- The Codex bulk route reads camelCase keys only (`bulk-import/route.js:72-99`):
+  an item without `accessToken` fails with `missing accessToken`, and a
+  `snake_case` key is ignored. Its `providerSpecificData` is kept as given:
+  strings verbatim, other values as their JSON text; the JWT backfills only a
+  falsy account id or plan (`:78-91`).
 - An update is `{...existing, ...incoming}` (`:283`). The connection keeps its
   id, proxy pool and identity. The access token and `providerSpecificData` are
   replaced, the map whole. A sign-in replaces the refresh token, id token and
