@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,6 +42,8 @@ type Registry struct {
 	// without one, so every registration path refreshes the same way.
 	resolve        func(Connection) Exchanger
 	credentialName func(Connection) (name, expiryName string)
+	// afterList runs between Load's list and its registrations (tests only).
+	afterList func()
 }
 
 type entry struct {
@@ -108,6 +111,9 @@ func (r *Registry) SetCredentialNameResolver(resolve func(Connection) (name, exp
 
 // Register seeds one connection into memory-first state. An already-registered
 // connection is replaced, which is how an import or edit installs new material.
+// Only a different credential is a new install: one equal to the credential
+// held keeps its generation, so a re-registration that changes nothing or only
+// metadata never supersedes a refresh in flight (#252).
 func (r *Registry) Register(connection Connection, exchanger Exchanger) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -120,19 +126,30 @@ func (r *Registry) Register(connection Connection, exchanger Exchanger) {
 	}
 	if existing, ok := r.entries[connection.ID]; ok {
 		existing.installMu.Lock()
-		existing.mu.Lock()
-		existing.connection = connection
-		existing.credentialName = name
-		existing.credentialExpiryName = expiryName
-		existing.current = connection.Secret
-		existing.seeded = true
-		existing.exchanger = exchanger
-		existing.generation++
-		existing.mu.Unlock()
+		install(existing, connection, exchanger, name, expiryName)
 		existing.installMu.Unlock()
 		return
 	}
 	r.entries[connection.ID] = &entry{connection: connection, credentialName: name, credentialExpiryName: expiryName, exchanger: exchanger, current: connection.Secret, seeded: true, generation: 1}
+}
+
+// install replaces a held connection under its install lock. The generation
+// moves only when the credential differs from the one held: a refresh in flight
+// started from the held credential, so its rotation is still the newest one and
+// must commit.
+func install(current *entry, connection Connection, exchanger Exchanger, name, expiryName string) {
+	current.mu.Lock()
+	defer current.mu.Unlock()
+	current.connection = connection
+	current.credentialName = name
+	current.credentialExpiryName = expiryName
+	current.exchanger = exchanger
+	if current.seeded && sameSecret(current.current, connection.Secret) {
+		return
+	}
+	current.current = connection.Secret
+	current.seeded = true
+	current.generation++
 }
 
 // Update changes one registered connection's durable record and credential as a
@@ -218,7 +235,12 @@ func (r *Registry) Forget(connectionID string) {
 	delete(r.entries, connectionID)
 }
 
-// Load seeds every connection for one provider from durable storage.
+// Load seeds every connection for one provider from durable storage. A
+// connection the registry already holds is read again under its install lock,
+// so a row listed before a refresh committed is never installed over that
+// refresh; the reference likewise reads the latest stored row before quota work
+// (usage/[connectionId]/route.js:25-28) and adopts a stored credential only when
+// it is newer (tokenRefresh.js:177-191).
 func (r *Registry) Load(ctx context.Context, providerID string) ([]Connection, error) {
 	if r.store == nil {
 		return nil, ErrKeyRequired
@@ -227,10 +249,49 @@ func (r *Registry) Load(ctx context.Context, providerID string) ([]Connection, e
 	if err != nil {
 		return nil, err
 	}
+	if r.afterList != nil {
+		r.afterList()
+	}
 	for _, connection := range connections {
-		r.Register(connection, nil)
+		if err := r.reload(ctx, connection); err != nil {
+			return nil, err
+		}
 	}
 	return connections, nil
+}
+
+// reload registers one listed connection, re-reading a held one at its install.
+func (r *Registry) reload(ctx context.Context, listed Connection) error {
+	r.mu.Lock()
+	current, ok := r.entries[listed.ID]
+	resolve, credentialName := r.resolve, r.credentialName
+	r.mu.Unlock()
+	if !ok {
+		r.Register(listed, nil)
+		return nil
+	}
+	current.installMu.Lock()
+	defer current.installMu.Unlock()
+	stored, err := r.store.GetConnection(ctx, listed.ID)
+	if errors.Is(err, ErrNotFound) {
+		// Deleted since the list; Forget owns removal.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	current.mu.Lock()
+	exchanger := current.exchanger
+	current.mu.Unlock()
+	if resolve != nil {
+		exchanger = resolve(stored)
+	}
+	name, expiryName := "", ""
+	if credentialName != nil {
+		name, expiryName = credentialName(stored)
+	}
+	install(current, stored, exchanger, name, expiryName)
+	return nil
 }
 
 // Credential returns a currently valid access token for one connection,
@@ -418,9 +479,6 @@ func (r *Registry) Import(ctx context.Context, connectionID, identity string, se
 	// import with a stale rotated secret.
 	current.installMu.Lock()
 	defer current.installMu.Unlock()
-	current.mu.Lock()
-	current.generation++
-	current.mu.Unlock()
 	// Nil provider data in an import means "no provider-field change", as in PATCH,
 	// and an import never changes how the connection was signed in (#241).
 	if secret.ProviderData == nil || secret.AuthType == "" {
@@ -435,6 +493,13 @@ func (r *Registry) Import(ctx context.Context, connectionID, identity string, se
 			secret.AuthType = existing.Secret.AuthType
 		}
 	}
+	// Importing the credential already held is not a new install (Register), so
+	// a refresh in flight from it still commits its rotation (#252).
+	current.mu.Lock()
+	if !current.seeded || !sameSecret(current.current, secret) {
+		current.generation++
+	}
+	current.mu.Unlock()
 	if err := r.store.RotateSecret(ctx, connectionID, secret); err != nil {
 		return err
 	}
@@ -507,4 +572,12 @@ func carryProviderData(stored, update map[string]string) map[string]string {
 		merged[key] = value
 	}
 	return merged
+}
+
+// sameSecret reports whether two payloads hold the same credential. Expiry is
+// compared as an instant, so a decoded copy equals the one it was stored from.
+func sameSecret(a, b Secret) bool {
+	return a.AccessToken == b.AccessToken && a.RefreshToken == b.RefreshToken &&
+		a.IDToken == b.IDToken && a.Cookie == b.Cookie && a.AuthType == b.AuthType &&
+		a.Expiry.Equal(b.Expiry) && maps.Equal(a.ProviderData, b.ProviderData)
 }

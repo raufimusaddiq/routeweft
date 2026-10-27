@@ -631,8 +631,8 @@ func TestRefreshWaitersRecheckAfterUpdate(t *testing.T) {
 	}
 }
 
-// A refresh that a newer install supersedes (a direct re-registration, a Load
-// that re-seeds the stored record, an import) checks what was installed as any
+// A refresh that a newer install supersedes (a re-registration or an import of
+// a different credential) checks what was installed as any
 // request does: it is served if valid and refreshed from its own refresh token
 // otherwise, once for the refresher and every waiter, so no caller is handed an
 // expired credential (#250; the reference adopts the latest stored credential
@@ -655,13 +655,6 @@ func TestSupersededRefreshRechecksInstalledCredential(t *testing.T) {
 			r.Register(c, nil)
 			return nil
 		}, "installed", ""},
-		{"load re-seeds the stored expired credential", func(ctx context.Context, r *Registry, _ Connection) error {
-			loaded, err := r.Load(ctx, "codex")
-			if err == nil && len(loaded) != 1 {
-				err = fmt.Errorf("load re-seeded %d connections, want 1", len(loaded))
-			}
-			return err
-		}, "fresh", "r0"},
 		{"import installs an expired credential", func(ctx context.Context, r *Registry, c Connection) error {
 			return r.Import(ctx, c.ID, "acct", Secret{AccessToken: "imported", RefreshToken: "r-imported", Expiry: expired})
 		}, "fresh", "r-imported"},
@@ -738,6 +731,166 @@ func TestSupersededRefreshRechecksInstalledCredential(t *testing.T) {
 			}
 			if tc.reuses != "" && (loaded.Secret.AccessToken != "fresh" || loaded.Secret.RefreshToken != tc.reuses+"-next") {
 				t.Fatalf("durable after the second refresh: %+v", loaded.Secret)
+			}
+		})
+	}
+}
+
+// rotatingTokens is a fixture token endpoint that rotates the refresh token on
+// every use and rejects a spent one, as Codex does (usage/[connectionId]/route.js:25-26:
+// reuse revokes the session).
+type rotatingTokens struct {
+	mu      sync.Mutex
+	live    string
+	spent   []string
+	started chan struct{}
+	release chan struct{}
+}
+
+func (f *rotatingTokens) exchange(_ context.Context, current Secret) (Secret, error) {
+	f.mu.Lock()
+	f.spent = append(f.spent, current.RefreshToken)
+	first := len(f.spent) == 1
+	f.mu.Unlock()
+	if first {
+		close(f.started)
+		<-f.release
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if current.RefreshToken != f.live {
+		return Secret{}, fmt.Errorf("refresh_token_reused: %s", current.RefreshToken)
+	}
+	f.live = current.RefreshToken + "-next"
+	return Secret{AccessToken: "fresh-" + f.live, RefreshToken: f.live, Expiry: time.Now().Add(time.Hour)}, nil
+}
+
+// A re-registration that does not change the credential (the quota poll, the
+// autoping tick and the Codex credits reset all Load the provider) neither
+// supersedes a refresh in flight nor reverts what it committed: the rotated
+// refresh token is committed once and never spent again (#252). The reference
+// reads the latest stored row for quota and never writes an unchanged or older
+// one over a rotated credential (usage/[connectionId]/route.js:25-28,
+// tokenRefresh.js:177-191).
+func TestReregistrationKeepsRefreshInFlight(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// during runs while the first exchange is in flight; it returns what to
+		// run once that refresh has committed.
+		during func(t *testing.T, ctx context.Context, r *Registry, store *Store, c Connection) (after func())
+		check  func(t *testing.T, r *Registry, c Connection)
+	}{
+		{name: "load re-seeds the unchanged record", during: func(t *testing.T, ctx context.Context, r *Registry, _ *Store, _ Connection) func() {
+			if _, err := r.Load(ctx, "codex"); err != nil {
+				t.Fatal(err)
+			}
+			return nil
+		}},
+		{name: "register re-installs the unchanged record", during: func(t *testing.T, ctx context.Context, r *Registry, store *Store, c Connection) func() {
+			stored, err := store.GetConnection(ctx, c.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.Register(stored, nil)
+			return nil
+		}},
+		{name: "import of the credential already held", during: func(t *testing.T, ctx context.Context, r *Registry, store *Store, c Connection) func() {
+			stored, err := store.GetConnection(ctx, c.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := r.Import(ctx, c.ID, "acct", stored.Secret); err != nil {
+				t.Fatal(err)
+			}
+			return nil
+		}},
+		{name: "load picks up a metadata change made outside the registry", during: func(t *testing.T, ctx context.Context, r *Registry, store *Store, c Connection) func() {
+			if err := store.SetConnectionEnabled(ctx, c.ID, false); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.Load(ctx, "codex"); err != nil {
+				t.Fatal(err)
+			}
+			return nil
+		}, check: func(t *testing.T, r *Registry, c Connection) {
+			held, _ := r.lookup(c.ID)
+			held.mu.Lock()
+			defer held.mu.Unlock()
+			if held.connection.Enabled {
+				t.Fatal("load did not pick up the stored metadata change")
+			}
+		}},
+		{name: "load read the record before the refresh committed", during: func(t *testing.T, ctx context.Context, r *Registry, _ *Store, _ Connection) func() {
+			listed, resume := make(chan struct{}), make(chan struct{})
+			r.afterList = func() { close(listed); <-resume }
+			loaded := make(chan error, 1)
+			go func() { _, err := r.Load(ctx, "codex"); loaded <- err }()
+			<-listed
+			return func() {
+				close(resume)
+				if err := <-loaded; err != nil {
+					t.Fatal(err)
+				}
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store, _ := testStore(t)
+			node := seedNode(t, store, "codex")
+			connection, err := store.PutConnection(ctx, Connection{NodeID: node.ID, Name: "primary", AuthKind: AuthOAuth, Identity: "acct", Enabled: true, Secret: Secret{AccessToken: "expired", RefreshToken: "r0", Expiry: time.Now().Add(-time.Minute)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tokens := &rotatingTokens{live: "r0", started: make(chan struct{}), release: make(chan struct{})}
+			registry := NewRegistry(store, nil)
+			registry.SetExchangerResolver(func(Connection) Exchanger { return tokens.exchange })
+			if _, err := registry.Load(ctx, "codex"); err != nil {
+				t.Fatal(err)
+			}
+
+			const callers = 4
+			got := make(chan error, callers)
+			call := func() {
+				secret, err := registry.Secret(ctx, connection.ID)
+				if err == nil && secret.AccessToken != "fresh-r0-next" {
+					err = fmt.Errorf("access %q, want the rotated credential", secret.AccessToken)
+				}
+				got <- err
+			}
+			go call()
+			<-tokens.started
+			for i := 1; i < callers; i++ {
+				go call()
+			}
+			time.Sleep(50 * time.Millisecond) // the waiters join the exchange in flight
+			after := tc.during(t, ctx, registry, store, connection)
+			close(tokens.release)
+			for i := 0; i < callers; i++ {
+				if err := <-got; err != nil {
+					t.Fatalf("caller: %v", err)
+				}
+			}
+			if after != nil {
+				after()
+			}
+			// The next request is served the committed rotation without an exchange.
+			secret, err := registry.Secret(ctx, connection.ID)
+			if err != nil || secret.AccessToken != "fresh-r0-next" {
+				t.Fatalf("next request: access %q err %v", secret.AccessToken, err)
+			}
+			tokens.mu.Lock()
+			spent := fmt.Sprint(tokens.spent)
+			tokens.mu.Unlock()
+			if spent != "[r0]" {
+				t.Fatalf("refresh tokens spent %s, want [r0]", spent)
+			}
+			loaded, err := store.GetConnection(ctx, connection.ID)
+			if err != nil || loaded.Secret.RefreshToken != "r0-next" {
+				t.Fatalf("durable refresh token %q err %v, want the rotation committed", loaded.Secret.RefreshToken, err)
+			}
+			if tc.check != nil {
+				tc.check(t, registry, connection)
 			}
 		})
 	}
