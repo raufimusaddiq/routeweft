@@ -105,13 +105,17 @@ func geminiRequestOptions(model, scope string, repair bool) geminiwire.RequestOp
 // geminiTranslation turns a Chat body into the whole attempt on a Gemini-family
 // wire; project is the Code Assist project a Cloud Code envelope names. wrap
 // adapts the Chat response legs to the client's wire (nil for a Chat client).
-func geminiTranslation(wire string, chat map[string]any, model, scope, project string, stream, repair bool,
+// imagesAsText is set for a Responses or Messages client, whose legs have no
+// images entry (PARITY 6.27).
+func geminiTranslation(wire string, chat map[string]any, model, scope, project string, stream, repair, imagesAsText bool,
 	wrapBody func(func([]byte) ([]byte, error)) func([]byte) ([]byte, error),
 	wrapStream func(streamFunc) streamFunc) (ChatTranslation, error) {
 	// An Antigravity image model is called non-streaming whatever the client asked
 	// (executors/antigravity.js:121-123, chatCore.js:149-154); a streaming client is
 	// answered from that one body, and the picture is in the text, as the pin's
-	// buffered path writes it (PARITY 6.26).
+	// buffered path writes it (PARITY 6.26). A Responses or Messages client gets
+	// every Gemini-family picture in the text, as the pin's buffered path gives it
+	// (nonStreamingHandler.js:167-175,218-223), streamed too (PARITY 6.27).
 	image := wire == geminiwire.AntigravityProtocol && geminiwire.IsAntigravityImageModel(model)
 	answerOnce := stream && image
 	endpoint, err := geminiEndpoint(wire, model, stream && !answerOnce)
@@ -133,7 +137,7 @@ func geminiTranslation(wire string, chat map[string]any, model, scope, project s
 	if err != nil {
 		return ChatTranslation{}, err
 	}
-	options := geminiwire.ResponseOptions{Model: model, Names: names, Signatures: geminiSignatures, Scope: scope, Wire: wire, ImagesAsText: image}
+	options := geminiwire.ResponseOptions{Model: model, Names: names, Signatures: geminiSignatures, Scope: scope, Wire: wire, ImagesAsText: image || imagesAsText}
 	response := func(body []byte) ([]byte, error) { return geminiwire.GeminiResponseToChat(body, options) }
 	streamer := func(ctx context.Context, src io.Reader, dst io.Writer) error {
 		if answerOnce {
@@ -323,7 +327,7 @@ func TranslateChat(request *openai.ChatRequest, target string) (ChatTranslation,
 		if err != nil {
 			return ChatTranslation{}, err
 		}
-		return geminiTranslation(target, parsed, request.Model, request.Scope, request.Project, request.Stream, true, nil, nil)
+		return geminiTranslation(target, parsed, request.Model, request.Scope, request.Project, request.Stream, true, false, nil, nil)
 	case commandcode.Protocol:
 		parsed, err := concerns.WireObject(request.Raw)
 		if err != nil {
@@ -371,7 +375,7 @@ func TranslateResponses(request *openai.ResponsesRequest, target string) (ChatTr
 		return ChatTranslation{}, err
 	}
 	if isGeminiFamily(target) {
-		return geminiTranslation(target, chat, request.Model, request.Scope, request.Project, request.Stream, false,
+		return geminiTranslation(target, chat, request.Model, request.Scope, request.Project, request.Stream, false, true,
 			func(first func([]byte) ([]byte, error)) func([]byte) ([]byte, error) {
 				return chainBodies(first, toResponses)
 			},
@@ -471,7 +475,7 @@ func TranslateMessages(request *anthropic.MessagesRequest, target string) (ChatT
 		if err != nil {
 			return ChatTranslation{}, err
 		}
-		return geminiTranslation(target, chat, request.Model, request.Scope, request.Project, request.Stream, false,
+		return geminiTranslation(target, chat, request.Model, request.Scope, request.Project, request.Stream, false, true,
 			func(first func([]byte) ([]byte, error)) func([]byte) ([]byte, error) {
 				return chainBodies(first, anthropic.ChatResponseToMessages)
 			},

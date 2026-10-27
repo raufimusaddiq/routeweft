@@ -35,7 +35,9 @@ type ResponseOptions struct {
 	// image the pin writes on its buffered path (nonStreamingHandler.js:218-223),
 	// instead of an images entry. The pin always answers an Antigravity image
 	// model on that path (chatCore.js:149-154), so its every client, Chat,
-	// Responses or Messages, gets the picture in the text (PARITY 6.26).
+	// Responses or Messages, gets the picture in the text (PARITY 6.26); a
+	// Responses or Messages client of any Gemini-family wire gets it so too,
+	// since their legs have no images entry (PARITY 6.27).
 	ImagesAsText bool
 }
 
