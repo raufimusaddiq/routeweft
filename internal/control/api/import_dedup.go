@@ -130,7 +130,9 @@ func (h *Handler) saveImportedDuplicate(w http.ResponseWriter, r *http.Request, 
 		return true
 	}
 	h.clearConnectionHealth(connection.ID)
-	writeJSON(w, http.StatusOK, onboardedJSON(connection, onboardedUpdated))
+	saved := onboardedJSON(connection, onboardedUpdated)
+	h.markOnboarded(r.Context(), saved, credentials.OriginImport, result.Unvalidated)
+	writeJSON(w, http.StatusOK, saved)
 	return true
 }
 

@@ -337,7 +337,13 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	connection, _, err := h.publishConnection(r.Context(), credentials.Connection{ID: r.PathValue("id"), NodeID: node.ID, ProviderID: node.ProviderID, Name: body.Name, AuthKind: authKind, Identity: body.Identity, Secret: body.Secret, Enabled: enabled, Priority: priority, ProxyPoolID: proxyPool, AccountID: accountID})
+	connection, persisted, err := h.publishConnection(r.Context(), credentials.Connection{ID: r.PathValue("id"), NodeID: node.ID, ProviderID: node.ProviderID, Name: body.Name, AuthKind: authKind, Identity: body.Identity, Secret: body.Secret, Enabled: enabled, Priority: priority, ProxyPoolID: proxyPool, AccountID: accountID})
+	// A credential typed into the form is new to every provider: a create, or an
+	// edit that replaces the credential (a relink), is untested until checked.
+	// An edit of name, order, proxy or state keeps the stored result (#220).
+	if persisted && (r.Method != http.MethodPatch || replacesCredential(body.Secret)) {
+		_ = h.opts.Credentials.MarkCredentialUntested(context.WithoutCancel(r.Context()), connection.ID, credentials.OriginManual)
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity, auth mode, and proxy pool")
 		return
@@ -395,6 +401,7 @@ func (h *Handler) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := h.validateConnection(r.Context(), connection, node, body.Transport, body.ModelID)
+	h.recordValidation(r.Context(), connection, &result)
 	if !result.OK {
 		status := http.StatusBadGateway
 		if result.Classification == "slow" || result.Classification == "canceled" {
@@ -1341,6 +1348,13 @@ func nodeJSON(node credentials.Node) map[string]any {
 
 func connectionJSON(connection credentials.Connection) map[string]any {
 	return map[string]any{"id": connection.ID, "nodeId": connection.NodeID, "providerId": connection.ProviderID, "name": connection.Name, "authKind": connection.AuthKind, "identity": connection.Identity, "enabled": connection.Enabled, "priority": connection.Priority, "proxyPoolId": connection.ProxyPoolID, "accountId": connection.AccountID, "credentialConfigured": !connection.Secret.Empty()}
+}
+
+// replacesCredential reports whether a form edit carries credential material,
+// which replaces the stored credential (mergeConnectionSecret keeps the stored
+// one for an edit that carries none).
+func replacesCredential(secret credentials.Secret) bool {
+	return !secret.Empty() || secret.IDToken != ""
 }
 
 func slicesContain(items []string, target string) bool {

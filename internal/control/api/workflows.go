@@ -184,7 +184,10 @@ func (h *Handler) handleValidateNode(w http.ResponseWriter, r *http.Request) {
 	}
 	node := credentials.Node{Kind: credentials.NodeGeneric, ProviderID: "validation", BaseURL: body.BaseURL, Transports: body.Transports}
 	c := credentials.Connection{Enabled: true, AuthKind: body.AuthKind, Secret: body.Secret}
-	writeJSON(w, 200, h.validateConnection(r.Context(), c, node, body.Transports[0], body.ModelID))
+	result := h.validateConnection(r.Context(), c, node, body.Transports[0], body.ModelID)
+	// Nothing is stored for an unsaved node; the key is still kept out of the answer.
+	h.recordValidation(r.Context(), c, &result)
+	writeJSON(w, 200, result)
 }
 
 func (h *Handler) workflowConnections(ctx context.Context) ([]credentials.Connection, error) {
@@ -299,6 +302,7 @@ func (h *Handler) handleTestBatch(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		result := h.validateConnection(ctx, c, node, "", body.ModelID)
+		h.recordValidation(ctx, c, &result)
 		results = append(results, result)
 		if ctx.Err() != nil {
 			writeProbeInterrupted(w, ctx, "batch", results)

@@ -353,10 +353,11 @@ func xiaomiAPIKeyFlow() Flow {
 			var models struct {
 				Data []json.RawMessage `json:"data"`
 			}
-			if err := getJSON(ctx, p.Client, baseURL+"/models", map[string]string{
+			err = getJSON(ctx, p.Client, baseURL+"/models", map[string]string{
 				"Authorization": "Bearer " + account.key,
 				"X-Mimo-Source": "mimocode-cli",
-			}, &models); err == nil {
+			}, &models)
+			if err == nil {
 				providerData["modelCount"] = strconv.Itoa(len(models.Data))
 			}
 			identity := ""
@@ -371,6 +372,7 @@ func xiaomiAPIKeyFlow() Flow {
 					AccessToken:  account.key,
 					ProviderData: providerData,
 				},
+				Unvalidated: err != nil,
 			}, nil
 		},
 	}

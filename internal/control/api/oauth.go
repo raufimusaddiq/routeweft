@@ -99,7 +99,10 @@ type oauthFlow struct {
 	target string
 	// device marks a device-authorization attempt, whose sign-in follows the
 	// reference's oauth duplicate rule (deviceMatch).
-	device    bool
+	device bool
+	// imported marks a pasted or file-chosen credential (/import), recorded as
+	// the connection's auth origin (#220).
+	imported  bool
 	expiresAt time.Time
 }
 
@@ -830,6 +833,15 @@ func (h *Handler) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request) 
 // last in routing order, and answers the request. Shared by both flows.
 func (h *Handler) saveOnboardedConnection(w http.ResponseWriter, r *http.Request, providerID string, flow oauthFlow, result onboarding.Result) (saved map[string]any, persisted, ok bool) {
 	saved, persisted, ok = h.saveOnboardedResult(w, r, providerID, flow, result)
+	if ok {
+		origin := credentials.OriginOAuth
+		if flow.device {
+			origin = credentials.OriginDevice
+		} else if flow.imported {
+			origin = credentials.OriginImport
+		}
+		h.markOnboarded(r.Context(), saved, origin, result.Unvalidated)
+	}
 	// Work the provider starts once the account is connected (Antigravity's Code
 	// Assist onboarding) runs after the answer, as the reference's does not hold
 	// up its save; the request ending does not cancel it.
@@ -1251,7 +1263,7 @@ func (h *Handler) handleOAuthImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	flowState := oauthFlow{name: name, identity: identity, identityOptional: flow.IdentityOptional}
+	flowState := oauthFlow{name: name, identity: identity, identityOptional: flow.IdentityOptional, imported: true}
 	if saved, _, ok := h.saveOnboardedConnection(w, r, providerID, flowState, result); ok {
 		writeJSON(w, http.StatusOK, saved)
 	}
@@ -1442,6 +1454,7 @@ func (h *Handler) handleOAuthBulkImport(w http.ResponseWriter, r *http.Request) 
 		if updated {
 			outcome = onboardedUpdated
 		}
+		_ = h.opts.Credentials.MarkCredentialAccepted(context.WithoutCancel(r.Context()), connection.ID, credentials.OriginImport)
 		item := itemResult{Index: index, OK: true, ID: connection.ID, Outcome: outcome}
 		if expired, refreshable := importExpiry(account.Secret, time.Now()); expired {
 			item.Expired, item.Refreshable = true, &refreshable

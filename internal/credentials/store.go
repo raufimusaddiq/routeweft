@@ -262,8 +262,14 @@ func (s *Store) PutConnection(ctx context.Context, connection Connection) (Conne
 	if connection.Enabled {
 		enabled = 1
 	}
-	const upsert = `INSERT INTO provider_connections(id,node_id,name,auth_kind,identity,secret_blob,enabled,priority,proxy_pool_id,account_id) VALUES(?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_kind=excluded.auth_kind,identity=excluded.identity,secret_blob=COALESCE(excluded.secret_blob,provider_connections.secret_blob),enabled=excluded.enabled,priority=excluded.priority,proxy_pool_id=excluded.proxy_pool_id,account_id=excluded.account_id,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+	// The expiry column follows the sealed secret: it changes only when a new
+	// secret is written (v13).
+	var expiry any
+	if blob != nil {
+		expiry = expiryColumn(connection.Secret)
+	}
+	const upsert = `INSERT INTO provider_connections(id,node_id,name,auth_kind,identity,secret_blob,enabled,priority,proxy_pool_id,account_id,credential_expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_kind=excluded.auth_kind,identity=excluded.identity,secret_blob=COALESCE(excluded.secret_blob,provider_connections.secret_blob),enabled=excluded.enabled,priority=excluded.priority,proxy_pool_id=excluded.proxy_pool_id,account_id=excluded.account_id,credential_expires_at=CASE WHEN excluded.secret_blob IS NULL THEN provider_connections.credential_expires_at ELSE excluded.credential_expires_at END,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 	change := func(c *Configuration) error {
 		metadata := connection
 		metadata.Secret = Secret{}
@@ -280,7 +286,7 @@ ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_k
 		c.Connections = append(c.Connections, metadata)
 		return nil
 	}
-	if err := s.exec(ctx, change, upsert, connection.ID, connection.NodeID, connection.Name, string(connection.AuthKind), nullable(connection.Identity), blob, enabled, connection.Priority, nullable(connection.ProxyPoolID), connection.AccountID); err != nil {
+	if err := s.exec(ctx, change, upsert, connection.ID, connection.NodeID, connection.Name, string(connection.AuthKind), nullable(connection.Identity), blob, enabled, connection.Priority, nullable(connection.ProxyPoolID), connection.AccountID, expiry); err != nil {
 		return Connection{}, fmt.Errorf("persist provider connection %q: %w", connection.Name, err)
 	}
 	return connection, nil
@@ -325,7 +331,7 @@ func (s *Store) RotateSecret(ctx context.Context, connectionID string, secret Se
 	}
 	return s.exec(ctx, editConnection(connectionID, func(c *Connection) {
 		c.Settings = projectSettings(secret.ProviderData)
-	}), "UPDATE provider_connections SET secret_blob=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", sealed, connectionID)
+	}), "UPDATE provider_connections SET secret_blob=?,credential_expires_at=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", sealed, expiryColumn(secret), connectionID)
 }
 
 // GetConnection returns one connection with its decrypted secret.

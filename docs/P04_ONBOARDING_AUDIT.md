@@ -78,7 +78,7 @@ Routeweft stores the same fields in the sealed secret payload.
 | Kiro Google/GitHub sign-in | **implementable now, not done** | The registry holds one flow per provider and Kiro's slot is the device flow (`FlowDeviceCode` and browser flows are mutually exclusive per provider, `api/oauth.go:providerFor`). Social sign-in needs either a per-start variant selector or a second registry key. That is an API-shape decision shared by every future dual-flow provider, which AGENTS.md §12 forbids settling inside an unrelated PR. Imported and device-created social credentials already *refresh*. |
 | Kiro `resolveKiroProfileArnPatch` network fallback | open | A refresh that reports no ARN does not call `ListAvailableProfiles` (`providerHelpers.js:53`). The ARN a refresh does report is recorded. |
 | Cursor token refresh | none exists | The pin has no public refresh endpoint (`R/cursor/import/route.js:47`); a Cursor token is re-imported at expiry. |
-| Pin `testStatus` (`untested`) | not modeled | Routeweft connections carry no per-connection test status; Xiaomi's soft validation stores the key without recording `untested`. |
+| Pin `testStatus` (`untested`) | implemented (#220) | v13 persists `test_status` per connection (SPEC §33.2). Xiaomi's soft validation (`Result.Unvalidated`) stores a new key `untested` and leaves a stored duplicate's status as it was (`xiaomi-mimo/api-key/route.js:79,115`); every other onboarding save records `active`. |
 | Dispatcher loopback listeners, `ide-status`, `register-session` | deliberately absent | Host listeners and host reads; paste-back completion replaces them. |
 
 ## 4. Host-secret access

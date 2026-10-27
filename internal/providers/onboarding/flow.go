@@ -274,6 +274,12 @@ type Result struct {
 	// handler runs it in the background after the connection is saved, on a
 	// context the request's end does not cancel. It saves nothing.
 	AfterSave func(context.Context)
+	// Unvalidated marks a credential stored although the provider did not
+	// confirm it: Xiaomi's soft validation keeps a key whose model listing
+	// failed and records it untested, or leaves a stored duplicate's status as
+	// it was (xiaomi-mimo/api-key/route.js:52-55,79,115). Every other result is
+	// a credential the provider issued or accepted.
+	Unvalidated bool
 }
 
 // PollResult is one device-code poll outcome.

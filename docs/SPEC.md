@@ -2087,6 +2087,59 @@ whose `base_url` is exactly the old default
 base URL (operator overrides) and every other provider are untouched. Older
 binaries reject schema v8; rollback requires the pre-upgrade backup.
 
+### 33.2 Connection validation lifecycle (#220)
+
+Each connection keeps a persisted validation lifecycle beside it in
+`provider_connections` (migration v13), outside the sealed secret and outside the
+runtime snapshot: recording a result never opens a credential, recompiles
+configuration or touches the serving path. The connections read model reports
+four separate things the operator must not confuse:
+
+| Question | Field(s) | Source |
+| --- | --- | --- |
+| Did the provider accept the credential? | `testStatus`: `untested`, `active` or `failed`; `lastError`, `lastErrorAt` | sign-in/import, connection test |
+| Did a model answer? | `lastTestedAt`, `modelsAvailable` | connection test / batch test |
+| Is quota observed? | `plan`, `quotaObservedAt` | quota service (in memory) |
+| Is the provider ready? | catalog `readiness` | build-time catalog (unchanged) |
+
+`authOrigin` (`manual`, `oauth`, `device`, `import`) names how the credential
+arrived; `expiresAt` mirrors the sealed secret's expiry, rewritten with every
+new secret, including a refresh rotation (`RotateSecret`). Neither is credential
+material.
+
+Transitions, after the reference (`testUtils.js:892-899`,
+`[provider]/[action]/route.js:69`, `connectionsRepo.js:64-75`):
+
+- A browser or device sign-in, a Reauthenticate, a single import, an import or
+  sign-in that updates a stored duplicate, and every saved bulk item mark the
+  connection `active` with its origin and clear the last error. The response
+  carries `testStatus` and `authOrigin`, beside the existing `outcome`
+  (`added`, `updated`, `reauthenticated`).
+- A manual create, or a manual edit that carries credential material (a
+  relink), marks it `untested` with origin `manual` and clears the last test,
+  model count and error: no provider has seen the new credential. The
+  reference keeps the previous status on such an edit; Routeweft does not
+  report a result for a credential that was never tested. An edit of name,
+  identity, order, proxy or enabled state keeps the stored lifecycle.
+- `POST /admin/v1/connections/{id}/test` and each account of
+  `POST /admin/v1/providers/test-batch` record `active` (clearing the error)
+  or `failed` with the error, the time and the listed model count. A canceled
+  test and a disabled connection record nothing. The error is the probe's
+  bounded text with every value of the connection's credential (stored and as
+  the registry currently holds it) of eight or more characters replaced by
+  `[redacted]`, in both the answer and the stored row; unsaved node validation
+  applies the same redaction.
+- A save that fails (invalid account id, unknown proxy pool, store error)
+  leaves the stored credential, its runtime registration and its lifecycle
+  unchanged. Deleting the connection deletes its lifecycle with the row.
+
+The Providers UI shows the status as a state tag, a one-line summary (last
+check, models listed, token expiry, origin, plan, quota seen) and the last error
+when failed. Edit changes name and identity and, for API-key and cookie
+connections, replaces the credential through a masked field that starts empty
+(a blank field keeps the stored one) and is cleared once saved; sign-in
+connections are renewed with Reauthenticate.
+
 ## 34. Public compatibility details
 
 Routeweft ingress must account for:
