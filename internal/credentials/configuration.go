@@ -155,5 +155,6 @@ func projectSettings(data map[string]string) routing.ProviderSettings {
 		WorkspaceID: data["workspaceId"], DeviceID: data["deviceId"], MachineID: data["machineId"], AgentID: data["agentId"],
 		Email: data["email"], UserID: data["userId"], SystemID: data["systemId"],
 		OrganizationID: data["organizationId"], DefaultOrganizationID: data["defaultOrganizationId"], UID: data["uid"], OrgID: data["orgId"], ProjectID: data["projectId"], Location: data["location"], ChatGPTAccountID: data["chatgptAccountId"], KiroToolCallRepair: data["kiroToolCallRepair"],
+		ConnectionProxyEnabled: data["connectionProxyEnabled"], ConnectionProxyURL: data["connectionProxyUrl"], ConnectionNoProxy: data["connectionNoProxy"],
 	}
 }

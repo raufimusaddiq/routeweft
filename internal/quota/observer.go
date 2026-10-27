@@ -8,6 +8,7 @@ import (
 
 	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
 	codexprovider "github.com/raufimusaddiq/routeweft/internal/providers/codex"
+	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
 // Publisher is the RuntimeState surface the observer writes to. It is an
@@ -53,7 +54,9 @@ func (o Observer) Observe(ctx context.Context, providerID, account string, crede
 		return State{}, ErrNotConfigured
 	}
 	now := o.now()
-	state, err := client.Usage(ctx, credential)
+	// A usage read leaves through the connection's proxy
+	// (usage/[connectionId]/route.js:159-185).
+	state, err := client.Usage(transport.WithConnection(ctx, credential.ConnectionID), credential)
 	if err != nil {
 		state = State{Status: StatusError, ObservedAt: now, Err: err.Error()}
 	}

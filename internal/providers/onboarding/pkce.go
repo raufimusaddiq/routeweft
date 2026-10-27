@@ -417,8 +417,19 @@ func grokBulkAccount(item map[string]any) (BulkAccount, error) {
 	}
 	if given, ok := item["providerSpecificData"].(map[string]any); ok {
 		for key, value := range given {
-			if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
-				providerData[key] = strings.TrimSpace(text)
+			switch value := value.(type) {
+			case nil:
+			case string:
+				if strings.TrimSpace(value) != "" {
+					providerData[key] = strings.TrimSpace(value)
+				}
+			default:
+				// The route spreads the object as given (bulk-import/route.js:87),
+				// so a boolean such as connectionProxyEnabled is kept, as its JSON
+				// text since the stored map holds strings.
+				if raw, err := json.Marshal(value); err == nil {
+					providerData[key] = string(raw)
+				}
 			}
 		}
 	}

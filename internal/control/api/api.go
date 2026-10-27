@@ -191,11 +191,22 @@ func New(opts Options) *Handler {
 	if provided, ok := opts.DiscoveryClient.HTTP.(*http.Client); ok && provided.Transport != nil {
 		h.probeTransport = provided.Transport
 	}
-	if base, ok := h.probeTransport.(*http.Transport); ok {
+	switch base := h.probeTransport.(type) {
+	case *http.Transport:
 		// Own the header budget without changing discovery's shared transport.
 		pooled := base.Clone()
 		pooled.ResponseHeaderTimeout = modelProbeTimeout
 		h.probeTransport = pooled
+	case transport.ConnectionRouter:
+		// The same for the direct path of a connection-routed client. A
+		// connection with a proxy is probed through the transport inference
+		// uses, header budget included.
+		if direct, ok := base.Base.(*http.Transport); ok {
+			pooled := direct.Clone()
+			pooled.ResponseHeaderTimeout = modelProbeTimeout
+			base.Base = pooled
+			h.probeTransport = base
+		}
 	}
 	return h
 }

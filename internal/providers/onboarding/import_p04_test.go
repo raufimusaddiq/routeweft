@@ -575,3 +575,26 @@ func TestCodexBulkKeepsExportedProviderData(t *testing.T) {
 		t.Fatalf("providerSpecificData=%v, want %v", account.Secret.ProviderData, want)
 	}
 }
+
+// The Grok CLI route spreads providerSpecificData as given
+// (grok-cli/bulk-import/route.js:87): a non-string value such as LiteRouter's
+// connectionProxyEnabled flag is kept, as its JSON text.
+func TestGrokBulkKeepsNonStringProviderData(t *testing.T) {
+	account, err := grokBulkAccount(map[string]any{
+		"accessToken": "grok-access", "email": "person@example.invalid",
+		"providerSpecificData": map[string]any{
+			"connectionProxyEnabled": true, "connectionProxyUrl": " http://proxy.example:3128 ", "connectionNoProxy": "",
+			"retries": float64(2), "gone": nil,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"authMethod": "device_code", "email": "person@example.invalid",
+		"connectionProxyEnabled": "true", "connectionProxyUrl": "http://proxy.example:3128", "retries": "2",
+	}
+	if fmt.Sprint(account.Secret.ProviderData) != fmt.Sprint(want) {
+		t.Fatalf("providerSpecificData=%v, want %v", account.Secret.ProviderData, want)
+	}
+}

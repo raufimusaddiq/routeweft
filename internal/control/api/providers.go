@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/providers/discovery"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
+	"github.com/raufimusaddiq/routeweft/internal/proxy"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/transport"
@@ -493,6 +495,7 @@ func (h *Handler) handleTestModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) testProviderModel(ctx context.Context, connection credentials.Connection, node credentials.Node, spec registry.Spec, transportName, modelID string, timeout time.Duration) (result modelTestResult) {
+	ctx = transport.WithConnection(ctx, connection.ID)
 	start := time.Now()
 	requestCtx := ctx
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -739,6 +742,8 @@ func (h *Handler) handleDiscoverModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) fetchModelEntries(ctx context.Context, connectionID string) ([]discovery.Model, error) {
+	// Listing leaves through the connection's proxy (models/route.js:463).
+	ctx = transport.WithConnection(ctx, connectionID)
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	if h.opts.Credentials == nil {
@@ -1107,21 +1112,63 @@ func (h *Handler) handleSetConnectionProxy(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusServiceUnavailable, "credentials_unavailable", "provider credential storage is not configured")
 		return
 	}
-	var body struct {
-		ProxyPoolID string `json:"proxyPoolId"`
-	}
+	var body map[string]json.RawMessage
 	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
+	poolRaw, hasPool := body["proxyPoolId"]
+	var poolID string
+	if hasPool && string(poolRaw) != "null" && json.Unmarshal(poolRaw, &poolID) != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "proxyPoolId must be a string")
+		return
+	}
+	legacy, hasLegacy := connectionProxyUpdate(body)
+	if !hasLegacy {
+		// A body without the per-connection fields is the pool assignment it has
+		// always been: a missing proxyPoolId unbinds.
+		hasPool = true
+	}
+	if hasLegacy && legacy.Enabled {
+		if legacy.URL == "" {
+			writeError(w, http.StatusBadRequest, "invalid_connection_proxy", "Connection proxy URL is required when connection proxy is enabled")
+			return
+		}
+		normalized, err := proxy.ValidateURL(runtime.LegacyProxyURL(legacy.URL))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_connection_proxy", err.Error())
+			return
+		}
+		if err := h.checkProxyHost(normalized); err != nil {
+			writeError(w, http.StatusBadRequest, "proxy_host_blocked", "proxy host is not allowed by the outbound network policy")
+			return
+		}
+	}
+	id := r.PathValue("id")
 	h.connectionMu.Lock()
-	err := h.opts.Credentials.SetConnectionProxy(r.Context(), r.PathValue("id"), body.ProxyPoolID)
+	var err error
+	if hasPool {
+		err = h.opts.Credentials.SetConnectionProxy(r.Context(), id, poolID)
+	}
+	if err == nil && hasLegacy {
+		_, err = h.updateConnection(r.Context(), id, func(existing credentials.Connection) (credentials.Connection, error) {
+			data := make(map[string]string, len(existing.Secret.ProviderData)+3)
+			for key, value := range existing.Secret.ProviderData {
+				data[key] = value
+			}
+			data["connectionProxyEnabled"] = strconv.FormatBool(legacy.Enabled)
+			data["connectionProxyUrl"] = legacy.URL
+			data["connectionNoProxy"] = legacy.NoProxy
+			existing.Secret.ProviderData = data
+			return existing, nil
+		})
+	}
 	h.connectionMu.Unlock()
 	if errors.Is(err, credentials.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "connection_not_found", "provider connection was not found")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "proxy_assignment_failed", "proxy pool assignment could not be saved")
+		writeError(w, http.StatusBadRequest, "proxy_assignment_failed", "proxy assignment could not be saved")
 		return
 	}
 	if h.opts.PoolBindings != nil {
@@ -1130,7 +1177,48 @@ func (h *Handler) handleSetConnectionProxy(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": r.PathValue("id"), "proxyPoolId": body.ProxyPoolID})
+	response := map[string]any{"id": id}
+	if hasPool {
+		response["proxyPoolId"] = poolID
+	}
+	if hasLegacy {
+		response["connectionProxyEnabled"] = legacy.Enabled
+		response["connectionProxyUrl"] = safeURL(legacy.URL)
+		response["connectionNoProxy"] = legacy.NoProxy
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+// connectionProxySettings is a LiteRouter per-connection proxy as the pin's
+// provider routes accept it.
+type connectionProxySettings struct {
+	Enabled      bool
+	URL, NoProxy string
+}
+
+// connectionProxyUpdate reads the per-connection proxy fields the way the pin's
+// normalizeProxyConfig does (src/app/api/providers/[id]/route.js:9-34): any of
+// the three keys sets all three, only a JSON true enables, and a non-string
+// URL or no-proxy list reads as empty.
+func connectionProxyUpdate(body map[string]json.RawMessage) (connectionProxySettings, bool) {
+	enabledRaw, hasEnabled := body["connectionProxyEnabled"]
+	urlRaw, hasURL := body["connectionProxyUrl"]
+	noProxyRaw, hasNoProxy := body["connectionNoProxy"]
+	if !hasEnabled && !hasURL && !hasNoProxy {
+		return connectionProxySettings{}, false
+	}
+	text := func(raw json.RawMessage) string {
+		var value string
+		if json.Unmarshal(raw, &value) != nil {
+			return ""
+		}
+		return strings.TrimSpace(value)
+	}
+	return connectionProxySettings{
+		Enabled: strings.TrimSpace(string(enabledRaw)) == "true",
+		URL:     text(urlRaw),
+		NoProxy: text(noProxyRaw),
+	}, true
 }
 
 func (h *Handler) handleMoveConnection(w http.ResponseWriter, r *http.Request) {

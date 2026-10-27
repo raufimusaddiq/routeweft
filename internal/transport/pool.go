@@ -22,11 +22,19 @@ type ProxyPolicy struct {
 	ConnectionProxyURL string
 	NoProxy            []string
 	AllowPrivate       bool
+	// ConnectionOwnsNoProxy marks ConnectionProxyURL as a LiteRouter
+	// per-connection proxy (providerSpecificData.connectionProxyUrl). Only
+	// ConnectionNoProxy bypasses it, and a bypassed host takes the global proxy
+	// under NoProxy (open-sse/utils/proxyFetch.js:62-73,112-114). A pool member
+	// leaves it false, so NoProxy bypasses the member as well.
+	ConnectionOwnsNoProxy bool
+	ConnectionNoProxy     []string
 }
 
 // ProxyForHost exposes the compiled precedence for tests and callers that need
 // to inspect the effective proxy: a connection-level proxy wins over the global
-// one, and a no-proxy match wins over both (PRD-ROUTE-005, SPEC §20). A nil
+// one, and a no-proxy match wins over both (PRD-ROUTE-005, SPEC §20), except
+// that a per-connection proxy answers only to its own no-proxy list. A nil
 // result means the request dials directly.
 func (p ProxyPolicy) ProxyForHost(host string) (*url.URL, error) {
 	return p.proxyFor(host)
@@ -38,18 +46,26 @@ func (p ProxyPolicy) proxyFor(host string) (*url.URL, error) {
 	if !p.Enabled {
 		return nil, nil
 	}
-	for _, entry := range p.NoProxy {
-		if noProxyMatches(entry, host) {
-			return nil, nil
-		}
-	}
 	raw := p.ConnectionProxyURL
+	if p.ConnectionOwnsNoProxy && raw != "" {
+		if !noProxyListMatches(p.ConnectionNoProxy, host) {
+			return parseProxyURL(raw)
+		}
+		raw = ""
+	}
+	if noProxyListMatches(p.NoProxy, host) {
+		return nil, nil
+	}
 	if raw == "" {
 		raw = p.GlobalProxyURL
 	}
 	if raw == "" {
 		return nil, nil
 	}
+	return parseProxyURL(raw)
+}
+
+func parseProxyURL(raw string) (*url.URL, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" {
 		return nil, errors.New("invalid proxy URL")
@@ -60,6 +76,15 @@ func (p ProxyPolicy) proxyFor(host string) (*url.URL, error) {
 		return nil, errors.New("unsupported proxy scheme")
 	}
 	return parsed, nil
+}
+
+func noProxyListMatches(entries []string, host string) bool {
+	for _, entry := range entries {
+		if noProxyMatches(entry, host) {
+			return true
+		}
+	}
+	return false
 }
 
 // noProxyMatches applies the pin's bypass rules
@@ -128,10 +153,15 @@ func (p *PooledClients) Release(policy ProxyPolicy) {
 }
 
 func policyCacheKey(policy ProxyPolicy) (string, error) {
-	key := fmt.Sprintf("enabled=%t|global=%s|connection=%s|private=%t|", policy.Enabled, policy.GlobalProxyURL, policy.ConnectionProxyURL, policy.AllowPrivate)
+	key := fmt.Sprintf("enabled=%t|global=%s|connection=%s|private=%t|owns=%t|", policy.Enabled, policy.GlobalProxyURL, policy.ConnectionProxyURL, policy.AllowPrivate, policy.ConnectionOwnsNoProxy)
 	noProxy := append([]string(nil), policy.NoProxy...)
 	sort.Strings(noProxy)
 	key += strings.Join(noProxy, ",")
+	if policy.ConnectionOwnsNoProxy {
+		connectionNoProxy := append([]string(nil), policy.ConnectionNoProxy...)
+		sort.Strings(connectionNoProxy)
+		key += "|" + strings.Join(connectionNoProxy, ",")
+	}
 	if _, err := policy.proxyFor(""); err != nil {
 		return "", err
 	}

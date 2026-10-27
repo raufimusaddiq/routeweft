@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/codex"
+	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
 func (h *Handler) handleCodexResetCredits(w http.ResponseWriter, r *http.Request) {
@@ -18,6 +19,9 @@ func (h *Handler) handleCodexResetCredits(w http.ResponseWriter, r *http.Request
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
+	// Reset credits leave through the connection's proxy
+	// (codex-reset-credits/route.js:66-72).
+	ctx = transport.WithConnection(ctx, r.PathValue("id"))
 	connection, err := h.opts.Credentials.GetConnection(ctx, r.PathValue("id"))
 	if errors.Is(err, credentials.ErrNotFound) {
 		writeError(w, 404, "connection_not_found", "connection not found")

@@ -194,7 +194,7 @@ func (a *App) initialize(ctx context.Context) error {
 	binder := proxy.NewBinder(loadSnapshot(manager))
 	binder.AllowLocal = a.cfg.AllowPrivateUpstreams
 	specs := registry.Builtins()
-	if err := a.initializeQuota(ctx, store, manager, specs, sealer); err != nil {
+	if err := a.initializeQuota(ctx, store, manager, specs, sealer, binder); err != nil {
 		_ = store.Close()
 		return err
 	}
@@ -264,7 +264,7 @@ func (a *App) initialize(ctx context.Context) error {
 			})
 		},
 	})
-	if err := a.initializeAdmin(ctx, store, manager, specs); err != nil {
+	if err := a.initializeAdmin(ctx, store, manager, specs, binder); err != nil {
 		_ = store.Close()
 		return err
 	}
@@ -276,7 +276,7 @@ func (a *App) initialize(ctx context.Context) error {
 // builds the session-gated control API. A missing bootstrap credential is not an
 // error while no admin exists: the control API stays mounted but returns 409
 // until an operator provisions one (RUNBOOK §bootstrap).
-func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager *runtime.Manager, specs []registry.Spec) error {
+func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager *runtime.Manager, specs []registry.Spec, binder *proxy.Binder) error {
 	a.admin = adminauth.NewStore(store.DB())
 	if (a.cfg.AdminBootstrapUsername == "") != (a.cfg.AdminBootstrapPassword == "") {
 		return errors.New("initial admin bootstrap username and password must be configured together")
@@ -314,19 +314,35 @@ func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager 
 		AllowPrivateUpstreams: a.cfg.AllowPrivateUpstreams,
 		PublicOrigin:          a.cfg.PublicOrigin,
 		PXPIPE:                a.pxpipe,
-		DiscoveryClient:       &discovery.Client{},
-		Telemetry:             a.usage,
-		Events:                a.events,
-		UsageFeed:             a.feed,
-		Logs:                  a.logs,
-		ActiveRequests:        func() int64 { return a.active.Load() },
-		Ready:                 a.ready.Load,
-		Build:                 buildinfo.Current(),
-		DataDir:               a.cfg.DataDir,
-		Backup:                a.CreateBackup,
-		Restore:               a.QueueRestore,
+		// Model discovery, connection tests, sign-in and reset credits share one
+		// client; work made for a connection leaves through its proxy.
+		DiscoveryClient: &discovery.Client{HTTP: a.connectionClient(binder)},
+		OAuthClient:     a.connectionClient(binder),
+		Telemetry:       a.usage,
+		Events:          a.events,
+		UsageFeed:       a.feed,
+		Logs:            a.logs,
+		ActiveRequests:  func() int64 { return a.active.Load() },
+		Ready:           a.ready.Load,
+		Build:           buildinfo.Current(),
+		DataDir:         a.cfg.DataDir,
+		Backup:          a.CreateBackup,
+		Restore:         a.QueueRestore,
 	})
 	return nil
+}
+
+// connectionClient is the SSRF-protected client for work outside inference.
+// A request made for a connection (transport.WithConnection) leaves through
+// that connection's compiled proxy, the one inference uses: its pool member,
+// else its own proxy, else the global proxy (LiteRouter resolves the
+// connection proxy on these paths too, src/lib/network/connectionProxy.js:66).
+func (a *App) connectionClient(binder *proxy.Binder) *http.Client {
+	client := transport.NewSSRFProtectedClient()
+	if a.cfg.AllowPrivateUpstreams {
+		client = transport.NewTrustedLocalSSRFProtectedClient()
+	}
+	return transport.RouteByConnection(client, binder.TransportFor)
 }
 
 // newAdminID returns a stable, non-secret admin identifier.
@@ -337,7 +353,7 @@ func newAdminID() string { return "admin_" + uuid.NewString() }
 // singleflight-refreshed credentials inference uses. It is skipped when no
 // credential master key is configured, in which case there are no stored
 // provider connections to read quota for.
-func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager *runtime.Manager, specs []registry.Spec, sealer *credentials.Sealer) error {
+func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager *runtime.Manager, specs []registry.Spec, sealer *credentials.Sealer, binder *proxy.Binder) error {
 	if sealer == nil {
 		return nil
 	}
@@ -357,10 +373,7 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 	// Refreshes are network calls: they need the same pooled, SSRF-guarded client
 	// inference uses, never nil. A nil client here failed every refresh at request
 	// time, which surfaced as a 5xx on inference once a token crossed its lead.
-	refreshClient := transport.NewSSRFProtectedClient()
-	if a.cfg.AllowPrivateUpstreams {
-		refreshClient = transport.NewTrustedLocalSSRFProtectedClient()
-	}
+	refreshClient := a.connectionClient(binder)
 	resolver, err := oauthrefresh.Resolver(refreshClient)
 	if err != nil {
 		return fmt.Errorf("install credential refresh: %w", err)
@@ -398,10 +411,7 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 	// Codex and Claude keep their dedicated engines; every other provider whose
 	// quota LiteRouter reads goes through the shared usage package, so the reader
 	// set is the reference dispatcher's table rather than a second hand-kept list.
-	usageClient := transport.NewSSRFProtectedClient()
-	if a.cfg.AllowPrivateUpstreams {
-		usageClient = transport.NewTrustedLocalSSRFProtectedClient()
-	}
+	usageClient := a.connectionClient(binder)
 	clients, err := providerusage.Readers(usageClient, nil)
 	if err != nil {
 		return fmt.Errorf("install quota readers: %w", err)

@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -202,6 +203,7 @@ func (c Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, erro
 		combos:            combos,
 		poolBindings:      cloneStringMap(config.PoolBindings),
 		poolPools:         compileProxyPools(config.ProxyPools),
+		connectionProxies: compileConnectionProxies(config.Providers.Connections),
 	}
 	snapshot.proxyEnabled, _ = strconv.ParseBool(strings.TrimSpace(settings["outboundProxyEnabled"]))
 	snapshot.proxyURL = strings.TrimSpace(settings["outboundProxyUrl"])
@@ -227,6 +229,56 @@ func compileProxyPools(pools []ProxyPool) map[string]proxyPoolEntry {
 		compiled[pool.ID] = proxyPoolEntry{enabled: pool.Enabled, strategy: strategy, members: append([]ProxyMember(nil), pool.Members...)}
 	}
 	return compiled
+}
+
+// compileConnectionProxies compiles every connection's LiteRouter
+// per-connection proxy, disabled connections included, since a connection test
+// or usage read of a disabled connection still leaves through it.
+func compileConnectionProxies(connections []credentials.Connection) map[string]ConnectionProxy {
+	var compiled map[string]ConnectionProxy
+	for _, connection := range connections {
+		settings := connection.Settings
+		// The pin enables only a JSON true (connectionProxy.js:40-41). Import keeps
+		// a boolean as its JSON text, so the stored form of true is "true".
+		if settings.ConnectionProxyEnabled != "true" {
+			continue
+		}
+		proxyURL := LegacyProxyURL(settings.ConnectionProxyURL)
+		if proxyURL == "" {
+			continue
+		}
+		if compiled == nil {
+			compiled = make(map[string]ConnectionProxy)
+		}
+		compiled[connection.ID] = ConnectionProxy{URL: proxyURL, NoProxy: legacyNoProxy(settings.ConnectionNoProxy)}
+	}
+	return compiled
+}
+
+// LegacyProxyURL trims a stored connectionProxyUrl and, like the pin's
+// normalizeProxyUrl (open-sse/utils/proxyFetch.js:48-60), reads a value with
+// no scheme and host, such as "127.0.0.1:7890", as an http proxy.
+func LegacyProxyURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(trimmed); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		return trimmed
+	}
+	return "http://" + trimmed
+}
+
+// legacyNoProxy splits a stored connectionNoProxy on commas, as the pin's
+// shouldBypassByNoProxy does (open-sse/utils/proxyFetch.js:11-24).
+func legacyNoProxy(raw string) []string {
+	var entries []string
+	for _, entry := range strings.Split(raw, ",") {
+		if entry = strings.TrimSpace(entry); entry != "" {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
 }
 
 func cloneStringMap(src map[string]string) map[string]string {

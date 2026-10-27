@@ -306,7 +306,7 @@ const { join } = require('node:path');
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'node-openai', kind: 'builtin', providerId: 'openai', name: 'openai', baseUrl: 'https://api.openai.com/v1', transports: ['openai-chat','openai-responses'] }, { id: 'node-jev', kind: 'builtin', providerId: 'typesafe', name: 'typesafe', baseUrl: 'https://api.typesafe.ai/v1/systemone', transports: ['systemone'] }], page: 1, pageSize: 100, total: 2 }) });
   }
   if (url.pathname === '/admin/v1/connections' && method === 'GET') {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'conn-1', nodeId: 'node-openai', providerId: 'openai', name: 'primary', authKind: 'api-key', identity: 'acct-1', enabled: providerPatches === 0, priority: 0, credentialConfigured: true }, { id: 'conn-jev', nodeId: 'node-jev', providerId: 'typesafe', name: 'jev', authKind: 'api-key', identity: 'acct-jev', enabled: true, priority: 0, credentialConfigured: true }], page: 1, pageSize: 100, total: 2 }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'conn-1', nodeId: 'node-openai', providerId: 'openai', name: 'primary', authKind: 'api-key', identity: 'acct-1', enabled: providerPatches === 0, priority: 0, credentialConfigured: true, connectionProxy: { url: 'http://proxy.example.test:3128', noProxy: 'localhost' } }, { id: 'conn-jev', nodeId: 'node-jev', providerId: 'typesafe', name: 'jev', authKind: 'api-key', identity: 'acct-jev', enabled: true, priority: 0, credentialConfigured: true }], page: 1, pageSize: 100, total: 2 }) });
   }
   if (url.pathname === '/admin/v1/systemone' && method === 'GET') {
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: systemOneModelAdded ? [{ providerId: 'typesafe', id: 'jev', name: 'jev', capabilities: [], disabled: false }, { providerId: 'typesafe', id: 'jev-mini', name: 'jev-mini', capabilities: [], disabled: false }] : [{ providerId: 'typesafe', id: 'jev', name: 'jev', capabilities: [], disabled: false }], page: 1, pageSize: 100, total: 1 }) });
@@ -570,6 +570,8 @@ const { join } = require('node:path');
   assert.equal(await page.locator('.provider-summary .readiness-note').count(), 0);
   assert.match(await page.locator('.connection-row .state-tag').first().textContent(), /^(Enabled|Disabled)$/);
   assert.equal(await page.locator('.connection-row .readiness-tag').count(), 0);
+  // A LiteRouter per-connection proxy is named on its row (#249), its URL as the API redacted it.
+  assert.equal(await page.locator('.connection-row .connection-proxy').first().textContent(), 'Connection proxy http://proxy.example.test:3128 · bypassed for localhost');
   report.providerDetail = await page.locator('.provider-summary h2').textContent();
   report.modelRows = await page.locator('.model-row').count();
   report.modelProbeGuidance = await page.locator('.model-test-form .count-label').textContent();
