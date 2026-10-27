@@ -12,6 +12,22 @@ const { join } = require('node:path');
   const artifacts = process.env.ROUTEWEFT_SMOKE_ARTIFACTS || '/tmp/routeweft-ui-evidence';
   mkdirSync(artifacts, { recursive: true });
   report.visualChecks = [];
+  // D's type scale (UI_STYLE §3): 28px stays for secondary display; the poster sizes are the title, headline, statement, live figure.
+  const desktopSizes = ['11px', '12px', '16px', '28px', '36px', '44px', '56px', '64px'];
+  const phoneSizes = ['11px', '12px', '16px', '24px', '26px', '28px', '30px', '40px'];
+  // A focused control's ring: its style, the computed ink it must differ from, and its contrast with what is behind it.
+  const focusRing = element => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 1;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    const rgba = value => { context.clearRect(0, 0, 1, 1); context.fillStyle = value; context.fillRect(0, 0, 1, 1); return [...context.getImageData(0, 0, 1, 1).data]; };
+    const luminance = rgb => rgb.slice(0, 3).map(value => { const c = value / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }).reduce((sum, c, index) => sum + c * [0.2126, 0.7152, 0.0722][index], 0);
+    const ratio = (a, b) => { const x = luminance(a), y = luminance(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+    const background = node => { const layers = []; for (; node; node = node.parentElement) layers.push(rgba(getComputedStyle(node).backgroundColor)); return layers.reverse().reduce((base, color) => color.slice(0, 3).map((c, i) => c * color[3] / 255 + base[i] * (1 - color[3] / 255)), [255, 255, 255]); };
+    const style = getComputedStyle(element);
+    const ink = rgba(getComputedStyle(document.documentElement).getPropertyValue('--ink').trim());
+    return { id: element.id, focused: document.activeElement === element, visible: element.matches(':focus-visible'), style: style.outlineStyle, width: style.outlineWidth, color: style.outlineColor, offset: style.outlineOffset, ink: `rgb(${ink[0]}, ${ink[1]}, ${ink[2]})`, against: ratio(rgba(style.outlineColor), background(element.parentElement)) };
+  };
   async function captureVisuals(view) {
     const savedTheme = await page.locator('#theme-select').inputValue();
     for (const theme of ['light', 'dark', 'system']) {
@@ -52,21 +68,76 @@ const { join } = require('node:path');
             const value = ratio(rgba(getComputedStyle(element).color), background(element));
             return value < 4.5 ? [{ element: element.className, ratio: value }] : [];
           });
+          // D's radii (UI_STYLE §2, §12.1): 0 and 2px anywhere; every larger value only on its owners, never on a pseudo-element.
+          const radiusOwners = {
+            '999px': '.nav-link, .button-primary, .button-secondary, .button-ghost, .button-danger, input, select, .state-tag, .ed-bar, .ed-headline strong, .ed-statement strong',
+            '32px': '.accent-surface',
+            '24px': '.accent-surface, .empty-state, .empty-keys, .page-error, .auth-error',
+            '22px': '.provider-option',
+            '20px': 'textarea',
+          };
           const radii = elements.flatMap(element => ['', '::before', '::after'].flatMap(pseudo => {
             const style = getComputedStyle(element, pseudo || null);
-            return ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomLeftRadius', 'borderBottomRightRadius'].filter(key => style[key].split(' ').some(value => parseFloat(value) > 2)).map(key => `${element.className}${pseudo}: ${key}=${style[key]}`);
+            return ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomLeftRadius', 'borderBottomRightRadius'].filter(key => style[key].split(' ').some(value => {
+              if (value === '0px' || value === '2px') return false;
+              return pseudo || !radiusOwners[value] || !element.matches(radiusOwners[value]);
+            })).map(key => `${element.className}${pseudo}: ${key}=${style[key]}`);
           }));
           const states = ['--danger', '--success', '--warning', '--info'].map(token => ({ token, ratio: ratio(rgba(getComputedStyle(document.documentElement).getPropertyValue(token)), background(document.body)) }));
           const sizes = [...new Set(elements.filter(visible).filter(element => [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim())).map(element => getComputedStyle(element).fontSize))].sort((a, b) => parseFloat(a) - parseFloat(b));
           const eleven = elements.filter(visible).filter(element => [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim()) && getComputedStyle(element).fontSize === '11px' && !element.closest('svg')).map(element => element.tagName + '.' + element.className);
           const accents = [...document.querySelectorAll('.accent-surface')].filter(visible).length;
+          const token = name => rgba(getComputedStyle(document.documentElement).getPropertyValue(name).trim());
+          const same = (a, b) => a.slice(0, 3).every((value, index) => Math.abs(value - b[index]) <= 1);
+          // 3:1 for every control boundary: the border, or the control's own fill, against what is behind it. A transparent
+          // border is no boundary and a disabled control is exempt; a text-only control is judged by its text at 4.5:1.
+          const controls = elements.filter(visible).filter(element => element.matches('button:not(.drawer-backdrop), input, select, textarea') && !element.disabled);
+          const weakControls = controls.flatMap(element => {
+            const style = getComputedStyle(element);
+            const border = rgba(style.borderTopColor);
+            if (parseFloat(style.borderTopWidth) === 0 || border[3] === 0) return [];
+            const behind = background(element.parentElement);
+            const fill = rgba(style.backgroundColor);
+            const value = Math.max(ratio(border, behind), fill[3] ? ratio(fill, behind) : 0);
+            return value < 3 ? [{ element: element.className || element.tagName, ratio: value }] : [];
+          });
+          // The frameless phone menu button: its bars are its boundary, against the header behind them.
+          const menu = document.querySelector('.mobile-menu');
+          const menuBars = menu && visible(menu) ? ratio(rgba(getComputedStyle(menu).color), background(document.querySelector('.mobile-header'))) : null;
+          // The shell's edges against the page: the desktop rail and the phone header, from their fill or their rule.
+          const page = background(document.querySelector('.workspace'));
+          const edge = (selector, side) => {
+            const element = document.querySelector(selector);
+            if (!element || !visible(element)) return null;
+            const style = getComputedStyle(element);
+            const rule = parseFloat(style[`border${side}Width`]) >= 1 ? ratio(rgba(style[`border${side}Color`]), page) : 0;
+            return Math.max(rule, ratio(background(element), page));
+          };
+          const edges = { rail: innerWidth >= 700 ? edge('.sidebar', 'Right') : null, header: innerWidth < 700 ? edge('.mobile-header', 'Bottom') : null };
+          // Depth is a hard offset, never a blur: every shadow is one of the two token offsets with zero blur and spread.
+          const shadows = elements.flatMap(element => {
+            const value = getComputedStyle(element).boxShadow;
+            if (value === 'none') return [];
+            const match = /^rgba?\([^)]*\) (-?[\d.]+)px (-?[\d.]+)px ([\d.]+)px ([\d.]+)px$/.exec(value);
+            const ok = match && ['10,6', '5,3'].includes(`${match[1]},${match[2]}`) && match[3] === '0' && match[4] === '0';
+            return ok ? [] : [`${element.className}: ${value}`];
+          });
+          const slabElement = [...document.querySelectorAll('.accent-surface')].find(visible);
+          const slabStyle = slabElement && getComputedStyle(slabElement);
+          const slab = slabElement && {
+            fill: same(rgba(slabStyle.backgroundColor), token('--slab')),
+            borders: ['Top', 'Right', 'Bottom', 'Left'].map(side => slabStyle[`border${side}Width`]),
+            radius: slabStyle.borderTopLeftRadius,
+            shadow: /^rgba?\([^)]*\) 10px 6px 0px 0px$/.test(slabStyle.boxShadow),
+          };
           const active = document.querySelector('.nav-link-active');
           const marker = getComputedStyle(active, '::before');
+          const activeStyle = getComputedStyle(active);
           return {
             resolvedTheme: document.documentElement.dataset.theme,
             overflow: document.documentElement.scrollWidth - innerWidth,
-            lowContrast, radii, states, sizes, eleven, accents,
-            active: { width: marker.width, color: marker.backgroundColor, weight: getComputedStyle(active).fontWeight, inactiveWeight: getComputedStyle(document.querySelector('.nav-link:not(.nav-link-active)')).fontWeight },
+            lowContrast, radii, states, sizes, eleven, accents, weakControls, menuBars, edges, shadows, slab,
+            active: { width: marker.width, color: marker.backgroundColor, weight: activeStyle.fontWeight, inactiveWeight: getComputedStyle(document.querySelector('.nav-link:not(.nav-link-active)')).fontWeight, highlight: same(rgba(activeStyle.backgroundColor), token('--highlight')), radius: activeStyle.borderTopLeftRadius, text: ratio(rgba(activeStyle.color), rgba(activeStyle.backgroundColor)) },
           };
         });
         assert.equal(checks.resolvedTheme, theme === 'system' ? 'dark' : theme);
@@ -74,20 +145,31 @@ const { join } = require('node:path');
         assert.deepEqual(checks.radii, [], `${view}/${theme}/${width}: rounded shell`);
         assert.deepEqual(checks.lowContrast, [], `${view}/${theme}/${width}: low contrast`);
         assert.ok(checks.states.every(state => state.ratio >= 4.5), JSON.stringify(checks.states));
-        const allowedSizes = width < 700 ? ['11px', '12px', '16px', '24px', '28px'] : ['11px', '12px', '16px', '28px'];
+        // D's scale (UI_STYLE §3, §12.2): the poster title is required on every view; 11px stays SVG-only.
+        const allowedSizes = width < 700 ? phoneSizes : desktopSizes;
         assert.ok(checks.sizes.every(size => allowedSizes.includes(size)), `${view}/${theme}/${width}: type sizes ${checks.sizes}`);
-        assert.ok(checks.sizes.includes('12px') && checks.sizes.includes('28px'), `${view}/${theme}/${width}: scale ${checks.sizes}`);
+        assert.ok(checks.sizes.includes('12px') && checks.sizes.includes(width < 700 ? '40px' : '64px'), `${view}/${theme}/${width}: scale ${checks.sizes}`);
         assert.deepEqual(checks.eleven, [], `${view}/${theme}/${width}: 11px is reserved for chart axis text`);
         assert.equal(checks.accents, 1, `${view}/${theme}/${width}: exactly one accent surface`);
+        assert.deepEqual(checks.slab, { fill: true, borders: ['3px', '3px', '3px', '3px'], radius: width < 700 ? '24px' : '32px', shadow: true }, `${view}/${theme}/${width}: the accent surface is the pink slab`);
         assert.equal(checks.active.width, '2px');
         assert.notEqual(checks.active.color, 'rgba(0, 0, 0, 0)');
         assert.ok(Number(checks.active.weight) > Number(checks.active.inactiveWeight));
+        assert.equal(checks.active.highlight, true, `${view}/${theme}/${width}: the active page is the highlight pill`);
+        assert.equal(checks.active.radius, '999px');
+        assert.ok(checks.active.text >= 4.5, `${view}/${theme}/${width}: active nav text ${checks.active.text}`);
+        assert.deepEqual(checks.weakControls, [], `${view}/${theme}/${width}: control boundary below 3:1`);
+        if (width < 700) assert.ok(checks.menuBars >= 3, `${view}/${theme}/${width}: menu bars ${checks.menuBars} against the header`);
+        for (const [name, value] of Object.entries(checks.edges)) if (value !== null) assert.ok(value >= 3, `${view}/${theme}/${width}: ${name} edge ${value} against the page`);
+        assert.ok(width < 700 ? checks.edges.header !== null : checks.edges.rail !== null, `${view}/${theme}/${width}: shell edge measured`);
+        assert.deepEqual(checks.shadows, [], `${view}/${theme}/${width}: a shadow that is not a hard offset token`);
         if (width === 1440) {
           await page.locator('.brand').focus();
           await page.keyboard.press('Tab');
-          checks.focus = await page.locator('.nav-link').first().evaluate(element => ({ focused: document.activeElement === element, visible: element.matches(':focus-visible'), style: getComputedStyle(element).outlineStyle, width: getComputedStyle(element).outlineWidth, color: getComputedStyle(element).outlineColor, offset: getComputedStyle(element).outlineOffset, token: getComputedStyle(document.documentElement).getPropertyValue('--focus').trim() }));
+          checks.focus = await page.locator('.nav-link').first().evaluate(focusRing);
           assert.equal(checks.focus.offset, '2px');
-          assert.notEqual(checks.focus.color, 'rgb(32, 36, 43)', 'focus ring is the accent colour, not the ink');
+          assert.notEqual(checks.focus.color, checks.focus.ink, 'focus ring is the accent colour, not the ink');
+          assert.ok(checks.focus.against >= 3, `focus ring ${checks.focus.against} against the background behind it`);
           assert.equal(checks.focus.focused, true);
           assert.equal(checks.focus.visible, true);
           assert.equal(checks.focus.style, 'solid');
@@ -490,7 +572,9 @@ const { join } = require('node:path');
   report.overviewAlert = await page.locator('[aria-label="Needs a look"]').innerText();
   report.sessionCalls = sessionCalls;
   report.brandMark = await page.locator('.sidebar .brand-mark').evaluate(el => { const r = el.getBoundingClientRect(); return { w: r.width, h: r.height, svg: !!el.querySelector('svg'), rects: el.querySelectorAll('rect').length, letters: el.textContent.replace('Routeweft', '').trim().length }; });
-  report.headLinks = await page.evaluate(() => ({ themeColors: [...document.querySelectorAll('meta[name="theme-color"]')].map(m => m.media), icons: [...document.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"]')].map(l => l.getAttribute('href')) }));
+  report.headLinks = await page.evaluate(() => ({ themeColors: [...document.querySelectorAll('meta[name="theme-color"]')].map(m => m.media), themeColorValues: [...document.querySelectorAll('meta[name="theme-color"]')].map(m => m.content), icons: [...document.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"]')].map(l => l.getAttribute('href')) }));
+  // The favicon cannot read CSS variables, so its literal colours are the contract's (UI_STYLE §4a).
+  report.faviconFills = await page.evaluate(async () => [...(await (await fetch('/favicon.svg')).text()).matchAll(/\.(warp|weft) \{ fill: (#[0-9a-f]{6}); \}/g)].map(match => `${match[1]} ${match[2]}`));
   report.signOutLabel = await page.locator('.sign-out').textContent();
   report.monospaceValue = await page.locator('.ed-fact-note').first().evaluate(el => getComputedStyle(el).fontFamily);
   report.overviewScroll = await page.evaluate(() => document.documentElement.scrollWidth + '/' + document.documentElement.clientWidth);
@@ -1079,12 +1163,21 @@ const { join } = require('node:path');
   await page.locator('#usage-period').focus();
   await page.keyboard.press('Shift+Tab');
   await page.keyboard.press('Tab');
-  report.focusRing = await page.evaluate(() => { const el = document.activeElement, style = getComputedStyle(el); return { id: el.id, style: style.outlineStyle, width: style.outlineWidth, offset: style.outlineOffset, color: style.outlineColor, token: getComputedStyle(document.documentElement).getPropertyValue('--focus').trim() }; });
+  report.focusRing = await (await page.evaluateHandle(() => document.activeElement)).evaluate(focusRing);
   await page.screenshot({ path: join(artifacts, 'usage-focus-1440.png'), clip: { x: 208, y: 120, width: 1000, height: 160 } });
   usageMode = 'error';
   await page.getByRole('button', { name: 'Refresh' }).click();
   await page.waitForSelector('.usage-content .page-error');
-  report.usageError = await page.evaluate(() => { const el = document.querySelector('.usage-content .page-error'); const style = getComputedStyle(el); return { text: el.textContent, leftWidth: style.borderLeftWidth, leftColor: style.borderLeftColor, retry: !!el.querySelector('button') }; });
+  report.usageError = await page.evaluate(() => {
+    const el = document.querySelector('.usage-content .page-error');
+    const style = getComputedStyle(el);
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--danger)';
+    el.append(probe);
+    const danger = getComputedStyle(probe).color;
+    probe.remove();
+    return { text: el.textContent, widths: ['Top', 'Right', 'Bottom', 'Left'].map(side => style[`border${side}Width`]), colours: ['Top', 'Right', 'Bottom', 'Left'].map(side => style[`border${side}Color`] === danger), radius: style.borderTopLeftRadius, shadow: style.boxShadow, retry: !!el.querySelector('button') };
+  });
   await page.waitForTimeout(200);
   await page.screenshot({ path: join(artifacts, 'usage-error-1440.png') });
   usageMode = 'empty';
@@ -1324,6 +1417,28 @@ const { join } = require('node:path');
   report.systemDark = await page.evaluate(() => document.documentElement.dataset.theme);
   await page.setViewportSize({ width: 320, height: 700 });
   report.tiny = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth + '/' + document.documentElement.clientWidth, titleSize: getComputedStyle(document.querySelector('h1')).fontSize }));
+  // Every page title at 320px (UI_STYLE §3): the poster title never overflows its box or the page and breaks only between words.
+  const tinyHash = await page.evaluate(() => location.hash);
+  report.tinyTitles = {};
+  for (const href of await page.locator('nav a.nav-link').evaluateAll(links => links.map(link => link.getAttribute('href')))) {
+    await page.evaluate(target => { location.hash = target; }, href);
+    await page.waitForFunction(target => document.querySelector('.nav-link-active')?.getAttribute('href') === target, href);
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForTimeout(150);
+    report.tinyTitles[href] = await page.evaluate(() => {
+      const h1 = document.querySelector('h1');
+      const text = [...h1.childNodes].find(node => node.nodeType === Node.TEXT_NODE);
+      const split = [...text.textContent.matchAll(/\S+/g)].filter(match => {
+        const range = document.createRange();
+        range.setStart(text, match.index);
+        range.setEnd(text, match.index + match[0].length);
+        return new Set([...range.getClientRects()].map(rect => Math.round(rect.top))).size > 1;
+      }).map(match => match[0]);
+      return { size: getComputedStyle(h1).fontSize, titleOverflow: h1.scrollWidth - h1.clientWidth, pageOverflow: document.documentElement.scrollWidth - innerWidth, split };
+    });
+  }
+  await page.evaluate(target => { location.hash = target; }, tinyHash);
+  await page.waitForTimeout(300);
   report.errors = errors;
   // UI_STYLE.md §15 accessibility audit: name/label rules, contrast, heading
   // order, landmark presence, and reduced-motion behavior. Runs on the live
@@ -1438,7 +1553,7 @@ const { join } = require('node:path');
     report.pageSizes[href] = await page.evaluate(() => {
       const visible = element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden';
       const sizes = [...new Set([...document.querySelectorAll('.workspace *, .sidebar *')].filter(visible).filter(element => [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim())).map(element => getComputedStyle(element).fontSize))].sort((a, b) => parseFloat(a) - parseFloat(b));
-      return { sizes, accents: [...document.querySelectorAll('.accent-surface')].filter(visible).length };
+      return { sizes, accents: [...document.querySelectorAll('.accent-surface')].filter(visible).length, title: getComputedStyle(document.querySelector('h1')).fontSize };
     });
   }
   console.log(JSON.stringify(report, null, 2));
@@ -1447,6 +1562,8 @@ const { join } = require('node:path');
   assert.deepEqual([report.brandMark.w, report.brandMark.h], [20, 20], 'the mark is 20px in the sidebar');
   assert.ok(report.brandMark.svg && report.brandMark.rects >= 6 && report.brandMark.letters === 0, 'the mark is the drawn weave, not a letter');
   assert.deepEqual(report.headLinks.themeColors, ['(prefers-color-scheme: light)', '(prefers-color-scheme: dark)']);
+  assert.deepEqual(report.headLinks.themeColorValues, ['#f7f6f0', '#111111'], 'theme-color is --paper in each theme');
+  assert.deepEqual(report.faviconFills, ['warp #111111', 'weft #00727f', 'warp #f7f6f0', 'weft #4fd1e0'], 'favicon colours (UI_STYLE §4a)');
   assert.deepEqual(report.headLinks.icons, ['/favicon.svg', '/favicon-32.png', '/apple-touch-icon.png']);
   assert.doesNotMatch(report.tenDayInstall.headline, /[↑↓]|%/, 'ten recorded days cannot support a week-over-week percentage');
   assert.match(report.tenDayInstall.weekFact, /successful of/);
@@ -1549,13 +1666,18 @@ const { join } = require('node:path');
   assert.equal(report.focusRing.width, '2px');
   assert.equal(report.focusRing.offset, '2px');
   assert.notEqual(report.focusRing.color, 'rgba(0, 0, 0, 0)');
+  assert.ok(report.focusRing.against >= 3, `usage focus ring ${report.focusRing.against} against the background behind it`);
   assert.match(report.usageError.text, /Usage store is unavailable/);
-  assert.equal(report.usageError.leftWidth, '3px');
+  assert.deepEqual(report.usageError.widths, ['3px', '3px', '3px', '3px'], 'the error state is a 3px box');
+  assert.deepEqual(report.usageError.colours, [true, true, true, true], 'the error box is the danger colour');
+  assert.equal(report.usageError.radius, '24px');
+  assert.match(report.usageError.shadow, /^rgba?\([^)]*\) 5px 3px 0px 0px$/, 'the error state carries the small hard shadow');
   assert.equal(report.usageError.retry, true);
   assert.equal(report.usageEmpty.action, true);
   assert.equal(report.usageEmpty.border, 'solid');
   for (const [href, result] of Object.entries(report.pageSizes)) {
-    assert.ok(result.sizes.every(size => ['11px', '12px', '16px', '28px'].includes(size)), `${href}: type sizes ${result.sizes}`);
+    assert.ok(result.sizes.every(size => desktopSizes.includes(size)), `${href}: type sizes ${result.sizes}`);
+    assert.equal(result.title, '64px', `${href}: the poster title`);
     assert.equal(result.accents, 1, `${href}: one accent surface`);
   }
   assert.equal(report.skeleton.busy, 'true');
@@ -1654,6 +1776,13 @@ const { join } = require('node:path');
   assert.equal(report.systemLight, 'light');
   assert.equal(report.systemDark, 'dark');
   assert.equal(report.tiny.scroll, '320/320');
+  assert.equal(Object.keys(report.tinyTitles).length, 10, 'every nav page title was measured at 320px');
+  for (const [href, title] of Object.entries(report.tinyTitles)) {
+    assert.equal(title.size, '40px', `${href}: the phone title size`);
+    assert.equal(title.titleOverflow, 0, `${href}: the title overflows its box at 320px`);
+    assert.equal(title.pageOverflow, 0, `${href}: the page overflows at 320px`);
+    assert.deepEqual(title.split, [], `${href}: a title word is split across lines at 320px`);
+  }
   assert.deepEqual(report.a11y.unlabeledButtons, []);
   assert.deepEqual(report.a11y.unlabeledInputs, []);
   assert.deepEqual(report.a11y.lowContrast, []);

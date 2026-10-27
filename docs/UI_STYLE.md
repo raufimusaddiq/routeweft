@@ -6,10 +6,12 @@ Status: **Normative for frontend work**
 > graphite rule. The owner chose direction D "Signal" on 2026-10-27 from the
 > phase 1 previews (`ui/preview/263/`, screenshots in
 > `docs/evidence/263/preview/`); A, B and C were considered and not chosen
-> (BDR-027). The tokens and rules below are D's. Until phase 2 lands,
-> `ui/src/style.css` still holds the BDR-015 values (git `f15b350`) and the smoke
-> guards enforce them; §12 specifies how phase 2 rewrites those guards. Code,
-> guards and this file then change together, phase by phase.
+> (BDR-027). The tokens and rules below are D's. Phase 2 implements §2's tokens
+> and the shell (rail, phone header, page title, buttons, form controls, tags,
+> focus, the accent slab, empty and error states, `theme-color`, favicon) and the
+> §12 guards. Page bodies (headline, statement, figures, rows: phase 3) and
+> charts and the mark (phase 4) still use their BDR-015 layout with D's tokens.
+> Code, guards and this file change together, phase by phase.
 
 ## 1. House style: editorial instrument, retro neo-brutalist
 
@@ -72,7 +74,7 @@ need 4.5:1, control and shell boundaries 3:1.
 | `--highlight` / `--highlight-ink` (marker block, active nav pill) | `#ffd60a` / `#111111` (13.4:1) | same |
 | `--rail` (sidebar and phone header) | `#111111` (17.4:1 against the page) | `#000000` (1.1:1, so `--rail-rule` draws the edge) |
 | `--rail-text` / `--rail-muted` | `#f7f6f0` (17.4:1) / `#c9c7bd` (11.1:1) | `#f7f6f0` (19.4:1) / `#c9c7bd` (12.4:1) |
-| `--rail-rule` (dark only) | none | 3px `#f7f6f0` (17.4:1 against the page) |
+| `--rail-rule` | `#111111`, the rail's own colour, so no visible rule | 3px `#f7f6f0` (17.4:1 against the page) |
 | `--hard` / `--hard-sm` | `10px 6px 0 var(--shadow-ink)` / `5px 3px 0 var(--shadow-ink)` | same |
 
 The accent surface re-points the tokens onto the slab: text `#111111` (6.7:1
@@ -194,8 +196,9 @@ Implemented in `ui/src/editorial.tsx` and `ui/src/style.css`.
 - Tables collapse borders, use hairline row separators, never zebra stripes, and
   right-align numeric columns. Provider rows are open; the selected row is a 22px
   `--highlight` block.
-- **Stamped tags** (`.state-tag`): 2px `currentColor` pill, mono capitals,
-  tilted `-3deg`, with the word.
+- **Stamped tags** (`.state-tag`): 2px `currentColor` pill, bold mono, tilted
+  `-3deg`, with the word in its own case. Not CSS capitals: `text-transform`
+  changes `innerText`, which copy and the smoke tests read.
 
 ## 6. Data presentation
 
@@ -393,7 +396,9 @@ New assertions:
 11. **Shell edges**: the desktop `.sidebar` and the phone `.mobile-header` are
     3:1 against the page, from their fill or their edge rule.
 12. **Shadows**: every computed `box-shadow` on a shell element is `none` or one
-    of the two token values with a zero blur radius.
+    of the two token offsets (10px 6px or 5px 3px) with zero blur and zero
+    spread. The colour is not compared: inside the slab a control's shadow is the
+    slab's ink, not `--shadow-ink`.
 13. **Titles**: at 320px on every nav page, the `h1` neither overflows its box
     nor the page, and no word in it is split across lines.
 

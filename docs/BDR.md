@@ -401,8 +401,8 @@ titles at 320px) for phase 2. The phase 1 previews showed a 10px round status
 mark; #263 froze "square dot plus word", so the contract keeps the square
 unless the owner lifts that freeze.
 
-Until phase 2 lands, `ui/src/style.css` still implements the BDR-015 values and
-the smoke guards enforce them; each later phase changes code, guards and the
+Phase 2 implements the tokens, the shell and the §12 guards; phases 3 (page
+bodies) and 4 (charts, mark) follow. Each phase changes code, guards and the
 contract together. Navigation, routes, features, aria, 44px targets, status
 never shown by colour alone and no horizontal overflow at 320px are unchanged.
 This decision authorizes no API, backend or product-scope change.
