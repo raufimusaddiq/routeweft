@@ -68,7 +68,13 @@ ROUTEWEFT_GOOGLE_OAUTH_CLIENT_SECRET='use-a-secret-source'
 `ROUTEWEFT_UI_DIR` (`--ui-dir`) points at the built Vite output; the Go binary
 then serves the dashboard at `/`. The image sets it to `/ui`. UI routes are
 hash-based, so only `/` returns `index.html`; `/assets/*` is immutable-cached and
-unknown paths (and GET/HEAD under `/admin/`, `/v1/`, `/api/`) return 404. Leave it
+unknown paths (and GET/HEAD under `/admin/`, `/v1/`, `/api/`) return 404. A path
+with `.`/`..` segments or repeated slashes gets Go's `ServeMux` canonical redirect
+(301 on go1.22, 307 on later toolchains) to the cleaned same-origin path (for
+every route, not only the UI), which is then
+404 unless it names a built file. Symlinks inside the UI directory are followed
+only while they resolve inside it (the directory may itself be a symlink); a link
+to anything outside is a 404, so nothing outside the UI directory is read. Leave it
 unset to serve API only and let Caddy serve the assets. A directory without
 `index.html` logs an error and disables the UI; the API keeps running.
 
