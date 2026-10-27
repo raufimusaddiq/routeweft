@@ -1212,7 +1212,7 @@ func (h *Handler) publishMergedConnection(ctx context.Context, connection creden
 	} else {
 		stored, err = h.opts.Credentials.PutConnection(ctx, connection)
 		if err == nil {
-			h.register(stored)
+			err = h.register(ctx, stored)
 		}
 	}
 	if err != nil {
@@ -1301,7 +1301,9 @@ func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name 
 		return credentials.Connection{}, err
 	}
 	stored.ProviderID = node.ProviderID
-	h.register(stored)
+	if err := h.register(ctx, stored); err != nil {
+		return credentials.Connection{}, err
+	}
 	return stored, nil
 }
 
@@ -1316,17 +1318,12 @@ func (h *Handler) accountLabel(ctx context.Context, providerID string) (string, 
 	return fmt.Sprintf("Account %d", len(existing)+1), nil
 }
 
-// register publishes one stored connection to the runtime registry. It is separate
-// from the store write so a batch can write many connections and publish the
-// recompiled snapshot once.
 // updateConnection changes one stored connection from its record as stored at
-// the write, and publishes it to the runtime. With a credential registry that
-// holds the connection, the read, change, durable write and publication are one
+// the write, and publishes it to the runtime. With a credential registry, the read, change, durable write and publication are one
 // step with refresh (Registry.Update), so a refresh can neither rotate the
 // credential between the read and the write nor commit over the result.
-// Refresh runs only through the registry, so a connection it does not hold (or
-// no registry at all) has none to race, and the store is read and written
-// directly.
+// The registry seeds a connection it does not hold first (#252), so the store
+// is read and written directly only without a registry, where no refresh runs.
 func (h *Handler) updateConnection(ctx context.Context, id string, change func(credentials.Connection) (credentials.Connection, error)) (credentials.Connection, error) {
 	if registry := h.opts.CredentialRegistry; registry != nil {
 		stored, err := registry.Update(ctx, id, change)
@@ -1346,14 +1343,21 @@ func (h *Handler) updateConnection(ctx context.Context, id string, change func(c
 	if err != nil {
 		return credentials.Connection{}, err
 	}
-	h.register(stored)
+	if err := h.register(ctx, stored); err != nil {
+		return credentials.Connection{}, err
+	}
 	return stored, nil
 }
 
-func (h *Handler) register(connection credentials.Connection) {
+// register publishes one stored connection to the runtime registry. It is separate
+// from the store write so a batch can write many connections and publish the
+// recompiled snapshot once. It seeds (Seed): a connection a Load seeded and a
+// request refreshed meanwhile keeps that rotation (#252).
+func (h *Handler) register(ctx context.Context, connection credentials.Connection) error {
 	if h.opts.CredentialRegistry != nil {
-		h.opts.CredentialRegistry.Register(connection, nil)
+		return h.opts.CredentialRegistry.Seed(ctx, connection)
 	}
+	return nil
 }
 
 // publishBindings refreshes the compiled snapshot after a batch. Every
