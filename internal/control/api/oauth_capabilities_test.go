@@ -232,7 +232,8 @@ func TestOAuthDeviceSaveFailureThenCancelEndsTheAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clash, err := creds.PutConnection(context.Background(), credentials.Connection{NodeID: node.ID, Name: "Existing", AuthKind: credentials.AuthOAuth, Identity: "work@example.test", Secret: credentials.Secret{AccessToken: "other"}, Enabled: true})
+	// An API-key row is never a sign-in duplicate, so its identity makes the save fail.
+	clash, err := creds.PutConnection(context.Background(), credentials.Connection{NodeID: node.ID, Name: "Existing", AuthKind: credentials.AuthAPIKey, Identity: "work@example.test", Secret: credentials.Secret{AccessToken: "other"}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

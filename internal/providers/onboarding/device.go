@@ -17,6 +17,40 @@ import (
 // ErrRateLimited means the provider has too many pending authorizations.
 var ErrRateLimited = errors.New("provider device authorization is rate limited; try again later")
 
+// errPollTransient is a poll the provider answered with a status that says
+// "not now" (408, 429, 5xx) rather than a verdict on the authorization. It is
+// returned as an error, which the handler reports as retryable and which leaves
+// the attempt open: the reference keeps polling through such an answer until its
+// deadline (OAuthModal.js:180-186 ends only on expired_token and access_denied).
+var errPollTransient = errors.New("provider poll answered a transient status")
+
+// transientPollStatus reports whether a poll status is the provider being briefly
+// unavailable rather than answering for the authorization.
+func transientPollStatus(status int) bool {
+	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= 500
+}
+
+// deviceErrorOutcome maps an RFC 8628 token-endpoint error to a poll outcome.
+// slow_down is pending with a longer interval (RFC 8628 3.5; OAuthModal.js:184
+// adds 5 s), expired_token and access_denied are the two terminal rejections the
+// reference reports by name (OAuthModal.js:180), and any other error ends the
+// attempt as a provider failure. ok is false when the document names no error.
+func deviceErrorOutcome(provider, code string) (PollResult, bool) {
+	switch code {
+	case "":
+		return PollResult{}, false
+	case "authorization_pending":
+		return PollResult{Pending: true}, true
+	case "slow_down":
+		return PollResult{Pending: true, SlowDown: true}, true
+	case "expired_token":
+		return PollResult{Expired: true, Err: fmt.Errorf("%s authorization code expired", provider)}, true
+	case "access_denied":
+		return PollResult{Denied: true, Err: fmt.Errorf("%s authorization denied", provider)}, true
+	}
+	return PollResult{Err: fmt.Errorf("%s authorization failed: %s", provider, code)}, true
+}
+
 // deviceCodeResponse is the RFC 8628 device authorization payload. Providers add
 // their own private fields, which each flow reads from the raw document.
 type deviceCodeResponse struct {
@@ -123,14 +157,14 @@ func githubFlow() Flow {
 				"device_code": {p.Input},
 				"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
 			}, nil, &document)
+			if transientPollStatus(status) {
+				return PollResult{}, errPollTransient
+			}
 			if err != nil {
 				return PollResult{}, err
 			}
-			if document.Error == "authorization_pending" || document.Error == "slow_down" {
-				return PollResult{Pending: true}, nil
-			}
-			if document.Error != "" {
-				return PollResult{Err: fmt.Errorf("github authorization failed: %s", document.Error)}, nil
+			if outcome, ok := deviceErrorOutcome("github", document.Error); ok {
+				return outcome, nil
 			}
 			if status < 200 || status >= 300 || document.AccessToken == "" {
 				return PollResult{Err: fmt.Errorf("github authorization returned no token")}, nil
@@ -233,14 +267,14 @@ func grokCLIFlow() Flow {
 				"device_code": {p.Input},
 				"client_id":   {clientID},
 			}, map[string]string{"User-Agent": userAgent}, &document)
+			if transientPollStatus(status) {
+				return PollResult{}, errPollTransient
+			}
 			if err != nil {
 				return PollResult{}, err
 			}
-			if document.Error == "authorization_pending" || document.Error == "slow_down" {
-				return PollResult{Pending: true}, nil
-			}
-			if document.Error != "" {
-				return PollResult{Err: fmt.Errorf("grok-cli authorization failed: %s", document.Error)}, nil
+			if outcome, ok := deviceErrorOutcome("grok-cli", document.Error); ok {
+				return outcome, nil
 			}
 			if status < 200 || status >= 300 || document.AccessToken == "" {
 				return PollResult{Err: fmt.Errorf("grok-cli authorization returned no token")}, nil
@@ -342,14 +376,14 @@ func kimiFlow() Flow {
 				"client_id":   {clientID},
 				"device_code": {p.Input},
 			}, kimiDeviceHeaders(deviceID), &document)
+			if transientPollStatus(status) {
+				return PollResult{}, errPollTransient
+			}
 			if err != nil {
 				return PollResult{}, err
 			}
-			if document.Error == "authorization_pending" || document.Error == "slow_down" {
-				return PollResult{Pending: true}, nil
-			}
-			if document.Error != "" {
-				return PollResult{Err: fmt.Errorf("kimi authorization failed: %s", document.Error)}, nil
+			if outcome, ok := deviceErrorOutcome("kimi", document.Error); ok {
+				return outcome, nil
 			}
 			if status < 200 || status >= 300 || document.AccessToken == "" {
 				return PollResult{Err: fmt.Errorf("kimi authorization returned no token")}, nil
@@ -394,6 +428,8 @@ func kilocodeFlow() Flow {
 	return Flow{
 		Provider:       "kilocode",
 		RedirectSource: RedirectUnused,
+		// The approval names the account (userEmail) but nothing promises it.
+		InfersIdentity: true,
 		Type:           FlowDeviceCode,
 		Completion:     CompletionToken,
 		Authorize: func(ctx context.Context, p Params) (AuthRequest, error) {
@@ -432,6 +468,9 @@ func kilocodeFlow() Flow {
 			if err != nil {
 				return PollResult{}, err
 			}
+			if transientPollStatus(status) {
+				return PollResult{}, errPollTransient
+			}
 			switch status {
 			case http.StatusAccepted:
 				return PollResult{Pending: true}, nil
@@ -469,8 +508,12 @@ func kilocodeFlow() Flow {
 			if len(providerData) == 0 {
 				providerData = nil
 			}
+			// The reference stores the approving account's email as the
+			// connection's (kilocode.js:47,55), which is what tells two accounts
+			// apart.
 			return PollResult{Done: true, Result: Result{
 				AuthKind: credentials.AuthOAuth,
+				Identity: strings.TrimSpace(document.UserEmail),
 				Secret: credentials.Secret{
 					AccessToken:  document.Token,
 					ProviderData: providerData,
@@ -542,6 +585,9 @@ func codebuddyFlow(provider, baseURL, domain, platform string) Flow {
 			if err != nil {
 				return PollResult{}, err
 			}
+			if transientPollStatus(status) {
+				return PollResult{}, errPollTransient
+			}
 			if status < 200 || status >= 300 {
 				return PollResult{Err: fmt.Errorf("codebuddy poll returned HTTP %d", status)}, nil
 			}
@@ -564,12 +610,18 @@ func codebuddyFlow(provider, baseURL, domain, platform string) Flow {
 			if document.Code != 0 || document.Data.AccessToken == "" {
 				return PollResult{Err: fmt.Errorf("codebuddy authorization failed: %s", document.Msg)}, nil
 			}
+			// A reply without expiresIn lasts a day, as the reference assumes
+			// (codebuddy-cn.js:75, codebuddy-intl.js), so refresh still runs.
+			expiry := expiryFrom(document.Data.ExpiresIn, p.now())
+			if expiry.IsZero() {
+				expiry = p.now().Add(24 * time.Hour)
+			}
 			return PollResult{Done: true, Result: Result{
 				AuthKind: credentials.AuthOAuth,
 				Secret: credentials.Secret{
 					AccessToken:  document.Data.AccessToken,
 					RefreshToken: document.Data.RefreshToken,
-					Expiry:       expiryFrom(document.Data.ExpiresIn, p.now()),
+					Expiry:       expiry,
 				},
 			}}, nil
 		},

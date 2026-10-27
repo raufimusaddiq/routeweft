@@ -43,6 +43,13 @@ const (
 	// oauthMinPollInterval bounds upstream polling per attempt regardless of how
 	// fast the browser asks.
 	oauthMinPollInterval = 2 * time.Second
+	// oauthSlowDownStep and oauthMaxPollInterval are the reference's answer to a
+	// provider's slow_down: five more seconds each time, up to thirty
+	// (OAuthModal.js:184-186, RFC 8628 3.5). The cap applies only to a provider
+	// that asked for thirty seconds or less; one that asked for more gets five
+	// more seconds each time, so slow_down never shortens what it asked for.
+	oauthSlowDownStep    = 5 * time.Second
+	oauthMaxPollInterval = 30 * time.Second
 	oauthInputPasteCode  = "code"
 	oauthInputPasteURL   = "redirect-url"
 )
@@ -60,6 +67,12 @@ type oauthFlow struct {
 	// logs.
 	deviceCode string
 	nextPoll   time.Time
+	// interval is the provider's poll interval for a device attempt, raised by
+	// each slow_down. Upstream polls are spaced by it, never by the browser.
+	interval time.Duration
+	// baseInterval is the interval the provider asked for at start, which decides
+	// whether the slow_down cap applies (slowedInterval).
+	baseInterval time.Duration
 	// ttl, when set, caps the attempt's lifetime below oauthFlowTTL (a device
 	// code that expires sooner than the flow must not outlive its code).
 	ttl time.Duration
@@ -83,7 +96,10 @@ type oauthFlow struct {
 	// target is the connection a Reauthenticate started for (#215). The sign-in
 	// then renews that connection's credential and nothing else: an answer for
 	// another account is refused rather than added or written over another row.
-	target    string
+	target string
+	// device marks a device-authorization attempt, whose sign-in follows the
+	// reference's oauth duplicate rule (deviceMatch).
+	device    bool
 	expiresAt time.Time
 }
 
@@ -166,10 +182,10 @@ func (f *oauthFlows) consume(state, sessionID, provider string) (oauthFlow, bool
 }
 
 // claimPoll admits one upstream poll for a device attempt. A poll that arrives
-// before the provider's interval has elapsed is throttled so a fast browser loop
+// before the attempt's interval has elapsed is throttled so a fast browser loop
 // cannot hammer the provider, and an unknown, expired, foreign-session or
 // foreign-provider state is indistinguishable to the caller, as in consume.
-func (f *oauthFlows) claimPoll(state, sessionID, provider string, interval time.Duration) (flow oauthFlow, found, throttled bool) {
+func (f *oauthFlows) claimPoll(state, sessionID, provider string) (flow oauthFlow, found, throttled bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	flow, ok := f.pending[state]
@@ -187,9 +203,47 @@ func (f *oauthFlows) claimPoll(state, sessionID, provider string, interval time.
 	if flow.completing || now.Before(flow.nextPoll) {
 		return flow, true, true
 	}
-	flow.nextPoll = now.Add(interval)
+	flow.nextPoll = now.Add(pollInterval(flow.interval))
 	f.pending[state] = flow
 	return flow, true, false
+}
+
+// pollInterval is an attempt's interval, never below the floor.
+func pollInterval(interval time.Duration) time.Duration {
+	if interval < oauthMinPollInterval {
+		return oauthMinPollInterval
+	}
+	return interval
+}
+
+// slowDown lengthens an attempt's interval after the provider answered
+// slow_down, and spaces the next upstream poll by the new value. It returns the
+// interval now in force (zero for an attempt that is gone).
+func (f *oauthFlows) slowDown(state string) time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	flow, ok := f.pending[state]
+	if !ok {
+		return 0
+	}
+	flow.interval = slowedInterval(flow.interval, flow.baseInterval)
+
+	flow.nextPoll = f.now().Add(flow.interval)
+	f.pending[state] = flow
+	return flow.interval
+}
+
+// slowedInterval is the interval after one slow_down: always five seconds more
+// (RFC 8628 3.5), capped at thirty as the reference caps it only when the
+// provider's own interval (base) was thirty seconds or less, so the cap never
+// lowers what a provider asked for. Growth is bounded by the attempt's deadline.
+func slowedInterval(current, base time.Duration) time.Duration {
+	current = pollInterval(current)
+	next := current + oauthSlowDownStep
+	if pollInterval(base) <= oauthMaxPollInterval && next > oauthMaxPollInterval {
+		next = oauthMaxPollInterval
+	}
+	return next
 }
 
 // reserveResult says why reserve did or did not take the attempt.
@@ -612,7 +666,11 @@ func (h *Handler) handleOAuthDeviceStart(w http.ResponseWriter, r *http.Request)
 		sessionID: session.ID, provider: providerID,
 		deviceCode: device.DeviceCode, verifier: device.Verifier,
 		extra: device.Extra, meta: body.Meta, name: name, identity: identity,
-		identityOptional: provider.flow.IdentityOptional, ttl: device.ExpiresIn, nextPoll: h.oauth.now().Add(device.Interval),
+		identityOptional: provider.flow.IdentityOptional, ttl: device.ExpiresIn,
+		// The first poll waits the provider's own interval, as before; later ones
+		// are spaced by it at the 2 s floor.
+		interval: pollInterval(device.Interval), baseInterval: device.Interval, nextPoll: h.oauth.now().Add(device.Interval),
+		device: true,
 	})
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "oauth_busy", "too many sign-ins in progress; try again shortly")
@@ -626,7 +684,7 @@ func (h *Handler) handleOAuthDeviceStart(w http.ResponseWriter, r *http.Request)
 		"flowType":        provider.flow.Type,
 		"userCode":        device.UserCode,
 		"verificationUrl": device.VerificationURL,
-		"intervalSeconds": int(device.Interval / time.Second),
+		"intervalSeconds": int(pollInterval(device.Interval) / time.Second),
 		"expiresAt":       expiresAt,
 	})
 }
@@ -681,13 +739,18 @@ func (h *Handler) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusUnauthorized, "unauthenticated", "admin session is required")
 		return
 	}
-	flow, found, throttled := h.oauth.claimPoll(body.State, session.ID, providerID, oauthMinPollInterval)
+	flow, found, throttled := h.oauth.claimPoll(body.State, session.ID, providerID)
 	if !found {
 		writeError(w, http.StatusBadRequest, "oauth_state_invalid", "this sign-in attempt expired or was already used; start again")
 		return
 	}
+	// Every pending answer carries the interval in force, so the dashboard spaces
+	// its polls by the provider's pace rather than its own.
+	pending := func(interval time.Duration) {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "pending", "intervalSeconds": int(pollInterval(interval) / time.Second)})
+	}
 	if throttled {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "pending"})
+		pending(flow.interval)
 		return
 	}
 	outcome, err := provider.flow.Poll(r.Context(), onboarding.Params{
@@ -724,7 +787,7 @@ func (h *Handler) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request) 
 		if reserved == reserveBusy {
 			// Lost the race to a poll that is saving this same approval; the
 			// dashboard keeps polling and sees the connection.
-			writeJSON(w, http.StatusOK, map[string]any{"status": "pending"})
+			pending(flow.interval)
 			return
 		}
 		if reserved != reserveTaken {
@@ -755,7 +818,11 @@ func (h *Handler) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request) 
 		h.oauth.consume(body.State, session.ID, providerID)
 		writeError(w, http.StatusBadGateway, "oauth_sign_in_rejected", "the provider rejected the sign-in; start again")
 	default:
-		writeJSON(w, http.StatusOK, map[string]any{"status": "pending"})
+		if outcome.SlowDown {
+			pending(h.oauth.slowDown(body.State))
+			return
+		}
+		pending(flow.interval)
 	}
 }
 
@@ -812,7 +879,7 @@ func (h *Handler) saveOnboardedResult(w http.ResponseWriter, r *http.Request, pr
 		writeError(w, http.StatusBadRequest, "invalid_auth_kind", "this provider does not accept the credential mode this sign-in produced")
 		return nil, persisted, false
 	}
-	if providerID == codexProviderID {
+	if providerID == codexProviderID || flow.device {
 		h.connectionMu.Lock()
 		defer h.connectionMu.Unlock()
 	}
@@ -830,6 +897,33 @@ func (h *Handler) saveOnboardedResult(w http.ResponseWriter, r *http.Request, pr
 			// identity: a sign-in sends none of them (codex.js:48-66,
 			// [provider]/[action]/route.js:471-479). It takes the new credential whole:
 			// a reply without a refresh token or expires_in clears the stored ones.
+			match.Secret = result.Secret
+			connection, persisted, err := h.publishMergedConnection(r.Context(), match, func(existing, update credentials.Secret) credentials.Secret {
+				return codexMergedSecret(existing, update, onboarding.CarriesAll)
+			})
+			if err != nil {
+				if persisted {
+					writeError(w, http.StatusInternalServerError, "connection_publish_failed", "connection saved but could not be published to the runtime")
+				} else {
+					writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
+				}
+				return nil, persisted, false
+			}
+			h.clearConnectionHealth(connection.ID)
+			return onboardedJSON(connection, onboardedUpdated), true, true
+		}
+	}
+	if flow.device && providerID != codexProviderID {
+		match, found, err := h.deviceMatch(r.Context(), providerID, identity)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
+			return nil, persisted, false
+		}
+		if found {
+			// Signing the same account in again renews its row, as the reference's
+			// oauth duplicate rule does (connectionsRepo.js:228-283): the row keeps
+			// its id, name, priority, enabled flag, proxy and identity and takes the
+			// new credential whole. Another account's row is never touched.
 			match.Secret = result.Secret
 			connection, persisted, err := h.publishMergedConnection(r.Context(), match, func(existing, update credentials.Secret) credentials.Secret {
 				return codexMergedSecret(existing, update, onboarding.CarriesAll)
@@ -894,6 +988,13 @@ func onboardedJSON(connection credentials.Connection, outcome string) map[string
 	}
 	if plan := connection.Secret.ProviderData["chatgptPlanType"]; plan != "" && connection.ProviderID == codexProviderID {
 		saved["plan"] = plan
+	}
+	// GitHub serves through the Copilot token minted at sign-in; without one the
+	// account has no Copilot entitlement the sign-in could see (a 403 from
+	// copilot_internal/v2/token), so the result says so instead of the first
+	// request failing (#217). The flag is not a credential.
+	if connection.ProviderID == "github" {
+		saved["copilotMissing"] = strings.TrimSpace(connection.Secret.ProviderData["copilotToken"]) == ""
 	}
 	// A Code Assist provider is unusable without the project its sign-in
 	// discovers (wire/cloudcode.go refuses a request without one), so the result

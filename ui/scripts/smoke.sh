@@ -40,5 +40,6 @@ for _ in $(seq 1 60); do
 done
 node scripts/shell-smoke.cjs
 node scripts/oauth-journeys-smoke.cjs
+node scripts/device-approval-smoke.cjs
 node scripts/import-masking-smoke.cjs
 

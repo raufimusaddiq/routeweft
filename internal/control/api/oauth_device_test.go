@@ -126,8 +126,11 @@ func TestOAuthDeviceStartRequiresSessionAndDeviceProvider(t *testing.T) {
 	if recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/openai/device", `{"name":"a","identity":"b"}`); recorder.Code != http.StatusNotFound {
 		t.Fatalf("api-key provider device status=%d want 404", recorder.Code)
 	}
-	if recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/kilocode/device", `{"name":"a","identity":""}`); recorder.Code != http.StatusBadRequest {
-		t.Fatalf("missing identity status=%d want 400", recorder.Code)
+	// Kilo reads the approving email (kilocode.js:47,55), so it asks for none
+	// up front; a provider that reports no account still does
+	// (TestDeviceJourneysAskIdentityOnlyWhereNoneIsReported).
+	if recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/kilocode/device", `{"name":"a","identity":""}`); recorder.Code != http.StatusOK {
+		t.Fatalf("kilocode without identity status=%d want 200", recorder.Code)
 	}
 }
 
@@ -188,7 +191,9 @@ func TestOAuthDeviceApprovalStoresNonExpiringBearerOnce(t *testing.T) {
 		t.Fatalf("connections=%v err=%v", connections, err)
 	}
 	stored := connections[0]
-	if stored.AuthKind != credentials.AuthOAuth || stored.Name != "Work" || stored.Identity != "work@example.test" || stored.Secret.AccessToken != deviceTestToken || stored.Secret.RefreshToken != "" || !stored.Secret.Expiry.IsZero() || !stored.Enabled || len(stored.Secret.ProviderData) != 0 {
+	// The approving account's email is the identity (kilocode.js:55); the
+	// operator's value is only the fallback.
+	if stored.AuthKind != credentials.AuthOAuth || stored.Name != "Work" || stored.Identity != "a@b.c" || stored.Secret.AccessToken != deviceTestToken || stored.Secret.RefreshToken != "" || !stored.Secret.Expiry.IsZero() || !stored.Enabled || len(stored.Secret.ProviderData) != 0 {
 		t.Fatalf("stored=%+v", stored)
 	}
 	clock.now = clock.now.Add(3 * time.Second)
@@ -310,12 +315,14 @@ func TestOAuthDeviceSaveFailureKeepsAttemptOpen(t *testing.T) {
 	h, mux, creds, cookie, clock := newDeviceAPI(t, upstream)
 	started := startDevice(t, mux, cookie)
 	clock.now = clock.now.Add(3 * time.Second)
-	// An existing connection with the same stable identity makes the save fail.
+	// An API-key connection with the same identity is not a sign-in duplicate
+	// (deviceMatch takes oauth rows only), so the store's unique identity makes
+	// the save fail.
 	node, err := h.builtinNode(context.Background(), "kilocode")
 	if err != nil {
 		t.Fatal(err)
 	}
-	clash, err := creds.PutConnection(context.Background(), credentials.Connection{NodeID: node.ID, Name: "Existing", AuthKind: credentials.AuthOAuth, Identity: "work@example.test", Secret: credentials.Secret{AccessToken: "other"}, Enabled: true})
+	clash, err := creds.PutConnection(context.Background(), credentials.Connection{NodeID: node.ID, Name: "Existing", AuthKind: credentials.AuthAPIKey, Identity: "work@example.test", Secret: credentials.Secret{AccessToken: "other"}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

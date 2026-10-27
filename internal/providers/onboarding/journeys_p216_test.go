@@ -16,7 +16,8 @@ import (
 // the account from the provider when they can (#216). The reference asks for no
 // identity before any of them (OAuthModal.js opens the provider page directly);
 // these learn one best effort, so the operator is not asked up front. Claude
-// reports none (claude.js:52), so it still asks.
+// reports none (claude.js:52), so it still asks. Kilo's device approval names the
+// account's email (kilocode.js:47,55, #217), best effort as well.
 func TestBrowserFlowsInferIdentityAsTheReferenceDoes(t *testing.T) {
 	registry := NewRegistry()
 	var inferred []string
@@ -33,7 +34,7 @@ func TestBrowserFlowsInferIdentityAsTheReferenceDoes(t *testing.T) {
 		}
 	}
 	sort.Strings(inferred)
-	want := []string{"antigravity", "cline", "clinepass", "gemini-cli", "kimchi", "xai", "xiaomi-mimo", "zed"}
+	want := []string{"antigravity", "cline", "clinepass", "gemini-cli", "kilocode", "kimchi", "xai", "xiaomi-mimo", "zed"}
 	if !reflect.DeepEqual(inferred, want) {
 		t.Fatalf("InfersIdentity flows = %v, want %v", inferred, want)
 	}

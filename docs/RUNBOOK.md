@@ -701,7 +701,11 @@ Actions:
    updates its row rather than adding one (SPEC §19.1). A Gemini CLI or
    Antigravity connection whose requests fail with "has no projectId" needs its
    Code Assist project: name it on the sign-in result, or Reauthenticate once
-   the account has one (SPEC §19.1, #216);
+   the account has one (SPEC §19.1, #216). A device-code provider (GitHub,
+   Kimi, Kilo Code, CodeBuddy, Kiro, Qoder, Grok CLI) has no Reauthenticate:
+   approve a new device code as the same account, which renews its row in
+   place (SPEC §19.2, #217). A GitHub result that says no Copilot token was
+   issued means the account has no Copilot entitlement;
 6. confirm RuntimeState reflects new credential;
 7. run a minimal provider test.
 

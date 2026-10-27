@@ -139,14 +139,19 @@ func kiroFlow() Flow {
 			}
 			status, err := postJSONTargetWithHeaders(ctx, p.Client,
 				"https://oidc."+region+".amazonaws.com/token", nil, string(body), &document)
+			if transientPollStatus(status) {
+				return PollResult{}, errPollTransient
+			}
 			if err != nil {
 				return PollResult{}, err
 			}
-			if document.Error != "" || (status < 200 || status >= 300) {
-				if document.Error == "authorization_pending" || document.Error == "slow_down" || document.Error == "" {
-					return PollResult{Pending: true}, nil
-				}
-				return PollResult{Err: fmt.Errorf("kiro authorization failed: %s", document.Error)}, nil
+			// AWS SSO OIDC answers the RFC 8628 error names; a non-2xx without one
+			// stays pending, as the reference polls on until its deadline.
+			if outcome, ok := deviceErrorOutcome("kiro", document.Error); ok {
+				return outcome, nil
+			}
+			if status < 200 || status >= 300 {
+				return PollResult{Pending: true}, nil
 			}
 			if document.AccessToken == "" {
 				return PollResult{Pending: true}, nil

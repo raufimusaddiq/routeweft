@@ -1055,8 +1055,9 @@ refresh token came with it).
 
 Onboarding golden path (#215). Every saved sign-in, import and bulk item says
 what it did: the connection a callback, poll or import returns carries
-`outcome` (`added`; `updated` when the Codex duplicate rule below put the
-credential on a stored connection; `reauthenticated`), and a Codex one carries
+`outcome` (`added`; `updated` when the Codex duplicate rule below, or a device
+approval of a connected account (§19.2), put the credential on a stored
+connection; `reauthenticated`), and a Codex one carries
 `plan` from the sign-in's `chatgptPlanType` (a label, not a credential); each
 bulk result item carries the same `outcome`. The provider read model reports
 `bulkImport` exactly where the bulk endpoint accepts the provider.
@@ -1352,6 +1353,15 @@ counts as successful.
 Providers whose oracle flow is device authorization use `POST /admin/v1/oauth/{provider}/device` (body: optional account name, and an identity when the flow cannot resolve one), which returns `{state, userCode, verificationUrl, intervalSeconds, expiresAt}`, and `POST /admin/v1/oauth/{provider}/poll` (body: `state`). The browser's only handle on an attempt is the opaque `state`; poll requests carry nothing else, and poll responses never echo the code. Kilo Code's protocol uses one code as both the device code and the user code, so that code is shown to the operator once, in the start response, because the operator must confirm it on the provider's page. A provider with a separate device code keeps it server-side.
 
 `expiresAt` is the earlier of the 10-minute flow limit and the lifetime the provider reported for its code, so an attempt never outlives its code. Poll is session-bound, answers `{status:"pending"}` while the operator has not approved (throttled server-side so a fast client cannot drive upstream traffic), and on approval answers `{status:"connected", connection}`. Approval reserves the attempt so concurrent polls cannot save it twice, and ends it only once a connection has been persisted; a save that persisted nothing releases the attempt so the next poll can save the token already issued upstream. Denial and expiry end the attempt (`oauth_denied`, `oauth_expired`); a transient upstream fault answers `oauth_poll_failed` (502) and leaves the attempt open, and clients must retry on it. A provider offers either the browser flow or the device flow, never both. Kilo Code's approved token is a non-expiring bearer with no refresh token.
+
+Device approval journeys (#217) for GitHub, Grok CLI, Kimi, Kilo Code, CodeBuddy CN and international, Kiro (AWS Builder ID or IAM Identity Center) and Qoder:
+
+- Polling is bounded per attempt. The attempt keeps the provider's interval (at least 2 s) and spaces upstream polls by it whatever the browser does; every pending answer carries `intervalSeconds`. RFC 8628 `slow_down` lengthens it by 5 s, capped at 30 s as the reference does (`OAuthModal.js:184-186`) only when the provider's own interval was 30 s or less; a longer provider interval is never lowered and grows by 5 s each time. The attempt ends at `expiresAt` (the provider's code lifetime, else the method's own, never past the 10-minute flow limit), after which polls answer `oauth_state_invalid` without an upstream call. The dashboard waits the interval it was last told, retries `oauth_poll_failed` five times before pausing, and stops on its own 60 s past `expiresAt` with a Check again action.
+- `expired_token` answers `oauth_expired` and `access_denied` `oauth_denied` for every RFC 8628 method (GitHub, Grok CLI, Kimi, Kiro), as Kilo's 410 and 403 already did; another named error is `oauth_sign_in_rejected`. A poll the provider answers 408, 429 or 5xx is `oauth_poll_failed` and leaves the attempt open, as the reference keeps polling through it. CodeBuddy and Qoder report neither expiry nor denial and end at the deadline.
+- A device approval of an account already connected to that provider (an oauth connection on its built-in node with the same identity) renews that connection in place, answering `outcome: "updated"`: it keeps id, name, priority, enabled state, proxy and identity, takes the new credential whole, and clears health, as the reference's oauth duplicate rule does (`connectionsRepo.js:228-283`). Another account is added beside it; a connection of another provider, CodeBuddy's other region included, is never matched. A non-oauth connection with that identity still makes the save fail (`connection_save_failed`). Browser sign-ins beyond Codex keep their #215 behaviour.
+- Kilo Code's approval names the account (`userEmail`, `kilocode.js:47,55`), so its sign-in asks for no identity up front. CodeBuddy without `expiresIn` stores a one-day expiry (`codebuddy-cn.js:75`).
+- A GitHub result carries `copilotMissing`: true when the Copilot token mint returned none (an account without Copilot entitlement). The connection is still saved, as the reference saves it (`github.js:56-65`).
+- Storing a Qoder credential changes nothing about readiness: Qoder stays `unavailable` and not served (§36) with any number of enabled connections.
 
 ## 20. Transport pooling and proxying
 
