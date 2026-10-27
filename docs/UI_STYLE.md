@@ -6,10 +6,12 @@ Status: **Normative for frontend work**
 > graphite rule. The owner chose direction D "Signal" on 2026-10-27 from the
 > phase 1 previews (`ui/preview/263/`, screenshots in
 > `docs/evidence/263/preview/`); A, B and C were considered and not chosen
-> (BDR-027). The tokens and rules below are D's. Until phase 2 lands,
-> `ui/src/style.css` still holds the BDR-015 values (git `f15b350`) and the smoke
-> guards enforce them; §12 specifies how phase 2 rewrites those guards. Code,
-> guards and this file then change together, phase by phase.
+> (BDR-027). The tokens and rules below are D's. Phase 2 implements §2's tokens
+> and the shell (rail, phone header, page title, buttons, form controls, tags,
+> focus, the accent slab, empty and error states, `theme-color`, favicon) and the
+> §12 guards. Page bodies (headline, statement, figures, rows: phase 3) and
+> charts and the mark (phase 4) still use their BDR-015 layout with D's tokens.
+> Code, guards and this file change together, phase by phase.
 
 ## 1. House style: editorial instrument, retro neo-brutalist
 
@@ -72,7 +74,7 @@ need 4.5:1, control and shell boundaries 3:1.
 | `--highlight` / `--highlight-ink` (marker block, active nav pill) | `#ffd60a` / `#111111` (13.4:1) | same |
 | `--rail` (sidebar and phone header) | `#111111` (17.4:1 against the page) | `#000000` (1.1:1, so `--rail-rule` draws the edge) |
 | `--rail-text` / `--rail-muted` | `#f7f6f0` (17.4:1) / `#c9c7bd` (11.1:1) | `#f7f6f0` (19.4:1) / `#c9c7bd` (12.4:1) |
-| `--rail-rule` (dark only) | none | 3px `#f7f6f0` (17.4:1 against the page) |
+| `--rail-rule` | `#111111`, the rail's own colour, so no visible rule | 3px `#f7f6f0` (17.4:1 against the page) |
 | `--hard` / `--hard-sm` | `10px 6px 0 var(--shadow-ink)` / `5px 3px 0 var(--shadow-ink)` | same |
 
 The accent surface re-points the tokens onto the slab: text `#111111` (6.7:1
@@ -177,9 +179,10 @@ Implemented in `ui/src/editorial.tsx` and `ui/src/style.css`.
 - **Two separator weights do different jobs:** a 6px ink rule opens a section,
   statement or margin list (4px under a table head); 1px `--border-subtle` rules
   separate rows.
-- **Status is never colour alone:** a mark beside the word. The mark stays an
-  8px square: #263 froze "square dot plus word". The D preview drew 10px circles;
-  phase 2 keeps the square unless the owner lifts that freeze. One
+- **Status is never colour alone:** a 10px round dot (`.dot`, 50% radius) always
+  beside its word. #263 first froze "square dot plus word"; the owner lifted the
+  shape part on 2026-10-28, so the mark follows D. The word beside it stays
+  frozen. One
   classification serves every mark: HTTP 2xx good, 3xx idle (a hollow mark), 4xx warn, 5xx bad.
   A provider's mark is red under the same rule as its error figure (below).
   A *failure* is any response that is not a 2xx, the API's own definition of
@@ -194,8 +197,9 @@ Implemented in `ui/src/editorial.tsx` and `ui/src/style.css`.
 - Tables collapse borders, use hairline row separators, never zebra stripes, and
   right-align numeric columns. Provider rows are open; the selected row is a 22px
   `--highlight` block.
-- **Stamped tags** (`.state-tag`): 2px `currentColor` pill, mono capitals,
-  tilted `-3deg`, with the word.
+- **Stamped tags** (`.state-tag`): 2px `currentColor` pill, bold mono, tilted
+  `-3deg`, with the word in its own case. Not CSS capitals: `text-transform`
+  changes `innerText`, which copy and the smoke tests read.
 
 ## 6. Data presentation
 
@@ -214,7 +218,7 @@ Implemented in `ui/src/editorial.tsx` and `ui/src/style.css`.
   (`ui/src/format.typecheck.ts` fails `npm run typecheck` if that changes), and a unit test checks that no result depends
   on the length of the zero-filled window.
 - **Share bars** all use one baseline, `largest()` of the values present, never the first row.
-- **Provider table (Table 1):** provider with status square, requests, a thin
+- **Provider table (Table 1):** provider with status dot, requests, a thin
   share bar, and the error rate with its own bar scaled to 10%. The error bar and
   figure turn `--danger` only when a provider is above 1.5x the fleet rate, above
   3%, with at least 50 requests. At 390px the share bar shrinks to a thin inline
@@ -319,6 +323,8 @@ Quoted from the previous version (git `f15b350`), each replaced as above:
 - §4: "Active navigation: 2px `--live` left rule ... No active background pill."
   Now a yellow pill on a black rail.
 - §4a: "`theme-color` tags, light `#f4f4f2` and dark `#0c0e11`."
+- §5: "Status is never colour alone: an 8px square (`.dot`) beside the word." Now
+  a 10px round dot (owner, 2026-10-28); the word beside it is unchanged.
 - §5: "a 2px ink rule opens a section" (now 6px) and "It has a 2px `--live` left
   rule." (now the pink slab).
 - §7: "Empty: a ruled box" and "Error: left rule in the danger colour". Now 24px
@@ -331,7 +337,8 @@ Quoted from the previous version (git `f15b350`), each replaced as above:
 
 Unchanged: the editorial layout (§1, §5), the navigation table, drawer, 44px
 targets and 320px rule (§4), the mark drawing (§4a), status never shown by
-colour alone with a square mark and every data rule (§5, §6), loading (§7), 4.5:1
+colour alone (the mark beside its word; the mark is now round) and every data
+rule (§5, §6), loading (§7), 4.5:1
 text and 3:1 boundaries (§8), themes and motion (§9).
 
 ## 12. Phase 2 guard specification (D)
@@ -350,7 +357,9 @@ Rewritten:
    only on its owner from §2 (pills on `.nav-link`, buttons, inputs, selects,
    `.state-tag`, `.ed-bar`, highlight blocks; `32px`/`24px` on `.accent-surface`;
    `24px` on empty and error states; `22px` on `.provider-option`; `20px` on
-   `textarea`; `50%` only on `.dot`, if the owner lifts the square-mark freeze).
+   `textarea`; `50%` only on `.dot`, the round status mark the owner chose on
+   2026-10-28). Every visible `.dot` is round (`50%`), and its parent carries a
+   word beside it (status is never colour alone).
    Any other value fails with the element and corner named.
 2. **Type sizes** (`:60-61`, asserts `:77-80`; per page `:1438-1441`, assert
    `:1558`). Today: 11/12/16/28px (24px on a phone), 12 and 28 required, 11 only in
@@ -393,7 +402,9 @@ New assertions:
 11. **Shell edges**: the desktop `.sidebar` and the phone `.mobile-header` are
     3:1 against the page, from their fill or their edge rule.
 12. **Shadows**: every computed `box-shadow` on a shell element is `none` or one
-    of the two token values with a zero blur radius.
+    of the two token offsets (10px 6px or 5px 3px) with zero blur and zero
+    spread. The colour is not compared: inside the slab a control's shadow is the
+    slab's ink, not `--shadow-ink`.
 13. **Titles**: at 320px on every nav page, the `h1` neither overflows its box
     nor the page, and no word in it is split across lines.
 

@@ -3,10 +3,10 @@
   <!-- Favicon: the same drawing as mark.svg with literal colours, because a favicon cannot read the page's CSS
        variables. Light tab bars get the light-theme ink, dark tab bars the dark-theme ink. -->
   <style>
-    .warp { fill: #14161a; }
+    .warp { fill: #111111; }
     .weft { fill: #00727f; }
     @media (prefers-color-scheme: dark) {
-      .warp { fill: #ecedef; }
+      .warp { fill: #f7f6f0; }
       .weft { fill: #4fd1e0; }
     }
   </style>
