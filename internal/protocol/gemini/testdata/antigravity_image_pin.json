@@ -1,0 +1,819 @@
+{
+ "pin": "1c3b9f47837d42ea64992063309064af755a14a3",
+ "now": 1700000000000,
+ "models": [
+  {
+   "model": "gemini-3-flash",
+   "image": false,
+   "chatCoreImage": false,
+   "streamUrl": "https://synthetic.invalid/v1internal:streamGenerateContent?alt=sse",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent"
+  },
+  {
+   "model": "gemini-3.8-flash-high",
+   "image": false,
+   "chatCoreImage": false,
+   "streamUrl": "https://synthetic.invalid/v1internal:streamGenerateContent?alt=sse",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent"
+  },
+  {
+   "model": "claude-sonnet-4-6",
+   "image": false,
+   "chatCoreImage": false,
+   "streamUrl": "https://synthetic.invalid/v1internal:streamGenerateContent?alt=sse",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent"
+  },
+  {
+   "model": "gpt-oss-120b-medium",
+   "image": false,
+   "chatCoreImage": false,
+   "streamUrl": "https://synthetic.invalid/v1internal:streamGenerateContent?alt=sse",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent"
+  },
+  {
+   "model": "gemini-3.1-flash-image",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "1:1"
+   },
+   "upstreamModel": "gemini-3.1-flash-image"
+  },
+  {
+   "model": "gemini-3-pro-image-preview",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "1:1"
+   },
+   "upstreamModel": "gemini-3-pro-image-preview"
+  },
+  {
+   "model": "gemini-2.5-flash-image-preview",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "1:1"
+   },
+   "upstreamModel": "gemini-2.5-flash-image-preview"
+  },
+  {
+   "model": "imagen-4.0-generate-001",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "1:1"
+   },
+   "upstreamModel": "imagen-4.0-generate-001"
+  },
+  {
+   "model": "Imagen-4",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "1:1"
+   },
+   "upstreamModel": "Imagen-4"
+  },
+  {
+   "model": "GEMINI-IMAGE",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "1:1"
+   },
+   "upstreamModel": "GEMINI-IMAGE"
+  },
+  {
+   "model": "image-generation-x",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "1:1"
+   },
+   "upstreamModel": "image-generation-x"
+  },
+  {
+   "model": "gemini-image-16x9",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "16:9"
+   },
+   "upstreamModel": "gemini-image"
+  },
+  {
+   "model": "gemini-image-9x16",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "9:16"
+   },
+   "upstreamModel": "gemini-image"
+  },
+  {
+   "model": "gemini-image-1x1",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "1:1"
+   },
+   "upstreamModel": "gemini-image"
+  },
+  {
+   "model": "gemini-image-16x16",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "16:16"
+   },
+   "upstreamModel": "gemini-image"
+  },
+  {
+   "model": "gemini-image-17x16",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "17:16"
+   },
+   "upstreamModel": "gemini-image"
+  },
+  {
+   "model": "gemini-image-0x5",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "0:5"
+   },
+   "upstreamModel": "gemini-image"
+  },
+  {
+   "model": "gemini-image-1024x768",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "4:3"
+   },
+   "upstreamModel": "gemini-image"
+  },
+  {
+   "model": "gemini-image-1920x1080",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "16:9"
+   },
+   "upstreamModel": "gemini-image"
+  },
+  {
+   "model": "gemini-image-768x1024",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "3:4"
+   },
+   "upstreamModel": "gemini-image"
+  },
+  {
+   "model": "gemini-image-1024x0",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "1:0"
+   },
+   "upstreamModel": "gemini-image"
+  },
+  {
+   "model": "gemini-image-0016x0009",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "16:9"
+   },
+   "upstreamModel": "gemini-image"
+  },
+  {
+   "model": "gemini-image16x9",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "16:9"
+   },
+   "upstreamModel": "gemini-image16x9"
+  },
+  {
+   "model": "gemini-image-16x9-preview",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "1:1"
+   },
+   "upstreamModel": "gemini-image-16x9-preview"
+  },
+  {
+   "model": "gemini-image-16X9",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "1:1"
+   },
+   "upstreamModel": "gemini-image-16X9"
+  },
+  {
+   "model": "gemini-image-4x3x2",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "3:2"
+   },
+   "upstreamModel": "gemini-image-4x3x2"
+  },
+  {
+   "model": "gemini-image-x9",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "1:1"
+   },
+   "upstreamModel": "gemini-image-x9"
+  },
+  {
+   "model": "gemini-image-1024x768x",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "1:1"
+   },
+   "upstreamModel": "gemini-image-1024x768x"
+  },
+  {
+   "model": "claude-image",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "1:1"
+   },
+   "upstreamModel": "claude-image"
+  },
+  {
+   "model": "img",
+   "image": false,
+   "chatCoreImage": false,
+   "streamUrl": "https://synthetic.invalid/v1internal:streamGenerateContent?alt=sse",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent"
+  },
+  {
+   "model": "imag",
+   "image": false,
+   "chatCoreImage": false,
+   "streamUrl": "https://synthetic.invalid/v1internal:streamGenerateContent?alt=sse",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent"
+  },
+  {
+   "model": "gemini-İmage",
+   "image": false,
+   "chatCoreImage": false,
+   "streamUrl": "https://synthetic.invalid/v1internal:streamGenerateContent?alt=sse",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent"
+  },
+  {
+   "model": "gemini-Kimage",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "1:1"
+   },
+   "upstreamModel": "gemini-Kimage"
+  },
+  {
+   "model": "gemini-IMAGE-3x2",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "3:2"
+   },
+   "upstreamModel": "gemini-IMAGE"
+  },
+  {
+   "model": "gemini-image-9007199254740993x3",
+   "image": true,
+   "chatCoreImage": true,
+   "streamUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "plainUrl": "https://synthetic.invalid/v1internal:generateContent",
+   "imageConfig": {
+    "aspectRatio": "9007199254740992:3"
+   },
+   "upstreamModel": "gemini-image"
+  }
+ ],
+ "transforms": [
+  {
+   "name": "text only",
+   "body": {
+    "request": {
+     "contents": [
+      {
+       "role": "user",
+       "parts": [
+        {
+         "text": "draw a cat"
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "sent": {
+    "project": "synthetic-project",
+    "model": "gemini-3.1-flash-image",
+    "userAgent": "antigravity",
+    "requestType": "image_gen",
+    "requestId": "agent/8f622dd8-f3dd-5cd0-b325-134265ffaa85/1700000000000/4ec6a93f-5e28-5ef0-91e8-3d04e75f683c/1",
+    "request": {
+     "contents": [
+      {
+       "role": "user",
+       "parts": [
+        {
+         "text": "draw a cat"
+        }
+       ]
+      }
+     ],
+     "generationConfig": {
+      "temperature": 1,
+      "topP": 0.95,
+      "topK": 40,
+      "maxOutputTokens": 8192,
+      "imageConfig": {
+       "aspectRatio": "16:9"
+      }
+     },
+     "sessionId": "synthetic-session"
+    }
+   }
+  },
+  {
+   "name": "conversation",
+   "body": {
+    "request": {
+     "contents": [
+      {
+       "role": "user",
+       "parts": [
+        {
+         "text": "draw a cat"
+        }
+       ]
+      },
+      {
+       "role": "model",
+       "parts": [
+        {
+         "text": "here"
+        }
+       ]
+      },
+      {
+       "role": "user",
+       "parts": [
+        {
+         "text": "bluer"
+        },
+        {
+         "text": "please"
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "sent": {
+    "project": "synthetic-project",
+    "model": "gemini-3.1-flash-image",
+    "userAgent": "antigravity",
+    "requestType": "image_gen",
+    "requestId": "agent/8f622dd8-f3dd-5cd0-b325-134265ffaa85/1700000000000/4ec6a93f-5e28-5ef0-91e8-3d04e75f683c/5",
+    "request": {
+     "contents": [
+      {
+       "role": "user",
+       "parts": [
+        {
+         "text": "draw a cat"
+        }
+       ]
+      },
+      {
+       "role": "model",
+       "parts": [
+        {
+         "text": "here"
+        }
+       ]
+      },
+      {
+       "role": "user",
+       "parts": [
+        {
+         "text": "bluer"
+        },
+        {
+         "text": "please"
+        }
+       ]
+      }
+     ],
+     "generationConfig": {
+      "temperature": 1,
+      "topP": 0.95,
+      "topK": 40,
+      "maxOutputTokens": 8192,
+      "imageConfig": {
+       "aspectRatio": "16:9"
+      }
+     },
+     "sessionId": "synthetic-session"
+    }
+   }
+  },
+  {
+   "name": "no role",
+   "body": {
+    "request": {
+     "contents": [
+      {
+       "parts": [
+        {
+         "text": "draw"
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "sent": {
+    "project": "synthetic-project",
+    "model": "gemini-3.1-flash-image",
+    "userAgent": "antigravity",
+    "requestType": "image_gen",
+    "requestId": "agent/8f622dd8-f3dd-5cd0-b325-134265ffaa85/1700000000000/4ec6a93f-5e28-5ef0-91e8-3d04e75f683c/1",
+    "request": {
+     "contents": [
+      {
+       "role": "user",
+       "parts": [
+        {
+         "text": "draw"
+        }
+       ]
+      }
+     ],
+     "generationConfig": {
+      "temperature": 1,
+      "topP": 0.95,
+      "topK": 40,
+      "maxOutputTokens": 8192,
+      "imageConfig": {
+       "aspectRatio": "16:9"
+      }
+     },
+     "sessionId": "synthetic-session"
+    }
+   }
+  },
+  {
+   "name": "empty text kept",
+   "body": {
+    "request": {
+     "contents": [
+      {
+       "role": "user",
+       "parts": [
+        {
+         "text": ""
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "sent": {
+    "project": "synthetic-project",
+    "model": "gemini-3.1-flash-image",
+    "userAgent": "antigravity",
+    "requestType": "image_gen",
+    "requestId": "agent/8f622dd8-f3dd-5cd0-b325-134265ffaa85/1700000000000/4ec6a93f-5e28-5ef0-91e8-3d04e75f683c/1",
+    "request": {
+     "contents": [
+      {
+       "role": "user",
+       "parts": [
+        {
+         "text": ""
+        }
+       ]
+      }
+     ],
+     "generationConfig": {
+      "temperature": 1,
+      "topP": 0.95,
+      "topK": 40,
+      "maxOutputTokens": 8192,
+      "imageConfig": {
+       "aspectRatio": "16:9"
+      }
+     },
+     "sessionId": "synthetic-session"
+    }
+   }
+  },
+  {
+   "name": "signature dropped",
+   "body": {
+    "request": {
+     "contents": [
+      {
+       "role": "model",
+       "parts": [
+        {
+         "text": "a",
+         "thoughtSignature": "sig"
+        }
+       ]
+      },
+      {
+       "role": "user",
+       "parts": [
+        {
+         "text": "b"
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "sent": {
+    "project": "synthetic-project",
+    "model": "gemini-3.1-flash-image",
+    "userAgent": "antigravity",
+    "requestType": "image_gen",
+    "requestId": "agent/8f622dd8-f3dd-5cd0-b325-134265ffaa85/1700000000000/4ec6a93f-5e28-5ef0-91e8-3d04e75f683c/3",
+    "request": {
+     "contents": [
+      {
+       "role": "model",
+       "parts": [
+        {
+         "text": "a"
+        }
+       ]
+      },
+      {
+       "role": "user",
+       "parts": [
+        {
+         "text": "b"
+        }
+       ]
+      }
+     ],
+     "generationConfig": {
+      "temperature": 1,
+      "topP": 0.95,
+      "topK": 40,
+      "maxOutputTokens": 8192,
+      "imageConfig": {
+       "aspectRatio": "16:9"
+      }
+     },
+     "sessionId": "synthetic-session"
+    }
+   }
+  },
+  {
+   "name": "turn without text left out",
+   "body": {
+    "request": {
+     "contents": [
+      {
+       "role": "user",
+       "parts": [
+        {
+         "text": "a"
+        }
+       ]
+      },
+      {
+       "role": "model",
+       "parts": []
+      },
+      {
+       "role": "user",
+       "parts": [
+        {
+         "text": "b"
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "sent": {
+    "project": "synthetic-project",
+    "model": "gemini-3.1-flash-image",
+    "userAgent": "antigravity",
+    "requestType": "image_gen",
+    "requestId": "agent/8f622dd8-f3dd-5cd0-b325-134265ffaa85/1700000000000/4ec6a93f-5e28-5ef0-91e8-3d04e75f683c/3",
+    "request": {
+     "contents": [
+      {
+       "role": "user",
+       "parts": [
+        {
+         "text": "a"
+        }
+       ]
+      },
+      {
+       "role": "user",
+       "parts": [
+        {
+         "text": "b"
+        }
+       ]
+      }
+     ],
+     "generationConfig": {
+      "temperature": 1,
+      "topP": 0.95,
+      "topK": 40,
+      "maxOutputTokens": 8192,
+      "imageConfig": {
+       "aspectRatio": "16:9"
+      }
+     },
+     "sessionId": "synthetic-session"
+    }
+   }
+  },
+  {
+   "name": "everything else dropped",
+   "body": {
+    "request": {
+     "contents": [
+      {
+       "role": "user",
+       "parts": [
+        {
+         "text": "a"
+        },
+        {
+         "inlineData": {
+          "mimeType": "image/png",
+          "data": "AA=="
+         }
+        }
+       ]
+      }
+     ],
+     "systemInstruction": {
+      "role": "user",
+      "parts": [
+       {
+        "text": "system"
+       }
+      ]
+     },
+     "tools": [
+      {
+       "functionDeclarations": [
+        {
+         "name": "f"
+        }
+       ]
+      }
+     ],
+     "toolConfig": {
+      "functionCallingConfig": {
+       "mode": "AUTO"
+      }
+     },
+     "generationConfig": {
+      "temperature": 0.2,
+      "topP": 0.5,
+      "maxOutputTokens": 100,
+      "stopSequences": [
+       "x"
+      ]
+     },
+     "safetySettings": [
+      {
+       "category": "c",
+       "threshold": "OFF"
+      }
+     ]
+    }
+   },
+   "sent": {
+    "project": "synthetic-project",
+    "model": "gemini-3.1-flash-image",
+    "userAgent": "antigravity",
+    "requestType": "image_gen",
+    "requestId": "agent/8f622dd8-f3dd-5cd0-b325-134265ffaa85/1700000000000/4ec6a93f-5e28-5ef0-91e8-3d04e75f683c/1",
+    "request": {
+     "contents": [
+      {
+       "role": "user",
+       "parts": [
+        {
+         "text": "a"
+        }
+       ]
+      }
+     ],
+     "generationConfig": {
+      "temperature": 1,
+      "topP": 0.95,
+      "topK": 40,
+      "maxOutputTokens": 8192,
+      "imageConfig": {
+       "aspectRatio": "16:9"
+      }
+     },
+     "sessionId": "synthetic-session"
+    }
+   }
+  }
+ ],
+ "ids": [
+  {
+   "model": "gemini-3.1-flash-image",
+   "upstreamModel": "gemini-3.1-flash-image",
+   "session": "synthetic-session",
+   "turns": 3,
+   "requestId": "agent/8f622dd8-f3dd-5cd0-b325-134265ffaa85/1700000000000/4ec6a93f-5e28-5ef0-91e8-3d04e75f683c/5"
+  },
+  {
+   "model": "gemini-3.1-flash-image-1024x768",
+   "upstreamModel": "gemini-3.1-flash-image",
+   "session": "synthetic-session",
+   "turns": 3,
+   "requestId": "agent/8f622dd8-f3dd-5cd0-b325-134265ffaa85/1700000000000/4ec6a93f-5e28-5ef0-91e8-3d04e75f683c/5"
+  }
+ ]
+}

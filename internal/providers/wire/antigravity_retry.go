@@ -140,6 +140,8 @@ var ideRequestID = regexp.MustCompile(`^agent/[^/]+/[0-9]+/[^/]+/[0-9]+$`)
 // withIDERequestID is buildIdeRequestId (antigravity.js:100-111) as transformRequest
 // puts it in the envelope (:309): an id already in the IDE form stays, any other is
 // built from the session, the model, the length of the conversation and the clock.
+// The kind in the trajectory is the envelope's requestType, which only an image
+// model's request names (image_gen, :185-186); the agent path has none (:309).
 // A body that is not a JSON object is returned as it is.
 func withIDERequestID(payload []byte, provider routing.ProviderRef, now time.Time) []byte {
 	var envelope map[string]json.RawMessage
@@ -152,6 +154,11 @@ func withIDERequestID(payload []byte, provider routing.ProviderRef, now time.Tim
 		return payload
 	}
 	_ = json.Unmarshal(envelope["model"], &model)
+	kind := "agent"
+	var requestType string
+	if json.Unmarshal(envelope["requestType"], &requestType) == nil && requestType != "" {
+		kind = requestType
+	}
 	var inner struct {
 		SessionID string          `json:"sessionId"`
 		Contents  json.RawMessage `json:"contents"`
@@ -172,7 +179,7 @@ func withIDERequestID(payload []byte, provider routing.ProviderRef, now time.Tim
 		session = "anonymous"
 	}
 	id := "agent/" + uuidFromSeed("antigravity:conversation:"+session) + "/" + strconv.FormatInt(now.UnixMilli(), 10) + "/" +
-		uuidFromSeed("antigravity:trajectory:"+session+":"+model+":agent") + "/" + strconv.Itoa(max(1, count*2-1))
+		uuidFromSeed("antigravity:trajectory:"+session+":"+model+":"+kind) + "/" + strconv.Itoa(max(1, count*2-1))
 	encoded, err := json.Marshal(id)
 	if err != nil {
 		return payload

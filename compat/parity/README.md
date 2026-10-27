@@ -31,6 +31,11 @@ is the only way that file changes.
 scripted network, clock and timers (a wait moves the clock), the IDE request id, V8's `Date.parse`, and writes `internal/providers/wire/testdata/antigravity_pin.json`
 (PARITY 6.21). It needs `ORACLE_DIR` and `TZ=UTC`; the Go tests only read the file.
 
+`compat/parity/generate-antigravity-image.mjs` evaluates the pinned `antigravity.js` image path
+(`isImageModel`, `parseImageConfig`, `buildUrl`, `transformRequest`, `buildIdeRequestId`) and the
+image test of `chatCore.js`, with the clock and session fixed, and writes
+`internal/protocol/gemini/testdata/antigravity_image_pin.json` (PARITY 6.26). It needs `ORACLE_DIR`.
+
 CI runs this as the `parity` PR job, alongside existing Go/UI/container jobs.
 No test may update golden files from its actual output or turn a missing oracle
 into a passing dedicated gate. Ordinary unit tests remain usable without v1.
