@@ -232,6 +232,65 @@ func TestAntigravityImageAnswerReachesBothKindsOfClient(t *testing.T) {
 	}
 }
 
+// The answer's text is the pin's for every client format: each image is the
+// markdown its buffered path writes (nonStreamingHandler.js:218-223), in part
+// order, buffered and streamed alike. The pin answers a Messages client in the
+// Chat shape; that framing is the ingress's, the text is compared here.
+func TestAntigravityImageAnswerTextIsThePins(t *testing.T) {
+	raw, err := os.ReadFile("testdata/antigravity_image_pin.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pin struct {
+		Answers []struct {
+			Name   string          `json:"name"`
+			Client string          `json:"client"`
+			Body   json.RawMessage `json:"body"`
+			Sent   map[string]any  `json:"sent"`
+		} `json:"answers"`
+	}
+	if err := json.Unmarshal(raw, &pin); err != nil || len(pin.Answers) == 0 {
+		t.Fatalf("fixture: %v", err)
+	}
+	options := ResponseOptions{Model: "gemini-3.1-flash-image", Wire: AntigravityProtocol, ImagesAsText: true}
+	for _, c := range pin.Answers {
+		want, _ := at(c.Sent, "choices.0.message.content").(string)
+		if c.Client == "openai-responses" {
+			want, _ = at(c.Sent, "output.0.content.0.text").(string)
+		}
+		whole, err := GeminiResponseToChat(c.Body, options)
+		if err != nil {
+			t.Fatalf("%s: %v", c.Name, err)
+		}
+		var message map[string]any
+		_ = json.Unmarshal(whole, &message)
+		if got, _ := at(message, "choices.0.message.content").(string); got != want || at(message, "choices.0.message.images") != nil {
+			t.Errorf("%s/%s buffered: %q, pin %q (%s)", c.Name, c.Client, got, want, whole)
+		}
+		var stream bytes.Buffer
+		if err := AntigravityImageStreamToChat(context.Background(), bytes.NewReader(c.Body), &stream, options); err != nil {
+			t.Fatalf("%s: %v", c.Name, err)
+		}
+		var streamed strings.Builder
+		for _, line := range strings.Split(stream.String(), "\n") {
+			payload, ok := strings.CutPrefix(line, "data: ")
+			if !ok || payload == "[DONE]" {
+				continue
+			}
+			var chunk map[string]any
+			_ = json.Unmarshal([]byte(payload), &chunk)
+			text, _ := at(chunk, "choices.0.delta.content").(string)
+			streamed.WriteString(text)
+			if at(chunk, "choices.0.delta.images") != nil {
+				t.Errorf("%s: streamed an images entry: %s", c.Name, payload)
+			}
+		}
+		if streamed.String() != want {
+			t.Errorf("%s/%s streamed: %q, pin %q", c.Name, c.Client, streamed.String(), want)
+		}
+	}
+}
+
 // A body cut short, an empty one, two bodies and one with no finish end the
 // stream on the failure terminal, never as an answer.
 func TestAntigravityImageStreamRefusesABrokenBody(t *testing.T) {

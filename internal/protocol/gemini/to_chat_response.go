@@ -31,6 +31,12 @@ type ResponseOptions struct {
 	// isolation would follow a key the upstream controls. Empty means the plain
 	// Gemini wire.
 	Wire string
+	// ImagesAsText puts a generated image in the answer's text, as the markdown
+	// image the pin writes on its buffered path (nonStreamingHandler.js:218-223),
+	// instead of an images entry. The pin always answers an Antigravity image
+	// model on that path (chatCore.js:149-154), so its every client, Chat,
+	// Responses or Messages, gets the picture in the text (PARITY 6.26).
+	ImagesAsText bool
 }
 
 // fallbackModel is what the pin reports when neither the response nor the
@@ -211,9 +217,14 @@ func (s *responseState) part(part map[string]any, scope string) ([]map[string]an
 		if mediaType == "" {
 			mediaType = "image/png"
 		}
-		deltas = append(deltas, map[string]any{"images": []any{map[string]any{
-			"type": "image_url", "image_url": map[string]any{"url": "data:" + mediaType + ";base64," + concerns.Text(data["data"])},
-		}}})
+		url := "data:" + mediaType + ";base64," + concerns.Text(data["data"])
+		if s.options.ImagesAsText {
+			deltas = append(deltas, map[string]any{"content": "\n![image](" + url + ")\n"})
+		} else {
+			deltas = append(deltas, map[string]any{"images": []any{map[string]any{
+				"type": "image_url", "image_url": map[string]any{"url": url},
+			}}})
+		}
 	}
 	return deltas, nil
 }

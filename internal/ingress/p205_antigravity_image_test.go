@@ -18,10 +18,10 @@ const antigravityImageAnswer = `{"response":{"candidates":[{"content":{"role":"m
 
 // An Antigravity image model is called at generateContent with the image_gen
 // envelope whatever the client asked (executors/antigravity.js:121-123,144-189,
-// chatCore.js:149-154), and every client wire is answered in its own framing.
-// A Chat client gets the picture as an image content block, streamed or not.
-// Responses and Messages clients get the text and usage, as at the pin, whose
-// response legs carry no images either (PARITY 6.26, open).
+// chatCore.js:149-154), and every client wire is answered in its own framing,
+// streamed or not, with the picture in the text as the markdown image the pin's
+// buffered path writes (nonStreamingHandler.js:218-223), and the usage the
+// upstream reported recorded in both modes (PARITY 6.26).
 func TestAntigravityImageModelIsServedToEveryClientWire(t *testing.T) {
 	for _, client := range clientWires {
 		for _, stream := range []bool{false, true} {
@@ -64,10 +64,9 @@ func TestAntigravityImageModelIsServedToEveryClientWire(t *testing.T) {
 					t.Errorf("request id %q is not the IDE form", requestID)
 				}
 				body := w.Body.String()
-				want := []string{"a cat", "1290"}
-				if client == openai.ChatProtocol {
-					want = append(want, "data:image/png;base64,QUJD")
-				}
+				// JSON escapes the newlines around the markdown; a stream carries the
+				// image in a delta of its own.
+				want := []string{"a cat", "1290", `![image](data:image/png;base64,QUJD)`}
 				if stream {
 					want = append(want, "data: ")
 				}
@@ -80,13 +79,31 @@ func TestAntigravityImageModelIsServedToEveryClientWire(t *testing.T) {
 				if len(outcomes) != 1 || outcomes[0].Status != http.StatusOK || outcomes[0].ProviderID != "antigravity" {
 					t.Fatalf("outcomes %+v", outcomes)
 				}
-				// A buffered answer's usage is read; a streamed client's is not, because
-				// the usage scanner reads SSE lines and the upstream sent one JSON body.
-				// Unobserved is recorded as such, never as zero (SPEC 21.1).
-				if got := outcomes[0]; stream != got.UsageUnobserved || (!stream && (got.InputTokens != 7 || got.OutputTokens != 1290)) {
+				// The usage is read from the one JSON body in both modes.
+				if got := outcomes[0]; got.UsageUnobserved || got.InputTokens != 7 || got.OutputTokens != 1290 {
 					t.Errorf("usage record %+v", got)
 				}
 			})
+		}
+	}
+}
+
+// An answer that is only a picture is not an empty answer to any client.
+func TestAntigravityImageOnlyAnswerReachesEveryClientWire(t *testing.T) {
+	answer := `{"response":{"candidates":[{"content":{"role":"model","parts":[{"inlineData":{"mimeType":"image/png","data":"QUJD"}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":1290,"totalTokenCount":1297}}}`
+	for _, client := range clientWires {
+		for _, stream := range []bool{false, true} {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, answer)
+			}))
+			s := newServing(t, routing.ProviderRef{ProviderID: "antigravity", Protocol: "antigravity", BaseURL: upstream.URL, UpstreamModel: "gemini-3.1-flash-image", APIToken: "ya29.fixture",
+				Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{ProjectID: "fixture-project"}}})
+			w := s.call(client, stream)
+			upstream.Close()
+			if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `![image](data:image/png;base64,QUJD)`) {
+				t.Errorf("%s/stream=%v: %d %s", client, stream, w.Code, w.Body)
+			}
 		}
 	}
 }
@@ -106,5 +123,33 @@ func TestAntigravityImageModelRefusesASystemPromptWithoutSending(t *testing.T) {
 	// Every candidate refused the translation: the dispatcher's request_translation_failed.
 	if w.Code != http.StatusBadGateway || hits != 0 || !strings.Contains(w.Body.String(), "request_translation_failed") || !strings.Contains(w.Body.String(), "system") {
 		t.Errorf("status %d after %d requests: %s", w.Code, hits, w.Body)
+	}
+}
+
+// A whole-answer scanner reads usage from the one JSON body, in any chunking;
+// a body that is not JSON, reports nothing or passes the translated response
+// limit is unobserved, never zero.
+func TestWholeAnswerUsageScanner(t *testing.T) {
+	read := func(chunks ...string) (bool, int64) {
+		s := &usageScanner{family: "antigravity", whole: true}
+		for _, chunk := range chunks {
+			_, _ = s.Write([]byte(chunk))
+		}
+		usage, _ := s.usage()
+		return s.reportsUsage(true), usage.InputTokens
+	}
+	half := len(antigravityImageAnswer) / 2
+	if observed, input := read(antigravityImageAnswer[:half], antigravityImageAnswer[half:]); !observed || input != 7 {
+		t.Errorf("split body: observed %v, input %d", observed, input)
+	}
+	for name, chunks := range map[string][]string{
+		"not json":   {"data: {}\n\n"},
+		"no usage":   {`{"response":{"candidates":[]}}`},
+		"empty":      nil,
+		"over limit": {antigravityImageAnswer, strings.Repeat(" ", openai.MaxTranslatedResponseBytes)},
+	} {
+		if observed, _ := read(chunks...); observed {
+			t.Errorf("%s: observed", name)
+		}
 	}
 }

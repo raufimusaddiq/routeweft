@@ -815,5 +815,613 @@
    "turns": 3,
    "requestId": "agent/8f622dd8-f3dd-5cd0-b325-134265ffaa85/1700000000000/4ec6a93f-5e28-5ef0-91e8-3d04e75f683c/5"
   }
+ ],
+ "answers": [
+  {
+   "name": "text and image",
+   "client": "openai",
+   "body": {
+    "response": {
+     "candidates": [
+      {
+       "content": {
+        "role": "model",
+        "parts": [
+         {
+          "text": "a cat"
+         },
+         {
+          "inlineData": {
+           "mimeType": "image/png",
+           "data": "QUJD"
+          }
+         }
+        ]
+       },
+       "finishReason": "STOP"
+      }
+     ],
+     "usageMetadata": {
+      "promptTokenCount": 7,
+      "candidatesTokenCount": 1290,
+      "totalTokenCount": 1297
+     },
+     "responseId": "r1",
+     "modelVersion": "gemini-3.1-flash-image"
+    }
+   },
+   "sent": {
+    "id": "chatcmpl-r1",
+    "object": "chat.completion",
+    "created": 1793084048,
+    "model": "gemini-3.1-flash-image",
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": "a cat\n![image](data:image/png;base64,QUJD)\n"
+      },
+      "finish_reason": "stop"
+     }
+    ],
+    "usage": {
+     "prompt_tokens": 7,
+     "completion_tokens": 1290,
+     "total_tokens": 1297
+    }
+   }
+  },
+  {
+   "name": "text and image",
+   "client": "openai-responses",
+   "body": {
+    "response": {
+     "candidates": [
+      {
+       "content": {
+        "role": "model",
+        "parts": [
+         {
+          "text": "a cat"
+         },
+         {
+          "inlineData": {
+           "mimeType": "image/png",
+           "data": "QUJD"
+          }
+         }
+        ]
+       },
+       "finishReason": "STOP"
+      }
+     ],
+     "usageMetadata": {
+      "promptTokenCount": 7,
+      "candidatesTokenCount": 1290,
+      "totalTokenCount": 1297
+     },
+     "responseId": "r1",
+     "modelVersion": "gemini-3.1-flash-image"
+    }
+   },
+   "sent": {
+    "id": "resp_r1",
+    "object": "response",
+    "created_at": 1793084048,
+    "model": "gemini-3.1-flash-image",
+    "status": "completed",
+    "background": false,
+    "error": null,
+    "output": [
+     {
+      "type": "message",
+      "role": "assistant",
+      "content": [
+       {
+        "type": "output_text",
+        "text": "a cat\n![image](data:image/png;base64,QUJD)\n",
+        "annotations": []
+       }
+      ]
+     }
+    ],
+    "usage": {
+     "input_tokens": 7,
+     "output_tokens": 1290,
+     "total_tokens": 1297
+    }
+   }
+  },
+  {
+   "name": "text and image",
+   "client": "claude",
+   "body": {
+    "response": {
+     "candidates": [
+      {
+       "content": {
+        "role": "model",
+        "parts": [
+         {
+          "text": "a cat"
+         },
+         {
+          "inlineData": {
+           "mimeType": "image/png",
+           "data": "QUJD"
+          }
+         }
+        ]
+       },
+       "finishReason": "STOP"
+      }
+     ],
+     "usageMetadata": {
+      "promptTokenCount": 7,
+      "candidatesTokenCount": 1290,
+      "totalTokenCount": 1297
+     },
+     "responseId": "r1",
+     "modelVersion": "gemini-3.1-flash-image"
+    }
+   },
+   "sent": {
+    "id": "chatcmpl-r1",
+    "object": "chat.completion",
+    "created": 1793084048,
+    "model": "gemini-3.1-flash-image",
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": "a cat\n![image](data:image/png;base64,QUJD)\n"
+      },
+      "finish_reason": "stop"
+     }
+    ],
+    "usage": {
+     "prompt_tokens": 7,
+     "completion_tokens": 1290,
+     "total_tokens": 1297
+    }
+   }
+  },
+  {
+   "name": "image only, no mime type",
+   "client": "openai",
+   "body": {
+    "response": {
+     "candidates": [
+      {
+       "content": {
+        "role": "model",
+        "parts": [
+         {
+          "inline_data": {
+           "data": "QUJD"
+          }
+         }
+        ]
+       },
+       "finishReason": "STOP"
+      }
+     ],
+     "responseId": "r2"
+    }
+   },
+   "sent": {
+    "id": "chatcmpl-r2",
+    "object": "chat.completion",
+    "created": 1793084048,
+    "model": "gemini",
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": "\n![image](data:image/png;base64,QUJD)\n"
+      },
+      "finish_reason": "stop"
+     }
+    ]
+   }
+  },
+  {
+   "name": "image only, no mime type",
+   "client": "openai-responses",
+   "body": {
+    "response": {
+     "candidates": [
+      {
+       "content": {
+        "role": "model",
+        "parts": [
+         {
+          "inline_data": {
+           "data": "QUJD"
+          }
+         }
+        ]
+       },
+       "finishReason": "STOP"
+      }
+     ],
+     "responseId": "r2"
+    }
+   },
+   "sent": {
+    "id": "resp_r2",
+    "object": "response",
+    "created_at": 1793084048,
+    "model": "gemini",
+    "status": "completed",
+    "background": false,
+    "error": null,
+    "output": [
+     {
+      "type": "message",
+      "role": "assistant",
+      "content": [
+       {
+        "type": "output_text",
+        "text": "\n![image](data:image/png;base64,QUJD)\n",
+        "annotations": []
+       }
+      ]
+     }
+    ],
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "total_tokens": 0
+    }
+   }
+  },
+  {
+   "name": "image only, no mime type",
+   "client": "claude",
+   "body": {
+    "response": {
+     "candidates": [
+      {
+       "content": {
+        "role": "model",
+        "parts": [
+         {
+          "inline_data": {
+           "data": "QUJD"
+          }
+         }
+        ]
+       },
+       "finishReason": "STOP"
+      }
+     ],
+     "responseId": "r2"
+    }
+   },
+   "sent": {
+    "id": "chatcmpl-r2",
+    "object": "chat.completion",
+    "created": 1793084048,
+    "model": "gemini",
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": "\n![image](data:image/png;base64,QUJD)\n"
+      },
+      "finish_reason": "stop"
+     }
+    ]
+   }
+  },
+  {
+   "name": "two images around text",
+   "client": "openai",
+   "body": {
+    "response": {
+     "candidates": [
+      {
+       "content": {
+        "role": "model",
+        "parts": [
+         {
+          "inlineData": {
+           "mimeType": "image/jpeg",
+           "data": "AAAA"
+          }
+         },
+         {
+          "text": "and"
+         },
+         {
+          "inlineData": {
+           "mimeType": "image/webp",
+           "data": "BBBB"
+          }
+         }
+        ]
+       },
+       "finishReason": "STOP"
+      }
+     ],
+     "responseId": "r3"
+    }
+   },
+   "sent": {
+    "id": "chatcmpl-r3",
+    "object": "chat.completion",
+    "created": 1793084048,
+    "model": "gemini",
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": "\n![image](data:image/jpeg;base64,AAAA)\nand\n![image](data:image/webp;base64,BBBB)\n"
+      },
+      "finish_reason": "stop"
+     }
+    ]
+   }
+  },
+  {
+   "name": "two images around text",
+   "client": "openai-responses",
+   "body": {
+    "response": {
+     "candidates": [
+      {
+       "content": {
+        "role": "model",
+        "parts": [
+         {
+          "inlineData": {
+           "mimeType": "image/jpeg",
+           "data": "AAAA"
+          }
+         },
+         {
+          "text": "and"
+         },
+         {
+          "inlineData": {
+           "mimeType": "image/webp",
+           "data": "BBBB"
+          }
+         }
+        ]
+       },
+       "finishReason": "STOP"
+      }
+     ],
+     "responseId": "r3"
+    }
+   },
+   "sent": {
+    "id": "resp_r3",
+    "object": "response",
+    "created_at": 1793084048,
+    "model": "gemini",
+    "status": "completed",
+    "background": false,
+    "error": null,
+    "output": [
+     {
+      "type": "message",
+      "role": "assistant",
+      "content": [
+       {
+        "type": "output_text",
+        "text": "\n![image](data:image/jpeg;base64,AAAA)\nand\n![image](data:image/webp;base64,BBBB)\n",
+        "annotations": []
+       }
+      ]
+     }
+    ],
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "total_tokens": 0
+    }
+   }
+  },
+  {
+   "name": "two images around text",
+   "client": "claude",
+   "body": {
+    "response": {
+     "candidates": [
+      {
+       "content": {
+        "role": "model",
+        "parts": [
+         {
+          "inlineData": {
+           "mimeType": "image/jpeg",
+           "data": "AAAA"
+          }
+         },
+         {
+          "text": "and"
+         },
+         {
+          "inlineData": {
+           "mimeType": "image/webp",
+           "data": "BBBB"
+          }
+         }
+        ]
+       },
+       "finishReason": "STOP"
+      }
+     ],
+     "responseId": "r3"
+    }
+   },
+   "sent": {
+    "id": "chatcmpl-r3",
+    "object": "chat.completion",
+    "created": 1793084048,
+    "model": "gemini",
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": "\n![image](data:image/jpeg;base64,AAAA)\nand\n![image](data:image/webp;base64,BBBB)\n"
+      },
+      "finish_reason": "stop"
+     }
+    ]
+   }
+  },
+  {
+   "name": "empty image data skipped",
+   "client": "openai",
+   "body": {
+    "response": {
+     "candidates": [
+      {
+       "content": {
+        "role": "model",
+        "parts": [
+         {
+          "text": "x"
+         },
+         {
+          "inlineData": {
+           "mimeType": "image/png",
+           "data": ""
+          }
+         }
+        ]
+       },
+       "finishReason": "STOP"
+      }
+     ],
+     "responseId": "r4"
+    }
+   },
+   "sent": {
+    "id": "chatcmpl-r4",
+    "object": "chat.completion",
+    "created": 1793084048,
+    "model": "gemini",
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": "x"
+      },
+      "finish_reason": "stop"
+     }
+    ]
+   }
+  },
+  {
+   "name": "empty image data skipped",
+   "client": "openai-responses",
+   "body": {
+    "response": {
+     "candidates": [
+      {
+       "content": {
+        "role": "model",
+        "parts": [
+         {
+          "text": "x"
+         },
+         {
+          "inlineData": {
+           "mimeType": "image/png",
+           "data": ""
+          }
+         }
+        ]
+       },
+       "finishReason": "STOP"
+      }
+     ],
+     "responseId": "r4"
+    }
+   },
+   "sent": {
+    "id": "resp_r4",
+    "object": "response",
+    "created_at": 1793084048,
+    "model": "gemini",
+    "status": "completed",
+    "background": false,
+    "error": null,
+    "output": [
+     {
+      "type": "message",
+      "role": "assistant",
+      "content": [
+       {
+        "type": "output_text",
+        "text": "x",
+        "annotations": []
+       }
+      ]
+     }
+    ],
+    "usage": {
+     "input_tokens": 0,
+     "output_tokens": 0,
+     "total_tokens": 0
+    }
+   }
+  },
+  {
+   "name": "empty image data skipped",
+   "client": "claude",
+   "body": {
+    "response": {
+     "candidates": [
+      {
+       "content": {
+        "role": "model",
+        "parts": [
+         {
+          "text": "x"
+         },
+         {
+          "inlineData": {
+           "mimeType": "image/png",
+           "data": ""
+          }
+         }
+        ]
+       },
+       "finishReason": "STOP"
+      }
+     ],
+     "responseId": "r4"
+    }
+   },
+   "sent": {
+    "id": "chatcmpl-r4",
+    "object": "chat.completion",
+    "created": 1793084048,
+    "model": "gemini",
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": "x"
+      },
+      "finish_reason": "stop"
+     }
+    ]
+   }
+  }
  ]
 }

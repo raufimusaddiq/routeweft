@@ -5,14 +5,16 @@
 //
 // It evaluates the pin's own executors/antigravity.js (isImageModel,
 // parseImageConfig, buildUrl, transformRequest and buildIdeRequestId) and the
-// image test of handlers/chatCore.js, read with `git show` at the pin. The clock
+// image test of handlers/chatCore.js, and the buffered answer path an image
+// model always takes (handlers/chatCore/nonStreamingHandler.js
+// translateNonStreamingResponse), read with `git show` at the pin. The clock
 // and the session are fixed; nothing is sent and no credential is used. The Go
 // tests read the file this writes; no test regenerates it.
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { source, pin } from './oracle.mjs';
+import { source, pin, load } from './oracle.mjs';
 
 const NOW = 1_700_000_000_000; // Tue, 14 Nov 2023 22:13:20 GMT
 const SESSION = 'synthetic-session';
@@ -104,5 +106,31 @@ const ids = ['gemini-3.1-flash-image', 'gemini-3.1-flash-image-1024x768'].map(mo
   return { model, upstreamModel: sent.model, session: sent.request.sessionId, turns: sent.request.contents.length, requestId: sent.requestId };
 });
 
-writeFileSync(out, JSON.stringify({ pin, now: NOW, models, transforms, ids }, null, 1) + '\n');
-console.log(`wrote ${models.length} models, ${transforms.length} transforms, ${ids.length} request ids`);
+// The answer: chatCore.js:149-154 makes every image-model call buffered, so
+// translateNonStreamingResponse decides what each client format receives.
+const { FORMATS } = await load('open-sse/translator/formats.js', {});
+const { ROLE } = await load('open-sse/translator/schema/roles.js', {});
+const { RESPONSES_ITEM } = await load('open-sse/translator/schema/blocks.js', {});
+const nonStreaming = await load('open-sse/handlers/chatCore/nonStreamingHandler.js', {
+  FORMATS, ROLE, RESPONSES_ITEM, needsTranslation: () => true, openAICompletionToClaudeMessage: body => body, ollamaBodyToOpenAI: body => body,
+  addBufferToUsage: usage => usage, filterUsageForFormat: usage => usage, createErrorResult() {}, upstreamResponseHeaders: () => ({}), HTTP_STATUS: {},
+  parseSSEToOpenAIResponse() {}, unwrapClineEnvelope: body => body, buildRequestDetail() {}, extractRequestConfig() {}, extractUsageFromResponse() {},
+  saveUsageStats() {}, formatDoneLine() {}, appendRequestLog() {}, saveRequestDetail() {}, decloakToolNames: body => body, restoreToolNames: body => body,
+  rewriteResponsesCustomToolOutput() {}, PROVIDERS: {},
+});
+const answerBodies = {
+  'text and image': { response: { candidates: [{ content: { role: 'model', parts: [{ text: 'a cat' }, { inlineData: { mimeType: 'image/png', data: 'QUJD' } }] }, finishReason: 'STOP' }],
+    usageMetadata: { promptTokenCount: 7, candidatesTokenCount: 1290, totalTokenCount: 1297 }, responseId: 'r1', modelVersion: 'gemini-3.1-flash-image' } },
+  'image only, no mime type': { response: { candidates: [{ content: { role: 'model', parts: [{ inline_data: { data: 'QUJD' } }] }, finishReason: 'STOP' }], responseId: 'r2' } },
+  'two images around text': { response: { candidates: [{ content: { role: 'model', parts: [{ inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }, { text: 'and' }, { inlineData: { mimeType: 'image/webp', data: 'BBBB' } }] }, finishReason: 'STOP' }], responseId: 'r3' } },
+  'empty image data skipped': { response: { candidates: [{ content: { role: 'model', parts: [{ text: 'x' }, { inlineData: { mimeType: 'image/png', data: '' } }] }, finishReason: 'STOP' }], responseId: 'r4' } },
+};
+const answers = [];
+for (const [name, body] of Object.entries(answerBodies)) {
+  for (const client of [FORMATS.OPENAI, FORMATS.OPENAI_RESPONSES, FORMATS.CLAUDE]) {
+    answers.push({ name, client, body, sent: nonStreaming.translateNonStreamingResponse(structuredClone(body), FORMATS.ANTIGRAVITY, client) });
+  }
+}
+
+writeFileSync(out, JSON.stringify({ pin, now: NOW, models, transforms, ids, answers }, null, 1) + '\n');
+console.log(`wrote ${models.length} models, ${transforms.length} transforms, ${ids.length} request ids, ${answers.length} answers`);

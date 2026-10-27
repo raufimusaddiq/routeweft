@@ -13,7 +13,8 @@ import (
 
 // An Antigravity model whose name says image is served by the image_gen request
 // (executors/antigravity.js:58-90,144-189): a Chat request whose answer carries
-// the picture as an image content block. It is the same Chat route as any other
+// the picture in its text, as a markdown data-URI image (ResponseOptions
+// ImagesAsText, nonStreamingHandler.js:218-223). It is the same Chat route as any other
 // model, so it is no standalone media surface (PRD 4.2, BDR-016; PARITY 6.26).
 //
 // The pin sends the image request text only, with fixed sampling, and drops the

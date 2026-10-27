@@ -33,7 +33,8 @@ scripted network, clock and timers (a wait moves the clock), the IDE request id,
 
 `compat/parity/generate-antigravity-image.mjs` evaluates the pinned `antigravity.js` image path
 (`isImageModel`, `parseImageConfig`, `buildUrl`, `transformRequest`, `buildIdeRequestId`) and the
-image test of `chatCore.js`, with the clock and session fixed, and writes
+image test of `chatCore.js` and the buffered answer path (`translateNonStreamingResponse`) for
+Chat, Responses and Messages clients, with the clock and session fixed, and writes
 `internal/protocol/gemini/testdata/antigravity_image_pin.json` (PARITY 6.26). It needs `ORACLE_DIR`.
 
 CI runs this as the `parity` PR job, alongside existing Go/UI/container jobs.

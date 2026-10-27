@@ -110,8 +110,10 @@ func geminiTranslation(wire string, chat map[string]any, model, scope, project s
 	wrapStream func(streamFunc) streamFunc) (ChatTranslation, error) {
 	// An Antigravity image model is called non-streaming whatever the client asked
 	// (executors/antigravity.js:121-123, chatCore.js:149-154); a streaming client is
-	// answered from that one body (PARITY 6.26).
-	answerOnce := stream && wire == geminiwire.AntigravityProtocol && geminiwire.IsAntigravityImageModel(model)
+	// answered from that one body, and the picture is in the text, as the pin's
+	// buffered path writes it (PARITY 6.26).
+	image := wire == geminiwire.AntigravityProtocol && geminiwire.IsAntigravityImageModel(model)
+	answerOnce := stream && image
 	endpoint, err := geminiEndpoint(wire, model, stream && !answerOnce)
 	if err != nil {
 		return ChatTranslation{}, err
@@ -131,7 +133,7 @@ func geminiTranslation(wire string, chat map[string]any, model, scope, project s
 	if err != nil {
 		return ChatTranslation{}, err
 	}
-	options := geminiwire.ResponseOptions{Model: model, Names: names, Signatures: geminiSignatures, Scope: scope, Wire: wire}
+	options := geminiwire.ResponseOptions{Model: model, Names: names, Signatures: geminiSignatures, Scope: scope, Wire: wire, ImagesAsText: image}
 	response := func(body []byte) ([]byte, error) { return geminiwire.GeminiResponseToChat(body, options) }
 	streamer := func(ctx context.Context, src io.Reader, dst io.Writer) error {
 		if answerOnce {
@@ -145,7 +147,7 @@ func geminiTranslation(wire string, chat map[string]any, model, scope, project s
 	if wrapStream != nil {
 		streamer = wrapStream(streamer)
 	}
-	return ChatTranslation{Endpoint: endpoint, Body: body, Response: response, Stream: streamer}, nil
+	return ChatTranslation{Endpoint: endpoint, Body: body, Response: response, Stream: streamer, WholeAnswer: answerOnce}, nil
 }
 
 // takesProviderHeaders reports the translated targets whose credential and
