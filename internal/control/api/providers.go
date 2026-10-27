@@ -579,9 +579,20 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 			endpoint = "messages"
 		}
 	}
+	// The credential is loaded first: a target can depend on it, as serving's
+	// does (Vertex's project comes from a service account or ADC JSON, and a
+	// partner raw key's is probed for), so a probe resolves what a request would.
+	credential, err := h.probeCredential(ctx, connection)
+	if err != nil {
+		result.Error = "provider credentials are unavailable"
+		return result
+	}
 	// Probe the first serving target through the shared URL rules.
 	// Probes do not exercise serving's response-driven Kiro surface fallback.
 	route := probeRef(node, connection, spec, transportName, modelID, "")
+	if connection.AuthKind == credentials.AuthAPIKey || connection.AuthKind == credentials.AuthOAuth {
+		route.APIToken = credential
+	}
 	target, err := wire.ResolveTarget(route, nativeEndpointPath(route.BaseURL, transportName, endpoint), 0)
 	if err != nil {
 		var refused *wire.TargetError
@@ -616,11 +627,6 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "text/event-stream, application/x-ndjson, application/json")
-	credential, err := h.probeCredential(ctx, connection)
-	if err != nil {
-		result.Error = "provider credentials are unavailable"
-		return result
-	}
 	switch connection.AuthKind {
 	case credentials.AuthNone:
 		// A provider with no account still has the headers serving sends (OpenCode
@@ -631,7 +637,6 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	case credentials.AuthCookie:
 		request.Header.Set("Cookie", credential)
 	case credentials.AuthAPIKey, credentials.AuthOAuth:
-		route.APIToken = credential
 		for name, values := range modelWireHeaders(route) {
 			request.Header[name] = values
 		}
