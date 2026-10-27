@@ -2124,11 +2124,18 @@ Transitions, after the reference (`testUtils.js:892-899`,
 - `POST /admin/v1/connections/{id}/test` and each account of
   `POST /admin/v1/providers/test-batch` record `active` (clearing the error)
   or `failed` with the error, the time and the listed model count. A canceled
-  test and a disabled connection record nothing. The error is the probe's
-  bounded text with every value of the connection's credential (stored and as
-  the registry currently holds it) of eight or more characters replaced by
-  `[redacted]`, in both the answer and the stored row; unsaved node validation
-  applies the same redaction.
+  test and a disabled connection record nothing. A result is recorded only
+  against the `credential_revision` read with the credential it tested: every
+  save that writes a new secret increments it (a refresh rotation does not), so
+  a check that started before a relink and ends after it is refused and the
+  replacement keeps its own status. The error is the probe's bounded text with
+  every credential value of the connection (stored and as the registry
+  currently holds it), whatever its length, replaced by `[redacted]`, in both
+  the answer and the stored row: the access, refresh and ID tokens, the cookie,
+  and provider-data values under credential keys (the provider's named
+  credential, keys the log redaction treats as secret, proxy URLs). Provider
+  metadata such as project, region, account ids and plan is not redacted.
+  Unsaved node validation applies the same redaction.
 - A save that fails (invalid account id, unknown proxy pool, store error)
   leaves the stored credential, its runtime registration and its lifecycle
   unchanged. Deleting the connection deletes its lifecycle with the row.

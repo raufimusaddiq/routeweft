@@ -64,6 +64,11 @@ type Connection struct {
 	Priority    int
 	ProxyPoolID string
 	AccountID   string
+	// CredentialRevision is how many times the stored credential was replaced
+	// (v13), read in the same row as Secret. A validation records its result
+	// only against the revision it tested (RecordValidation). It is not
+	// configuration: a save ignores it and the store keeps the count.
+	CredentialRevision int64
 }
 
 // Secret is one decryptable credential payload. Fields are optional per auth
@@ -269,7 +274,7 @@ func (s *Store) PutConnection(ctx context.Context, connection Connection) (Conne
 		expiry = expiryColumn(connection.Secret)
 	}
 	const upsert = `INSERT INTO provider_connections(id,node_id,name,auth_kind,identity,secret_blob,enabled,priority,proxy_pool_id,account_id,credential_expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_kind=excluded.auth_kind,identity=excluded.identity,secret_blob=COALESCE(excluded.secret_blob,provider_connections.secret_blob),enabled=excluded.enabled,priority=excluded.priority,proxy_pool_id=excluded.proxy_pool_id,account_id=excluded.account_id,credential_expires_at=CASE WHEN excluded.secret_blob IS NULL THEN provider_connections.credential_expires_at ELSE excluded.credential_expires_at END,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_kind=excluded.auth_kind,identity=excluded.identity,secret_blob=COALESCE(excluded.secret_blob,provider_connections.secret_blob),enabled=excluded.enabled,priority=excluded.priority,proxy_pool_id=excluded.proxy_pool_id,account_id=excluded.account_id,credential_expires_at=CASE WHEN excluded.secret_blob IS NULL THEN provider_connections.credential_expires_at ELSE excluded.credential_expires_at END,credential_revision=CASE WHEN excluded.secret_blob IS NULL THEN provider_connections.credential_revision ELSE provider_connections.credential_revision+1 END,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 	change := func(c *Configuration) error {
 		metadata := connection
 		metadata.Secret = Secret{}
@@ -336,7 +341,7 @@ func (s *Store) RotateSecret(ctx context.Context, connectionID string, secret Se
 
 // GetConnection returns one connection with its decrypted secret.
 func (s *Store) GetConnection(ctx context.Context, id string) (Connection, error) {
-	const query = "SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,COALESCE(c.identity,''),COALESCE(c.secret_blob,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.account_id FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id WHERE c.id=?"
+	const query = "SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,COALESCE(c.identity,''),COALESCE(c.secret_blob,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.account_id,c.credential_revision FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id WHERE c.id=?"
 	row := s.db.QueryRowContext(ctx, query, id)
 	connection, err := s.scanConnection(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -348,7 +353,7 @@ func (s *Store) GetConnection(ctx context.Context, id string) (Connection, error
 // ListConnections returns a provider's connections in routing order: priority
 // ascending, then name, so selection is deterministic across restarts.
 func (s *Store) ListConnections(ctx context.Context, providerID string) ([]Connection, error) {
-	const query = `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,COALESCE(c.identity,''),COALESCE(c.secret_blob,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.account_id
+	const query = `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,COALESCE(c.identity,''),COALESCE(c.secret_blob,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.account_id,c.credential_revision
 FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id
 WHERE n.provider_id=? ORDER BY c.priority,c.name,c.id`
 	rows, err := s.db.QueryContext(ctx, query, providerID)
@@ -515,7 +520,7 @@ func (s *Store) scanConnection(scan func(...any) error) (Connection, error) {
 	var connection Connection
 	var blob string
 	var enabled int
-	if err := scan(&connection.ID, &connection.NodeID, &connection.ProviderID, &connection.Name, &connection.AuthKind, &connection.Identity, &blob, &enabled, &connection.Priority, &connection.ProxyPoolID, &connection.AccountID); err != nil {
+	if err := scan(&connection.ID, &connection.NodeID, &connection.ProviderID, &connection.Name, &connection.AuthKind, &connection.Identity, &blob, &enabled, &connection.Priority, &connection.ProxyPoolID, &connection.AccountID, &connection.CredentialRevision); err != nil {
 		return Connection{}, err
 	}
 	connection.Enabled = enabled != 0

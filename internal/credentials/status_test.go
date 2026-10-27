@@ -30,14 +30,14 @@ func TestValidationStatusLifecycle(t *testing.T) {
 		t.Fatalf("new: %+v err=%v", status, err)
 	}
 	at := time.Date(2026, 10, 27, 8, 0, 0, 0, time.UTC)
-	if err := store.RecordValidation(ctx, connection.ID, Validation{Error: "provider rejected credentials", At: at}); err != nil {
+	if err := store.RecordValidation(ctx, connection.ID, 0, Validation{Error: "provider rejected credentials", At: at}); err != nil {
 		t.Fatal(err)
 	}
 	status, _ = store.GetConnectionStatus(ctx, connection.ID)
 	if status.TestStatus != StatusFailed || status.LastError != "provider rejected credentials" || status.LastErrorAt != "2026-10-27T08:00:00.000Z" || status.LastTestedAt != status.LastErrorAt {
 		t.Fatalf("failed: %+v", status)
 	}
-	if err := store.RecordValidation(ctx, connection.ID, Validation{OK: true, ModelsAvailable: 3, At: at.Add(time.Minute)}); err != nil {
+	if err := store.RecordValidation(ctx, connection.ID, 0, Validation{OK: true, ModelsAvailable: 3, At: at.Add(time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
 	status, _ = store.GetConnectionStatus(ctx, connection.ID)
@@ -58,7 +58,7 @@ func TestValidationStatusLifecycle(t *testing.T) {
 	if status.TestStatus != StatusUntested || status.AuthOrigin != OriginManual || status.LastTestedAt != "" || status.ModelsAvailable != nil {
 		t.Fatalf("replaced: %+v", status)
 	}
-	if err := store.RecordValidation(ctx, connection.ID, Validation{Error: "boom"}); err != nil {
+	if err := store.RecordValidation(ctx, connection.ID, 0, Validation{Error: "boom"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.MarkCredentialAccepted(ctx, connection.ID, OriginOAuth); err != nil {
@@ -69,7 +69,7 @@ func TestValidationStatusLifecycle(t *testing.T) {
 		t.Fatalf("accepted: %+v", status)
 	}
 	for _, write := range []error{
-		store.RecordValidation(ctx, "missing", Validation{OK: true}),
+		store.RecordValidation(ctx, "missing", 0, Validation{OK: true}),
 		store.MarkCredentialAccepted(ctx, "missing", OriginOAuth),
 		store.MarkCredentialUntested(ctx, "missing", OriginManual),
 	} {
@@ -213,5 +213,60 @@ func TestConcurrentRefreshRotationsSurviveRestart(t *testing.T) {
 		if err != nil || status.ExpiresAt != statusTime(expiry) {
 			t.Fatalf("account %d expiry after restart: %+v err=%v", i, status, err)
 		}
+	}
+}
+
+// A test reads the credential with its revision; a relink that lands before the
+// test finishes makes the store refuse the old result, so the replacement keeps
+// its own status. A metadata edit or a refresh rotation is the same credential.
+func TestValidationIsRefusedForAReplacedCredential(t *testing.T) {
+	ctx := context.Background()
+	store, _ := testStore(t)
+	node := seedNode(t, store, "claude")
+	connection, err := store.PutConnection(ctx, Connection{NodeID: node.ID, Name: "primary", AuthKind: AuthAPIKey, Identity: "acct", Enabled: true, Secret: Secret{AccessToken: "fixture-old"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := func() int64 {
+		t.Helper()
+		stored, err := store.GetConnection(ctx, connection.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stored.CredentialRevision
+	}
+	tested := revision()
+	// Neither a metadata edit nor a refresh rotation replaces the credential.
+	metadata := connection
+	metadata.Secret, metadata.Name = Secret{}, "renamed"
+	if _, err := store.PutConnection(ctx, metadata); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RotateSecret(ctx, connection.ID, Secret{AccessToken: "fixture-old-rotated"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := revision(); got != tested {
+		t.Fatalf("revision moved without a replacement: %d -> %d", tested, got)
+	}
+	// The relink.
+	replaced := connection
+	replaced.Secret = Secret{AccessToken: "fixture-new"}
+	if _, err := store.PutConnection(ctx, replaced); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkCredentialUntested(ctx, connection.ID, OriginManual); err != nil {
+		t.Fatal(err)
+	}
+	for _, result := range []Validation{{OK: true, ModelsAvailable: 4}, {Error: "provider rejected credentials"}} {
+		if err := store.RecordValidation(ctx, connection.ID, tested, result); !errors.Is(err, ErrCredentialChanged) {
+			t.Fatalf("stale result %+v: %v", result, err)
+		}
+	}
+	status, err := store.GetConnectionStatus(ctx, connection.ID)
+	if err != nil || status.TestStatus != StatusUntested || status.LastTestedAt != "" || status.LastError != "" || status.ModelsAvailable != nil {
+		t.Fatalf("replacement status overwritten: %+v err=%v", status, err)
+	}
+	if err := store.RecordValidation(ctx, connection.ID, revision(), Validation{OK: true}); err != nil {
+		t.Fatalf("current revision: %v", err)
 	}
 }

@@ -6,14 +6,11 @@ import (
 	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/telemetry"
 )
 
 // redactedCredential replaces credential material an upstream echoed back.
 const redactedCredential = "[redacted]"
-
-// minRedactLength keeps short provider labels (a region, a plan) from being
-// treated as credential material inside an error text.
-const minRedactLength = 8
 
 // recordValidation persists a connection test's outcome (#220) after removing
 // any of the connection's own credential material from its error, so neither the
@@ -25,7 +22,9 @@ func (h *Handler) recordValidation(ctx context.Context, c credentials.Connection
 	if h.opts.Credentials == nil || c.ID == "" || !c.Enabled || result.Classification == "canceled" {
 		return
 	}
-	_ = h.opts.Credentials.RecordValidation(context.WithoutCancel(ctx), c.ID, credentials.Validation{OK: result.OK, Error: result.Error, ModelsAvailable: result.ModelsAvailable})
+	// c was read with its credential revision; a relink since then makes the
+	// store refuse this result (ErrCredentialChanged).
+	_ = h.opts.Credentials.RecordValidation(context.WithoutCancel(ctx), c.ID, c.CredentialRevision, credentials.Validation{OK: result.OK, Error: result.Error, ModelsAvailable: result.ModelsAvailable})
 }
 
 // markOnboarded records an onboarded credential's status with its origin. One a
@@ -65,30 +64,39 @@ func (h *Handler) redactConnectionSecret(ctx context.Context, c credentials.Conn
 	if text == "" {
 		return text
 	}
-	values := secretValues(c.Secret)
+	spec, _ := h.providerSpec(c.ProviderID)
+	values := secretValues(c.Secret, spec.CredentialName)
 	if h.opts.CredentialRegistry != nil && c.ID != "" {
 		if current, err := h.opts.CredentialRegistry.Secret(ctx, c.ID); err == nil {
-			values = append(values, secretValues(current)...)
+			values = append(values, secretValues(current, spec.CredentialName)...)
 		}
 	}
 	return redactValues(text, values)
 }
 
-func secretValues(secret credentials.Secret) []string {
+// secretValues lists every credential value of a secret, whatever its length:
+// the access, refresh and ID tokens, the cookie, and each provider-data value
+// that is a credential, being the provider's named credential, under a key the
+// log redaction treats as one (apiKey, copilotToken, mimoPassToken, wireToken),
+// or a proxy URL that may carry a password. Provider metadata (project, region,
+// account and user ids, plan, base URL) is not a credential and is left in the
+// text.
+func secretValues(secret credentials.Secret, credentialName string) []string {
 	values := []string{secret.AccessToken, secret.RefreshToken, secret.IDToken, secret.Cookie}
-	for _, value := range secret.ProviderData {
-		values = append(values, value)
+	for key, value := range secret.ProviderData {
+		if key == credentialName || telemetry.SensitiveKey(key) || strings.Contains(strings.ToLower(key), "proxy") {
+			values = append(values, value)
+		}
 	}
 	return values
 }
 
-// redactValues replaces each value of at least minRedactLength, longest first so
-// a token that contains another is removed whole.
+// redactValues replaces each non-blank value, longest first so a token that
+// contains another is removed whole. No length is too short to be a secret.
 func redactValues(text string, values []string) string {
 	sort.Slice(values, func(i, j int) bool { return len(values[i]) > len(values[j]) })
 	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if len(value) >= minRedactLength {
+		if value = strings.TrimSpace(value); value != "" {
 			text = strings.ReplaceAll(text, value, redactedCredential)
 		}
 	}

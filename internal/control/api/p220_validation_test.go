@@ -224,11 +224,19 @@ func TestRecordValidationRedactsEchoedCredential(t *testing.T) {
 	if want := "denied [redacted] refresh [redacted] copilot [redacted] region us"; result.Error != want {
 		t.Fatalf("redacted=%q, want %q", result.Error, want)
 	}
+	// No credential is too short to redact; metadata is not a credential.
+	short := c
+	short.Secret = credentials.Secret{AccessToken: "k7", Cookie: "c=1x", ProviderData: map[string]string{"apiKey": "ak", "mimoPassToken": "pt", "projectId": "proj-9"}}
+	shortResult := validationResult{Error: "bad key k7 cookie c=1x api ak pass pt project proj-9"}
+	h.recordValidation(context.Background(), short, &shortResult)
+	if want := "bad key [redacted] cookie [redacted] api [redacted] pass [redacted] project proj-9"; shortResult.Error != want {
+		t.Fatalf("short redacted=%q, want %q", shortResult.Error, want)
+	}
 	status, err := creds.GetConnectionStatus(context.Background(), c.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.TestStatus != credentials.StatusFailed || status.LastError != result.Error {
+	if status.TestStatus != credentials.StatusFailed || status.LastError != shortResult.Error {
 		t.Fatalf("stored: %+v", status)
 	}
 }
@@ -242,7 +250,7 @@ func TestOnboardedCredentialIsActiveWithItsOrigin(t *testing.T) {
 		t.Fatalf("import: %d %v", status, body)
 	}
 	id := body["id"].(string)
-	if err := env.creds.RecordValidation(context.Background(), id, credentials.Validation{Error: "revoked"}); err != nil {
+	if err := env.creds.RecordValidation(context.Background(), id, connectionByID(t, env.creds, id).CredentialRevision, credentials.Validation{Error: "revoked"}); err != nil {
 		t.Fatal(err)
 	}
 	status, body = env.importAs(t, "grok-cli", "grok@example.invalid", `{"access_token":"tok-g2","email":"grok@example.invalid"}`, nil)
@@ -287,7 +295,7 @@ func TestXiaomiSoftValidationKeepsTheKeyUntested(t *testing.T) {
 	if status, body = env.importAs(t, "xiaomi-mimo", "7@xiaomi", xiaomi("sk-fixture-soft-2"), nil); status != http.StatusOK || body["outcome"] != onboardedUpdated || body["testStatus"] != credentials.StatusActive {
 		t.Fatalf("validated update: %d %v", status, body)
 	}
-	if err := env.creds.RecordValidation(context.Background(), id, credentials.Validation{Error: "provider rejected credentials"}); err != nil {
+	if err := env.creds.RecordValidation(context.Background(), id, connectionByID(t, env.creds, id).CredentialRevision, credentials.Validation{Error: "provider rejected credentials"}); err != nil {
 		t.Fatal(err)
 	}
 	env.exchange.status = http.StatusUnauthorized
@@ -297,5 +305,63 @@ func TestXiaomiSoftValidationKeepsTheKeyUntested(t *testing.T) {
 	view := listedConnection(t, env.mux, env.cookie, id, "sk-fixture-soft")
 	if view.TestStatus != credentials.StatusFailed || view.LastError != "provider rejected credentials" {
 		t.Fatalf("kept status: %+v", view)
+	}
+}
+
+// A check that started before a relink and finishes after it never marks the
+// replacement credential active or failed from the old credential's result.
+func TestCheckStartedBeforeRelinkDoesNotRecordOverIt(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var rejectOld atomic.Bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if r.URL.Path == "/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"relink-a"}]}`)
+			return
+		}
+		started <- struct{}{}
+		<-release
+		if rejectOld.Load() {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(w, `{"error":{"message":"invalid key"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"OK"}}]}`)
+	}))
+	defer upstream.Close()
+	_, mux, store, creds, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	c := workflowAccount(t, creds, "race", upstream.URL, "race@example.invalid")
+	if err := creds.RotateSecret(context.Background(), c.ID, credentials.Secret{AccessToken: relinkKeyOne}); err != nil {
+		t.Fatal(err)
+	}
+	for _, outcome := range []struct {
+		name   string
+		reject bool
+		code   int
+	}{{"pass", false, http.StatusOK}, {"fail", true, http.StatusBadGateway}} {
+		rejectOld.Store(outcome.reject)
+		done := make(chan int, 1)
+		go func() {
+			done <- doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"relink-a"}`).Code
+		}()
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("check did not reach the upstream")
+		}
+		relink := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"accessToken":"`+relinkKeyTwo+outcome.name+`"}}`)
+		if relink.Code != http.StatusOK {
+			t.Fatalf("%s relink: %d %s", outcome.name, relink.Code, relink.Body.String())
+		}
+		release <- struct{}{}
+		if code := <-done; code != outcome.code {
+			t.Fatalf("%s check: %d", outcome.name, code)
+		}
+		view := listedConnection(t, mux, cookie, c.ID, relinkKeyOne, relinkKeyTwo)
+		if view.TestStatus != credentials.StatusUntested || view.LastTestedAt != "" || view.LastError != "" || view.ModelsAvailable != nil {
+			t.Fatalf("%s: old check recorded over the relinked credential: %+v", outcome.name, view)
+		}
 	}
 }

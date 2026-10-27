@@ -38,10 +38,17 @@ type Validation struct {
 	At              time.Time
 }
 
+// ErrCredentialChanged reports a validation result for a credential that has
+// since been replaced; it is not recorded.
+var ErrCredentialChanged = errors.New("connection credential changed since it was tested")
+
 // RecordValidation persists one connection test's outcome, as the reference's
 // testSingleConnection does (testUtils.js:892-899): a pass is active and clears
-// the stored error, a failure is failed with its error and time.
-func (s *Store) RecordValidation(ctx context.Context, id string, v Validation) error {
+// the stored error, a failure is failed with its error and time. revision is
+// the CredentialRevision the test read with the credential it tested; if the
+// credential was replaced meanwhile (a relink), the result describes the old
+// one and is refused with ErrCredentialChanged, leaving the new one's status.
+func (s *Store) RecordValidation(ctx context.Context, id string, revision int64, v Validation) error {
 	at := v.At
 	if at.IsZero() {
 		at = s.now()
@@ -51,7 +58,14 @@ func (s *Store) RecordValidation(ctx context.Context, id string, v Validation) e
 	if !v.OK {
 		status, lastError, lastErrorAt = StatusFailed, strings.TrimSpace(v.Error), stamp
 	}
-	return requireAffected(s.db.ExecContext(ctx, "UPDATE provider_connections SET test_status=?,last_tested_at=?,last_error=?,last_error_at=?,models_available=? WHERE id=?", status, stamp, lastError, lastErrorAt, v.ModelsAvailable, id))
+	err := requireAffected(s.db.ExecContext(ctx, "UPDATE provider_connections SET test_status=?,last_tested_at=?,last_error=?,last_error_at=?,models_available=? WHERE id=? AND credential_revision=?", status, stamp, lastError, lastErrorAt, v.ModelsAvailable, id, revision))
+	if errors.Is(err, ErrNotFound) {
+		var exists int
+		if s.db.QueryRowContext(ctx, "SELECT 1 FROM provider_connections WHERE id=?", id).Scan(&exists) == nil {
+			return ErrCredentialChanged
+		}
+	}
+	return err
 }
 
 // MarkCredentialAccepted records a credential a provider just issued or accepted
