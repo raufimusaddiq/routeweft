@@ -995,6 +995,17 @@ mints a PKCE pair and a 256-bit state, and returns
 own endpoint (`/device`, below). The verifier and any flow-private state never
 leave the server.
 
+A provider may offer a browser sign-in beside its device flow (Kiro's Google and
+GitHub login beside its AWS SSO device code, #219): `/start` and `/callback`
+drive the browser sign-in, `/device` and `/poll` the device flow. Where a flow
+reads `meta.authMethod` it is a closed set (Kiro: `builder-id`/`idc` on
+`/device`, defaulting to `builder-id`; `google`/`github` on `/start`, no default),
+and any other value answers 400 `oauth_auth_method_invalid` before a provider is
+contacted, so a sign-in never falls back to a method the operator did not choose.
+A Reauthenticate (`connectionId`) uses the connection's own stored method and
+answers 400 `oauth_reauth_unsupported` for a connection that browser sign-in did
+not make.
+
 `POST /admin/v1/oauth/{provider}/device` (same body) begins a device
 authorization and returns `{state, flowType, userCode, verificationUrl,
 intervalSeconds, expiresAt}`. The provider's device handle stays server-side on
@@ -1133,7 +1144,10 @@ stores, `resolvesIdentity`, the `metaKeys` that mode alone reads (GitLab's PAT
 import reads `baseUrl`, not the OAuth application's client id and secret), a
 browser mode's `completion`, and `loopbackRedirect` when the provider registered
 a loopback callback (Codex `http://localhost:1455/auth/callback`, xAI
-`http://127.0.0.1:56121/callback`). The dashboard offers each method, and each
+`http://127.0.0.1:56121/callback`), and `variant` when a browser mode is fixed to
+one `authMethod` (Kiro lists `browser` twice, `google` and `github`). Connections
+report their non-secret `signInMethod` (the stored `authMethod`) so the dashboard
+offers Reauthenticate only where it can renew that method. The dashboard offers each method, and each
 manual credential mode the spec accepts, as its own choice showing only its own
 fields (#214).
 

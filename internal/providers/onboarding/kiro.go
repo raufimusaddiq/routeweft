@@ -92,7 +92,7 @@ func refreshKiroAWS(ctx context.Context, client HTTPClient, now func() time.Time
 	if document.ExpiresIn > 0 {
 		next.Expiry = now().Add(time.Duration(document.ExpiresIn) * time.Second)
 	}
-	next.ProviderData = kiroProfilePatch(current.ProviderData, document.ProfileARN)
+	next.ProviderData = kiroProfilePatch(ctx, client, current.ProviderData, document.AccessToken, document.ProfileARN)
 	return next, nil
 }
 
@@ -127,7 +127,7 @@ func refreshKiroSocial(ctx context.Context, client HTTPClient, now func() time.T
 		lifetime = time.Duration(document.ExpiresIn) * time.Second
 	}
 	next.Expiry = now().Add(lifetime)
-	next.ProviderData = kiroProfilePatch(current.ProviderData, document.ProfileARN)
+	next.ProviderData = kiroProfilePatch(ctx, client, current.ProviderData, document.AccessToken, document.ProfileARN)
 	return next, nil
 }
 
@@ -178,21 +178,158 @@ func refreshKiroExternalIdp(ctx context.Context, client HTTPClient, now func() t
 	return next, nil
 }
 
-// kiroProfilePatch is resolveKiroProfileArnPatch (:316-324) without its network
-// fallback: a profile ARN the refresh reports is recorded only when the connection
-// has none, and one already stored is never replaced. Everything else the
-// connection carries is returned untouched.
-func kiroProfilePatch(stored map[string]string, reported string) map[string]string {
-	reported = strings.TrimSpace(reported)
-	if reported == "" || stored["profileArn"] != "" {
+// kiroProfilePatch is resolveKiroProfileArnPatch (:316-324): a profile ARN is
+// recorded only when the connection has none, and one already stored is never
+// replaced. The ARN the refresh reports wins; without one the account's profiles
+// are listed, as the pin does. Everything else the connection carries is returned
+// untouched.
+func kiroProfilePatch(ctx context.Context, client HTTPClient, stored map[string]string, accessToken, reported string) map[string]string {
+	if stored["profileArn"] != "" {
+		return stored
+	}
+	arn := strings.TrimSpace(reported)
+	if arn == "" {
+		arn = kiroProfileARN(ctx, client, accessToken)
+	}
+	if arn == "" {
 		return stored
 	}
 	patched := make(map[string]string, len(stored)+1)
 	for key, value := range stored {
 		patched[key] = value
 	}
-	patched["profileArn"] = reported
+	patched["profileArn"] = arn
 	return patched
+}
+
+// kiroProfilesEndpoint is where the pin lists an account's CodeWhisperer
+// profiles when a token arrives without one (providerHelpers.js:53-71).
+const kiroProfilesEndpoint = "https://codewhisperer.us-east-1.amazonaws.com/ListAvailableProfiles"
+
+// kiroProfileARN mirrors fetchKiroProfileArn (providerHelpers.js:53-71): the first
+// profile with a non-blank ARN, or "" on any failure. It is best effort, as the
+// pin's is: a sign-in or refresh never fails because the lookup did.
+func kiroProfileARN(ctx context.Context, client HTTPClient, accessToken string) string {
+	if strings.TrimSpace(accessToken) == "" {
+		return ""
+	}
+	var document struct {
+		Profiles []struct {
+			ARN string `json:"arn"`
+		} `json:"profiles"`
+	}
+	status, err := postJSONTargetWithHeaders(ctx, client, kiroProfilesEndpoint,
+		map[string]string{"Authorization": "Bearer " + accessToken}, `{"maxResults":10}`, &document)
+	if err != nil || status < 200 || status >= 300 {
+		return ""
+	}
+	for _, profile := range document.Profiles {
+		if arn := strings.TrimSpace(profile.ARN); arn != "" {
+			return arn
+		}
+	}
+	return ""
+}
+
+// kiroSocialRedirect is the only redirect Kiro's auth service accepts for a
+// social login: the Kiro IDE's own URL scheme (services/kiro.js:133-138,146).
+// No browser loads it, so the operator pastes the address back.
+const kiroSocialRedirect = "kiro://kiro.kiroAgent/authenticate-success"
+
+// kiroSocialIdPs maps the sign-in method to the idp the login page takes
+// (services/kiro.js:134) and the label the pin stores (social-exchange/route.js:50).
+var kiroSocialIdPs = map[string]struct{ idp, label string }{
+	"google": {idp: "Google", label: "Google"},
+	"github": {idp: "Github", label: "Github"},
+}
+
+// ErrKiroSocialMethod means a social sign-in was started or completed without
+// naming Google or GitHub. It is refused rather than defaulted, so the account
+// is never signed in with a provider the operator did not choose.
+var ErrKiroSocialMethod = errors.New("kiro social sign-in needs authMethod google or github")
+
+// kiroSocialFlow mirrors social-authorize/route.js and social-exchange/route.js:
+// a PKCE login on Kiro's own auth service for a Google or GitHub account, with the
+// kiro:// redirect pasted back. It is offered beside the AWS SSO device flow
+// (kiroFlow), selected by authMethod; the refresh is refreshKiroSocial.
+func kiroSocialFlow() Flow {
+	return Flow{
+		Provider: "kiro",
+		// authMethod is fixed per sign-in method (one for Google, one for GitHub)
+		// rather than typed, so it is declared but the dashboard does not render it.
+		MetaKeys:       []string{"authMethod"},
+		AuthMethods:    []string{"google", "github"},
+		RedirectSource: RedirectPinned,
+		Type:           FlowAuthorizationCodePKCE,
+		Completion:     CompletionRedirectURL,
+		// Signing the same account in again renews its row, as the pin's oauth
+		// duplicate rule does for every sign-in (connectionsRepo.js:228-283).
+		RenewsSameAccount: true,
+		Authorize: func(_ context.Context, p Params) (AuthRequest, error) {
+			social, ok := kiroSocialIdPs[p.Meta["authMethod"]]
+			if !ok {
+				return AuthRequest{}, ErrKiroSocialMethod
+			}
+			return pkceAuthorize(kiroAuthService+"/login", url.Values{
+				"idp":                   {social.idp},
+				"redirect_uri":          {kiroSocialRedirect},
+				"code_challenge":        {challengeFor(p.Verifier)},
+				"code_challenge_method": {"S256"},
+				"state":                 {p.State},
+				"prompt":                {"select_account"},
+			})
+		},
+		Exchange: func(ctx context.Context, p Params) (Result, error) {
+			method := p.Meta["authMethod"]
+			social, ok := kiroSocialIdPs[method]
+			if !ok {
+				return Result{}, ErrKiroSocialMethod
+			}
+			body, err := json.Marshal(map[string]string{
+				"code":          p.Input,
+				"code_verifier": p.Verifier,
+				"redirect_uri":  kiroSocialRedirect,
+			})
+			if err != nil {
+				return Result{}, err
+			}
+			var document struct {
+				AccessToken  string `json:"accessToken"`
+				RefreshToken string `json:"refreshToken"`
+				ExpiresIn    int    `json:"expiresIn"`
+				ProfileARN   string `json:"profileArn"`
+			}
+			status, err := postJSONTargetWithHeaders(ctx, p.Client, kiroAuthService+"/oauth/token", nil, string(body), &document)
+			if err != nil || status < 200 || status >= 300 {
+				return Result{}, fmt.Errorf("kiro social token exchange failed")
+			}
+			if document.AccessToken == "" {
+				return Result{}, fmt.Errorf("kiro social token exchange returned no token")
+			}
+			lifetime := kiroDefaultExpiry
+			if document.ExpiresIn > 0 {
+				lifetime = time.Duration(document.ExpiresIn) * time.Second
+			}
+			// The pin stores whatever ARN the exchange reports and resolves a missing
+			// one at the first refresh. Routeweft refuses to serve a Kiro connection
+			// without one (wire/kiro.go kiroTarget), so the same lookup runs here, so
+			// the new connection is usable before its first refresh.
+			providerData := kiroProfilePatch(ctx, p.Client, map[string]string{
+				"authMethod": method,
+				"provider":   social.label,
+			}, document.AccessToken, document.ProfileARN)
+			return Result{
+				AuthKind: credentials.AuthOAuth,
+				Identity: kiroEmail(document.AccessToken),
+				Secret: credentials.Secret{
+					AccessToken:  document.AccessToken,
+					RefreshToken: document.RefreshToken,
+					Expiry:       p.now().Add(lifetime),
+					ProviderData: providerData,
+				},
+			}, nil
+		},
+	}
 }
 
 // validateMicrosoftTokenEndpoint mirrors kiroExternalIdp.js:14-35.
@@ -276,7 +413,13 @@ func kiroTokenImport(ctx context.Context, p Params, document map[string]json.Raw
 		}
 		data = map[string]string{"clientId": clientID, "clientSecret": clientSecret, "region": region, "authMethod": "idc"}
 	}
-	rotated, err := refreshKiro(ctx, p.Client, p.now, credentials.Secret{RefreshToken: refresh}, data)
+	// A pasted profile ARN is the stored one, so the refresh does not look it up
+	// again; without one the refresh's own lookup (kiroProfilePatch) supplies it.
+	current := credentials.Secret{RefreshToken: refresh}
+	if pasted := jsonString(document, "profileArn"); pasted != "" {
+		current.ProviderData = map[string]string{"profileArn": pasted}
+	}
+	rotated, err := refreshKiro(ctx, p.Client, p.now, current, data)
 	if err != nil {
 		return Result{}, err
 	}

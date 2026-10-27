@@ -6,7 +6,7 @@ import { badRate, num, largest, outlier, pct, rate, share, topByRequests, type S
 import { connectionProxyText, type ConnectionProxy } from './connectionProxy'
 import { READINESS_LABEL, readinessNote, readinessStatus, type Readiness } from './readiness'
 import { attemptExpired, attemptStillOpen, cancelResult, connectMethods, phaseForError, type AttemptPhase, type Completion, type ConnectMethod, type SignInMethod, type SignInMode } from './signIn'
-import { bulkSummary, canReauthenticate, closeSignInWindow, duplicateNote, openSignInWindow, outcomeMessage, parseBulkInput, sendSignInWindow, signInURL, type BulkResponse, type SignInWindow } from './onboarding'
+import { bulkSummary, canReauthenticate, closeSignInWindow, duplicateNote, openSignInWindow, outcomeMessage, parseBulkInput, reauthMethod, sendSignInWindow, signInURL, type BulkResponse, type SignInWindow } from './onboarding'
 import { quotaLine, quotaQuery, type QuotaItem } from './quotaView'
 import { browserJourney, checkedNote, copilotNote, DEVICE_REQUEST_TIMEOUT_MS, deviceCopyItems, deviceJourney, devicePollDelay, devicePollingOver, identityPrompt, importJourney, projectNote, requestBound, validProjectId } from './journeys'
 
@@ -16,7 +16,7 @@ function ReadinessTag({ provider }: { provider: { readiness?: Readiness } }) {
 }
 type Provider = { id: string; transports: string[]; auth: string; authModes: string[]; defaultBaseURL?: string; modelCatalog: string; passthroughModels: boolean; staticModels?: string[]; reportsUsage: boolean; flowType?: string; signInModes?: SignInMode[]; metaKeys?: string[]; signInMethods?: SignInMethod[]; bulkImport?: boolean; configuredNodes: number; enabledAccounts: number; readiness?: Readiness }
 type Node = { id: string; kind: string; providerId: string; name: string; prefix?: string; baseUrl?: string; transports: string[] }
-type Connection = { id: string; nodeId: string; providerId: string; name: string; authKind: string; identity: string; enabled: boolean; priority: number; proxyPoolId?: string; connectionProxy?: ConnectionProxy; credentialConfigured: boolean; outcome?: string; plan?: string; project?: string; projectMissing?: boolean; copilotMissing?: boolean }
+type Connection = { id: string; nodeId: string; providerId: string; name: string; authKind: string; identity: string; enabled: boolean; priority: number; proxyPoolId?: string; connectionProxy?: ConnectionProxy; credentialConfigured: boolean; signInMethod?: string; outcome?: string; plan?: string; project?: string; projectMissing?: boolean; copilotMissing?: boolean }
 type Model = { providerId: string; id: string; name?: string; contextWindow?: number; capabilities: string[]; disabled: boolean; custom?: boolean }
 type Alias = { alias: string; providerId: string; modelId: string }
 type Pricing = { providerId: string; modelId: string; inputPerMTok?: number; outputPerMTok?: number; cacheReadPerMTok?: number; cacheWritePerMTok?: number }
@@ -440,7 +440,8 @@ export function Providers({ onUnauthorized }: Props) {
   // for that connection; its start button begins it (the sign-in window must open
   // in a click), after any provider fields the sign-in reads.
   function reauthenticate(connection: Connection) {
-    resetSecrets(); setOutcome(null); setMethodId('browser'); setAccountOpen(true)
+    const renew = reauthMethod(selectedProvider?.signInMethods, connection)
+    resetSecrets(); setOutcome(null); setMethodId(renew?.variant ? `browser-${renew.variant}` : 'browser'); setAccountOpen(true)
     setReauthTarget(connection)
   }
 
@@ -510,7 +511,9 @@ export function Providers({ onUnauthorized }: Props) {
     for (const [key, value] of Object.entries(metaInput)) {
       if (value.trim()) meta[key] = value.trim()
     }
-    return meta
+    // A variant method's own auth method (Kiro's google or github) is not an
+    // operator field and always wins over anything typed for another method.
+    return { ...meta, ...(method?.fixedMeta ?? {}) }
   }
 
   // Clears every credential-bearing field. Called on close and on successful save:

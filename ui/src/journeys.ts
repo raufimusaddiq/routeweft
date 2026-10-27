@@ -10,6 +10,7 @@ import type { Completion } from './signIn'
 // The part of a browser method the journey reads (signIn.ConnectMethod).
 export type JourneyMethod = {
   completion?: Completion
+  variant?: string
   loopbackRedirect?: string
   redirectUri?: string
   redirectUnconfigured?: boolean
@@ -138,6 +139,21 @@ export function browserJourney(provider: string, method: JourneyMethod, meta: Re
         before: before('The address Xiaomi returns carries the account’s key encrypted to a key this server made for this sign-in alone, so it can finish only this attempt.'),
         hint: `Sign in on Xiaomi MiMo. Your browser then returns to ${returnsTo(method, 'u=')}. Copy that full address and paste it below.`,
       }
+    case 'kiro': {
+      // Kiro's Google and GitHub sign-in (#219). Kiro's login page returns only to
+      // the Kiro IDE's own URL scheme, so the operator copies that address back.
+      const who = method.variant === 'github' ? 'GitHub' : 'Google'
+      return {
+        ...base,
+        before: before(
+          `Kiro signs you in with ${who} on Kiro’s own login page. Afterwards it sends your browser to kiro://kiro.kiroAgent/authenticate-success, the Kiro IDE’s own address: no page loads, and nothing on this server receives it.`,
+          'Kiro does not report which account signed in, so name it above. Signing in again with an account that is already connected renews that connection instead of adding a second one.',
+        ),
+        hint: `Sign in with ${who}. Your browser is then sent to kiro://kiro.kiroAgent/authenticate-success?code=…&state=…; if it offers to open Kiro, decline. Copy that full address and paste it below. If the address bar does not show it, open the browser’s developer tools (Network) before signing in and copy the authenticate-success address from there.`,
+        pasteLabel: 'Address from the browser',
+        masked: false,
+      }
+    }
     case 'zed': {
       const port = (meta.nativeAppPort ?? '').trim() || '58443'
       return {
@@ -238,7 +254,7 @@ export function deviceJourney(provider: string, meta: Record<string, string> = {
           idc
             ? 'IAM Identity Center: enter your organization’s AWS SSO start URL and the region its Identity Center runs in (us-east-1 when blank).'
             : 'AWS Builder ID: sign in with a personal Builder ID. For an organization’s IAM Identity Center, choose idc as the AWS SSO method and enter its start URL and region.',
-          'Kiro can also be connected by importing a token or an API key: choose that method instead.',
+          'A Google or GitHub account signs in with Sign in with Google or Sign in with GitHub instead. Kiro can also be connected by importing a token or an API key.',
         ),
         requiredMeta: idc ? ['startUrl'] : [],
       }

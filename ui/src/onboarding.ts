@@ -84,9 +84,20 @@ export function duplicateNote(providerId: string): string | null {
 // --- Reauthenticate ---------------------------------------------------------
 
 // A connection can be reauthenticated when the provider has a browser sign-in
-// and the connection holds an OAuth credential that sign-in would produce.
-export function canReauthenticate(methods: SignInMethod[] | undefined, connection: { authKind: string }): boolean {
-  return connection.authKind === 'oauth' && (methods ?? []).some(method => method.mode === 'browser' && method.authKind === 'oauth')
+// and the connection holds an OAuth credential that sign-in would produce. Where
+// the browser sign-ins are variants (Kiro's Google and GitHub), only a connection
+// one of them made qualifies: the server renews it with that variant and refuses
+// any other (a Kiro Builder ID connection), so no button is offered for it (#219).
+export function canReauthenticate(methods: SignInMethod[] | undefined, connection: { authKind: string; signInMethod?: string }): boolean {
+  return reauthMethod(methods, connection) !== undefined
+}
+
+// The browser method a Reauthenticate of this connection uses, if any.
+export function reauthMethod(methods: SignInMethod[] | undefined, connection: { authKind: string; signInMethod?: string }): SignInMethod | undefined {
+  if (connection.authKind !== 'oauth') return undefined
+  const browser = (methods ?? []).filter(method => method.mode === 'browser' && method.authKind === 'oauth')
+  if (!browser.some(method => method.variant)) return browser[0]
+  return browser.find(method => method.variant === connection.signInMethod)
 }
 
 // --- Bulk import ------------------------------------------------------------
