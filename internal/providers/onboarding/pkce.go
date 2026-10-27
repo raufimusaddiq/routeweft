@@ -333,6 +333,10 @@ func codexBulkAccount(item map[string]any) (BulkAccount, error) {
 func codexItemProviderData(given map[string]any) map[string]string {
 	data := map[string]string{}
 	for key, value := range given {
+		if typed, ok := typedProviderData(key, value); ok {
+			data[key] = typed
+			continue
+		}
 		switch value := value.(type) {
 		case nil:
 		case string:
@@ -344,6 +348,22 @@ func codexItemProviderData(given map[string]any) map[string]string {
 		}
 	}
 	return data
+}
+
+// typedProviderData stores a key whose JSON type the reference reads as its
+// JSON text, string or not. connectionProxyEnabled is read as === true
+// everywhere (connectionProxy.js:40-41, chatCore.js:367, ConnectionRow.js:17),
+// so a boolean true is stored as true and a string "true" as "\"true\"", which
+// never enables the proxy. Kept verbatim, the two would read the same.
+func typedProviderData(key string, value any) (string, bool) {
+	if key != "connectionProxyEnabled" || value == nil {
+		return "", false
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "", false
+	}
+	return string(raw), true
 }
 
 // jsFalsy is the reference's !value for a decoded JSON value.
@@ -417,6 +437,10 @@ func grokBulkAccount(item map[string]any) (BulkAccount, error) {
 	}
 	if given, ok := item["providerSpecificData"].(map[string]any); ok {
 		for key, value := range given {
+			if typed, ok := typedProviderData(key, value); ok {
+				providerData[key] = typed
+				continue
+			}
 			switch value := value.(type) {
 			case nil:
 			case string:

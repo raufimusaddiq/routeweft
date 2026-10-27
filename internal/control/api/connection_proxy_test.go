@@ -450,3 +450,45 @@ func TestSetConnectionProxyStoreFailureIsAllOrNothing(t *testing.T) {
 		t.Fatalf("partial write: pool=%q proxy=%q stored pool=%q url=%q", snapshot.ConnectionPool(id), legacy.URL, stored.ProxyPoolID, stored.Secret.ProviderData["connectionProxyUrl"])
 	}
 }
+
+// Only a JSON true imported from LiteRouter turns the connection proxy on;
+// a string "true" or any other value leaves it off, on both imports
+// (connectionProxy.js:40-41).
+func TestImportedConnectionProxyFlagKeepsItsType(t *testing.T) {
+	items := map[string]func(flag string) string{
+		"codex": func(flag string) string {
+			return `{"accessToken":"` + unsignedJWT(codexClaims("flag@example.invalid", "acct-flag", "plus")) + `","providerSpecificData":{"connectionProxyEnabled":` + flag + `,"connectionProxyUrl":"http://proxy.example:3128"}}`
+		},
+		"grok-cli": func(flag string) string {
+			return `{"accessToken":"grok-access","email":"flag@example.invalid","providerSpecificData":{"connectionProxyEnabled":` + flag + `,"connectionProxyUrl":"http://proxy.example:3128"}}`
+		},
+	}
+	for provider, item := range items {
+		for _, tc := range []struct {
+			flag    string
+			enabled bool
+		}{
+			{`true`, true},
+			{`"true"`, false},
+			{`" true"`, false},
+			{`false`, false},
+			{`"false"`, false},
+			{`1`, false},
+		} {
+			t.Run(provider+"/"+tc.flag, func(t *testing.T) {
+				env, manager := connectionProxyEnv(t)
+				id, status := bulkOp(provider, item(tc.flag))(t, env)
+				if status != http.StatusOK || id == "" {
+					t.Fatalf("import status=%d id=%q", status, id)
+				}
+				if _, enabled := loadSnapshot(t, manager).LegacyConnectionProxy(id); enabled != tc.enabled {
+					t.Fatalf("connection proxy enabled=%v, want %v", enabled, tc.enabled)
+				}
+				listed := doJSON(t, env.mux, env.cookie, http.MethodGet, "/admin/v1/connections", "")
+				if strings.Contains(listed.Body.String(), `"connectionProxy"`) != tc.enabled {
+					t.Fatalf("list shows a connection proxy=%v, want %v: %s", !tc.enabled, tc.enabled, listed.Body.String())
+				}
+			})
+		}
+	}
+}

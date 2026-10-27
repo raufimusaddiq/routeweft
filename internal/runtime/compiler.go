@@ -238,8 +238,10 @@ func compileConnectionProxies(connections []credentials.Connection) map[string]C
 	var compiled map[string]ConnectionProxy
 	for _, connection := range connections {
 		settings := connection.Settings
-		// The pin enables only a JSON true (connectionProxy.js:40-41). Import keeps
-		// a boolean as its JSON text, so the stored form of true is "true".
+		// The pin enables only a JSON true (connectionProxy.js:40-41). Import stores
+		// this key as its JSON text (onboarding.typedProviderData) and the admin
+		// API writes "true"/"false", so only a boolean true reads "true"; a string
+		// "true" is stored quoted.
 		if settings.ConnectionProxyEnabled != "true" {
 			continue
 		}
