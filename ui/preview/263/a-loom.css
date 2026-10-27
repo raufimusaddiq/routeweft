@@ -1,0 +1,59 @@
+/* PREVIEW ONLY (#263, phase 1): direction A, "Loom". Not imported by the app; capture.cjs
+   injects it over the built style.css. Square geometry kept, ink outline plus a hard offset
+   shadow on the boxes that mean something, linen paper, one lime highlighter, three thread tints. */
+:root {
+  --paper: #ecebe4; --bg: #ecebe4; --surface: #f8f7f2; --sidebar: #e3e1d7;
+  --surface-2: #dedcd2; --surface-3: #c9c6ba;
+  --ink: #17181a; --ink-hover: #34362f; --text-main: #17181a;
+  --text-muted: #4f4d46; --text-subtle: #4f4d46;
+  --border: #6d6a60; --border-subtle: #c9c6ba;
+  --danger: #a8202c; --success: #1d6b3c; --warning: #7a5200; --info: #205d94;
+  --live: #00727f; --focus: #00727f;
+  --highlight: #d8f25a; --highlight-ink: #17181a; --highlight-solid: #d8f25a; --highlight-solid-ink: #17181a;
+  --tint-live: #cbe8e6; --tint-warn: #f1e2b0; --tint-danger: #f6d3cc;
+  --outline: #17181a; --shadow-ink: #17181a;
+  --hard: 4px 4px 0 var(--shadow-ink); --hard-sm: 2px 2px 0 var(--shadow-ink);
+  --accent-bg: #cbe8e6; --accent-fg: #17181a; --accent-muted: #3d4744; --accent-rule: #8fb9b5;
+  --accent-control: #4f6461; --accent-raised: #b6dcd9; --accent-danger: #8f1a24;
+  --accent-success: #155a32; --accent-warning: #614100; --accent-focus: #005a64; --accent-live: #005a64;
+}
+:root[data-theme="dark"] {
+  --paper: #111210; --bg: #111210; --surface: #1a1b18; --sidebar: #151613;
+  --surface-2: #23251f; --surface-3: #34372f;
+  --ink: #eeede6; --ink-hover: #cfcec6; --text-main: #eeede6;
+  --text-muted: #a9aa9e; --text-subtle: #a9aa9e;
+  --border: #85877c; --border-subtle: #2c2e28;
+  --danger: #ff7b86; --success: #6fd3a0; --warning: #e8bb5c; --info: #8dbff2;
+  --live: #4fd1e0; --focus: #4fd1e0;
+  --highlight: #4f5c14; --highlight-ink: #eeede6; --highlight-solid: #d8f25a; --highlight-solid-ink: #17181a;
+  --tint-live: #10353a; --tint-warn: #3d3112; --tint-danger: #47191d;
+  --outline: #eeede6; --shadow-ink: #5d6055;
+  --accent-bg: #10353a; --accent-fg: #eeede6; --accent-muted: #a9c4c1; --accent-rule: #2b5a5f;
+  --accent-control: #6f9a96; --accent-raised: #174349; --accent-danger: #ff8a93;
+  --accent-success: #7bd6a4; --accent-warning: #efc36b; --accent-focus: #6fe0ee; --accent-live: #6fe0ee;
+}
+/* Shell: a ruled rail, the active item is highlighted, not pilled. */
+.sidebar { border-right: 2px solid var(--outline); }
+/* The marker under text is themed (--highlight); a filled block uses the solid lime in both themes. */
+.nav-link-active { color: var(--highlight-solid-ink); background: var(--highlight-solid); }
+.nav-link-active::before { background: var(--highlight-solid-ink); }
+.page-intro h1, h1 { font-weight: 700; }
+/* Boxes that mean something: the one accent surface, notices, empty and error states. */
+.accent-surface { border: 2px solid var(--outline); border-left-width: 2px; box-shadow: var(--hard); }
+.empty-state, .empty-keys, .inline-notice, .secret-panel { border: 2px solid var(--outline); box-shadow: var(--hard-sm); }
+.page-error, .auth-error { border: 2px solid var(--outline); border-left: 6px solid var(--danger); background: var(--tint-danger); box-shadow: var(--hard-sm); }
+/* The highlighter: one stroke under the number a sentence is about. */
+.ed-headline strong, .ed-statement strong { text-decoration: underline var(--highlight) .42em; text-underline-offset: -.18em; text-decoration-skip-ink: none; }
+/* Controls: outlined, primary carries the hard shadow; press sinks into it. */
+.button-primary, .button-secondary, .button-danger { border-width: 2px; }
+.button-primary { border-color: var(--outline); box-shadow: var(--hard-sm); }
+.button-secondary { border-color: var(--outline); }
+.button-primary:active, .button-secondary:active { transform: translate(2px, 2px); box-shadow: none; }
+:is(input, select, textarea) { border-width: 2px; }
+/* Data: section rules thicken, share bars become ruled thread. */
+.ed-facts, .ed-watch, .ed-group, .ed-statement-row { border-top-width: 3px; }
+thead th, .ed-table thead th { border-bottom-width: 3px; }
+.ed-bar { height: 6px; background: var(--surface-3); }
+.provider-option-selected { border-left: 4px solid var(--outline); background: var(--tint-live); }
+.state-tag { border-color: var(--outline); }
+.dot { box-shadow: none; }
