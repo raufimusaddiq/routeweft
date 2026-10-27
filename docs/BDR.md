@@ -22,7 +22,7 @@ This document records binding architecture/build choices so implementation agent
 | BDR-012 | Token savers + final-body cache anchoring | Accepted |
 | BDR-013 | Bounded async telemetry with protected critical accounting | Accepted |
 | BDR-014 | Versioned `/admin/v1` control API | Accepted |
-| BDR-015 | Routeweft-owned graphite-rule visual language and static UI | Accepted |
+| BDR-015 | Routeweft-owned graphite-rule visual language and static UI | Accepted; visual part superseded by BDR-027 |
 | BDR-016 | No standalone media product surfaces | Accepted |
 | BDR-017 | One application writer per SQLite DB | Accepted |
 | BDR-018 | Default listen port 21128 | Accepted |
@@ -33,6 +33,7 @@ This document records binding architecture/build choices so implementation agent
 | BDR-023 | Generic Provider unifies Chat/Responses/Messages compatible nodes | Accepted |
 | BDR-024 | Product requirements freeze gates Codex implementation | Accepted |
 | BDR-025 | OpenAI Chat Completions is the conversion hub | Accepted |
+| BDR-027 | Retro neo-brutalist visual language (supersedes BDR-015's visual part) | Accepted; direction pending owner approval of #263 previews |
 
 ## BDR-001 — Standalone product
 
@@ -198,6 +199,11 @@ LiteRouter remains a behavioral reference, not a visual acceptance criterion.
 Navigation groups/items/order/labels/icons/hashes and operator workflows stay
 unchanged. This decision authorizes no API, backend or product-scope change.
 
+The visual part of this decision (graphite rule, flat with no shadow, ruled
+sections instead of cards, 0/2px geometry) is superseded by BDR-027. Ownership,
+the static UI, navigation, workflows, WCAG AA and LiteRouter as a behavioral
+reference only stay in force.
+
 ## BDR-016 — Media boundary
 
 Allowed:
@@ -342,3 +348,38 @@ runtime catalog source or fetch models.dev: the pin is the behavioral reference,
 and mutable remote data would introduce an SSRF surface and availability/drift
 failure modes. [MODEL_CAPABILITIES.md](MODEL_CAPABILITIES.md) records the exact
 fields, lookup order, override precedence and remaining #119 integration.
+
+## BDR-027 — Retro neo-brutalist visual language
+
+Decision (owner, Suhu, 2026-10-27, issue #263): restyle the control plane into a
+retro neo-brutalist language in the family of Richmod and Antares. This
+supersedes only the visual part of BDR-015: "cool neutral flat surfaces,
+ink-on-paper primary actions, ruled sections instead of cards, 0/2px geometry"
+and UI_STYLE's "No gradient, blur, glass, shadow or glow anywhere".
+
+Borrowed traits: flat fills; a crisp ink outline only where a box means
+something; depth as a hard offset shadow with no blur; tinted paper; a few
+pastels that each mean one thing; one highlighter colour; light and dark set the
+same token names.
+
+Kept as Routeweft's own, not borrowed: the weave mark; square 0/2px geometry
+(Richmod and Antares are rounded); Space Grotesk prose with JetBrains Mono for
+technical values; cyan `--live` for current data; the editorial layout of
+UI_STYLE §1 and §5; the 11/12/16/28px type scale. Excluded: Richmod's Fraunces
+and cream/teal palette, Antares' cobalt action colour, marker gradient, pills,
+rotated tags and two-tone focus halo.
+
+Still forbidden: blur, glass, glow, backdrop filters, gradients and soft
+shadows. `box-shadow` is allowed only as the hard-offset tokens `--hard` and
+`--hard-sm`.
+
+`docs/UI_STYLE.md` carries the tokens and the acceptance checks. Phase 1 of #263
+records the contract and an isolated preview (`ui/preview/263/`); the direction
+(A "Loom", recommended, or B "Patchwork") is the owner's choice from those
+screenshots, and the token tables follow that choice before phase 2. Until
+phase 2 lands, `ui/src/style.css` still implements the BDR-015 values and the
+smoke guards enforce them; each later phase changes code, guards and this
+contract together. Navigation, routes, features, aria, 44px targets, status
+never shown by colour alone and no horizontal overflow at 320px are unchanged.
+This decision authorizes no API, backend or product-scope change.
+
