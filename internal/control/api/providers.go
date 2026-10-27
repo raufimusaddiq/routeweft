@@ -212,6 +212,10 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, 1<<20, &body) {
 		return
 	}
+	// The Codex identity check below and the save it allows are one step, as are
+	// an edit's read of the stored row and its write (connectionMu).
+	h.connectionMu.Lock()
+	defer h.connectionMu.Unlock()
 	oldIdentity := ""
 	if r.Method == http.MethodPatch {
 		old, err := h.opts.Credentials.GetConnection(r.Context(), r.PathValue("id"))
@@ -342,7 +346,9 @@ func (h *Handler) handleDeleteConnection(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	id := r.PathValue("id")
+	h.connectionMu.Lock()
 	err := h.opts.Credentials.DeleteConnection(r.Context(), id)
+	h.connectionMu.Unlock()
 	if errors.Is(err, credentials.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "connection_not_found", "provider connection was not found")
 		return
@@ -1104,7 +1110,9 @@ func (h *Handler) handleSetConnectionProxy(w http.ResponseWriter, r *http.Reques
 	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
+	h.connectionMu.Lock()
 	err := h.opts.Credentials.SetConnectionProxy(r.Context(), r.PathValue("id"), body.ProxyPoolID)
+	h.connectionMu.Unlock()
 	if errors.Is(err, credentials.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "connection_not_found", "provider connection was not found")
 		return
@@ -1144,7 +1152,9 @@ func (h *Handler) handleMoveConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_direction", "direction must be up or down")
 		return
 	}
+	h.connectionMu.Lock()
 	err := h.opts.Credentials.MoveConnection(r.Context(), r.PathValue("id"), direction)
+	h.connectionMu.Unlock()
 	if errors.Is(err, credentials.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "connection_not_found", "provider connection was not found")
 		return

@@ -771,8 +771,8 @@ func (h *Handler) saveOnboardedConnection(w http.ResponseWriter, r *http.Request
 		return nil, persisted, false
 	}
 	if providerID == codexProviderID {
-		h.codexSaveMu.Lock()
-		defer h.codexSaveMu.Unlock()
+		h.connectionMu.Lock()
+		defer h.connectionMu.Unlock()
 	}
 	if providerID == codexProviderID && !result.NeverDeduped {
 		match, found, err := h.codexMatch(r.Context(), identity, result.Secret.ProviderData)
@@ -783,9 +783,12 @@ func (h *Handler) saveOnboardedConnection(w http.ResponseWriter, r *http.Request
 		if found {
 			// The matched row keeps its id, name, priority, enabled flag, proxy pool and
 			// identity: a sign-in sends none of them (codex.js:48-66,
-			// [provider]/[action]/route.js:471-479), and takes the new credential.
+			// [provider]/[action]/route.js:471-479). It takes the new credential whole:
+			// a reply without a refresh token or expires_in clears the stored ones.
 			match.Secret = result.Secret
-			connection, persisted, err := h.publishMergedConnection(r.Context(), match, codexMergedSecret)
+			connection, persisted, err := h.publishMergedConnection(r.Context(), match, func(existing, update credentials.Secret) credentials.Secret {
+				return codexMergedSecret(existing, update, onboarding.CarriesAll)
+			})
 			if err != nil {
 				if persisted {
 					writeError(w, http.StatusInternalServerError, "connection_publish_failed", "connection saved but could not be published to the runtime")
@@ -1228,8 +1231,8 @@ func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name 
 	if providerID == codexProviderID {
 		// Held from before the node is resolved: builtinNode creates the node on
 		// first use, and two first imports racing there would each create one.
-		h.codexSaveMu.Lock()
-		defer h.codexSaveMu.Unlock()
+		h.connectionMu.Lock()
+		defer h.connectionMu.Unlock()
 	}
 	node, err := h.builtinNode(ctx, providerID)
 	if err != nil {
@@ -1241,13 +1244,24 @@ func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name 
 			return credentials.Connection{}, err
 		}
 		if found {
-			// {...existing, ...item} (connectionsRepo.js:283): the item's credential
-			// replaces the stored one, its own name replaces the label, and its
-			// isActive, true unless it says false (bulk-import/route.js:103), sets
-			// enabled. The id, priority, proxy pool and identity are kept.
-			match.Secret = codexMergedSecret(match.Secret, account.Secret)
+			// {...existing, ...item} (connectionsRepo.js:283): the keys of the
+			// credential the item carries replace the stored ones, its own name
+			// replaces the label, its priority the row's, and its isActive, true
+			// unless it says false (bulk-import/route.js:103), sets enabled. The id,
+			// proxy pool and identity are kept.
+			match.Secret = codexMergedSecret(match.Secret, account.Secret, account.Carries)
 			if account.ItemName != "" {
 				match.Name = account.ItemName
+			}
+			if account.HasPriority {
+				match.Priority = account.Priority
+				if match.Priority == 0 {
+					// The reference sorts a zero or null priority as 999, after the
+					// rest of the pool (connectionsRepo.js:159).
+					if match.Priority, err = h.codexLastPriority(ctx, match.ID); err != nil {
+						return credentials.Connection{}, err
+					}
+				}
 			}
 			match.Enabled = !account.Disabled
 			stored, err := h.opts.Credentials.PutConnection(ctx, match)
@@ -1264,10 +1278,15 @@ func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name 
 	if err != nil {
 		return credentials.Connection{}, err
 	}
+	priority := len(existing)
+	if account.Priority != 0 {
+		// An item's own non-zero priority places it (connectionsRepo.js:293-294).
+		priority = account.Priority
+	}
 	stored, err := h.opts.Credentials.PutConnection(ctx, credentials.Connection{
 		NodeID: node.ID, Name: name, Identity: account.Identity,
 		AuthKind: account.AuthKind, Secret: account.Secret, Enabled: !account.Disabled,
-		Priority: len(existing),
+		Priority: priority,
 	})
 	if err != nil {
 		return credentials.Connection{}, err

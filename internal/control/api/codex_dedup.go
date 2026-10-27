@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
 )
 
 // codexProviderID is the one provider whose built-in node may hold several
@@ -15,12 +16,14 @@ const codexProviderID = "codex"
 // existing oauth connection with that email only when both carry the same
 // non-empty chatgptAccountId. Any other case, including a missing account id on
 // either side, inserts. The reference's access_token connections (the Codex
-// token import) are never an existing match (connectionsRepo.js:232,264); here
-// they are the rows import-token stores with authMethod "access_token". The
-// reference has one pool per provider, so every built-in Codex node is searched
-// (a database may hold more than one from concurrent first sign-ins) and no
-// Generic node is. Callers hold codexSaveMu across the lookup and the write it
-// decides.
+// token import and a raw token pasted as a sign-in code) are never an existing
+// match (connectionsRepo.js:232,264); here they are the rows stored with
+// authMethod "access_token". The reference has one pool per provider, so every
+// built-in Codex node is searched (a database may hold more than one from
+// concurrent first sign-ins) and no Generic node is. When more than one row
+// matches, the reference's all.find takes the first in table order, which is
+// creation order here. Callers hold connectionMu across the lookup and the
+// write it decides.
 func (h *Handler) codexMatch(ctx context.Context, identity string, data map[string]string) (credentials.Connection, bool, error) {
 	account := data["chatgptAccountId"]
 	if identity == "" || account == "" {
@@ -40,11 +43,24 @@ func (h *Handler) codexMatch(ctx context.Context, identity string, data map[stri
 	if err != nil {
 		return credentials.Connection{}, false, err
 	}
+	matches := map[string]credentials.Connection{}
 	for _, connection := range existing {
 		if !builtin[connection.NodeID] || connection.AuthKind != credentials.AuthOAuth || connection.Secret.ProviderData["authMethod"] == "access_token" {
 			continue
 		}
 		if connection.Identity == identity && connection.Secret.ProviderData["chatgptAccountId"] == account {
+			matches[connection.ID] = connection
+		}
+	}
+	if len(matches) == 0 {
+		return credentials.Connection{}, false, nil
+	}
+	order, err := h.opts.Credentials.ConnectionCreationOrder(ctx, codexProviderID)
+	if err != nil {
+		return credentials.Connection{}, false, err
+	}
+	for _, id := range order {
+		if connection, ok := matches[id]; ok {
 			return connection, true, nil
 		}
 	}
@@ -52,22 +68,22 @@ func (h *Handler) codexMatch(ctx context.Context, identity string, data map[stri
 }
 
 // codexMergedSecret is {...existing, ...incoming} (connectionsRepo.js:283) over
-// the credential: each token, the id token and the expiry the incoming
-// credential carries replace the stored ones, and its providerSpecificData
-// replaces the stored object whole rather than key by key. What it leaves out
-// is kept.
-func codexMergedSecret(existing, incoming credentials.Secret) credentials.Secret {
+// the credential. The access token is always sent and replaces the stored one;
+// the refresh token, id token and expiry replace theirs when the incoming data
+// carries the key, even with no value, which clears it; and providerSpecificData
+// replaces the stored object whole rather than key by key. A sign-in carries
+// every key (codex.js:51-55, [provider]/[action]/route.js:474-477), a bulk item
+// only those it names. What it does not carry is kept.
+func codexMergedSecret(existing, incoming credentials.Secret, carries onboarding.Carries) credentials.Secret {
 	merged := existing
-	if incoming.AccessToken != "" {
-		merged.AccessToken = incoming.AccessToken
-	}
-	if incoming.RefreshToken != "" {
+	merged.AccessToken = incoming.AccessToken
+	if carries.RefreshToken {
 		merged.RefreshToken = incoming.RefreshToken
 	}
-	if incoming.IDToken != "" {
+	if carries.IDToken {
 		merged.IDToken = incoming.IDToken
 	}
-	if !incoming.Expiry.IsZero() {
+	if carries.Expiry {
 		merged.Expiry = incoming.Expiry
 	}
 	if len(incoming.ProviderData) > 0 {
@@ -86,6 +102,22 @@ func (h *Handler) clearConnectionHealth(connectionID string) {
 			state.ClearCooldown(connectionID)
 		}
 	}
+}
+
+// codexLastPriority is a priority after every other Codex connection's, where
+// the reference sorts a row whose priority is zero or null (connectionsRepo.js:159).
+func (h *Handler) codexLastPriority(ctx context.Context, id string) (int, error) {
+	existing, err := h.opts.Credentials.ListConnections(ctx, codexProviderID)
+	if err != nil {
+		return 0, err
+	}
+	last := 0
+	for _, connection := range existing {
+		if connection.ID != id && connection.Priority >= last {
+			last = connection.Priority + 1
+		}
+	}
+	return last, nil
 }
 
 // codexIdentityTaken reports whether a connection other than id on the built-in

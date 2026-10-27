@@ -347,6 +347,27 @@ WHERE n.provider_id=? ORDER BY c.priority,c.name,c.id`
 	return connections, rows.Err()
 }
 
+// ConnectionCreationOrder returns a provider's connection ids oldest first: by
+// creation time, then by row order for connections created in one millisecond.
+func (s *Store) ConnectionCreationOrder(ctx context.Context, providerID string) ([]string, error) {
+	const query = `SELECT c.id FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id
+WHERE n.provider_id=? ORDER BY c.created_at,c.rowid`
+	rows, err := s.db.QueryContext(ctx, query, providerID)
+	if err != nil {
+		return nil, fmt.Errorf("list provider connection creation order: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // SetConnectionEnabled toggles a connection without touching its secret.
 func (s *Store) SetConnectionEnabled(ctx context.Context, id string, enabled bool) error {
 	flag := 0

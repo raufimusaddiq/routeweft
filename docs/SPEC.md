@@ -1080,18 +1080,31 @@ Codex duplicate handling follows the same pin (#241, `connectionsRepo.js:226-292
   connection with that email only when both carry the same non-empty
   `chatgptAccountId` (`:239-242`). A different account id, or none on either
   side, inserts a new connection with the same email; so does an item with no
-  email (`:228`).
-- A token import is the reference's `access_token` connection: it always inserts
-  and is never the existing side of a match (`:232,264`,
-  `import-token/route.js:73`).
+  email (`:228`). When more than one stored connection matches, the oldest is
+  updated (`all.find` over the table).
+- A token import, and a raw access token pasted where the sign-in code goes
+  (`[provider]/[action]/route.js:414-454`, stored without an exchange), are the
+  reference's `access_token` connection: each always inserts and is never the
+  existing side of a match (`:232,264`, `import-token/route.js:73`).
 - An update is `{...existing, ...incoming}` (`:283`). The connection keeps its
-  id, priority, proxy pool and identity. The tokens, id token and expiry the
-  incoming credential carries replace the stored ones (one it leaves out is
-  kept), and its `providerSpecificData` replaces the stored map whole. A sign-in
-  keeps the name and enabled flag (it sends neither); a bulk item replaces the
-  name only with its own `name` and sets enabled from `isActive`, true unless it
-  says false (`bulk-import/route.js:103`). Every update clears the connection's
-  cooldown, the reference's health reset on `testStatus: "active"` (`:64-82`).
+  id, proxy pool and identity. The access token and `providerSpecificData` are
+  replaced, the map whole. A sign-in replaces the refresh token, id token and
+  expiry too, clearing one its reply lacks (`codex.js:51-55`); a bulk item
+  replaces each of those only when it has the key, clearing it when the value is
+  empty or null, and keeps the rest. A sign-in keeps the name, priority and
+  enabled flag (it sends none of them). A bulk item replaces the name only with
+  its own `name`, sets enabled from `isActive`, true unless it says false
+  (`bulk-import/route.js:103`), and replaces the priority with its own; a zero
+  or null one sorts the connection after the rest, as `(priority || 999)` does
+  (`:159`). A new bulk connection takes the item's non-zero priority
+  (`:293-294`). Every update clears the connection's cooldown, the reference's
+  health reset on `testStatus: "active"` (`:64-82`).
+- The duplicate lookup and the write it decides are one step, as the
+  reference's create transaction is (`:210`): the control API serializes them
+  with every other connection write it makes (manual create and edit, move,
+  proxy assignment, delete), so a concurrent manual save cannot pass its identity
+  check twice and a Codex update cannot overwrite a concurrent edit or bring back
+  a deleted connection.
 - Migration v12 drops `UNIQUE(node_id, identity)` and keeps it by trigger for
   every node except the built-in Codex node, so every other provider (built-in
   or Generic, including a Generic node that names `codex`) still refuses a second

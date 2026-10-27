@@ -109,6 +109,39 @@ func tokenImportOp(email, account string) codexOp {
 	}
 }
 
+// rawTokenSignInOp pastes a raw Codex access token where the sign-in code goes.
+func rawTokenSignInOp(email, account string) codexOp {
+	return func(t *testing.T, env *codexEnv) (string, int) {
+		saved, status := codexPasteSignIn(t, env, unsignedJWT(codexClaims(email, account, "plus")))
+		if saved == nil {
+			return "", status
+		}
+		return saved["id"].(string), status
+	}
+}
+
+// codexPasteSignIn starts a Codex sign-in and pastes input as its completion.
+func codexPasteSignIn(t *testing.T, env *codexEnv, input string) (map[string]any, int) {
+	t.Helper()
+	recorder := doJSON(t, env.mux, env.cookie, http.MethodPost, "/admin/v1/oauth/codex/start", `{}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("start status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var flow startedFlow
+	if err := json.Unmarshal(recorder.Body.Bytes(), &flow); err != nil {
+		t.Fatal(err)
+	}
+	recorder = callback(t, env.mux, env.cookie, "codex", flow.State, input)
+	if recorder.Code != http.StatusOK {
+		return nil, recorder.Code
+	}
+	var saved map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &saved); err != nil {
+		t.Fatal(err)
+	}
+	return saved, recorder.Code
+}
+
 func manualOp(provider, identity string) codexOp {
 	return func(t *testing.T, env *codexEnv) (string, int) {
 		recorder := doJSON(t, env.mux, env.cookie, http.MethodPost, "/admin/v1/connections",
@@ -172,6 +205,10 @@ func TestCodexDuplicateHandlingMatchesReference(t *testing.T) {
 			tokenImportOp(mail, "acct-1"), signInOp(mail, "acct-1", "a2"), "insert"},
 		{"sign-in then token import, same email same account", "connectionsRepo.js:264", "codex",
 			signInOp(mail, "acct-1", "a1"), tokenImportOp(mail, "acct-1"), "insert"},
+		{"raw token pasted at sign-in twice, same email same account", "[provider]/[action]/route.js:438, connectionsRepo.js:264", "codex",
+			rawTokenSignInOp(mail, "acct-1"), rawTokenSignInOp(mail, "acct-1"), "insert"},
+		{"raw token sign-in then sign-in, same email same account", "connectionsRepo.js:232", "codex",
+			rawTokenSignInOp(mail, "acct-1"), signInOp(mail, "acct-1", "a2"), "insert"},
 		{"manual form, same codex identity", "Routeweft-only form; providers/route.js:179-181", "codex",
 			signInOp(mail, "acct-1", "a1"), manualOp("codex", mail), "refuse"},
 		{"other provider, manual form duplicate", "unchanged: UNIQUE kept off the Codex node", "claude",
@@ -358,5 +395,174 @@ func TestCodexConcurrentImportsOfOneAccount(t *testing.T) {
 	wg.Wait()
 	if got := env.count(t, "codex"); got != 1 {
 		t.Fatalf("connections=%d, want 1", got)
+	}
+}
+
+// Manual creates of one Codex identity, racing each other and onboarding writes
+// of the same email, save at most one manual connection: the form's identity
+// check and its save are one step with every other connection write
+// (connectionMu).
+func TestCodexConcurrentManualCreatesOfOneIdentity(t *testing.T) {
+	env := newCodexEnv(t)
+	const mail = "shared@example.invalid"
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	saved := 0
+	for i := 0; i < 8; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			recorder := doJSON(t, env.mux, env.cookie, http.MethodPost, "/admin/v1/connections",
+				`{"providerId":"codex","name":"manual","identity":"`+mail+`","authKind":"oauth","secret":{"accessToken":"manual-access"}}`)
+			if recorder.Code == http.StatusOK {
+				mu.Lock()
+				saved++
+				mu.Unlock()
+			} else if recorder.Code != http.StatusBadRequest {
+				t.Errorf("manual status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			recorder := doJSON(t, env.mux, env.cookie, http.MethodPost, "/admin/v1/oauth/codex/bulk-import",
+				`[{"accessToken":"`+unsignedJWT(codexClaims(mail, "acct-1", "plus"))+`"}]`)
+			if recorder.Code != http.StatusOK {
+				t.Errorf("bulk status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+		}()
+	}
+	wg.Wait()
+	if saved > 1 {
+		t.Fatalf("%d manual creates saved one identity", saved)
+	}
+	connections, err := env.creds.ListConnections(context.Background(), "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manual, bulk := 0, 0
+	for _, connection := range connections {
+		if connection.Name == "manual" {
+			manual++
+		} else {
+			bulk++
+		}
+	}
+	if manual != saved || bulk != 1 {
+		t.Fatalf("manual=%d (saved %d) bulk=%d, want at most one manual and one bulk row", manual, saved, bulk)
+	}
+}
+
+// A sign-in replaces the credential whole (codex.js:51-55,
+// [provider]/[action]/route.js:474-477): a reply without a refresh token or
+// expires_in clears the stored ones, as the spread of undefined and null does.
+func TestCodexSignInWithoutRefreshTokenClearsIt(t *testing.T) {
+	env := newCodexEnv(t)
+	const mail = "shared@example.invalid"
+	first := codexSignIn(t, env.mux, env.cookie, env.exchange, codexReply(mail, "acct-1", "a1", "r1"))
+	id := first["id"].(string)
+	if got := connectionByID(t, env.creds, id); got.Secret.RefreshToken != "r1" || got.Secret.Expiry.IsZero() {
+		t.Fatalf("first sign-in: %+v", got.Secret)
+	}
+	bare := `{"access_token":"a2","id_token":"` + unsignedJWT(codexClaims(mail, "acct-1", "plus")) + `"}`
+	if second := codexSignIn(t, env.mux, env.cookie, env.exchange, bare); second["id"] != id {
+		t.Fatalf("matching sign-in inserted: %v", second)
+	}
+	got := connectionByID(t, env.creds, id)
+	if got.Secret.AccessToken != "a2" || got.Secret.RefreshToken != "" || !got.Secret.Expiry.IsZero() {
+		t.Fatalf("credential not replaced whole: %+v", got.Secret)
+	}
+}
+
+// A bulk item spreads only the keys it has (connectionsRepo.js:283): a refresh
+// token it sets to null is cleared, one it leaves out is kept, and an expiresIn
+// sets the expiry (bulk-import/route.js:96-99).
+func TestCodexBulkUpdateReplacesOnlyCarriedKeys(t *testing.T) {
+	env := newCodexEnv(t)
+	token := unsignedJWT(codexClaims("shared@example.invalid", "acct-1", "plus"))
+	id, _ := bulkOp("codex", `{"accessToken":"`+token+`","refreshToken":"r1","idToken":"`+token+`"}`)(t, env)
+	if again, _ := bulkOp("codex", `{"accessToken":"`+token+`","refreshToken":null,"expiresIn":3600}`)(t, env); again != id {
+		t.Fatal("matching item inserted")
+	}
+	got := connectionByID(t, env.creds, id)
+	if got.Secret.RefreshToken != "" || got.Secret.IDToken != token || got.Secret.Expiry.IsZero() {
+		t.Fatalf("after re-import: %+v", got.Secret)
+	}
+}
+
+// A bulk item's priority places a new connection when it is non-zero, replaces a
+// matched one's, and a zero there sorts the row after the rest, as the
+// reference's (priority || 999) does (connectionsRepo.js:159,293-294,283).
+func TestCodexBulkPriority(t *testing.T) {
+	env := newCodexEnv(t)
+	item := func(email, priority string) string {
+		return `{"accessToken":"` + unsignedJWT(codexClaims(email, "acct-"+email, "plus")) + `","priority":` + priority + `}`
+	}
+	other, _ := bulkOp("codex", item("other@example.invalid", "0"))(t, env)
+	id, _ := bulkOp("codex", item("shared@example.invalid", "5"))(t, env)
+	if got := connectionByID(t, env.creds, other); got.Priority != 0 {
+		t.Fatalf("zero priority insert placed at %d, want appended at 0", got.Priority)
+	}
+	if got := connectionByID(t, env.creds, id); got.Priority != 5 {
+		t.Fatalf("insert priority=%d, want 5", got.Priority)
+	}
+	bulkOp("codex", item("shared@example.invalid", "2"))(t, env)
+	if got := connectionByID(t, env.creds, id); got.Priority != 2 {
+		t.Fatalf("update priority=%d, want 2", got.Priority)
+	}
+	bulkOp("codex", item("other@example.invalid", "0"))(t, env)
+	if got := connectionByID(t, env.creds, other); got.Priority != 3 {
+		t.Fatalf("zero priority update=%d, want 3 (after the rest)", got.Priority)
+	}
+	if env.count(t, "codex") != 2 {
+		t.Fatal("bulk re-imports added connections")
+	}
+}
+
+// When more than one stored row matches, the oldest is updated, as the
+// reference's all.find over the table does, not the first in routing order.
+func TestCodexMatchTakesOldestRow(t *testing.T) {
+	env := newCodexEnv(t)
+	ctx := context.Background()
+	node, err := env.h.builtinNode(ctx, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	put := func(priority int, access string) string {
+		stored, err := env.creds.PutConnection(ctx, credentials.Connection{
+			NodeID: node.ID, Name: access, AuthKind: credentials.AuthOAuth, Identity: "shared@example.invalid", Enabled: true, Priority: priority,
+			Secret: credentials.Secret{AccessToken: access, ProviderData: map[string]string{"chatgptAccountId": "acct-1"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stored.ID
+	}
+	older := put(9, "older")
+	newer := put(0, "newer")
+	if saved := codexSignIn(t, env.mux, env.cookie, env.exchange, codexReply("shared@example.invalid", "acct-1", "a2", "r2")); saved["id"] != older {
+		t.Fatalf("sign-in updated %v, want the older row %s", saved["id"], older)
+	}
+	if got := connectionByID(t, env.creds, newer); got.Secret.AccessToken != "newer" {
+		t.Fatalf("newer row changed: %+v", got.Secret)
+	}
+}
+
+// A raw access token pasted as the sign-in code is stored without an exchange,
+// as an access_token connection named by its email
+// ([provider]/[action]/route.js:414-454).
+func TestCodexRawTokenSignIn(t *testing.T) {
+	env := newCodexEnv(t)
+	token := unsignedJWT(codexClaims("raw@example.invalid", "acct-1", "plus"))
+	saved, status := codexPasteSignIn(t, env, token)
+	if saved == nil {
+		t.Fatalf("raw token sign-in status=%d", status)
+	}
+	if len(env.exchange.requests) != 0 {
+		t.Fatalf("raw token was sent to the token endpoint: %d requests", len(env.exchange.requests))
+	}
+	got := connectionByID(t, env.creds, saved["id"].(string))
+	want := map[string]string{"authMethod": "access_token", "chatgptAccountId": "acct-1", "chatgptPlanType": "plus"}
+	if got.Identity != "raw@example.invalid" || got.Name != "raw@example.invalid" || got.Secret.AccessToken != token || got.Secret.RefreshToken != "" || fmt.Sprint(got.Secret.ProviderData) != fmt.Sprint(want) {
+		t.Fatalf("raw token connection: %+v", got)
 	}
 }

@@ -298,7 +298,7 @@ func codexBulkAccount(item map[string]any) (BulkAccount, error) {
 			providerData[key] = value
 		}
 	}
-	return BulkAccount{
+	account := BulkAccount{
 		Name:     bulkString(item, "displayName", "name"),
 		ItemName: bulkString(item, "name"),
 		Disabled: item["isActive"] == false,
@@ -308,7 +308,33 @@ func codexBulkAccount(item map[string]any) (BulkAccount, error) {
 			AccessToken: access, RefreshToken: refresh, IDToken: idToken,
 			Expiry: bulkExpiry(item, time.Now()), ProviderData: providerData,
 		},
-	}, nil
+		// The keys the item spreads over a matched row (connectionsRepo.js:283),
+		// expiresAt included when the route computes it from expiresIn
+		// (bulk-import/route.js:96-99).
+		Carries: Carries{
+			RefreshToken: bulkHas(item, "refreshToken", "refresh_token"),
+			IDToken:      bulkHas(item, "idToken", "id_token"),
+			Expiry:       bulkHas(item, "expiresAt", "expires_at") || bulkInt(item, "expiresIn", "expires_in") > 0,
+		},
+	}
+	if value, ok := item["priority"]; ok {
+		account.HasPriority = true
+		if number, ok := value.(float64); ok {
+			account.Priority = int(number)
+		}
+	}
+	return account, nil
+}
+
+// bulkHas reports whether the item sets any of the key spellings, with or
+// without a value.
+func bulkHas(item map[string]any, keys ...string) bool {
+	for _, key := range keys {
+		if _, ok := item[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // grokBulkAccount mirrors src/app/api/oauth/grok-cli/bulk-import/route.js, which
@@ -425,6 +451,9 @@ func codexFlow() Flow {
 			})
 		},
 		Exchange: func(ctx context.Context, p Params) (Result, error) {
+			if code := strings.TrimSpace(p.Input); strings.HasPrefix(code, "eyJ") && strings.Contains(code, ".") {
+				return codexRawTokenResult(code), nil
+			}
 			tokens, err := postForm(ctx, p.Client, tokenURL, url.Values{
 				"grant_type":    {"authorization_code"},
 				"client_id":     {clientID},
@@ -458,6 +487,24 @@ func codexFlow() Flow {
 				},
 			}, nil
 		},
+	}
+}
+
+// codexRawTokenResult mirrors the reference's sign-in branch for a raw access
+// token pasted where the authorization code goes ([provider]/[action]/route.js:414-454):
+// nothing is exchanged; the token is stored as an access_token connection, which
+// is always inserted and never matched (connectionsRepo.js:232,264), with the
+// email, account id and plan its claims name. No name is sent, so it is labelled
+// by its email or "Account N" (connectionsRepo.js:289-291).
+func codexRawTokenResult(token string) Result {
+	email, accountID, planType := codexAccountInfo(token)
+	providerData := codexProviderData(accountID, planType)
+	providerData["authMethod"] = "access_token"
+	return Result{
+		AuthKind:     credentials.AuthOAuth,
+		Identity:     email,
+		NeverDeduped: true,
+		Secret:       credentials.Secret{AccessToken: token, ProviderData: providerData},
 	}
 }
 
