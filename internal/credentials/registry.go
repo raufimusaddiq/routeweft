@@ -69,10 +69,11 @@ type refreshCall struct {
 	done   chan struct{}
 	secret Secret
 	err    error
-	// update marks the slot Registry.Update holds. It carries no result: a waiter
-	// checks the credential again once it is released and refreshes it if the
-	// update left it expired, or failed and left the expired one in place.
-	update bool
+	// recheck marks a slot that carries no result: the one Registry.Update holds,
+	// or a refresh a newer install superseded. A waiter checks the credential
+	// again once it is released and refreshes it if what was left is expired:
+	// an update that kept or failed over the expired one, or an install of one.
+	recheck bool
 }
 
 // NewRegistry builds an empty credential registry over the durable store.
@@ -157,7 +158,7 @@ func (r *Registry) Update(ctx context.Context, connectionID string, change func(
 	}
 	// Take the refresh slot: wait out a refresh in flight, then hold one that
 	// would start, so its exchange cannot spend the refresh token read below.
-	hold := &refreshCall{done: make(chan struct{}), update: true}
+	hold := &refreshCall{done: make(chan struct{}), recheck: true}
 	for {
 		current.mu.Lock()
 		call := current.inflight
@@ -271,62 +272,59 @@ func (r *Registry) Secret(ctx context.Context, connectionID string) (Secret, err
 			current.mu.Unlock()
 			return secret, nil
 		}
-		call := current.inflight
-		if call == nil {
-			break
+		if call := current.inflight; call != nil {
+			current.mu.Unlock()
+			select {
+			case <-call.done:
+			case <-ctx.Done():
+				return Secret{}, ctx.Err()
+			}
+			if !call.recheck {
+				return call.secret, call.err
+			}
+			// An update released the slot or an install superseded the refresh:
+			// check what it left, as the reference checks every request's
+			// credential against the latest stored one (tokenRefresh.js:175-197,
+			// called per request at chat.js:287).
+			current.mu.Lock()
+			continue
 		}
+		exchanger := current.exchanger
+		if exchanger == nil {
+			// A static credential has nothing to refresh; return what is stored so a
+			// missing static key surfaces as a configuration problem, not a hang.
+			secret := current.current
+			current.mu.Unlock()
+			return secret, nil
+		}
+		call := &refreshCall{done: make(chan struct{})}
+		current.inflight = call
+		stored := current.current
+		generation := current.generation
 		current.mu.Unlock()
-		select {
-		case <-call.done:
-		case <-ctx.Done():
-			return Secret{}, ctx.Err()
-		}
-		if !call.update {
-			return call.secret, call.err
-		}
-		// An update released the slot: check what it left, as the reference
-		// checks every request's credential against the latest stored one
-		// (tokenRefresh.js:175-196, called per request at chat.js:287).
-		current.mu.Lock()
-	}
-	exchanger := current.exchanger
-	if exchanger == nil {
-		// A static credential has nothing to refresh; return what is stored so a
-		// missing static key surfaces as a configuration problem, not a hang.
-		secret := current.current
-		current.mu.Unlock()
-		return secret, nil
-	}
-	call := &refreshCall{done: make(chan struct{})}
-	current.inflight = call
-	stored := current.current
-	generation := current.generation
-	current.mu.Unlock()
 
-	secret, err := r.refresh(ctx, connectionID, stored, generation, current, exchanger)
-	if errors.Is(err, ErrSuperseded) {
-		// A newer install won while this exchange ran. Serve the newer credential
-		// instead of a stale or failed one, and do not clear the inflight marker's
-		// result as an error for other waiters.
+		secret, err := r.refresh(ctx, connectionID, stored, generation, current, exchanger)
 		current.mu.Lock()
-		secret, err = current.current, nil
+		if errors.Is(err, ErrSuperseded) {
+			// A newer install won while this exchange ran. Its credential is not
+			// served unchecked: this caller and every waiter check it again and
+			// refresh it from its own refresh token if it is expired (#250).
+			current.inflight = nil
+			call.recheck = true
+			close(call.done)
+			continue
+		}
+		if err != nil {
+			secret = Secret{}
+		}
+		// Memory publication already happened inside refresh(), under the install
+		// lock and generation check, so a newer import can never be overwritten here.
 		current.inflight = nil
-		call.secret, call.err = secret, nil
+		call.secret, call.err = secret, err
 		current.mu.Unlock()
 		close(call.done)
-		return secret, nil
+		return secret, err
 	}
-	if err != nil {
-		secret = Secret{}
-	}
-	current.mu.Lock()
-	// Memory publication already happened inside refresh(), under the install
-	// lock and generation check, so a newer import can never be overwritten here.
-	current.inflight = nil
-	call.secret, call.err = secret, err
-	current.mu.Unlock()
-	close(call.done)
-	return secret, err
 }
 
 // refresh runs the provider exchange and durably commits the rotated payload
