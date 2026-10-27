@@ -20,6 +20,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/proxy"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
+	"github.com/raufimusaddiq/routeweft/internal/telemetry"
 	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
@@ -258,6 +259,7 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 		if body.AccountID == nil {
 			body.AccountID = &old.AccountID
 		}
+		body.Secret = relinkedSecret(old.Secret, body.Secret)
 	}
 	accountID := ""
 	if body.AccountID != nil {
@@ -1357,6 +1359,35 @@ func connectionJSON(connection credentials.Connection) map[string]any {
 		view["signInMethod"] = method
 	}
 	return view
+}
+
+// relinkedSecret makes a relink's new key replace every stored copy of the old
+// one. Onboarding keeps the key twice for some providers, as the access token
+// and as ProviderData["apiKey"] (kimi, onboarding/providers.go:98-101; iflow,
+// manual.go:251,260; xiaomi-mimo, manual.go:342), and usage readers prefer the
+// provider-data copy (usage/oauth.go:21-26), so a relink that changed only the
+// access token would leave quota reads on the old key. The edit merge keeps
+// every provider-data entry the edit does not name (mergeConnectionSecret), so
+// the relink names apiKey, and any other credential entry that held the old
+// access token, with the new one. Other entries (a Copilot or session token
+// minted separately, metadata) are kept.
+func relinkedSecret(stored, edit credentials.Secret) credentials.Secret {
+	key := strings.TrimSpace(edit.AccessToken)
+	if key == "" {
+		return edit
+	}
+	for name, value := range stored.ProviderData {
+		if _, named := edit.ProviderData[name]; named || value == "" {
+			continue
+		}
+		if name == "apiKey" || value == stored.AccessToken && telemetry.SensitiveKey(name) {
+			if edit.ProviderData == nil {
+				edit.ProviderData = map[string]string{}
+			}
+			edit.ProviderData[name] = key
+		}
+	}
+	return edit
 }
 
 // replacesCredential reports whether a form edit carries credential material,

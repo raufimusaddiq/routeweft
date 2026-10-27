@@ -301,12 +301,69 @@ func TestXiaomiSoftValidationKeepsTheKeyUntested(t *testing.T) {
 		t.Fatal(err)
 	}
 	env.exchange.status = http.StatusUnauthorized
-	if status, body = env.importAs(t, "xiaomi-mimo", "7@xiaomi", xiaomi("sk-fixture-soft-3"), nil); status != http.StatusOK || body["outcome"] != onboardedUpdated || body["testStatus"] != credentials.StatusFailed {
+	// The replacement key was never tested: the old key's failure, error and
+	// model count are not its own, so it is untested, not rejected.
+	if status, body = env.importAs(t, "xiaomi-mimo", "7@xiaomi", xiaomi("sk-fixture-soft-3"), nil); status != http.StatusOK || body["outcome"] != onboardedUpdated || body["testStatus"] != credentials.StatusUntested {
 		t.Fatalf("unvalidated update: %d %v", status, body)
 	}
 	view := listedConnection(t, env.mux, env.cookie, id, "sk-fixture-soft")
-	if view.TestStatus != credentials.StatusFailed || view.LastError != "provider rejected credentials" {
-		t.Fatalf("kept status: %+v", view)
+	if view.TestStatus != credentials.StatusUntested || view.LastError != "" || view.LastErrorAt != "" || view.LastTestedAt != "" || view.ModelsAvailable != nil {
+		t.Fatalf("replacement kept the old key's result: %+v", view)
+	}
+	// An accepted connection stays active through an unvalidated replacement,
+	// as the reference keeps existing.testStatus (xiaomi-mimo/api-key/route.js:79),
+	// but the old key's last test and model count are cleared.
+	env.exchange.status = 0
+	if status, body = env.importAs(t, "xiaomi-mimo", "7@xiaomi", xiaomi("sk-fixture-soft-4"), nil); status != http.StatusOK || body["testStatus"] != credentials.StatusActive {
+		t.Fatalf("validated update: %d %v", status, body)
+	}
+	if err := env.creds.RecordValidation(context.Background(), id, connectionByID(t, env.creds, id).CredentialRevision, credentials.Validation{OK: true, ModelsAvailable: 9}); err != nil {
+		t.Fatal(err)
+	}
+	env.exchange.status = http.StatusUnauthorized
+	if status, body = env.importAs(t, "xiaomi-mimo", "7@xiaomi", xiaomi("sk-fixture-soft-5"), nil); status != http.StatusOK || body["testStatus"] != credentials.StatusActive {
+		t.Fatalf("unvalidated update of an active key: %d %v", status, body)
+	}
+	if view = listedConnection(t, env.mux, env.cookie, id, "sk-fixture-soft"); view.TestStatus != credentials.StatusActive || view.LastTestedAt != "" || view.ModelsAvailable != nil {
+		t.Fatalf("active replacement kept the old key's test: %+v", view)
+	}
+}
+
+// A relink replaces every stored copy of the old key. Onboarding keeps some
+// providers' key twice, as the access token and as ProviderData["apiKey"]
+// (kimi, iflow, xiaomi-mimo), and usage readers prefer that copy
+// (usage/oauth.go:21-26); a relink that left it would keep quota reads on the
+// old key. Entries that are not copies of the old key are kept.
+func TestRelinkReplacesStoredCopiesOfTheKey(t *testing.T) {
+	_, mux, store, creds, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	c := workflowAccount(t, creds, "copies", "https://upstream.invalid", "copies@example.invalid")
+	if err := creds.RotateSecret(context.Background(), c.ID, credentials.Secret{AccessToken: "old-access", ProviderData: map[string]string{
+		"apiKey": "old-provider-key", "wireToken": "old-access", "mimoPassToken": "session-pass", "region": "us", "projectId": "old-access-project",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"accessToken":"new-access"}}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("relink: %d %s", recorder.Code, recorder.Body.String())
+	}
+	assertNoSecret(t, "relink response", recorder.Body.String(), "new-access", "old-provider-key", "session-pass")
+	got := connectionByID(t, creds, c.ID).Secret
+	want := map[string]string{"apiKey": "new-access", "wireToken": "new-access", "mimoPassToken": "session-pass", "region": "us", "projectId": "old-access-project"}
+	if got.AccessToken != "new-access" || len(got.ProviderData) != len(want) {
+		t.Fatalf("relinked secret: access=%v providerData=%v", got.AccessToken == "new-access", got.ProviderData)
+	}
+	for key, value := range want {
+		if got.ProviderData[key] != value {
+			t.Fatalf("providerData[%s] = %q, want %q", key, got.ProviderData[key], value)
+		}
+	}
+	// A metadata edit sends no key and changes no copy.
+	if recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"name":"Renamed"}`); recorder.Code != http.StatusOK {
+		t.Fatalf("rename: %d", recorder.Code)
+	}
+	if after := connectionByID(t, creds, c.ID).Secret; after.ProviderData["apiKey"] != "new-access" || after.AccessToken != "new-access" {
+		t.Fatal("metadata edit changed the key")
 	}
 }
 

@@ -71,13 +71,14 @@ func TestValidationStatusLifecycle(t *testing.T) {
 	if err := store.RecordValidation(ctx, connection.ID, stored.CredentialRevision, Validation{Error: "boom"}); err != nil {
 		t.Fatal(err)
 	}
-	// An empty status keeps the stored lifecycle (a soft-validated duplicate),
-	// and a save without a new secret never changes it, whatever it names.
+	// A replacement naming no status (a soft-validated duplicate) still clears
+	// the old credential's result, and its failure is not the new one's; a
+	// save without a new secret never changes the lifecycle, whatever it names.
 	save(Secret{AccessToken: "fixture-status-key-3"}, Lifecycle{Origin: OriginImport})
 	save(Secret{}, Lifecycle{Status: StatusActive, Origin: OriginOAuth})
 	status, _ = store.GetConnectionStatus(ctx, connection.ID)
-	if status.TestStatus != StatusFailed || status.LastError != "boom" || status.AuthOrigin != OriginImport {
-		t.Fatalf("kept: %+v", status)
+	if status.TestStatus != StatusUntested || status.LastError != "" || status.LastTestedAt != "" || status.AuthOrigin != OriginImport {
+		t.Fatalf("replaced without a status: %+v", status)
 	}
 	save(Secret{AccessToken: "fixture-status-key-4"}, Lifecycle{Status: StatusActive, Origin: OriginOAuth})
 	status, _ = store.GetConnectionStatus(ctx, connection.ID)
@@ -385,5 +386,59 @@ func TestUpgradedRowWithoutDigest(t *testing.T) {
 	}
 	if got := revision(); got != before+1 {
 		t.Fatalf("replacement of an upgraded row: revision %d -> %d", before, got)
+	}
+}
+
+// Every replacement clears the last test, error and model count, which describe
+// the credential it replaced, even when the save names no status. A failed
+// status is the old credential's and becomes untested; an active one is kept,
+// as the reference keeps existing.testStatus (xiaomi-mimo/api-key/route.js:79).
+func TestReplacementNamingNoStatusClearsTheOldResult(t *testing.T) {
+	ctx := context.Background()
+	store, _ := testStore(t)
+	node := seedNode(t, store, "xiaomi-mimo")
+	connection, err := store.PutConnection(ctx, Connection{NodeID: node.ID, Name: "mimo", AuthKind: AuthAPIKey, Identity: "7@xiaomi", Enabled: true, Secret: Secret{AccessToken: "fixture-mimo-1"}, Lifecycle: Lifecycle{Status: StatusActive, Origin: OriginImport}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replace := func(key string) ConnectionStatus {
+		t.Helper()
+		update := connection
+		update.Secret, update.Lifecycle = Secret{AccessToken: key}, Lifecycle{Origin: OriginImport}
+		if _, err := store.PutConnection(ctx, update); err != nil {
+			t.Fatal(err)
+		}
+		status, err := store.GetConnectionStatus(ctx, connection.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return status
+	}
+	record := func(v Validation) {
+		t.Helper()
+		stored, _ := store.GetConnection(ctx, connection.ID)
+		if err := store.RecordValidation(ctx, connection.ID, stored.CredentialRevision, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record(Validation{Error: "provider rejected credentials", ModelsAvailable: 4})
+	before, _ := store.GetConnection(ctx, connection.ID)
+	status := replace("fixture-mimo-2")
+	if status.TestStatus != StatusUntested || status.LastError != "" || status.LastErrorAt != "" || status.LastTestedAt != "" || status.ModelsAvailable != nil {
+		t.Fatalf("replacement of a failed credential: %+v", status)
+	}
+	if after, _ := store.GetConnection(ctx, connection.ID); after.CredentialRevision != before.CredentialRevision+1 {
+		t.Fatalf("revision %d -> %d", before.CredentialRevision, after.CredentialRevision)
+	}
+	record(Validation{OK: true, ModelsAvailable: 6})
+	status = replace("fixture-mimo-3")
+	if status.TestStatus != StatusActive || status.LastTestedAt != "" || status.ModelsAvailable != nil {
+		t.Fatalf("replacement of an active credential: %+v", status)
+	}
+	// Resealing the same credential is not a replacement and clears nothing.
+	record(Validation{Error: "provider rejected credentials", ModelsAvailable: 2})
+	status = replace("fixture-mimo-3")
+	if status.TestStatus != StatusFailed || status.LastError == "" || status.ModelsAvailable == nil {
+		t.Fatalf("reseal cleared the result: %+v", status)
 	}
 }

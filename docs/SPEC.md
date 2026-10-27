@@ -2135,7 +2135,12 @@ the last test, error and model count:
   (`added`, `updated`, `reauthenticated`).
 - A manual create, or a manual edit that carries credential material (a
   relink), marks it `untested` with origin `manual` and clears the last test,
-  model count and error: no provider has seen the new credential. The
+  model count and error: no provider has seen the new credential. A relink's
+  new key also replaces every stored copy of the old one:
+  `ProviderData.apiKey`, which onboarding keeps beside the access token for
+  kimi, iflow and xiaomi-mimo and which usage readers prefer, and any other
+  credential entry that held the old access token; other provider data is
+  kept. The
   reference keeps the previous status on such an edit; Routeweft does not
   report a result for a credential that was never tested. An edit of name,
   identity, order, proxy or enabled state keeps the stored lifecycle.
@@ -2152,8 +2157,14 @@ the last test, error and model count:
   is refused and the replacement keeps its own status. A connection stored
   before the digest existed has its digest filled in from its stored secret by
   its first save, before the comparison, so that save is not mistaken for a
-  replacement. An `untested` lifecycle and the clearing of the last test and
-  model count apply only on a replacement. An `active` one applies on any save
+  replacement. Every replacement clears the last test, error and model count,
+  which describe the credential it replaced, whether or not the save names a
+  status. An `untested` lifecycle applies only on a replacement; a replacement
+  that names no status (Xiaomi's soft-validated duplicate) keeps an `active`
+  status, as the reference keeps `existing.testStatus`
+  (`xiaomi-mimo/api-key/route.js:79`), but turns a `failed` one `untested`:
+  that failure was the old credential's, and the reference's would show the
+  old error against the new key. An `active` one applies on any save
   of a credential a provider issued or accepted, the same credential included
   (a reauthentication or validated reimport returning the stored token), and
   clears the last error, as the reference's activation does

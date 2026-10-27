@@ -82,11 +82,12 @@ type Connection struct {
 // to any save of a credential, the same one included, and clears the last
 // error, as the reference's activation does (connectionsRepo.js:64-75).
 // StatusUntested (no provider has confirmed it) applies only when the
-// credential is replaced by a different one. A replacement also clears the last
-// test and model count, which describe the credential it replaced. An empty
-// Status keeps the stored lifecycle whole (Xiaomi's soft-validated duplicate,
-// xiaomi-mimo/api-key/route.js:79); a new row then starts untested. An empty
-// Origin keeps the stored origin.
+// credential is replaced by a different one. Every replacement clears the last
+// test, error and model count, which describe the credential it replaced. An
+// empty Status keeps an active status (Xiaomi's soft-validated duplicate,
+// xiaomi-mimo/api-key/route.js:79) and turns a failed one untested on a
+// replacement; a new row starts untested. An empty Origin keeps the stored
+// origin.
 type Lifecycle struct {
 	Status string
 	Origin string
@@ -318,8 +319,12 @@ func (s *Store) PutConnection(ctx context.Context, connection Connection) (Conne
 		active = 1
 	}
 	// "Replaced" below is a new secret whose digest differs from the stored one;
-	// only a replacement counts in the revision and resets the last test and
-	// model count. "Accepted" is any save of a credential a provider just issued
+	// only a replacement counts in the revision, and every replacement clears
+	// the last test, error and model count, which describe the credential it
+	// replaced, whether or not the save names a status. A replacement that names
+	// none keeps an active status, as the reference keeps existing.testStatus
+	// (xiaomi-mimo/api-key/route.js:79), but not a failed one: that failure was
+	// the old credential's, so the new one is untested. "Accepted" is any save of a credential a provider just issued
 	// or accepted (?16): it is active and clears the last error even when the
 	// provider returned the same credential, as the reference's activation does
 	// (connectionsRepo.js:64-75,282,347). SET expressions read the row as it was
@@ -329,12 +334,12 @@ VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,COALESCE(NULLIF(?12,''),'untested'),?1
 ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_kind=excluded.auth_kind,identity=excluded.identity,secret_blob=COALESCE(excluded.secret_blob,provider_connections.secret_blob),enabled=excluded.enabled,priority=excluded.priority,proxy_pool_id=excluded.proxy_pool_id,account_id=excluded.account_id,credential_expires_at=CASE WHEN excluded.secret_blob IS NULL THEN provider_connections.credential_expires_at ELSE excluded.credential_expires_at END,
 credential_revision=CASE WHEN excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN provider_connections.credential_revision+1 ELSE provider_connections.credential_revision END,
 credential_digest=CASE WHEN excluded.secret_blob IS NULL THEN provider_connections.credential_digest ELSE ?15 END,
-test_status=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN excluded.test_status WHEN ?16 AND excluded.secret_blob IS NOT NULL THEN 'active' ELSE provider_connections.test_status END,
+test_status=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN excluded.test_status WHEN ?16 AND excluded.secret_blob IS NOT NULL THEN 'active' WHEN excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 AND provider_connections.test_status='failed' THEN 'untested' ELSE provider_connections.test_status END,
 auth_origin=CASE WHEN ?13<>'' AND (excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 OR ?16 AND excluded.secret_blob IS NOT NULL) THEN ?13 ELSE provider_connections.auth_origin END,
-last_tested_at=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN NULL ELSE provider_connections.last_tested_at END,
-last_error=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 OR ?16 AND excluded.secret_blob IS NOT NULL THEN NULL ELSE provider_connections.last_error END,
-last_error_at=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 OR ?16 AND excluded.secret_blob IS NOT NULL THEN NULL ELSE provider_connections.last_error_at END,
-models_available=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN NULL ELSE provider_connections.models_available END,
+last_tested_at=CASE WHEN excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN NULL ELSE provider_connections.last_tested_at END,
+last_error=CASE WHEN excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 OR ?16 AND excluded.secret_blob IS NOT NULL THEN NULL ELSE provider_connections.last_error END,
+last_error_at=CASE WHEN excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 OR ?16 AND excluded.secret_blob IS NOT NULL THEN NULL ELSE provider_connections.last_error_at END,
+models_available=CASE WHEN excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN NULL ELSE provider_connections.models_available END,
 updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 	change := func(c *Configuration) error {
 		metadata := connection
