@@ -66,8 +66,10 @@ type deviceFixture struct {
 	account string
 	// copilotStatus is the Copilot token mint's status (0 means 200).
 	copilotStatus int
-	seen          []string
-	headers       []http.Header
+	// interval is the poll interval the start reports, in seconds (0 means 5).
+	interval int
+	seen     []string
+	headers  []http.Header
 }
 
 func (f *deviceFixture) set(verdict deviceVerdict, account string) {
@@ -130,17 +132,21 @@ func (f *deviceFixture) Do(request *http.Request) (*http.Response, error) {
 		account = "a"
 	}
 	email := "fixture-" + account + "@example.test"
+	interval := f.interval
+	if interval == 0 {
+		interval = 5
+	}
 	token := "fixture-access-" + account
 	// Start endpoints.
 	switch {
 	case raw == "https://github.com/login/device/code",
 		raw == "https://auth.x.ai/oauth2/device/code",
 		raw == "https://auth.kimi.com/api/oauth/device_authorization":
-		return respond(200, `{"device_code":"fixture-device","user_code":"WXYZ-1234","verification_uri":"https://example.invalid/device","expires_in":600,"interval":5}`)
+		return respond(200, fmt.Sprintf(`{"device_code":"fixture-device","user_code":"WXYZ-1234","verification_uri":"https://example.invalid/device","expires_in":600,"interval":%d}`, interval))
 	case raw == "https://oidc.us-east-1.amazonaws.com/client/register":
 		return respond(200, `{"clientId":"fixture-client","clientSecret":"fixture-client-secret"}`)
 	case raw == "https://oidc.us-east-1.amazonaws.com/device_authorization":
-		return respond(200, `{"deviceCode":"fixture-device","userCode":"WXYZ-1234","verificationUri":"https://example.invalid/device","verificationUriComplete":"https://example.invalid/device?user_code=WXYZ-1234","expiresIn":600,"interval":5}`)
+		return respond(200, fmt.Sprintf(`{"deviceCode":"fixture-device","userCode":"WXYZ-1234","verificationUri":"https://example.invalid/device","verificationUriComplete":"https://example.invalid/device?user_code=WXYZ-1234","expiresIn":600,"interval":%d}`, interval))
 	case raw == "https://api.kilo.ai/api/device-auth/codes" && request.Method == http.MethodPost:
 		return respond(200, `{"code":"KILO-1234","verificationUrl":"https://example.invalid/kilo?code=KILO-1234","expiresIn":600}`)
 	case strings.HasPrefix(raw, "https://copilot.tencent.com/v2/plugin/auth/state"),
@@ -377,6 +383,58 @@ func TestDeviceSlowDownLengthensTheInterval(t *testing.T) {
 				t.Fatalf("approval after slow_down: %s", answer.body)
 			}
 		})
+	}
+}
+
+// The 30 s cap never lowers a provider's own interval: one that asks for 45 s
+// gets 50 s after a slow_down (RFC 8628 3.5: five seconds more), then 55 s, and
+// a poll before that interval never reaches it.
+func TestDeviceSlowDownNeverShortensALongProviderInterval(t *testing.T) {
+	for _, method := range deviceMethods {
+		if !method.rfc {
+			continue
+		}
+		t.Run(method.provider, func(t *testing.T) {
+			rig := newDeviceRig(t)
+			rig.fixture.interval = 45
+			started := rig.start(t, method.provider, identityFor(method.provider, "a"))
+			if started.IntervalSeconds != 45 {
+				t.Fatalf("start interval %d, want the provider's 45", started.IntervalSeconds)
+			}
+			rig.fixture.set(verdictSlowDown, "a")
+			rig.advance(45 * time.Second)
+			for round, want := range []int{50, 55} {
+				polls := rig.fixture.polls(method.provider)
+				if answer := rig.poll(t, method.provider, started.State); answer.status != "pending" || answer.intervalSeconds != want || rig.fixture.polls(method.provider) != polls+1 {
+					t.Fatalf("round %d slow_down on a long interval: %s, want %d", round, answer.body, want)
+				}
+				// 45 s later (the provider's own interval) is still too soon.
+				rig.advance(45 * time.Second)
+				if answer := rig.poll(t, method.provider, started.State); answer.intervalSeconds != want || rig.fixture.polls(method.provider) != polls+1 {
+					t.Fatalf("round %d: a poll before %d s reached the provider: %s", round, want, answer.body)
+				}
+				rig.advance(time.Duration(want-45) * time.Second)
+			}
+		})
+	}
+}
+
+func TestSlowedIntervalOnlyLengthens(t *testing.T) {
+	cases := []struct{ current, base, want time.Duration }{
+		{0, 0, 7 * time.Second},
+		{time.Second, time.Second, 7 * time.Second},
+		{5 * time.Second, 5 * time.Second, 10 * time.Second},
+		{28 * time.Second, 5 * time.Second, 30 * time.Second},
+		{30 * time.Second, 5 * time.Second, 30 * time.Second},
+		{30 * time.Second, 30 * time.Second, 30 * time.Second},
+		{45 * time.Second, 45 * time.Second, 50 * time.Second},
+		{50 * time.Second, 45 * time.Second, 55 * time.Second},
+	}
+	for _, c := range cases {
+		got := slowedInterval(c.current, c.base)
+		if got != c.want || got < pollInterval(c.current) || got < pollInterval(c.base) {
+			t.Fatalf("slowedInterval(%s, base %s) = %s, want %s", c.current, c.base, got, c.want)
+		}
 	}
 }
 

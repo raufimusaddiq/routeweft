@@ -295,10 +295,12 @@ export function devicePollingOver(expiresAt: string | undefined, now: number): b
 }
 
 // The delay before the next poll: the interval the server last reported, never
-// below two seconds (the server's own floor) nor above thirty (its slow_down cap).
+// below two seconds (the server's own floor). A provider may ask for more than
+// the 30 s slow_down cap, and the server keeps that, so the browser does too;
+// five minutes only bounds a nonsense value (an attempt lasts at most ten).
 export function devicePollDelay(intervalSeconds: number | undefined): number {
   const seconds = Number.isFinite(intervalSeconds) ? Number(intervalSeconds) : 5
-  return Math.min(Math.max(seconds, 2), 30) * 1000
+  return Math.min(Math.max(seconds, 2), 300) * 1000
 }
 
 // What a GitHub sign-in reported about Copilot (#217): an account the Copilot

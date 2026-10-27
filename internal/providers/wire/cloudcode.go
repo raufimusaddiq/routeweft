@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/raufimusaddiq/routeweft/internal/protocol/gemini"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
@@ -63,9 +64,19 @@ func geminiCLIHeaders(_ routing.ProviderRef, body []byte, requestURL string) (ma
 }
 
 // antigravityHeaders is buildHeaders (antigravity.js:129-135): the bearer and the
-// IDE user agent, which the shared path sets and this overrides.
-func antigravityHeaders(_ routing.ProviderRef, _ []byte, _ string) (map[string]string, error) {
-	return map[string]string{"User-Agent": antigravityUserAgent}, nil
+// IDE user agent, which the shared path sets and this overrides. An image
+// request is answered with one JSON body (antigravity.js:121-123) whatever the
+// client asked, so it asks for JSON: a streaming client's text/event-stream is
+// not forwarded to it. The agent path keeps the client's Accept.
+func antigravityHeaders(_ routing.ProviderRef, body []byte, _ string) (map[string]string, error) {
+	headers := map[string]string{"User-Agent": antigravityUserAgent}
+	var envelope struct {
+		RequestType string `json:"requestType"`
+	}
+	if json.Unmarshal(body, &envelope) == nil && envelope.RequestType == gemini.AntigravityImageRequestType {
+		headers["Accept"] = "application/json"
+	}
+	return headers, nil
 }
 
 func cloudCodeAccept(requestURL string) string {

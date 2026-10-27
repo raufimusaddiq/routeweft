@@ -159,11 +159,14 @@ test('the code and link are offered for copying as given; a missing code or a no
   assert.deepEqual(deviceCopyItems({ userCode: 'C', verificationUrl: 'javascript:alert(1)' }).map(item => item.key), ['code'])
 })
 
-test('polling follows the server interval within 2 to 30 seconds and stops on its own past the deadline', () => {
+test('polling follows the server interval, never below 2 seconds, and stops on its own past the deadline', () => {
   assert.equal(devicePollDelay(5), 5000)
   assert.equal(devicePollDelay(10), 10000)
   assert.equal(devicePollDelay(1), 2000)
-  assert.equal(devicePollDelay(90), 30000)
+  // A provider interval above the slow_down cap is kept, not shortened.
+  assert.equal(devicePollDelay(45), 45000)
+  assert.equal(devicePollDelay(90), 90000)
+  assert.equal(devicePollDelay(3600), 300000)
   assert.equal(devicePollDelay(undefined), 5000)
   const deadline = '2026-10-27T12:05:00Z'
   const at = Date.parse(deadline)

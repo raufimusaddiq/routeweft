@@ -435,12 +435,13 @@ func TestAntigravityEnvelopeCarriesNoRequestType(t *testing.T) {
 		chat, err := gemini.AntigravityRequestToChat(mustObject(t, `{`+value+inner+`}`), "gemini-3.8-flash-high", true)
 		refused := err != nil
 		switch c.Name {
-		case "agent", "null", "absent":
+		case "agent", "null", "absent", "image_gen":
+			// image_gen is the routed model's to decide, not the client's (PARITY 6.26).
 			if refused {
 				t.Fatalf("%s: %v", c.Name, err)
 			}
 		default:
-			// Image generation and search are not served here (PARITY 6.9 C1).
+			// Search is not served here (PARITY 6.9 C1).
 			if !refused {
 				t.Errorf("%s: served", c.Name)
 			}

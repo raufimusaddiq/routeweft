@@ -261,7 +261,7 @@ func (h *Handler) writeOpenAITranslation(w http.ResponseWriter, r *http.Request,
 		copyResponseHeaders(w.Header(), response.Header)
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(response.StatusCode)
-		scanner := &usageScanner{family: provider.Protocol}
+		scanner := &usageScanner{family: provider.Protocol, whole: translation.WholeAnswer}
 		var answer io.Reader = response.Body
 		if translation.Integrity != nil {
 			// Held until it is known to be whole; the client is told it is waiting.

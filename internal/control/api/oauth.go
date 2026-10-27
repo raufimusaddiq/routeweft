@@ -39,7 +39,9 @@ const (
 	oauthMinPollInterval = 2 * time.Second
 	// oauthSlowDownStep and oauthMaxPollInterval are the reference's answer to a
 	// provider's slow_down: five more seconds each time, up to thirty
-	// (OAuthModal.js:184-186, RFC 8628 3.5).
+	// (OAuthModal.js:184-186, RFC 8628 3.5). The cap applies only to a provider
+	// that asked for thirty seconds or less; one that asked for more gets five
+	// more seconds each time, so slow_down never shortens what it asked for.
 	oauthSlowDownStep    = 5 * time.Second
 	oauthMaxPollInterval = 30 * time.Second
 	oauthInputPasteCode  = "code"
@@ -62,6 +64,9 @@ type oauthFlow struct {
 	// interval is the provider's poll interval for a device attempt, raised by
 	// each slow_down. Upstream polls are spaced by it, never by the browser.
 	interval time.Duration
+	// baseInterval is the interval the provider asked for at start, which decides
+	// whether the slow_down cap applies (slowedInterval).
+	baseInterval time.Duration
 	// ttl, when set, caps the attempt's lifetime below oauthFlowTTL (a device
 	// code that expires sooner than the flow must not outlive its code).
 	ttl time.Duration
@@ -215,13 +220,24 @@ func (f *oauthFlows) slowDown(state string) time.Duration {
 	if !ok {
 		return 0
 	}
-	flow.interval = pollInterval(flow.interval) + oauthSlowDownStep
-	if flow.interval > oauthMaxPollInterval {
-		flow.interval = oauthMaxPollInterval
-	}
+	flow.interval = slowedInterval(flow.interval, flow.baseInterval)
+
 	flow.nextPoll = f.now().Add(flow.interval)
 	f.pending[state] = flow
 	return flow.interval
+}
+
+// slowedInterval is the interval after one slow_down: always five seconds more
+// (RFC 8628 3.5), capped at thirty as the reference caps it only when the
+// provider's own interval (base) was thirty seconds or less, so the cap never
+// lowers what a provider asked for. Growth is bounded by the attempt's deadline.
+func slowedInterval(current, base time.Duration) time.Duration {
+	current = pollInterval(current)
+	next := current + oauthSlowDownStep
+	if pollInterval(base) <= oauthMaxPollInterval && next > oauthMaxPollInterval {
+		next = oauthMaxPollInterval
+	}
+	return next
 }
 
 // reserveResult says why reserve did or did not take the attempt.
@@ -647,7 +663,7 @@ func (h *Handler) handleOAuthDeviceStart(w http.ResponseWriter, r *http.Request)
 		identityOptional: provider.flow.IdentityOptional, ttl: device.ExpiresIn,
 		// The first poll waits the provider's own interval, as before; later ones
 		// are spaced by it at the 2 s floor.
-		interval: pollInterval(device.Interval), nextPoll: h.oauth.now().Add(device.Interval),
+		interval: pollInterval(device.Interval), baseInterval: device.Interval, nextPoll: h.oauth.now().Add(device.Interval),
 		device: true,
 	})
 	if !ok {

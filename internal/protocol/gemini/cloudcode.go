@@ -134,7 +134,10 @@ func chatRequestToCloudCode(body map[string]any, options RequestOptions, cloud C
 		return nil, nil, err
 	}
 	antigravity := wire == AntigravityProtocol
-	claude := antigravity && isClaudeModel(options.Model)
+	// The pin tests for an image model before anything else (executors/antigravity.js:145),
+	// so an image model is never also treated as a Claude one.
+	image := antigravity && IsAntigravityImageModel(options.Model)
+	claude := antigravity && !image && isClaudeModel(options.Model)
 	if antigravity {
 		if err := antigravityPreflight(body, claude); err != nil {
 			return nil, nil, err
@@ -187,6 +190,9 @@ func chatRequestToCloudCode(body map[string]any, options RequestOptions, cloud C
 			}
 		}
 	}
+	if image {
+		return antigravityImageEnvelope(fields, config, options, cloud)
+	}
 	request["generationConfig"] = config
 	if !antigravity {
 		// Antigravity sends none (:364-367, executors/antigravity.js:287). The CLI
@@ -203,6 +209,17 @@ func chatRequestToCloudCode(body map[string]any, options RequestOptions, cloud C
 	case fields["tools"] != nil:
 		request["toolConfig"] = map[string]any{"functionCallingConfig": map[string]any{"mode": "VALIDATED"}}
 	}
+	envelope, err := cloudCodeEnvelope(request, options, cloud, wire, options.Model)
+	if err != nil {
+		return nil, nil, err
+	}
+	out, err := json.Marshal(envelope)
+	return out, names, err
+}
+
+// cloudCodeEnvelope wraps request for the Cloud Code endpoint under model, with
+// the session and request id both paths send.
+func cloudCodeEnvelope(request map[string]any, options RequestOptions, cloud CloudCodeOptions, wire, model string) (map[string]any, error) {
 	session := cloud.SessionID
 	if session == "" && options.Scope != "" {
 		session = "routeweft:" + options.Scope
@@ -212,16 +229,15 @@ func chatRequestToCloudCode(body map[string]any, options RequestOptions, cloud C
 	}
 	requestID := cloud.RequestID
 	if requestID == "" {
+		var err error
 		if requestID, err = newRequestID(); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
-	envelope := map[string]any{
-		"project": cloud.Project, "model": options.Model, "userAgent": wire,
+	return map[string]any{
+		"project": cloud.Project, "model": model, "userAgent": wire,
 		"requestId": requestID, "request": request,
-	}
-	out, err := json.Marshal(envelope)
-	return out, names, err
+	}, nil
 }
 
 // antigravityPreflight refuses what the Antigravity wire is known not to carry
@@ -297,8 +313,11 @@ func unwrapCloudCode(body map[string]any) (map[string]any, error) {
 			switch {
 			case key == "request" || cloudCodeRouting[key] || key == "sessionId" || key == "session_id":
 			case key == "requestType":
-				if value != nil && value != "agent" {
-					return nil, unsupported("requestType %s: only the agent path is served; image generation is out of scope", concerns.JSONText(value))
+				// image_gen is decided by the model the gateway routes to
+				// (executors/antigravity.js:145), as the client's model is, so the
+				// client's word is not needed. search is a bucket nothing here serves.
+				if value != nil && value != "agent" && value != AntigravityImageRequestType {
+					return nil, unsupported("requestType %s: only the agent and image_gen paths are served", concerns.JSONText(value))
 				}
 			case slices.Contains(cloudCodeInner, key):
 			default:
@@ -309,8 +328,9 @@ func unwrapCloudCode(body map[string]any) (map[string]any, error) {
 	copied := make(map[string]any, len(inner))
 	for key, value := range inner {
 		// The session is the client's own and the gateway assigns another.
-		// requestType was checked above: only absent, null or "agent" got here,
-		// and all three mean the same thing, so none is copied.
+		// requestType was checked above: only absent, null, "agent" or "image_gen"
+		// got here, and the routed model decides between the last two, so none is
+		// copied.
 		if key == "sessionId" || key == "session_id" || cloudCodeRouting[key] || key == "request" || key == "requestType" {
 			continue
 		}
