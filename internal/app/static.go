@@ -32,8 +32,9 @@ var staticTypes = map[string]string{
 // staticUI serves the built Vite UI (BDR-003). The UI uses hash routes, so the
 // browser only ever requests "/" for a page; every other path must be a real
 // built file and anything else is a 404 rather than an index.html fallback.
+// Symlinks are followed only while they resolve inside root (#206).
 type staticUI struct {
-	root string
+	root string // absolute, symlinks resolved
 }
 
 // newStaticUI returns nil when dir is empty (API-only deployment, e.g. Caddy
@@ -46,6 +47,11 @@ func newStaticUI(dir string) (*staticUI, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
+	}
+	// Resolve the root itself so a UI dir reached through a symlink (e.g. a
+	// release directory) still contains its own files.
+	if abs, err = filepath.EvalSymlinks(abs); err != nil {
+		return nil, errors.New("ui dir: " + err.Error())
 	}
 	info, err := os.Stat(filepath.Join(abs, "index.html"))
 	if err != nil {
@@ -71,7 +77,7 @@ func (s *staticUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	file, err := os.DirFS(s.root).Open(name)
+	file, err := s.open(name)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -79,14 +85,6 @@ func (s *staticUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() {
-		http.NotFound(w, r)
-		return
-	}
-	seeker, ok := file.(interface {
-		Read([]byte) (int, error)
-		Seek(int64, int) (int64, error)
-	})
-	if !ok {
 		http.NotFound(w, r)
 		return
 	}
@@ -111,5 +109,19 @@ func (s *staticUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		h.Set("Cache-Control", "no-cache")
 	}
-	http.ServeContent(w, r, name, info.ModTime(), seeker)
+	http.ServeContent(w, r, name, info.ModTime(), file)
+}
+
+// open opens name (an fs.ValidPath) only if every symlink on the way resolves
+// inside root, so a link in the UI dir cannot expose a file outside it.
+func (s *staticUI) open(name string) (*os.File, error) {
+	real, err := filepath.EvalSymlinks(filepath.Join(s.root, filepath.FromSlash(name)))
+	if err != nil {
+		return nil, err
+	}
+	rel, err := filepath.Rel(s.root, real)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return nil, fs.ErrNotExist
+	}
+	return os.Open(real)
 }
