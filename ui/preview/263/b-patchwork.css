@@ -1,0 +1,65 @@
+/* PREVIEW ONLY (#263, phase 1): direction B, "Patchwork". Not imported by the app; capture.cjs
+   injects it over the built style.css. Rounded tiles, an ink-filled rail, pastel patches per
+   figure, orange highlighter, pill controls. Breaks the 0/2px radius guard on purpose. */
+:root {
+  --paper: #e6efe9; --bg: #e6efe9; --surface: #fbfdfb; --sidebar: #0f2421;
+  --surface-2: #d6e4dc; --surface-3: #bfd2c7;
+  --ink: #0f2421; --ink-hover: #23413c; --text-main: #0f2421;
+  --text-muted: #3f5550; --text-subtle: #3f5550;
+  --border: #5c7570; --border-subtle: #bfd2c7;
+  --danger: #a3202e; --success: #17663b; --warning: #7a4a00; --info: #1f5a93;
+  --live: #006b78; --focus: #006b78;
+  --highlight: #ff9a3c; --highlight-ink: #0f2421;
+  --tint-live: #c4ead6; --tint-sky: #cfe3f7; --tint-warn: #ffd9b8;
+  --outline: #0f2421; --shadow-ink: #0f2421;
+  --hard: 3px 3px 0 var(--shadow-ink); --hard-sm: 2px 2px 0 var(--shadow-ink);
+  --radius-tile: 12px; --radius-pill: 999px;
+  --accent-bg: #ffd9b8; --accent-fg: #0f2421; --accent-muted: #4a3f33; --accent-rule: #d9a77d;
+  --accent-control: #6f5642; --accent-raised: #ffcaa0; --accent-danger: #8f1a24;
+  --accent-success: #135a33; --accent-warning: #5c3800; --accent-focus: #004f59; --accent-live: #004f59;
+}
+:root[data-theme="dark"] {
+  --paper: #0e1716; --bg: #0e1716; --surface: #16211f; --sidebar: #1d2e2b;
+  --surface-2: #213330; --surface-3: #2f4541;
+  --ink: #e6efe9; --ink-hover: #c8d6ce; --text-main: #e6efe9;
+  --text-muted: #a2b5ae; --text-subtle: #a2b5ae;
+  --border: #7d958f; --border-subtle: #2a3c39;
+  --danger: #ff7b86; --success: #6fd3a0; --warning: #f0b867; --info: #8dbff2;
+  --live: #4fd1e0; --focus: #ff9a3c;
+  --highlight: #8a4a12; --highlight-ink: #e6efe9;
+  --tint-live: #173a2c; --tint-sky: #172d44; --tint-warn: #45290f;
+  --outline: #e6efe9; --shadow-ink: #000000;
+  --accent-bg: #45290f; --accent-fg: #f3ece4; --accent-muted: #d6bfa8; --accent-rule: #6e4a2a;
+  --accent-control: #b08a68; --accent-raised: #573517; --accent-danger: #ff8a93;
+  --accent-success: #7bd6a4; --accent-warning: #f6c983; --accent-focus: #ffb36b; --accent-live: #6fe0ee;
+}
+/* An ink rail: the sidebar re-points its tokens like an accent surface does. */
+.sidebar { --text-main: #eef5f0; --text-muted: #b5cbc5; --ink: #eef5f0; --surface: #0f2421; --surface-2: #1d3a35; --border: #7fa39b; --border-subtle: #2c4a44; --live: #ff9a3c; --focus: #ff9a3c; color: #eef5f0; border-right: 0; }
+:root[data-theme="dark"] .sidebar { --surface: #1d2e2b; --surface-2: #2a403c; }
+.nav-link { border-radius: var(--radius-pill); }
+.nav-link-active { color: #0f2421; background: var(--highlight); }
+:root[data-theme="dark"] .nav-link-active { color: #0f2421; background: #ff9a3c; }
+.nav-link-active { padding-left: 16px; }
+.nav-link-active::before { background: #0f2421; left: 8px; }
+.mobile-header { background: var(--sidebar); --text-main: #eef5f0; color: #eef5f0; }
+h1 { font-weight: 700; letter-spacing: -.045em; }
+/* Patches: each figure, the accent surface and each detail panel is a tile. */
+.ed-figure, .ed-facts, .ed-watch, .accent-surface, .provider-details > .detail-panel, .provider-catalog { border: 2px solid var(--outline); border-radius: var(--radius-tile); padding: 14px 16px; background: var(--surface); box-shadow: var(--hard); }
+.detail-panel .ed-watch { border: 0; border-top: 2px solid var(--ink); border-radius: 0; padding: 0; background: none; box-shadow: none; }
+.ed-facts { background: var(--tint-live); }
+.ed-watch { background: var(--tint-sky); }
+.accent-surface { background: var(--accent-bg); border-left-width: 2px; }
+.ed-facts, .ed-watch { border-top-width: 2px; }
+.empty-state, .empty-keys, .inline-notice, .page-error, .auth-error { border: 2px solid var(--outline); border-radius: var(--radius-tile); box-shadow: var(--hard-sm); }
+.ed-headline strong, .ed-statement strong { padding: 0 .12em; border-radius: 4px; background: var(--highlight); color: var(--highlight-ink); }
+.button-primary, .button-secondary, .button-danger, .button-ghost { border-width: 2px; border-radius: var(--radius-pill); padding-inline: 14px; }
+.button-primary { border-color: var(--outline); box-shadow: var(--hard-sm); }
+.button-secondary { border-color: var(--outline); }
+.button-primary:active, .button-secondary:active { transform: translate(2px, 2px); box-shadow: none; }
+:is(input, select, textarea) { border-width: 2px; border-radius: 8px; }
+.state-tag { border-radius: var(--radius-pill); border-color: var(--outline); padding-inline: 8px; }
+.ed-bar { height: 8px; border-radius: var(--radius-pill); overflow: hidden; }
+.dot { border-radius: 0; }
+.provider-option { border-radius: 8px; }
+.provider-option-selected { border-left: 0; background: var(--tint-warn); outline: 2px solid var(--outline); outline-offset: -2px; }
+@media (max-width: 700px) { .provider-catalog, .provider-details > .detail-panel { padding: 10px; } }
