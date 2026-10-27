@@ -2,7 +2,7 @@
 // injected over the built app, light and dark, 1440px and 390px, plus the drawer and a provider
 // selection, and measures what the contract guards measure. Nothing here ships: the app never
 // imports ui/preview. Run against `npx vite preview --port 4173` of a fresh `npm run build`.
-// Usage: node preview/263/capture.cjs <outDir> [current|a|b ...]
+// Usage: node preview/263/capture.cjs <outDir> [current|a|b|c|d ...]
 const { chromium } = require('playwright-core');
 const { mkdirSync, readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
@@ -13,6 +13,8 @@ const directions = [
   { key: 'current', label: 'Current contract (BDR-015), for comparison', css: '' },
   { key: 'a', label: 'PREVIEW #263 · Direction A "Loom" · not shipped', css: readFileSync(join(__dirname, 'a-loom.css'), 'utf8') },
   { key: 'b', label: 'PREVIEW #263 · Direction B "Patchwork" · not shipped', css: readFileSync(join(__dirname, 'b-patchwork.css'), 'utf8') },
+  { key: 'c', label: 'PREVIEW #263 · Direction C "Ledger" · not shipped', css: readFileSync(join(__dirname, 'c-ledger.css'), 'utf8') },
+  { key: 'd', label: 'PREVIEW #263 · Direction D "Signal" · not shipped', css: readFileSync(join(__dirname, 'd-signal.css'), 'utf8') },
 ].filter(direction => wanted.length === 0 || wanted.includes(direction.key));
 
 // Sanitized fixture, the same shape as scripts/shell-smoke.cjs; 30 days so Fig. 1 has a real comparison.
@@ -48,6 +50,8 @@ async function stub(page) {
     if (path === '/usage/summary') return json(route, summary(url.searchParams.get('period') || '7d'));
     if (path === '/usage') return json(route, { items: events, page: 1, pageSize: 50, total: 4120 });
     if (path === '/usage/stream') return route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'retry: 600000\n: connected\n\n' });
+    // Settings and Token Saver read every key; the values are the shell-smoke fixture's.
+    if (path === '/settings' && route.request().method() === 'GET') { const settings = { requireApiKey: false, ...{ providerStrategy: 'fill-first', stickyRoundRobinLimit: '3', providerStrategies: '{}', comboStrategy: 'fallback', comboStickyRoundRobinLimit: '1', comboStrategies: '{}', quotaVisibility: '{}', enableObservability: 'false', observabilityMaxRecords: '1000', observabilityBatchSize: '20', observabilityFlushIntervalMs: '5000', observabilityMaxJsonSize: '5242880', outboundProxyEnabled: 'false', outboundProxyUrl: '[redacted]', noProxy: '[]', dnsToolEnabled: 'false', providerCompatibility: '{}', rtkEnabled: 'true', headroomEnabled: 'false', headroomUrl: 'http://localhost:8787', headroomCompressUserMessages: 'false', headroomTimeoutMs: '3000', cavemanEnabled: 'false', cavemanLevel: 'full', ponytailEnabled: 'false', ponytailLevel: 'full', pxpipeEnabled: 'false', pxpipeAutoInstall: 'true', pxpipeMinChars: '25000', pxpipeTimeoutMs: '15000' } }; return json(route, { settings, writable: Object.keys(settings) }); }
     if (path === '/providers') return json(route, { items: providers, page: 1, pageSize: 100, total: providers.length });
     if (path === '/provider-nodes') return json(route, { items: nodes, page: 1, pageSize: 100, total: nodes.length });
     if (path === '/connections') return json(route, { items: connections, page: 1, pageSize: 100, total: connections.length });
@@ -71,12 +75,28 @@ const measure = () => {
   const hasText = element => [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
   const lowContrast = elements.filter(visible).filter(element => !element.disabled && hasText(element)).flatMap(element => { const value = ratio(rgba(getComputedStyle(element).color), background(element)); return value < 4.5 ? [{ element: element.className, ratio: +value.toFixed(2) }] : []; });
   const controls = elements.filter(visible).filter(element => element.matches('button:not(.drawer-backdrop), input, select, textarea'));
-  const weakBoundaries = controls.flatMap(element => { const style = getComputedStyle(element); if (parseFloat(style.borderTopWidth) === 0) return []; const own = rgba(style.backgroundColor); const behind = background(element.parentElement); const value = Math.max(ratio(rgba(style.borderTopColor), behind), own[3] ? ratio(own, behind) : 0); return value < 3 ? [{ element: element.className || element.tagName, ratio: +value.toFixed(2) }] : []; });
+  // A transparent border is no boundary; rounds 1 and 2 counted it as black and reported a false sign-out failure.
+  const weakBoundaries = controls.flatMap(element => { const style = getComputedStyle(element); if (parseFloat(style.borderTopWidth) === 0 || rgba(style.borderTopColor)[3] === 0) return []; const own = rgba(style.backgroundColor); const behind = background(element.parentElement); const value = Math.max(ratio(rgba(style.borderTopColor), behind), own[3] ? ratio(own, behind) : 0); return value < 3 ? [{ element: element.className || element.tagName, ratio: +value.toFixed(2) }] : []; });
   const smallTargets = innerWidth < 700 ? elements.filter(visible).filter(element => element.matches('button:not(.drawer-backdrop), select, input:not([type=checkbox]):not([type=radio]), .nav-link')).filter(element => element.getBoundingClientRect().height < 44).map(element => element.className || element.tagName) : [];
   const radii = elements.filter(visible).flatMap(element => ['borderTopLeftRadius'].filter(key => parseFloat(getComputedStyle(element)[key]) > 2).map(() => element.className));
   const shadows = [...new Set(elements.map(element => getComputedStyle(element).boxShadow).filter(value => value !== 'none'))];
   const blurred = elements.filter(element => /blur/.test(getComputedStyle(element).filter + getComputedStyle(element).backdropFilter)).length;
-  return { overflow: document.documentElement.scrollWidth - innerWidth, lowContrast, weakBoundaries, smallTargets: [...new Set(smallTargets)], roundedElements: radii.length, shadows, blurred, accents: [...document.querySelectorAll('.accent-surface')].filter(visible).length };
+  // The phone menu button is frameless: its bars are its boundary, so they need 3:1 against the header behind them.
+  const menu = document.querySelector('.mobile-menu');
+  if (menu && visible(menu)) { const value = ratio(rgba(getComputedStyle(menu).color), background(document.querySelector('.mobile-header') || document.body)); if (value < 3) weakBoundaries.push({ element: 'mobile-menu bars', ratio: +value.toFixed(2) }); }
+  // The rail (desktop) and the phone header are surfaces of their own: their edge against the page needs 3:1,
+  // from a rule or from the fill itself, or the shell melts into the page.
+  const page = background(document.querySelector('.workspace') || document.body);
+  for (const [selector, side] of [['.sidebar', 'Right'], ['.mobile-header', 'Bottom']]) {
+    const element = document.querySelector(selector);
+    if (!element || !visible(element) || (selector === '.sidebar' && innerWidth < 700)) continue;
+    const style = getComputedStyle(element);
+    const rule = parseFloat(style[`border${side}Width`]) >= 1 ? ratio(rgba(style[`border${side}Color`]), page) : 0;
+    const value = Math.max(rule, ratio(background(element), page));
+    if (value < 3) weakBoundaries.push({ element: `${selector} edge`, ratio: +value.toFixed(2) });
+  }
+  const sizes = [...new Set(elements.filter(visible).filter(hasText).map(element => getComputedStyle(element).fontSize))].sort((a, b) => parseFloat(a) - parseFloat(b));
+  return { sizes, overflow: document.documentElement.scrollWidth - innerWidth, lowContrast, weakBoundaries, smallTargets: [...new Set(smallTargets)], roundedElements: radii.length, shadows, blurred, accents: [...document.querySelectorAll('.accent-surface')].filter(visible).length };
 };
 
 (async () => {
@@ -140,11 +160,43 @@ const measure = () => {
       await page.screenshot({ path: join(out, `${direction.key}-providers-focus-${theme}-1440.png`), clip: { x: 0, y: 0, width: 1440, height: 520 } });
       report.push({ direction: direction.key, view: 'interactions', theme, focusAfterEscape, focusedAfterSelect, selected: selected.split('\n')[0] });
     }
+    // Every page title at every width: the longest is "Combo & Capability Adapter". A title must not overflow its
+    // box or the page, must not be clipped, and must break only between words.
+    await page.selectOption('#theme-select', 'light').catch(() => {});
+    for (const width of [1440, 390, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      if (width < 700 && await page.locator('#theme-select').isVisible()) await page.keyboard.press('Escape');
+      for (const href of await page.locator('nav a.nav-link').evaluateAll(links => links.map(link => link.getAttribute('href')))) {
+        await page.evaluate(target => { location.hash = target; }, href);
+        await page.waitForTimeout(350);
+        await page.waitForSelector('h1', { timeout: 5000 }).catch(() => {});
+        await page.evaluate(() => document.fonts.ready);
+        await page.waitForTimeout(400);
+        const title = await page.evaluate(() => {
+          const h1 = document.querySelector('h1');
+          if (!h1) return { text: null, fontSize: null, lines: 0, titleWidth: 0, overflowX: 0, clippedRight: 0, pageOverflow: document.documentElement.scrollWidth - innerWidth, brokenWords: ['no h1'] };
+          const style = getComputedStyle(h1);
+          const box = h1.getBoundingClientRect();
+          const text = h1.firstChild && h1.firstChild.nodeType === Node.TEXT_NODE ? h1.firstChild : null;
+          const brokenWords = [];
+          if (text) for (const match of text.textContent.matchAll(/\S+/g)) {
+            const range = document.createRange();
+            range.setStart(text, match.index); range.setEnd(text, match.index + match[0].length);
+            const lines = new Set([...range.getClientRects()].map(rect => Math.round(rect.top)));
+            if (lines.size > 1) brokenWords.push(match[0]);
+          }
+          return { text: h1.textContent, fontSize: style.fontSize, lines: Math.round(box.height / parseFloat(style.lineHeight)), titleWidth: Math.round(box.width), overflowX: h1.scrollWidth - h1.clientWidth, clippedRight: Math.round(box.right - innerWidth), pageOverflow: document.documentElement.scrollWidth - innerWidth, brokenWords, outside: [...document.querySelectorAll('body *')].filter(element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden' && (element.getBoundingClientRect().right > innerWidth + 0.5 || element.scrollWidth > element.clientWidth + 1 && getComputedStyle(element).overflowX === 'visible')).map(element => (element.className || element.tagName) + ':' + element.scrollWidth + '/' + element.clientWidth + ':' + (element.textContent || '').slice(0, 30)).slice(0, 8) };
+        });
+        report.push({ direction: direction.key, view: 'title', width, href, ...title });
+        if (href === '#combo-capability-adapter') await page.screenshot({ path: join(out, `${direction.key}-title-combo-${width}.png`), clip: { x: 0, y: 0, width, height: 260 } });
+      }
+    }
     report.push({ direction: direction.key, errors });
     await page.close();
   }
   await browser.close();
   writeFileSync(join(out, 'report.json'), JSON.stringify(report, null, 2) + '\n');
-  for (const row of report.filter(row => row.width)) console.log([row.direction, row.view, row.theme, row.width, `overflow=${row.overflow}`, `lowText=${row.lowContrast.length}`, `weakControls=${row.weakBoundaries.length}`, `small=${row.smallTargets.length}`, `rounded=${row.roundedElements}`, `shadows=${row.shadows.length}`, `blur=${row.blurred}`, `accents=${row.accents}`].join(' '));
+  for (const row of report.filter(row => row.width && row.view !== 'title')) console.log([row.direction, row.view, row.theme, row.width, `overflow=${row.overflow}`, `lowText=${row.lowContrast.length}`, `weakControls=${row.weakBoundaries.length}`, `small=${row.smallTargets.length}`, `rounded=${row.roundedElements}`, `shadows=${row.shadows.length}`, `blur=${row.blurred}`, `accents=${row.accents}`].join(' '));
+  for (const row of report.filter(row => row.view === 'title')) console.log([row.direction, 'title', row.width, row.href, row.fontSize, `lines=${row.lines}`, `overflowX=${row.overflowX}`, `clippedRight=${row.clippedRight}`, `pageOverflow=${row.pageOverflow}`, `broken=${row.brokenWords.join(',') || 0}`].join(' '));
   for (const row of report.filter(row => !row.width)) console.log(JSON.stringify(row));
 })().catch(error => { console.error('FAIL', error); process.exit(1); });

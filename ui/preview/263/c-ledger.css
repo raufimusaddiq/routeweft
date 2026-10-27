@@ -1,0 +1,77 @@
+/* PREVIEW ONLY (#263, phase 1, round 2): direction C, "Ledger". Not imported by the app; capture.cjs
+   injects it over the built style.css. Square everything: a heavy ruled grid where every table cell,
+   list and control is boxed in black, an 8px hard shadow on the one slab, an inverted nav block, mono
+   uppercase labels, stamped status tags. Colours: vermilion slab, acid highlighter, cyan live. */
+:root {
+  --paper: #efeee9; --bg: #efeee9; --surface: #ffffff; --sidebar: #efeee9;
+  --surface-2: #e2e0d8; --surface-3: #c8c6bd;
+  --ink: #000000; --ink-hover: #2b2b2b; --text-main: #000000;
+  --text-muted: #3a3a36; --text-subtle: #3a3a36;
+  --border: #000000; --border-subtle: #000000;
+  --danger: #b0001a; --success: #0b6b2e; --warning: #7a5200; --info: #1f4f8a;
+  --live: #00727f; --focus: #00727f;
+  --slab: #ff4a1c; --highlight: #e4ff1a; --highlight-ink: #000000;
+  --outline: #000000; --shadow-ink: #000000;
+  --hard: 8px 8px 0 var(--shadow-ink); --hard-sm: 4px 4px 0 var(--shadow-ink);
+  --accent-bg: #ff4a1c; --accent-fg: #000000; --accent-muted: #2b0c03; --accent-rule: #000000;
+  --accent-control: #000000; --accent-raised: #ff6a43; --accent-danger: #000000;
+  --accent-success: #000000; --accent-warning: #000000; --accent-focus: #000000; --accent-live: #000000;
+}
+:root[data-theme="dark"] {
+  --paper: #0b0b0b; --bg: #0b0b0b; --surface: #161616; --sidebar: #0b0b0b;
+  --surface-2: #222222; --surface-3: #3a3a3a;
+  --ink: #f2f0e8; --ink-hover: #cfcdc5; --text-main: #f2f0e8;
+  --text-muted: #b9b7ae; --text-subtle: #b9b7ae;
+  --border: #f2f0e8; --border-subtle: #f2f0e8;
+  --danger: #ff6b6b; --success: #5fd38a; --warning: #ffc14d; --info: #8dbff2;
+  --live: #4fd1e0; --focus: #4fd1e0;
+  --slab: #ff5a2c; --highlight: #e4ff1a; --highlight-ink: #000000;
+  --outline: #f2f0e8; --shadow-ink: #f2f0e8;
+  --accent-bg: #ff5a2c; --accent-fg: #000000; --accent-muted: #2b0c03; --accent-rule: #000000;
+  --accent-control: #000000; --accent-raised: #ff7650; --accent-danger: #000000;
+  --accent-success: #000000; --accent-warning: #000000; --accent-focus: #000000; --accent-live: #000000;
+}
+/* Labels are mono capitals: the ledger's column heads. */
+.nav-group h2, th, thead th, .ed-label, .ed-fact dt, .eyebrow, .ed-group span, .sidebar-footer label, .ed-kicker { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .06em; }
+/* Rail: a 4px ruled edge, the active page an inverted black block. */
+.sidebar { border-right: 4px solid var(--outline); }
+.nav-link-active { color: var(--paper); background: var(--ink); font-weight: 700; }
+.nav-link-active::before { background: var(--slab); }
+.mobile-header { border-bottom: 4px solid var(--outline); }
+h1 { font-weight: 700; text-transform: uppercase; letter-spacing: -.01em; }
+.page-intro { border-bottom: 4px solid var(--outline); padding-bottom: 14px; margin-bottom: 8px; }
+/* The one slab: saturated, outlined, 8px hard shadow. */
+.accent-surface { border: 4px solid var(--outline); box-shadow: var(--hard); }
+/* The highlighter is a block behind the number, black text in both themes. */
+.ed-headline strong, .ed-statement strong { padding: 0 .12em; color: var(--highlight-ink); background: var(--highlight); -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.ed-statement-row, .ed-group, .ed-facts, .ed-watch { border-top-width: 4px; }
+/* Grid: every table cell and list row is ruled in black; the head row is inverted. */
+.ed-table, table { border: 3px solid var(--outline); }
+th, td, th:first-child, td:first-child, th:last-child, td:last-child { border: 2px solid var(--outline); padding: 0 10px; }
+thead th, .ed-table thead th { color: var(--paper); background: var(--ink); border-bottom: 3px solid var(--outline); }
+tbody tr:hover { background: var(--surface-2); }
+.ed-facts, .ed-watch { border: 3px solid var(--outline); border-top-width: 4px; background: var(--surface); }
+.ed-fact, .ed-watch li { border-bottom: 2px solid var(--outline); padding-inline: 12px; }
+.provider-option, .provider-option:first-child { border: 2px solid var(--outline); margin-bottom: -2px; padding: 10px 12px; }
+.provider-option-selected { border-left: 2px solid var(--outline); color: var(--highlight-ink); background: var(--highlight); --text-muted: #2b2b2b; --success: #0b5a26; --warning: #5c3d00; --danger: #8a0014; }
+.ed-bar { height: 10px; border: 2px solid var(--outline); background: var(--surface); }
+.ed-bar > span { background: var(--ink); }
+.chart-grid line { stroke: var(--surface-3); }
+/* Controls: 3px boxes, mono capitals, a 4px shadow that collapses when pressed. */
+.button-primary, .button-secondary, .button-danger { border: 3px solid var(--outline); border-radius: 0; font-family: var(--font-mono); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; box-shadow: var(--hard-sm); }
+.button-danger { border-color: var(--danger); }
+.button-primary:active, .button-secondary:active, .button-danger:active { transform: translate(4px, 4px); box-shadow: none; }
+:is(input, select, textarea) { border: 3px solid var(--border); border-radius: 0; }
+/* Stamped tags: hard capitals in a box of their own colour. */
+.state-tag { border: 2px solid currentColor; border-radius: 0; padding: 2px 6px; font-family: var(--font-mono); font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.dot { width: 10px; height: 10px; }
+.empty-state, .empty-keys, .inline-notice, .secret-panel { border: 3px solid var(--outline); box-shadow: var(--hard-sm); }
+.page-error, .auth-error { border: 3px solid var(--outline); border-left: 10px solid var(--danger); box-shadow: var(--hard-sm); }
+/* Inside the slab the outline is the slab's own ink, so a control keeps 3:1 in dark too. */
+.accent-surface :is(.button-primary, .button-secondary, input, select) { border-color: var(--accent-fg); box-shadow: 4px 4px 0 var(--accent-fg); }
+/* On a phone the request log stacks each row; the row is the cell, so the grid rules move to the row. */
+@media (max-width: 700px) {
+  .log-table { border: 0; }
+  .log-table td, .log-table td:first-child, .log-table td:last-child { border: 0; padding: 0; }
+  .log-table tr { border: 3px solid var(--outline); margin-bottom: -3px; padding: 8px 10px; }
+}
