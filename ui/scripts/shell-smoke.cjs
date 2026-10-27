@@ -114,7 +114,7 @@ const { join } = require('node:path');
     telemetry: { enabled: true, written: 1180, lost: 0, lostDiagnostics: 2, degraded: true },
   };
   const signInFixtureProviders = [
-    { id: 'codex', transports: ['openai-responses'], auth: 'oauth', authModes: [], modelCatalog: 'static', passthroughModels: false, reportsUsage: true, flowType: 'authorization_code_pkce', signInModes: ['browser', 'import'], signInMethods: [{ mode: 'browser', authKind: 'oauth', resolvesIdentity: true, completion: 'redirect-url', loopbackRedirect: 'http://localhost:1455/auth/callback' }, { mode: 'import', authKind: 'oauth', resolvesIdentity: true }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'ready', served: true } },
+    { id: 'codex', bulkImport: true, transports: ['openai-responses'], auth: 'oauth', authModes: [], modelCatalog: 'static', passthroughModels: false, reportsUsage: true, flowType: 'authorization_code_pkce', signInModes: ['browser', 'import'], signInMethods: [{ mode: 'browser', authKind: 'oauth', resolvesIdentity: true, completion: 'redirect-url', loopbackRedirect: 'http://localhost:1455/auth/callback' }, { mode: 'import', authKind: 'oauth', resolvesIdentity: true }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'ready', served: true } },
     { id: 'github', transports: ['openai-chat'], auth: 'oauth', authModes: [], modelCatalog: 'static', passthroughModels: false, reportsUsage: true, flowType: 'device_code', signInModes: ['device'], signInMethods: [{ mode: 'device', authKind: 'oauth', resolvesIdentity: false }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'ready', served: true } },
     { id: 'kimchi', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key', 'oauth'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, flowType: 'browser_token', signInModes: ['browser'], signInMethods: [{ mode: 'browser', authKind: 'oauth', resolvesIdentity: false, completion: 'token' }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'ready', served: true } },
   ];
@@ -157,6 +157,9 @@ const { join } = require('node:path');
   const codexCancelModes = [];
   const deviceCancelModes = [];
   const codexCallbackModes = [];
+  // #215: bulk import bodies and post-login connection checks the page sent.
+  const bulkImports = [];
+  const signedInChecks = [];
   let devicePolls = 0;
   // What the device poll answers ('pending', 'connected', 'save_failed',
   // 'state_invalid'), how long it holds the answer, and the attempt's expiry.
@@ -294,9 +297,20 @@ const { join } = require('node:path');
     if (mode === 'abort') return route.abort('failed');
     if (mode === 'mismatch') return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: 'oauth_state_mismatch', message: 'this address is from a different sign-in attempt; paste the one from this attempt' } }) });
     if (mode === 'invalid') return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { code: 'oauth_state_invalid', message: 'this sign-in attempt expired or was already used; start again' } }) });
+    // #215: a Reauthenticate answered by another account, then by the right one.
+    if (mode === 'account_mismatch') return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: { code: 'oauth_account_mismatch', message: 'a different account signed in; nothing was saved. Sign in as the account this connection belongs to, or use Add connection for a new one' } }) });
+    if (mode === 'reauth') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-codex-a', nodeId: 'node-codex', providerId: 'codex', name: 'Work A', authKind: 'oauth', identity: 'a@example.test', enabled: true, priority: 0, credentialConfigured: true, outcome: 'reauthenticated', plan: 'plus' }) });
     // A ChatGPT account whose tokens name no email is saved without an identity
     // and labelled "Account N", as the reference does (#239).
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-codex', nodeId: 'node-codex', providerId: 'codex', name: 'Account 1', authKind: 'oauth', identity: '', enabled: true, priority: 0, credentialConfigured: true }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-codex', nodeId: 'node-codex', providerId: 'codex', name: 'Account 1', authKind: 'oauth', identity: '', enabled: true, priority: 0, credentialConfigured: true, outcome: 'added', plan: 'plus' }) });
+  }
+  if (url.pathname === '/admin/v1/oauth/codex/bulk-import' && method === 'POST') {
+    bulkImports.push(route.request().postDataJSON());
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ total: 3, success: 2, failed: 1, results: [{ index: 0, ok: true, id: 'conn-codex-a', outcome: 'updated' }, { index: 1, ok: false, error: 'missing accessToken' }, { index: 2, ok: true, id: 'conn-codex-b', outcome: 'added' }] }) });
+  }
+  if (url.pathname === '/admin/v1/connections/conn-codex-a/test' && method === 'POST') {
+    signedInChecks.push(url.pathname);
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
   }
   if (url.pathname === '/admin/v1/connections/conn-codex' && method === 'PATCH') {
     signInPatches.push(route.request().postDataJSON());
@@ -306,7 +320,7 @@ const { join } = require('node:path');
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'node-openai', kind: 'builtin', providerId: 'openai', name: 'openai', baseUrl: 'https://api.openai.com/v1', transports: ['openai-chat','openai-responses'] }, { id: 'node-jev', kind: 'builtin', providerId: 'typesafe', name: 'typesafe', baseUrl: 'https://api.typesafe.ai/v1/systemone', transports: ['systemone'] }], page: 1, pageSize: 100, total: 2 }) });
   }
   if (url.pathname === '/admin/v1/connections' && method === 'GET') {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'conn-1', nodeId: 'node-openai', providerId: 'openai', name: 'primary', authKind: 'api-key', identity: 'acct-1', enabled: providerPatches === 0, priority: 0, credentialConfigured: true, connectionProxy: { url: 'http://proxy.example.test:3128', noProxy: 'localhost' } }, { id: 'conn-jev', nodeId: 'node-jev', providerId: 'typesafe', name: 'jev', authKind: 'api-key', identity: 'acct-jev', enabled: true, priority: 0, credentialConfigured: true }], page: 1, pageSize: 100, total: 2 }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'conn-1', nodeId: 'node-openai', providerId: 'openai', name: 'primary', authKind: 'api-key', identity: 'acct-1', enabled: providerPatches === 0, priority: 0, credentialConfigured: true, connectionProxy: { url: 'http://proxy.example.test:3128', noProxy: 'localhost' } }, { id: 'conn-jev', nodeId: 'node-jev', providerId: 'typesafe', name: 'jev', authKind: 'api-key', identity: 'acct-jev', enabled: true, priority: 0, credentialConfigured: true }, ...(signInProviders ? [{ id: 'conn-codex-a', nodeId: 'node-codex', providerId: 'codex', name: 'Work A', authKind: 'oauth', identity: 'a@example.test', enabled: true, priority: 0, credentialConfigured: true }] : [])], page: 1, pageSize: 100, total: signInProviders ? 3 : 2 }) });
   }
   if (url.pathname === '/admin/v1/systemone' && method === 'GET') {
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: systemOneModelAdded ? [{ providerId: 'typesafe', id: 'jev', name: 'jev', capabilities: [], disabled: false }, { providerId: 'typesafe', id: 'jev-mini', name: 'jev-mini', capabilities: [], disabled: false }] : [{ providerId: 'typesafe', id: 'jev', name: 'jev', capabilities: [], disabled: false }], page: 1, pageSize: 100, total: 1 }) });
@@ -622,6 +636,9 @@ const { join } = require('node:path');
   // Provider-aware sign-in (#214): methods are separate choices, Codex starts with
   // neither name nor identity, and every attempt ends in an explicit state.
   signInProviders = true;
+  // The sign-in window (#215) is sent to the provider's authorize URL; it is
+  // answered here so the smoke never reaches the real provider.
+  await page.context().route('https://auth.openai.com/**', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>provider stub</title>' }));
   await page.click('a[href="#combo-capability-adapter"]');
   await page.waitForSelector('.combos-content');
   await page.click('a[href="#providers"]');
@@ -632,7 +649,7 @@ const { join } = require('node:path');
   const signInForm = page.locator('.provider-form');
   await signInForm.waitFor();
   report.codexMethods = await signInForm.locator('.access-modes label').allTextContents();
-  assert.deepEqual(report.codexMethods, ['Sign in with Codex', 'Import token', 'Paste OAuth tokens']);
+  assert.deepEqual(report.codexMethods, ['Sign in with Codex', 'Import token', 'Bulk import accounts', 'Paste OAuth tokens']);
   assert.equal(await signInForm.getByLabel('Account name').count(), 0);
   assert.equal(await signInForm.getByLabel('Stable account identity').count(), 0);
   assert.equal(await signInForm.locator('input[type="password"]').count(), 0, 'browser sign-in must not show raw token fields');
@@ -685,12 +702,96 @@ const { join } = require('node:path');
   assert.equal(signInCallbacks.length, 4);
   assert.deepEqual(signInCallbacks.at(-1), { state: 'smoke-state-3', input: 'http://localhost:1455/auth/callback?code=auth-code-smoke&state=smoke-state-3' });
   report.codexConnected = await signInForm.locator('[aria-label="Sign-in result"] p').textContent();
-  assert.match(report.codexConnected, /Signed in as Account 1; the connection is saved\./, 'a connection without identity is reported by its label');
+  assert.match(report.codexConnected, /Signed in as Account 1\. Added as a new connection\./, 'a connection without identity is reported by its label');
   assert.equal(await page.content().then(html => html.includes('auth-code-smoke')), false, 'pasted callback must not stay in the DOM');
   await signInForm.getByLabel('Nickname (optional)').fill('Work');
   await signInForm.getByRole('button', { name: 'Save nickname', exact: true }).click();
   await signInForm.waitFor({ state: 'detached' });
   assert.deepEqual(signInPatches, [{ name: 'Work' }]);
+  // #215: the Codex golden path. The sign-in window opens in the click without an
+  // opener and closes when the attempt ends; a blocked window falls back to the
+  // link and paste-back; Reauthenticate renews one connection and refuses another
+  // account; bulk import reports each item and keeps no pasted secret.
+  await page.getByRole('button', { name: 'Add connection', exact: true }).click();
+  await signInForm.waitFor();
+  report.codexDuplicateNote = await signInForm.getByText(/already connected updates that connection/).textContent();
+  const popupOpened = page.waitForEvent('popup');
+  await signInForm.getByRole('button', { name: 'Sign in with Codex', exact: true }).click();
+  const signInPopup = await popupOpened;
+  await signInPopup.waitForURL(/^https:\/\/auth\.openai\.com\/oauth\/authorize\?state=smoke-state-/);
+  assert.equal(await signInPopup.evaluate(() => window.opener), null, 'the provider page cannot reach the dashboard');
+  await signInForm.getByText(/The sign-in page opened in a new window/).waitFor();
+  await signInForm.getByLabel('Address from the browser').fill(`http://localhost:1455/auth/callback?code=auth-code-popup&state=smoke-state-${signInStarts.length}`);
+  await signInForm.getByRole('button', { name: 'Finish sign-in', exact: true }).click();
+  await signInForm.getByText('Connected', { exact: true }).waitFor();
+  // The window has no opener, so the dashboard cannot close it either; it says so.
+  assert.match(await signInForm.locator('[aria-label="Sign-in result"] p').textContent(), /You can close the provider's sign-in window\.$/);
+  if (!signInPopup.isClosed()) await signInPopup.close();
+  await signInForm.getByRole('button', { name: 'Done', exact: true }).click();
+  await signInForm.waitFor({ state: 'detached' });
+  await page.evaluate(() => { window.routeweftOpen = window.open; window.open = () => null; });
+  await page.getByRole('button', { name: 'Add connection', exact: true }).click();
+  await signInForm.getByRole('button', { name: 'Sign in with Codex', exact: true }).click();
+  await signInForm.getByText(/Your browser blocked the sign-in window/).waitFor();
+  report.blockedLink = await signInForm.getByRole('link', { name: 'Open Codex sign-in page' }).getAttribute('href');
+  assert.match(report.blockedLink, /^https:\/\/auth\.openai\.com\/oauth\/authorize\?state=smoke-state-/);
+  assert.equal(await signInForm.getByLabel('Address from the browser').count(), 1, 'paste-back stays the way to finish');
+  await signInForm.getByRole('button', { name: 'Cancel sign-in', exact: true }).click();
+  await signInForm.getByText('Cancelled', { exact: true }).waitFor();
+  await page.evaluate(() => { window.open = window.routeweftOpen; });
+  await signInForm.getByRole('button', { name: 'Close', exact: true }).click();
+  await signInForm.waitFor({ state: 'detached' });
+  const reauthRow = page.locator('.connection-row', { hasText: 'Work A' });
+  codexCallbackModes.push('account_mismatch', 'reauth');
+  for (const expect of ['Failed', 'Connected']) {
+    await reauthRow.getByRole('button', { name: 'Reauthenticate', exact: true }).click();
+    await signInForm.getByRole('heading', { name: 'Reauthenticate “Work A”' }).waitFor();
+    await signInForm.getByText(/Renewing “Work A” \(a@example\.test\)\. Sign in as that account/).waitFor();
+    const starts = signInStarts.length;
+    await signInForm.getByRole('button', { name: 'Reauthenticate', exact: true }).click();
+    await signInForm.getByText('Pending', { exact: true }).waitFor();
+    assert.equal(signInStarts.length, starts + 1);
+    assert.deepEqual(signInStarts.at(-1), { connectionId: 'conn-codex-a', meta: {} }, 'Reauthenticate names its connection and nothing else');
+    await signInForm.getByLabel('Address from the browser').fill(`http://localhost:1455/auth/callback?code=auth-code-reauth&state=smoke-state-${signInStarts.length}`);
+    await signInForm.getByRole('button', { name: 'Finish sign-in', exact: true }).click();
+    await signInForm.getByText(expect, { exact: true }).waitFor();
+  }
+  report.reauthResult = await signInForm.locator('[aria-label="Sign-in result"] p').first().textContent();
+  assert.match(report.reauthResult, /Reauthenticated “Work A” as a@example\.test/);
+  // After login: the account and plan are shown, it can be checked and its quota
+  // read, and no raw token field is left on screen.
+  report.signedInFacts = await signInForm.locator('[aria-label="Signed-in account"]').textContent();
+  assert.match(report.signedInFacts, /a@example\.test/);
+  assert.match(report.signedInFacts, /plus/);
+  await signInForm.getByRole('button', { name: 'Check connection', exact: true }).click();
+  await signInForm.getByText('Connection check succeeded.', { exact: true }).waitFor();
+  await signInForm.getByRole('button', { name: 'Read quota', exact: true }).click();
+  await signInForm.getByText(/^Quota: /).waitFor();
+  report.signedInQuota = await signInForm.getByText(/^Quota: /).textContent();
+  assert.deepEqual(signedInChecks, ['/admin/v1/connections/conn-codex-a/test']);
+  assert.equal(await signInForm.locator('input[type="password"]').count(), 0, 'no raw token form after login');
+  assert.equal(await signInForm.getByLabel('Address from the browser').count(), 0);
+  await signInForm.getByRole('button', { name: 'Done', exact: true }).click();
+  await signInForm.waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: 'Add connection', exact: true }).click();
+  await signInForm.getByLabel('Bulk import accounts').check();
+  const bulkSecret = 'smoke-bulk-secret-token';
+  await signInForm.getByLabel('Exported accounts (JSON)').fill(`[{"accessToken":"${bulkSecret}"`);
+  await signInForm.getByRole('button', { name: 'Import all', exact: true }).click();
+  report.bulkParseError = await signInForm.getByText(/not valid JSON/).textContent();
+  assert.ok(!report.bulkParseError.includes(bulkSecret));
+  assert.equal(bulkImports.length, 0, 'nothing is sent when the export is not JSON');
+  await signInForm.getByLabel('Exported accounts (JSON)').fill(`[{"accessToken":"${bulkSecret}-1","email":"a@example.test"},{"refreshToken":"${bulkSecret}-2"},{"accessToken":"${bulkSecret}-3","email":"b@example.test"}]`);
+  await signInForm.getByRole('button', { name: 'Import all', exact: true }).click();
+  await signInForm.getByText('1 added, 1 already connected and updated, 1 failed.', { exact: true }).waitFor();
+  assert.equal(bulkImports.length, 1);
+  assert.equal(bulkImports[0].accounts.length, 3);
+  report.bulkRows = await signInForm.locator('.bulk-results li').allTextContents();
+  assert.deepEqual(report.bulkRows, ['Saved Item 1: already connected; its connection took the new credential', 'Failed Item 2: failed: missing accessToken', 'Saved Item 3: added as a new connection']);
+  assert.equal(await signInForm.getByLabel('Exported accounts (JSON)').inputValue(), '', 'the pasted export is cleared once sent');
+  assert.equal((await page.content()).includes(bulkSecret), false, 'no pasted token stays in the page');
+  await signInForm.getByRole('button', { name: 'Close', exact: true }).click();
+  await signInForm.waitFor({ state: 'detached' });
   // Device sign-in: a failed cancel leaves the poll running, and a cancel that
   // meets a save in progress claims neither cancelled nor saved until the poll says.
   await page.fill('#provider-filter', 'github');

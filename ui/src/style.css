@@ -289,6 +289,8 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .oauth-panel label { display: grid; gap: 6px; color: var(--text-muted); font-size: var(--t-body); font-weight: 600; }
 .oauth-panel a.button-secondary { justify-self: start; text-decoration: none; }
 .oauth-actions { display: flex; gap: 8px; }
+.oauth-panel textarea.bulk-input { width: 100%; min-height: 160px; resize: vertical; font-family: var(--font-mono); }
+.bulk-results { display: grid; gap: 4px; margin: 6px 0 0; padding: 0; list-style: none; color: var(--text-muted); font-size: var(--t-body); }
 .provider-form-grid input:not([type="radio"]), .provider-form-grid select { width: 100%; }
 .transport-options { display: flex; flex-wrap: wrap; grid-column: 1 / -1; gap: 10px 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-flat); padding: 9px 11px 11px; }
 .transport-options legend { padding: 0 5px; color: var(--text-muted); font-size: var(--t-body); }

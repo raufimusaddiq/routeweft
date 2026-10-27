@@ -72,6 +72,13 @@ export function remainingText(item: QuotaItem): string {
   return 'limit not reported'
 }
 
+/** One account's quota for the sign-in result (#215), or what to expect when the
+ * background read has not reached it yet: a new account usually has none. */
+export function quotaLine(item: QuotaItem | undefined): string {
+  if (!item || item.status === 'not-reported') return 'Quota not read yet. It is read in the background; use Refresh quota on the Quota page to ask for it now.'
+  return [statusLabel(item.status), remainingText(item), item.plan ? `plan ${item.plan}` : ''].filter(Boolean).join(' · ')
+}
+
 /** An absolute time with an explicit zone, so a reset reads the same to every operator. */
 export function zoned(value: string | undefined, timeZone?: string): string | null {
   if (!value) return null

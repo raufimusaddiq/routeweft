@@ -1025,6 +1025,45 @@ reports its index, status and saved connection id, and no credential is echoed.
 A provider may offer a browser or device flow *and* an import mode (codex, grok-cli, iflow, kiro, xiaomi-mimo, cursor); the
 import endpoint resolves the import flow independently of the browser one.
 
+Onboarding golden path (#215). Every saved sign-in, import and bulk item says
+what it did: the connection a callback, poll or import returns carries
+`outcome` (`added`; `updated` when the Codex duplicate rule below put the
+credential on a stored connection; `reauthenticated`), and a Codex one carries
+`plan` from the sign-in's `chatgptPlanType` (a label, not a credential); each
+bulk result item carries the same `outcome`. The provider read model reports
+`bulkImport` exactly where the bulk endpoint accepts the provider.
+`POST /start` takes an optional `connectionId`, which starts a Reauthenticate of
+that connection of this provider (`404 connection_not_found` otherwise; device
+flows do not take it). Its name and identity are the connection's own. The
+callback saves only if the result is that connection's account: for Codex, a
+ChatGPT account id on either side must be on both and equal, and an email on
+both must be equal, with no account id and no two emails nothing is confirmed;
+a bare access token pasted as the code is never accepted; for other providers
+the identity must equal the connection's (one the provider does not report falls
+back to it). Otherwise the callback answers `409 oauth_account_mismatch`, and a
+connection deleted meanwhile `409 connection_not_found`; both have consumed the
+attempt and saved nothing, so a Reauthenticate never adds a row or writes over
+another. A match replaces the credential and keeps name, priority, enabled
+state, proxy and identity, and clears the connection's health, as a duplicate
+update does. The reference has no Reauthenticate: signing in again reaches the
+same row through its duplicate rule, which the plain sign-in still follows.
+
+The dashboard opens the sign-in window in the operator's click (browsers block a
+window opened after the `/start` request), as `about:blank` with its opener cut so
+the provider's page cannot navigate the dashboard, then sends it to the
+`authorizeUrl` (only an `http`/`https` URL is opened or linked). A blocked window
+leaves the link and the paste-back field, which remain the only way to finish:
+there is no listener, because the reference's `start-proxy` listens on the
+server's own `localhost:1455`, which a browser on another computer never
+reaches. Without an opener the dashboard cannot close a window that has reached
+the provider, so the result says the operator can close it. Bulk import parses
+the paste in the browser first (an array, `{accounts}` or one object, as
+`BulkImportCodexModal.js` does), describes a parse error without quoting the
+input, sends nothing then, clears the paste once sent, and lists each item's
+outcome or error. After a sign-in the result shows the account and plan and
+offers a connection check and the account's quota read, and no credential
+field.
+
 An import's `input` is one masked field, so a flow whose import needs several
 secrets takes JSON in it rather than extra plain-text fields. Kiro: a bare string is
 an API key (proven against the Amazon Q model catalog); a JSON object with

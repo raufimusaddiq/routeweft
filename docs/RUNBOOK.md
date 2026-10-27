@@ -694,7 +694,11 @@ Actions:
 2. stop repeated refresh storms;
 3. inspect error without logging secrets;
 4. verify current durable credential generation;
-5. re-auth/import account if provider invalidated the refresh token;
+5. re-auth/import account if provider invalidated the refresh token: on the
+   connection's row use **Reauthenticate** (browser sign-in providers), which
+   renews that connection in place and refuses a different account, saving
+   nothing; a Codex sign-in or bulk item for an already connected account also
+   updates its row rather than adding one (SPEC §19.1);
 6. confirm RuntimeState reflects new credential;
 7. run a minimal provider test.
 
