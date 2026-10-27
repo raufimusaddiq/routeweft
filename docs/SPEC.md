@@ -948,8 +948,10 @@ Per identity:
   quota poll, autoping and the Codex credits reset all `Load` the provider) is
   not a new install: it applies changed metadata but keeps the generation, so a
   refresh in flight still commits its rotation and the spent refresh token is
-  never used again. `Load` re-reads a connection it already holds under that
-  connection's install lock, so a row listed before a refresh committed never
+  never used again. Every path that publishes a stored row (`Load`, the control
+  API's create paths, an update of a connection not yet held) seeds it: a
+  connection not held is added atomically with the check, and one held is read
+  again under its install lock, so a row read before a refresh committed never
   reverts it (#252; the reference reads the latest stored row before quota
   work, `src/app/api/usage/[connectionId]/route.js:25-28`, and adopts a stored
   credential only when it is newer, `src/sse/services/tokenRefresh.js:177-191`);

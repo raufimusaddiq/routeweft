@@ -822,7 +822,13 @@ func TestReregistrationKeepsRefreshInFlight(t *testing.T) {
 		}},
 		{name: "load read the record before the refresh committed", during: func(t *testing.T, ctx context.Context, r *Registry, _ *Store, _ Connection) func() {
 			listed, resume := make(chan struct{}), make(chan struct{})
-			r.afterList = func() { close(listed); <-resume }
+			var paused atomic.Bool
+			r.seeding = func(Connection) {
+				if paused.CompareAndSwap(false, true) {
+					close(listed)
+					<-resume
+				}
+			}
 			loaded := make(chan error, 1)
 			go func() { _, err := r.Load(ctx, "codex"); loaded <- err }()
 			<-listed
@@ -891,6 +897,99 @@ func TestReregistrationKeepsRefreshInFlight(t *testing.T) {
 			}
 			if tc.check != nil {
 				tc.check(t, registry, connection)
+			}
+		})
+	}
+}
+
+// Seeding a connection never installs a row read before a refresh committed:
+// not when the registry did not hold it at the check and another registration
+// and a refresh landed before the registration (the window Hermes found in
+// #252's first head), not when a create publishes after a Load seeded and
+// refreshed it, and not when an update reaches a connection the registry does
+// not yet hold.
+func TestSeedNeverInstallsOverARefresh(t *testing.T) {
+	refresh := func(t *testing.T, ctx context.Context, r *Registry, id string) {
+		t.Helper()
+		if secret, err := r.Secret(ctx, id); err != nil || secret.AccessToken != "fresh-r0-next" {
+			t.Fatalf("refresh: access %q err %v", secret.AccessToken, err)
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		race func(t *testing.T, ctx context.Context, r *Registry, c Connection)
+	}{
+		{"load seeds after another registration added and refreshed it", func(t *testing.T, ctx context.Context, r *Registry, c Connection) {
+			checked, resume := make(chan struct{}), make(chan struct{})
+			// Only the first seed pauses; the second registers and is refreshed
+			// while the first sits after its check.
+			var paused atomic.Bool
+			r.seeding = func(Connection) {
+				if paused.CompareAndSwap(false, true) {
+					close(checked)
+					<-resume
+				}
+			}
+			loaded := make(chan error, 1)
+			go func() { _, err := r.Load(ctx, "codex"); loaded <- err }()
+			<-checked
+			if _, err := r.Load(ctx, "codex"); err != nil {
+				t.Fatal(err)
+			}
+			refresh(t, ctx, r, c.ID)
+			close(resume)
+			if err := <-loaded; err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"create publishes after a load seeded and refreshed it", func(t *testing.T, ctx context.Context, r *Registry, c Connection) {
+			if _, err := r.Load(ctx, "codex"); err != nil {
+				t.Fatal(err)
+			}
+			refresh(t, ctx, r, c.ID)
+			if err := r.Seed(ctx, c); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"update of a connection the registry does not hold", func(t *testing.T, ctx context.Context, r *Registry, c Connection) {
+			updated, err := r.Update(ctx, c.ID, func(stored Connection) (Connection, error) {
+				stored.Name = "renamed"
+				return stored, nil
+			})
+			if err != nil || updated.Name != "renamed" {
+				t.Fatalf("update: name %q err %v", updated.Name, err)
+			}
+			refresh(t, ctx, r, c.ID)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store, _ := testStore(t)
+			node := seedNode(t, store, "codex")
+			connection, err := store.PutConnection(ctx, Connection{NodeID: node.ID, Name: "primary", AuthKind: AuthOAuth, Identity: "acct", Enabled: true, Secret: Secret{AccessToken: "expired", RefreshToken: "r0", Expiry: time.Now().Add(-time.Minute)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tokens := &rotatingTokens{live: "r0", started: make(chan struct{}), release: make(chan struct{})}
+			close(tokens.release)
+			registry := NewRegistry(store, nil)
+			registry.SetExchangerResolver(func(Connection) Exchanger { return tokens.exchange })
+
+			tc.race(t, ctx, registry, connection)
+
+			// The next request is served the committed rotation without an exchange.
+			if secret, err := registry.Secret(ctx, connection.ID); err != nil || secret.AccessToken != "fresh-r0-next" {
+				t.Fatalf("next request: access %q err %v", secret.AccessToken, err)
+			}
+			tokens.mu.Lock()
+			spent := fmt.Sprint(tokens.spent)
+			tokens.mu.Unlock()
+			if spent != "[r0]" {
+				t.Fatalf("refresh tokens spent %s, want [r0]", spent)
+			}
+			loaded, err := store.GetConnection(ctx, connection.ID)
+			if err != nil || loaded.Secret.RefreshToken != "r0-next" {
+				t.Fatalf("durable refresh token %q err %v, want the rotation committed", loaded.Secret.RefreshToken, err)
 			}
 		})
 	}

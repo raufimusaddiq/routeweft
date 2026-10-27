@@ -42,8 +42,8 @@ type Registry struct {
 	// without one, so every registration path refreshes the same way.
 	resolve        func(Connection) Exchanger
 	credentialName func(Connection) (name, expiryName string)
-	// afterList runs between Load's list and its registrations (tests only).
-	afterList func()
+	// seeding runs as Seed starts (tests only).
+	seeding func(Connection)
 }
 
 type entry struct {
@@ -117,6 +117,10 @@ func (r *Registry) SetCredentialNameResolver(resolve func(Connection) (name, exp
 func (r *Registry) Register(connection Connection, exchanger Exchanger) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.registerLocked(connection, exchanger)
+}
+
+func (r *Registry) registerLocked(connection Connection, exchanger Exchanger) {
 	if exchanger == nil && r.resolve != nil {
 		exchanger = r.resolve(connection)
 	}
@@ -131,6 +135,54 @@ func (r *Registry) Register(connection Connection, exchanger Exchanger) {
 		return
 	}
 	r.entries[connection.ID] = &entry{connection: connection, credentialName: name, credentialExpiryName: expiryName, exchanger: exchanger, current: connection.Secret, seeded: true, generation: 1}
+}
+
+// Seed registers one stored connection without installing over anything newer.
+// A connection the registry does not hold is added as given, in the same
+// critical section as the check, so no registration and refresh can land
+// between them. One it holds is read again from the store under its install
+// lock, the lock a refresh commits under, and installed only if its credential
+// changed: a row read before a refresh committed never reverts it (#252). Load
+// and the control API's create paths seed; Register is the explicit install.
+func (r *Registry) Seed(ctx context.Context, connection Connection) error {
+	if r.seeding != nil {
+		r.seeding(connection)
+	}
+	r.mu.Lock()
+	current, ok := r.entries[connection.ID]
+	if !ok {
+		r.registerLocked(connection, nil)
+		r.mu.Unlock()
+		return nil
+	}
+	resolve, credentialName := r.resolve, r.credentialName
+	r.mu.Unlock()
+	current.installMu.Lock()
+	defer current.installMu.Unlock()
+	stored := connection
+	if r.store != nil {
+		var err error
+		stored, err = r.store.GetConnection(ctx, connection.ID)
+		if errors.Is(err, ErrNotFound) {
+			// Deleted since it was read; Forget owns removal.
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+	current.mu.Lock()
+	exchanger := current.exchanger
+	current.mu.Unlock()
+	if resolve != nil {
+		exchanger = resolve(stored)
+	}
+	name, expiryName := "", ""
+	if credentialName != nil {
+		name, expiryName = credentialName(stored)
+	}
+	install(current, stored, exchanger, name, expiryName)
+	return nil
 }
 
 // install replaces a held connection under its install lock. The generation
@@ -161,7 +213,8 @@ func install(current *entry, connection Connection, exchanger Exchanger, name, e
 // the read and the write or commit over the result. It is the reference's
 // read-merge-write in one transaction (connectionsRepo.js:210,266-286) against a
 // refresh that is itself one (connectionsRepo.js:334-352), ordered refresh
-// first. A connection the registry does not hold answers ErrNotFound.
+// first. A connection the registry does not hold is seeded from the store
+// (Seed); one the store does not hold answers ErrNotFound.
 func (r *Registry) Update(ctx context.Context, connectionID string, change func(Connection) (Connection, error)) (Connection, error) {
 	if r.store == nil {
 		return Connection{}, ErrKeyRequired
@@ -171,7 +224,18 @@ func (r *Registry) Update(ctx context.Context, connectionID string, change func(
 	resolve, credentialName := r.resolve, r.credentialName
 	r.mu.Unlock()
 	if !ok {
-		return Connection{}, ErrNotFound
+		// Seed it from the store first, so the update is one step with refresh
+		// even when a Load seeds and refreshes it concurrently (#252).
+		stored, err := r.store.GetConnection(ctx, connectionID)
+		if err != nil {
+			return Connection{}, err
+		}
+		if err := r.Seed(ctx, stored); err != nil {
+			return Connection{}, err
+		}
+		if current, err = r.lookup(connectionID); err != nil {
+			return Connection{}, err
+		}
 	}
 	// Take the refresh slot: wait out a refresh in flight, then hold one that
 	// would start, so its exchange cannot spend the refresh token read below.
@@ -235,9 +299,8 @@ func (r *Registry) Forget(connectionID string) {
 	delete(r.entries, connectionID)
 }
 
-// Load seeds every connection for one provider from durable storage. A
-// connection the registry already holds is read again under its install lock,
-// so a row listed before a refresh committed is never installed over that
+// Load seeds every connection for one provider from durable storage (Seed), so
+// a re-seed never installs a row listed before a refresh committed over that
 // refresh; the reference likewise reads the latest stored row before quota work
 // (usage/[connectionId]/route.js:25-28) and adopts a stored credential only when
 // it is newer (tokenRefresh.js:177-191).
@@ -249,49 +312,12 @@ func (r *Registry) Load(ctx context.Context, providerID string) ([]Connection, e
 	if err != nil {
 		return nil, err
 	}
-	if r.afterList != nil {
-		r.afterList()
-	}
 	for _, connection := range connections {
-		if err := r.reload(ctx, connection); err != nil {
+		if err := r.Seed(ctx, connection); err != nil {
 			return nil, err
 		}
 	}
 	return connections, nil
-}
-
-// reload registers one listed connection, re-reading a held one at its install.
-func (r *Registry) reload(ctx context.Context, listed Connection) error {
-	r.mu.Lock()
-	current, ok := r.entries[listed.ID]
-	resolve, credentialName := r.resolve, r.credentialName
-	r.mu.Unlock()
-	if !ok {
-		r.Register(listed, nil)
-		return nil
-	}
-	current.installMu.Lock()
-	defer current.installMu.Unlock()
-	stored, err := r.store.GetConnection(ctx, listed.ID)
-	if errors.Is(err, ErrNotFound) {
-		// Deleted since the list; Forget owns removal.
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	current.mu.Lock()
-	exchanger := current.exchanger
-	current.mu.Unlock()
-	if resolve != nil {
-		exchanger = resolve(stored)
-	}
-	name, expiryName := "", ""
-	if credentialName != nil {
-		name, expiryName = credentialName(stored)
-	}
-	install(current, stored, exchanger, name, expiryName)
-	return nil
 }
 
 // Credential returns a currently valid access token for one connection,
