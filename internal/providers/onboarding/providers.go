@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -104,6 +105,12 @@ func iflowFlow() Flow {
 	}
 }
 
+// ErrGitLabClientIDRequired means a GitLab browser sign-in was started without
+// the OAuth application's client id. The reference sends an empty one
+// (gitlab.js:10) and GitLab refuses it on its own page; saying so before the
+// browser leaves is the same outcome, earlier.
+var ErrGitLabClientIDRequired = errors.New("enter the client id of the GitLab OAuth application, or use a personal access token instead")
+
 // gitlabFlow mirrors src/lib/oauth/providers/gitlab.js. GitLab is self-hostable,
 // so the base URL and client id come from the operator; the PAT path is a
 // separate manual_token flow on the same provider.
@@ -124,9 +131,9 @@ func gitlabFlow() Flow {
 		Completion:     CompletionCode,
 		Authorize: func(_ context.Context, p Params) (AuthRequest, error) {
 			base := strings.TrimSuffix(metaOr(p, "baseUrl", defaultBase), "/")
-			clientID := p.Meta["clientId"]
+			clientID := strings.TrimSpace(p.Meta["clientId"])
 			if clientID == "" {
-				return AuthRequest{}, fmt.Errorf("gitlab requires an application client id")
+				return AuthRequest{}, ErrGitLabClientIDRequired
 			}
 			return pkceAuthorize(base+"/oauth/authorize", url.Values{
 				"client_id":             {clientID},
@@ -258,12 +265,18 @@ func metaOr(p Params, key, fallback string) string {
 }
 
 // clineFlow mirrors cline.js and clinepass.js: an authorization code that is
-// either base64-encoded token JSON or an exchange against the gateway.
+// either base64-encoded token JSON or an exchange against the gateway. Both are
+// Cline's WorkOS sign-in (ClinePass shares its endpoints, tokenRefresh.js:151);
+// the stored access token is the bare WorkOS JWT, and the workos: prefix is added
+// where it is sent (internal/providers/cline, refreshCline).
 func clineFlow(provider, authorizeURL, exchangeURL string) Flow {
 	return Flow{
 		Provider:   provider,
 		Type:       FlowAuthorizationCode,
 		Completion: CompletionCode,
+		// The bundle and the gateway both name the account's email when they can
+		// (cline.js:27,46); the gateway's is best effort ("|| \"\"").
+		InfersIdentity: true,
 		Authorize: func(_ context.Context, p Params) (AuthRequest, error) {
 			return pkceAuthorize(authorizeURL, url.Values{
 				"client_type":  {"extension"},
@@ -273,40 +286,86 @@ func clineFlow(provider, authorizeURL, exchangeURL string) Flow {
 		},
 		Exchange: func(ctx context.Context, p Params) (Result, error) {
 			// The extension encodes the token bundle in the code parameter.
-			if token, ok := decodeClineCode(p.Input); ok {
+			if token, ok := decodeClineCode(p.Input, p.now()); ok {
 				return token, nil
 			}
-			tokens, err := postJSON(ctx, p.Client, exchangeURL, map[string]string{
-				"grant_type":   "authorization_code",
-				"code":         p.Input,
-				"client_type":  "extension",
-				"redirect_uri": p.RedirectURI,
-			}, nil)
-			if err != nil {
-				return Result{}, err
-			}
-			return Result{
-				AuthKind: credentials.AuthOAuth,
-				Secret: credentials.Secret{
-					AccessToken:  tokens.AccessToken,
-					RefreshToken: tokens.RefreshToken,
-					Expiry:       tokens.expiry(p.now()),
-				},
-			}, nil
+			return clineGatewayExchange(ctx, p, exchangeURL)
 		},
 	}
 }
 
+// clineGatewayExchange is the reference's fallback when the code is not a bundle
+// (cline.js:32-48): a JSON exchange whose answer is camelCase, either at the top
+// level or under data, with the email under data.userInfo.
+func clineGatewayExchange(ctx context.Context, p Params, exchangeURL string) (Result, error) {
+	type tokens struct {
+		AccessToken  string `json:"accessToken"`
+		RefreshToken string `json:"refreshToken"`
+		ExpiresAt    any    `json:"expiresAt"`
+	}
+	var document struct {
+		tokens
+		Data struct {
+			tokens
+			UserInfo struct {
+				Email string `json:"email"`
+			} `json:"userInfo"`
+		} `json:"data"`
+	}
+	body, err := json.Marshal(map[string]string{
+		"grant_type":   "authorization_code",
+		"code":         p.Input,
+		"client_type":  "extension",
+		"redirect_uri": p.RedirectURI,
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	status, err := postJSONTargetWithHeaders(ctx, p.Client, exchangeURL, nil, string(body), &document)
+	if err != nil || status < 200 || status >= 300 {
+		return Result{}, fmt.Errorf("token exchange failed")
+	}
+	access := firstNonEmpty(document.Data.AccessToken, document.AccessToken)
+	if strings.TrimSpace(access) == "" {
+		return Result{}, fmt.Errorf("token exchange returned no access token")
+	}
+	expiresAt := document.Data.ExpiresAt
+	if expiresAt == nil {
+		expiresAt = document.ExpiresAt
+	}
+	return Result{
+		AuthKind: credentials.AuthOAuth,
+		Identity: strings.TrimSpace(document.Data.UserInfo.Email),
+		Secret: credentials.Secret{
+			AccessToken:  access,
+			RefreshToken: firstNonEmpty(document.Data.RefreshToken, document.RefreshToken),
+			Expiry:       clineExpiry(expiresAt, p.now()),
+		},
+	}, nil
+}
+
+// clineExpiry is mapTokens' expiresIn (cline.js:54-56): the reported expiresAt,
+// or an hour from now when the answer names none.
+func clineExpiry(raw any, now time.Time) time.Time {
+	if expires := resetAtValue(raw); !expires.IsZero() {
+		return expires
+	}
+	return now.Add(time.Hour)
+}
+
 // decodeClineCode reads the base64 token bundle the Cline extension puts in the
 // code parameter. A code that is not that bundle falls through to the exchange.
-func decodeClineCode(input string) (Result, bool) {
+// Node's base64 decoder reads both alphabets, so a URL-safe bundle is accepted too.
+func decodeClineCode(input string, now time.Time) (Result, bool) {
 	base64Code := strings.TrimSpace(input)
 	if padding := 4 - len(base64Code)%4; padding != 4 {
 		base64Code += strings.Repeat("=", padding)
 	}
 	decoded, err := base64.StdEncoding.DecodeString(base64Code)
 	if err != nil {
-		return Result{}, false
+		if decoded, err = base64.URLEncoding.DecodeString(base64Code); err != nil {
+			return Result{}, false
+		}
 	}
 	text := string(decoded)
 	last := strings.LastIndex(text, "}")
@@ -317,16 +376,25 @@ func decodeClineCode(input string) (Result, bool) {
 		AccessToken  string `json:"accessToken"`
 		RefreshToken string `json:"refreshToken"`
 		Email        string `json:"email"`
+		FirstName    string `json:"firstName"`
+		LastName     string `json:"lastName"`
 		ExpiresAt    any    `json:"expiresAt"`
 	}
 	if err := json.Unmarshal([]byte(text[:last+1]), &bundle); err != nil || bundle.AccessToken == "" {
 		return Result{}, false
 	}
-	secret := credentials.Secret{AccessToken: bundle.AccessToken, RefreshToken: bundle.RefreshToken}
-	if expires := resetAtValue(bundle.ExpiresAt); !expires.IsZero() {
-		secret.Expiry = expires
+	secret := credentials.Secret{AccessToken: bundle.AccessToken, RefreshToken: bundle.RefreshToken, Expiry: clineExpiry(bundle.ExpiresAt, now)}
+	// providerSpecificData {firstName, lastName} (cline.js:58), names only.
+	for key, value := range map[string]string{"firstName": bundle.FirstName, "lastName": bundle.LastName} {
+		if value = strings.TrimSpace(value); value != "" {
+			if secret.ProviderData == nil {
+				secret.ProviderData = map[string]string{}
+			}
+			secret.ProviderData[key] = value
+		}
 	}
-	return Result{AuthKind: credentials.AuthOAuth, Identity: bundle.Email, Secret: secret}, true
+	display := strings.TrimSpace(strings.TrimSpace(bundle.FirstName) + " " + strings.TrimSpace(bundle.LastName))
+	return Result{AuthKind: credentials.AuthOAuth, Identity: strings.TrimSpace(bundle.Email), DisplayName: display, Secret: secret}, true
 }
 
 // resetAtValue parses an absolute expiry the providers report as ISO or Unix ms.
@@ -356,6 +424,8 @@ func kimchiFlow() Flow {
 		Provider:   "kimchi",
 		Type:       FlowBrowserToken,
 		Completion: CompletionToken,
+		// /api/v1/me names the email or user id when it answers (kimchi.js:56-71).
+		InfersIdentity: true,
 		Authorize: func(_ context.Context, p Params) (AuthRequest, error) {
 			return pkceAuthorize(webAppURL+"/cli-auth", url.Values{
 				"callback": {p.RedirectURI},

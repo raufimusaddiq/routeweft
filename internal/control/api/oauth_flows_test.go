@@ -56,6 +56,9 @@ func (f *flowUpstream) Do(request *http.Request) (*http.Response, error) {
 	case strings.Contains(url, "device/code"), strings.Contains(url, "device_authorization"),
 		strings.Contains(url, "deviceToken"), strings.Contains(url, "device-auth/codes"):
 		body = `{"device_code":"fixture-device","user_code":"ABCD-1234","verification_uri":"https://example.invalid/device","expires_in":900,"interval":5,"code":"fixture-device","verificationUrl":"https://example.invalid/device","state":"fixture-state","authUrl":"https://example.invalid/auth"}`
+	case strings.Contains(url, "api.cline.bot/api/v1/auth/token"):
+		// Cline's gateway answers camelCase under data (cline.js:43-47).
+		body = `{"data":{"accessToken":"fixture-access","refreshToken":"fixture-refresh","expiresAt":"2030-01-01T00:00:00Z","userInfo":{"email":"fixture@example.invalid"}}}`
 	case strings.Contains(url, "token"), strings.Contains(url, "access_token"):
 		body = `{"access_token":"fixture-access","refresh_token":"fixture-refresh","expires_in":3600}`
 	case strings.Contains(url, "getUserInfo"), strings.Contains(url, "apikey"):

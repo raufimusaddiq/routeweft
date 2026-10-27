@@ -211,6 +211,11 @@ type signInMethodReadModel struct {
 	// ResolvesIdentity means the provider or credential names the account, so
 	// the method needs no identity from the operator.
 	ResolvesIdentity bool `json:"resolvesIdentity"`
+	// InfersIdentity means a browser method usually learns the account from the
+	// provider but cannot promise to, so the identity is optional up front; a
+	// sign-in that learns none is refused (oauth_identity_unresolved) and the
+	// next attempt asks for it.
+	InfersIdentity bool `json:"infersIdentity,omitempty"`
 	// MetaKeys is the operator input this method reads, and only this method.
 	MetaKeys []string `json:"metaKeys,omitempty"`
 	// Completion is what a browser method's operator pastes back.
@@ -220,6 +225,13 @@ type signInMethodReadModel struct {
 	// server, so the page it lands on is expected not to load and its address is
 	// pasted back.
 	LoopbackRedirect string `json:"loopbackRedirect,omitempty"`
+	// RedirectURI is where a browser method that sends this server's public
+	// origin returns the operator's browser (Google, GitLab, Cline, iFlow, Kimchi,
+	// Xiaomi): the address a GitLab application registers, and the one whose
+	// query is pasted back. RedirectUnconfigured says no public origin is set, so
+	// the method cannot start yet (oauth_redirect_unconfigured).
+	RedirectURI          string `json:"redirectUri,omitempty"`
+	RedirectUnconfigured bool   `json:"redirectUnconfigured,omitempty"`
 }
 
 // readinessReadModel reports registry.Readiness. A provider with no declared
@@ -818,7 +830,11 @@ func (h *Handler) signInModes(providerID string) (string, []string, []string, []
 				method.Completion = string(flow.Completion)
 				if flow.FixedPort > 0 {
 					method.LoopbackRedirect, _ = onboarding.DefaultRedirectURI(flow, "")
+				} else if flow.NeedsRedirectURI() {
+					redirect, err := onboarding.DefaultRedirectURI(flow, h.dashboardOrigin())
+					method.RedirectURI, method.RedirectUnconfigured = redirect, err != nil
 				}
+				method.InfersIdentity = flow.InfersIdentity && !flow.ResolvesIdentity
 			}
 			methods = append(methods, method)
 		}
