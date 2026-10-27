@@ -674,3 +674,132 @@ func TestCodexOnboardingRecordsAuthType(t *testing.T) {
 		}
 	}
 }
+
+// codexRefreshing installs a credential registry holding id with an expired
+// credential and an exchanger that blocks until released, starts a refresh of
+// id, and returns once the exchange began.
+func codexRefreshing(t *testing.T, env *codexEnv, id string) (release func(), refreshed <-chan error) {
+	t.Helper()
+	registry := credentials.NewRegistry(env.creds, nil)
+	env.h.opts.CredentialRegistry = registry
+	entered, gate := make(chan struct{}), make(chan struct{})
+	connection := connectionByID(t, env.creds, id)
+	connection.Secret.Expiry = time.Now().Add(-time.Minute)
+	registry.Register(connection, func(_ context.Context, current credentials.Secret) (credentials.Secret, error) {
+		close(entered)
+		<-gate
+		return credentials.Secret{AccessToken: "rotated-access", RefreshToken: "rotated-refresh", Expiry: time.Now().Add(time.Hour), ProviderData: current.ProviderData}, nil
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, err := registry.Secret(context.Background(), id)
+		done <- err
+	}()
+	<-entered
+	return func() { close(gate) }, done
+}
+
+// A matching bulk item that arrives while the connection's refresh is
+// exchanging merges onto the refresh's result, not the credential read before
+// it: an item without a refresh token keeps the rotated one, which the refresh
+// already spent the old one to get, and storage and the runtime agree. The
+// reference's create-path update and refresh are each one read-merge-write
+// transaction (connectionsRepo.js:210,266-286; 334-352).
+func TestCodexBulkUpdateKeepsRotationOfRefreshInFlight(t *testing.T) {
+	env := newCodexEnv(t)
+	const mail = "shared@example.invalid"
+	id, _ := bulkOp("codex", `{"accessToken":"`+unsignedJWT(codexClaims(mail, "acct-1", "plus"))+`","refreshToken":"r0"}`)(t, env)
+	release, refreshed := codexRefreshing(t, env, id)
+
+	item := unsignedJWT(codexClaims(mail, "acct-1", "pro"))
+	imported := make(chan string, 1)
+	go func() {
+		recorder := doJSON(t, env.mux, env.cookie, http.MethodPost, "/admin/v1/oauth/codex/bulk-import", `[{"accessToken":"`+item+`"}]`)
+		var response struct {
+			Results []struct {
+				ID string `json:"id"`
+			} `json:"results"`
+		}
+		if json.Unmarshal(recorder.Body.Bytes(), &response) != nil || len(response.Results) != 1 {
+			t.Errorf("bulk status=%d body=%s", recorder.Code, recorder.Body.String())
+			imported <- ""
+			return
+		}
+		imported <- response.Results[0].ID
+	}()
+	select {
+	case again := <-imported:
+		t.Fatalf("bulk update did not wait for the refresh in flight (saved %s)", again)
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+	if err := <-refreshed; err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if again := <-imported; again != id {
+		t.Fatalf("matching item inserted %s", again)
+	}
+	durable := connectionByID(t, env.creds, id).Secret
+	if durable.AccessToken != item || durable.RefreshToken != "rotated-refresh" {
+		t.Fatalf("durable access=%q refresh=%q, want the item's access and the rotated refresh", durable.AccessToken, durable.RefreshToken)
+	}
+	memory, err := env.h.opts.CredentialRegistry.Secret(context.Background(), id)
+	if err != nil || memory.AccessToken != durable.AccessToken || memory.RefreshToken != durable.RefreshToken {
+		t.Fatalf("runtime credential %+v (%v) differs from storage %+v", memory, err, durable)
+	}
+}
+
+// A matching sign-in during a refresh is the same single step: it lands after
+// the refresh commits, its credential wins whole, and storage and the runtime
+// agree.
+func TestCodexSignInUpdateDuringRefresh(t *testing.T) {
+	env := newCodexEnv(t)
+	const mail = "shared@example.invalid"
+	first := codexSignIn(t, env.mux, env.cookie, env.exchange, codexReply(mail, "acct-1", "a1", "r1"))
+	id := first["id"].(string)
+	release, refreshed := codexRefreshing(t, env, id)
+	env.exchange.mu.Lock()
+	env.exchange.body = codexReply(mail, "acct-1", "a2", "r2")
+	env.exchange.mu.Unlock()
+	signedIn := make(chan string, 1)
+	go func() {
+		saved, _ := codexPasteSignInWithCode(t, env)
+		signedIn <- saved
+	}()
+	select {
+	case saved := <-signedIn:
+		t.Fatalf("sign-in update did not wait for the refresh in flight (saved %s)", saved)
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+	if err := <-refreshed; err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if saved := <-signedIn; saved != id {
+		t.Fatalf("matching sign-in saved %s", saved)
+	}
+	durable := connectionByID(t, env.creds, id).Secret
+	memory, err := env.h.opts.CredentialRegistry.Secret(context.Background(), id)
+	if durable.AccessToken != "a2" || durable.RefreshToken != "r2" || err != nil || memory.AccessToken != "a2" || memory.RefreshToken != "r2" {
+		t.Fatalf("durable %+v, runtime %+v (%v); want the sign-in's credential in both", durable, memory, err)
+	}
+}
+
+// codexPasteSignInWithCode completes a Codex sign-in with an authorization code,
+// for use off the test goroutine: it reports instead of failing.
+func codexPasteSignInWithCode(t *testing.T, env *codexEnv) (string, int) {
+	recorder := doJSON(t, env.mux, env.cookie, http.MethodPost, "/admin/v1/oauth/codex/start", `{}`)
+	var flow startedFlow
+	if recorder.Code != http.StatusOK || json.Unmarshal(recorder.Body.Bytes(), &flow) != nil {
+		return "", recorder.Code
+	}
+	redirect := "http://localhost:1455/auth/callback?code=" + oauthTestCode + "&state=" + flow.State
+	body, _ := json.Marshal(map[string]string{"state": flow.State, "input": redirect})
+	recorder = doJSON(t, env.mux, env.cookie, http.MethodPost, "/admin/v1/oauth/codex/callback", string(body))
+	var saved map[string]any
+	if recorder.Code != http.StatusOK || json.Unmarshal(recorder.Body.Bytes(), &saved) != nil {
+		return "", recorder.Code
+	}
+	id, _ := saved["id"].(string)
+	return id, recorder.Code
+}

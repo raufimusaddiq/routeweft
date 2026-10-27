@@ -1202,20 +1202,25 @@ func (h *Handler) publishMergedConnection(ctx context.Context, connection creden
 		connection.AuthKind = credentials.AuthOAuth
 	}
 	if connection.ID != "" {
-		existing, err := h.opts.Credentials.GetConnection(ctx, connection.ID)
-		if err != nil {
-			return credentials.Connection{}, false, err
+		// An edit merges onto the credential as stored when it is written, never an
+		// earlier read a refresh may since have rotated (updateConnection).
+		stored, err = h.updateConnection(ctx, connection.ID, func(existing credentials.Connection) (credentials.Connection, error) {
+			update := connection
+			update.Secret = merge(existing.Secret, connection.Secret)
+			return update, nil
+		})
+	} else {
+		stored, err = h.opts.Credentials.PutConnection(ctx, connection)
+		if err == nil {
+			h.register(stored)
 		}
-		connection.Secret = merge(existing.Secret, connection.Secret)
 	}
-	stored, err = h.opts.Credentials.PutConnection(ctx, connection)
 	if err != nil {
 		return credentials.Connection{}, false, err
 	}
 	// PutConnection returns the metadata as given; the registry's exchanger lookup
 	// keys on the provider.
 	stored.ProviderID = node.ProviderID
-	h.register(stored)
 	if h.opts.PoolBindings != nil {
 		if _, err := h.opts.PoolBindings.RefreshPoolBindings(ctx); err != nil {
 			return stored, true, err
@@ -1248,28 +1253,32 @@ func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name 
 			// credential the item carries replace the stored ones, its own name
 			// replaces the label, its priority the row's, and its isActive, true
 			// unless it says false (bulk-import/route.js:103), sets enabled. The id,
-			// proxy pool and identity are kept.
-			match.Secret = codexMergedSecret(match.Secret, account.Secret, account.Carries)
-			if account.ItemName != "" {
-				match.Name = account.ItemName
-			}
-			if account.HasPriority {
-				match.Priority = account.Priority
-				if match.Priority == 0 {
-					// The reference sorts a zero or null priority as 999, after the
-					// rest of the pool (connectionsRepo.js:159).
-					if match.Priority, err = h.codexLastPriority(ctx, match.ID); err != nil {
-						return credentials.Connection{}, err
-					}
+			// proxy pool and identity are kept. The merge is onto the credential as
+			// stored when it is written, so a refresh's rotated token is kept when
+			// the item carries none (updateConnection).
+			priority := account.Priority
+			if account.HasPriority && priority == 0 {
+				// The reference sorts a zero or null priority as 999, after the rest
+				// of the pool (connectionsRepo.js:159).
+				if priority, err = h.codexLastPriority(ctx, match.ID); err != nil {
+					return credentials.Connection{}, err
 				}
 			}
-			match.Enabled = !account.Disabled
-			stored, err := h.opts.Credentials.PutConnection(ctx, match)
+			stored, err := h.updateConnection(ctx, match.ID, func(existing credentials.Connection) (credentials.Connection, error) {
+				existing.Secret = codexMergedSecret(existing.Secret, account.Secret, account.Carries)
+				if account.ItemName != "" {
+					existing.Name = account.ItemName
+				}
+				if account.HasPriority {
+					existing.Priority = priority
+				}
+				existing.Enabled = !account.Disabled
+				return existing, nil
+			})
 			if err != nil {
 				return credentials.Connection{}, err
 			}
 			stored.ProviderID = node.ProviderID
-			h.register(stored)
 			h.clearConnectionHealth(stored.ID)
 			return stored, nil
 		}
@@ -1310,6 +1319,37 @@ func (h *Handler) accountLabel(ctx context.Context, providerID string) (string, 
 // register publishes one stored connection to the runtime registry. It is separate
 // from the store write so a batch can write many connections and publish the
 // recompiled snapshot once.
+// updateConnection changes one stored connection from its record as stored at
+// the write, and publishes it to the runtime. With a credential registry that
+// holds the connection, the read, change, durable write and publication are one
+// step with refresh (Registry.Update), so a refresh can neither rotate the
+// credential between the read and the write nor commit over the result.
+// Refresh runs only through the registry, so a connection it does not hold (or
+// no registry at all) has none to race, and the store is read and written
+// directly.
+func (h *Handler) updateConnection(ctx context.Context, id string, change func(credentials.Connection) (credentials.Connection, error)) (credentials.Connection, error) {
+	if registry := h.opts.CredentialRegistry; registry != nil {
+		stored, err := registry.Update(ctx, id, change)
+		if !errors.Is(err, credentials.ErrNotFound) {
+			return stored, err
+		}
+	}
+	existing, err := h.opts.Credentials.GetConnection(ctx, id)
+	if err != nil {
+		return credentials.Connection{}, err
+	}
+	updated, err := change(existing)
+	if err != nil {
+		return credentials.Connection{}, err
+	}
+	stored, err := h.opts.Credentials.PutConnection(ctx, updated)
+	if err != nil {
+		return credentials.Connection{}, err
+	}
+	h.register(stored)
+	return stored, nil
+}
+
 func (h *Handler) register(connection credentials.Connection) {
 	if h.opts.CredentialRegistry != nil {
 		h.opts.CredentialRegistry.Register(connection, nil)

@@ -130,6 +130,82 @@ func (r *Registry) Register(connection Connection, exchanger Exchanger) {
 	r.entries[connection.ID] = &entry{connection: connection, credentialName: name, credentialExpiryName: expiryName, exchanger: exchanger, current: connection.Secret, seeded: true, generation: 1}
 }
 
+// Update changes one registered connection's durable record and credential as a
+// single step with refresh: change receives the connection as stored now and
+// returns what to store. A refresh already in flight commits first, so change
+// reads its rotated credential; new refreshes wait until the result is written
+// and published; and the write and the publication happen under the install
+// lock with a generation bump, so no refresh can rotate the credential between
+// the read and the write or commit over the result. It is the reference's
+// read-merge-write in one transaction (connectionsRepo.js:210,266-286) against a
+// refresh that is itself one (connectionsRepo.js:334-352), ordered refresh
+// first. A connection the registry does not hold answers ErrNotFound.
+func (r *Registry) Update(ctx context.Context, connectionID string, change func(Connection) (Connection, error)) (Connection, error) {
+	if r.store == nil {
+		return Connection{}, ErrKeyRequired
+	}
+	r.mu.Lock()
+	current, ok := r.entries[connectionID]
+	resolve, credentialName := r.resolve, r.credentialName
+	r.mu.Unlock()
+	if !ok {
+		return Connection{}, ErrNotFound
+	}
+	// Take the refresh slot: wait out a refresh in flight, then hold one that
+	// would start, so its exchange cannot spend the refresh token read below.
+	hold := &refreshCall{done: make(chan struct{})}
+	for {
+		current.mu.Lock()
+		call := current.inflight
+		if call == nil {
+			current.inflight = hold
+			current.mu.Unlock()
+			break
+		}
+		current.mu.Unlock()
+		select {
+		case <-call.done:
+		case <-ctx.Done():
+			return Connection{}, ctx.Err()
+		}
+	}
+	current.installMu.Lock()
+	defer current.installMu.Unlock()
+	updated, err := func() (Connection, error) {
+		stored, err := r.store.GetConnection(ctx, connectionID)
+		if err != nil {
+			return Connection{}, err
+		}
+		updated, err := change(stored)
+		if err != nil {
+			return Connection{}, err
+		}
+		updated.ID = connectionID
+		return r.store.PutConnection(ctx, updated)
+	}()
+	current.mu.Lock()
+	if err == nil {
+		exchanger := current.exchanger
+		if resolve != nil {
+			exchanger = resolve(updated)
+		}
+		if credentialName != nil {
+			current.credentialName, current.credentialExpiryName = credentialName(updated)
+		}
+		current.connection = updated
+		current.exchanger = exchanger
+		current.current = updated.Secret
+		current.seeded = true
+		current.generation++
+	}
+	// Callers that waited on the held slot get the credential now published.
+	current.inflight = nil
+	hold.secret = current.current
+	current.mu.Unlock()
+	close(hold.done)
+	return updated, err
+}
+
 // Forget drops one connection's in-memory credential state.
 func (r *Registry) Forget(connectionID string) {
 	r.mu.Lock()
