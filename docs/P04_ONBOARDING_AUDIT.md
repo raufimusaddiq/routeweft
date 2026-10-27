@@ -38,9 +38,9 @@ Routeweft stores the same fields in the sealed secret payload.
 | kiro API key | `R/kiro/api-key/route.js:11-67`, `L/services/kiro.js:299-350` | `GET q.{region}/ListAvailableModels?origin=AI_EDITOR` with `TokenType: API_KEY`, **at least one model** | `authMethod: api_key`, 365-day horizon | **was wrong, fixed here**: it POSTed to a lower-case path and accepted any 2xx |
 | kiro token import | `R/kiro/import/route.js:11-66` | proves the refresh token by refreshing it; IDC when client id and secret are present | rotated pair, `authMethod` `idc`/`imported`, client registration, `profileArn` | **implemented here** |
 | kiro CLI-proxy | `R/kiro/import-cli-proxy/route.js:9-40`, `L/kiroExternalIdp.js:77-128` | `external_idp` only; Microsoft token endpoint allowlist; client id, scope, profile ARN required | `authMethod: external_idp`, `tokenEndpoint`, `scope`, `clientId` | **implemented here** |
-| kiro social | `R/kiro/social-authorize/route.js:10-43`, `R/kiro/social-exchange/route.js:10-67` | PKCE, `kiro://` redirect, code exchange at `prod.us-east-1.auth.desktop.kiro.dev/oauth/token` | `authMethod: google`/`github` | **refresh implemented here; sign-in not wired** (§3) |
+| kiro social | `R/kiro/social-authorize/route.js:10-43`, `R/kiro/social-exchange/route.js:10-67` | PKCE, `kiro://` redirect, code exchange at `prod.us-east-1.auth.desktop.kiro.dev/oauth/token` | `authMethod: google`/`github`, `provider`, `profileArn` | **implemented** (#219, §6): `kiro.go:kiroSocialFlow`, offered beside the device flow |
 | kiro auto-import | `R/kiro/auto-import/route.js:12-132` | scans `~/.aws/sso/cache` for `aorAAAAAG…` | returns token + client secret to the browser | **deliberately absent** (§4) |
-| kiro device | `L/providers/kiro.js:6` | AWS SSO OIDC registration + device authorization | client registration kept for refresh | already implemented (`custom.go:kiroFlow`) |
+| kiro device | `L/providers/kiro.js:6`, `L/providers/index.js:175-179` | AWS SSO OIDC registration + device authorization; a missing profile ARN is looked up | client registration kept for refresh | already implemented (`custom.go:kiroFlow`); the ARN lookup added in #219 |
 | xiaomi-mimo key | `R/xiaomi-mimo/api-key/route.js:11-136` | `sk-` prefix; `GET {base}/models` is *soft* (`:49-56`) | key, `uid`, `baseUrl`, `modelCount`, `mimoPassToken`/`UserId`/`CUserId` | **key and sealed account-field import implemented** (#181, §5) |
 | xiaomi-mimo auto-import | `R/xiaomi-mimo/auto-import/route.js:52-140` | reads `~/.local/share/mimocode/auth.json` and Desktop's cookie store | returns key + `passToken` to the browser | **deliberately absent** (§4); the file's *contents* are now accepted pasted |
 | refresh (all) | `open-sse/services/tokenRefresh.js:131-160`, `…/providers.js:326-455` | per-provider grant | rotated pair written back | table already mirrored; **kiro now covers its three shapes** |
@@ -75,8 +75,8 @@ Routeweft stores the same fields in the sealed secret payload.
 
 | Item | State | Why |
 |---|---|---|
-| Kiro Google/GitHub sign-in | **implementable now, not done** | The registry holds one flow per provider and Kiro's slot is the device flow (`FlowDeviceCode` and browser flows are mutually exclusive per provider, `api/oauth.go:providerFor`). Social sign-in needs either a per-start variant selector or a second registry key. That is an API-shape decision shared by every future dual-flow provider, which AGENTS.md §12 forbids settling inside an unrelated PR. Imported and device-created social credentials already *refresh*. |
-| Kiro `resolveKiroProfileArnPatch` network fallback | open | A refresh that reports no ARN does not call `ListAvailableProfiles` (`providerHelpers.js:53`). The ARN a refresh does report is recorded. |
+| Kiro Google/GitHub sign-in | **done in #219** | See §6. |
+| Kiro `resolveKiroProfileArnPatch` network fallback | **done in #219** | A refresh, device approval or social sign-in without an ARN calls `ListAvailableProfiles` (`providerHelpers.js:53-71`); see §6. |
 | Cursor token refresh | none exists | The pin has no public refresh endpoint (`R/cursor/import/route.js:47`); a Cursor token is re-imported at expiry. |
 | Pin `testStatus` (`untested`) | implemented (#220) | v13 persists `test_status` per connection (SPEC §33.2). Xiaomi's soft validation (`Result.Unvalidated`) stores a new key `untested` and leaves a stored duplicate's status as it was (`xiaomi-mimo/api-key/route.js:79,115`); every other onboarding save records `active`. |
 | Dispatcher loopback listeners, `ide-status`, `register-session` | deliberately absent | Host listeners and host reads; paste-back completion replaces them. |
@@ -139,3 +139,28 @@ then fails, the new token exists only in the failed call. The retry presents the
 one. Providers with refresh-token reuse detection will reject it and the connection
 needs reauthorization. Closing that needs the registry to hold the unsaved pair for a
 persist-only retry, which changes the SPEC §19 commit protocol and is not done here.
+
+## 6. Kiro Google and GitHub sign-in (#219)
+
+Revalidated against main after #201/#208/#215-#217 (`2e04783`): the social *refresh*
+existed (`kiro.go:refreshKiroSocial`), but no endpoint could start or finish a social
+sign-in, because `providerFor` gave each provider one flow and Kiro's was the device
+flow. The pin's flow and what Routeweft now does, step by step:
+
+| Pin (`1c3b9f47`; identical at `264a26d0`) | Routeweft |
+|---|---|
+| `R/kiro/social-authorize/route.js:13-20`: `provider` must be `google` or `github`, else 400 | `POST /oauth/kiro/start` with `meta.authMethod`; `Flow.AuthMethods` is the closed set and `startAuthMethod` (`api/oauth.go`) refuses anything else with `oauth_auth_method_invalid` before any network call. The device start applies the same rule to `builder-id`/`idc`, so `google` no longer silently became a Builder ID device code (`custom.go:kiroFlow` read any non-`idc` value as `builder-id`). |
+| `L/services/kiro.js:133-138`: `…/login?idp=Google\|Github&redirect_uri=kiro://kiro.kiroAgent/authenticate-success&code_challenge…S256&state&prompt=select_account` | `kiro.go:kiroSocialFlow` Authorize, same URL. The verifier stays server-side on the attempt; the pin returned it to the browser (`social-authorize/route.js:32-38`). |
+| `KiroSocialOAuthModal.js:64-83`: paste the callback address; `error` param is a failure; no `code` is an error | The shared callback (`api/oauth.go:handleOAuthCallback`, `parseOAuthInput`) takes the `kiro://` address: `error=` → `oauth_denied` (attempt ended), no code → `oauth_code_missing` (attempt kept), another attempt's `state` → `oauth_state_mismatch` (kept). The pin never checked `state`. |
+| `L/services/kiro.js:144-171`: JSON `{code, code_verifier, redirect_uri}` to `/oauth/token`; `expiresIn` defaults to 3600 | Exchange, same body and default. |
+| `social-exchange/route.js:36-53`: email from the JWT; `providerSpecificData {profileArn, authMethod, provider}` | Same fields. Kiro tokens are opaque, so the JWT rarely names the account; the identity is asked up front as for the device flow. |
+| `connectionsRepo.js:228-283`: an oauth sign-in with a stored email renews that row | `Flow.RenewsSameAccount` → the device rule (`deviceMatch`): same identity is `updated` in place, another is `added`. |
+| `KiroAuthModal.js:243-273`: the Google/GitHub buttons are rendered with `hidden` | Shown, as "Sign in with Google" and "Sign in with GitHub", because every step behind them is wired and tested (`p219_kiro_social_test.go`). Each is fixed to its method; there is no field to retype it. |
+| no pin equivalent | Reauthenticate renews a Google/GitHub connection with the method that made it (`signInMethod` on the connection read model) and refuses any other Kiro connection (`oauth_reauth_unsupported`), so a Builder ID row is never rewritten as a social one. |
+| `tokenRefresh/providers.js:316-324`, `providers/index.js:175-179`: look up a missing ARN (`fetchKiroProfileArn`) | `kiro.go:kiroProfilePatch` / `kiroProfileARN` on refresh, device approval, token import and social sign-in; a stored ARN is never replaced or looked up; best effort, as in the pin. The pin's social exchange stores a missing ARN as missing (`social-exchange/route.js:40-52`, `testStatus: "active"`), serves without the profile header (`open-sse/executors/kiro.js:276-279`) and fills it at the first refresh; Routeweft looks it up at sign-in too, because `wire/kiro.go:kiroTarget` refuses to serve a Kiro connection without one. When the lookup also finds none, the credential is still saved (as in the pin, so the refresh can retry), but the result carries `profileArnMissing` and the dashboard reports **Not usable yet** with the recovery: name the ARN (`PATCH /connections/{id}` `secret.providerData.profileArn`), or Reauthenticate (`TestKiroSocialMissingProfileARNIsSurfacedAndRecoverable`). |
+
+AWS SSO (Builder ID and IDC), API-key, token import, CLIProxyAPI (`external_idp`)
+and their refresh branches are unchanged; the parity gate still reads `device_code`
+for kiro (`Registry.OnboardingFlows`), with the browser sign-in carried as
+`Flow.Browser`.
+

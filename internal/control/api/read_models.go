@@ -217,6 +217,10 @@ type signInMethodReadModel struct {
 	// sign-in that learns none is refused (oauth_identity_unresolved) and the
 	// next attempt asks for it.
 	InfersIdentity bool `json:"infersIdentity,omitempty"`
+	// Variant is the auth method a browser method is fixed to (Kiro's "google" or
+	// "github"); the dashboard sends it as meta.authMethod and offers no field for
+	// it. Empty means the method has no variants.
+	Variant string `json:"variant,omitempty"`
 	// MetaKeys is the operator input this method reads, and only this method.
 	MetaKeys []string `json:"metaKeys,omitempty"`
 	// Completion is what a browser method's operator pastes back.
@@ -849,19 +853,15 @@ func (h *Handler) signInModes(providerID string) (string, []string, []string, []
 		default:
 			mode = "browser"
 		}
-		if mode != "" && flow.Startable() {
-			method := signInMethodFor(mode, flow, flow.MetaKeys)
-			if mode == "browser" {
-				method.Completion = string(flow.Completion)
-				if flow.FixedPort > 0 {
-					method.LoopbackRedirect, _ = onboarding.DefaultRedirectURI(flow, "")
-				} else if flow.NeedsRedirectURI() {
-					redirect, err := onboarding.DefaultRedirectURI(flow, h.dashboardOrigin())
-					method.RedirectURI, method.RedirectUnconfigured = redirect, err != nil
-				}
-				method.InfersIdentity = flow.InfersIdentity && !flow.ResolvesIdentity
-			}
-			methods = append(methods, method)
+		if mode == "browser" && flow.Startable() {
+			methods = append(methods, h.browserMethods(flow)...)
+		} else if mode != "" && flow.Startable() {
+			methods = append(methods, signInMethodFor(mode, flow, flow.MetaKeys))
+		}
+		// A browser sign-in offered beside the device flow (Kiro's Google and
+		// GitHub login) is listed after it, from the same table the endpoint reads.
+		if flow.Browser != nil && flow.Browser.Startable() {
+			methods = append(methods, h.browserMethods(*flow.Browser)...)
 		}
 	}
 	if manual, ok := h.importFlowFor(providerID); ok {
@@ -874,6 +874,40 @@ func (h *Handler) signInModes(providerID string) (string, []string, []string, []
 		modes = append(modes, method.Mode)
 	}
 	return flowType, modes, dedupeStrings(metaKeys), methods
+}
+
+// browserMethods describes a browser flow's sign-in methods. A flow whose auth
+// method has no default (Kiro's social login) is one method per auth method,
+// each fixed to it (Variant), so the operator picks "Google" or "GitHub" rather
+// than typing a value; the start still checks what is sent.
+func (h *Handler) browserMethods(flow onboarding.Flow) []signInMethodReadModel {
+	describe := func(variant string, metaKeys []string) signInMethodReadModel {
+		method := signInMethodFor("browser", flow, metaKeys)
+		method.Variant = variant
+		method.Completion = string(flow.Completion)
+		if flow.FixedPort > 0 {
+			method.LoopbackRedirect, _ = onboarding.DefaultRedirectURI(flow, "")
+		} else if flow.NeedsRedirectURI() {
+			redirect, err := onboarding.DefaultRedirectURI(flow, h.dashboardOrigin())
+			method.RedirectURI, method.RedirectUnconfigured = redirect, err != nil
+		}
+		method.InfersIdentity = flow.InfersIdentity && !flow.ResolvesIdentity
+		return method
+	}
+	if len(flow.AuthMethods) == 0 || flow.DefaultAuthMethod != "" {
+		return []signInMethodReadModel{describe("", flow.MetaKeys)}
+	}
+	var operator []string
+	for _, key := range flow.MetaKeys {
+		if key != "authMethod" {
+			operator = append(operator, key)
+		}
+	}
+	methods := make([]signInMethodReadModel, 0, len(flow.AuthMethods))
+	for _, variant := range flow.AuthMethods {
+		methods = append(methods, describe(variant, operator))
+	}
+	return methods
 }
 
 func signInMethodFor(mode string, flow onboarding.Flow, metaKeys []string) signInMethodReadModel {

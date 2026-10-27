@@ -6,9 +6,9 @@ import { badRate, num, largest, outlier, pct, rate, share, topByRequests, type S
 import { connectionProxyText, type ConnectionProxy } from './connectionProxy'
 import { READINESS_LABEL, readinessNote, readinessStatus, type Readiness } from './readiness'
 import { attemptExpired, attemptStillOpen, cancelResult, connectMethods, phaseForError, type AttemptPhase, type Completion, type ConnectMethod, type SignInMethod, type SignInMode } from './signIn'
-import { bulkSummary, canReauthenticate, closeSignInWindow, duplicateNote, openSignInWindow, outcomeMessage, parseBulkInput, sendSignInWindow, signInURL, type BulkResponse, type SignInWindow } from './onboarding'
+import { bulkSummary, canReauthenticate, closeSignInWindow, duplicateNote, openSignInWindow, outcomeMessage, parseBulkInput, reauthMethod, sendSignInWindow, signInURL, type BulkResponse, type SignInWindow } from './onboarding'
 import { quotaLine, quotaQuery, type QuotaItem } from './quotaView'
-import { browserJourney, checkedNote, copilotNote, DEVICE_REQUEST_TIMEOUT_MS, deviceCopyItems, deviceJourney, devicePollDelay, devicePollingOver, identityPrompt, importJourney, projectNote, requestBound, validProjectId } from './journeys'
+import { browserJourney, checkedNote, copilotNote, DEVICE_REQUEST_TIMEOUT_MS, deviceCopyItems, deviceJourney, devicePollDelay, devicePollingOver, identityPrompt, importJourney, profileArnNote, projectNote, requestBound, validProfileArn, validProjectId } from './journeys'
 import { canRelink, lifecycleLine, relinkPatch, TEST_STATUS_LABEL, testStatusOf, testStatusTone, type ConnectionLifecycle } from './connectionStatus'
 import { BULK_MAX_BYTES, IMPORT_MAX_BYTES, expiredNote, importShapes, missingMeta as missingImportMeta, readBulkFiles, readCredentialFile, savedReadinessNote } from './credentialImport'
 
@@ -18,7 +18,7 @@ function ReadinessTag({ provider }: { provider: { readiness?: Readiness } }) {
 }
 type Provider = { id: string; transports: string[]; auth: string; authModes: string[]; defaultBaseURL?: string; modelCatalog: string; passthroughModels: boolean; staticModels?: string[]; reportsUsage: boolean; flowType?: string; signInModes?: SignInMode[]; metaKeys?: string[]; signInMethods?: SignInMethod[]; bulkImport?: boolean; configuredNodes: number; enabledAccounts: number; readiness?: Readiness }
 type Node = { id: string; kind: string; providerId: string; name: string; prefix?: string; baseUrl?: string; transports: string[] }
-type Connection = { id: string; nodeId: string; providerId: string; name: string; authKind: string; identity: string; enabled: boolean; priority: number; proxyPoolId?: string; connectionProxy?: ConnectionProxy; credentialConfigured: boolean; outcome?: string; plan?: string; project?: string; projectMissing?: boolean; copilotMissing?: boolean; expired?: boolean; refreshable?: boolean } & ConnectionLifecycle
+type Connection = { id: string; nodeId: string; providerId: string; name: string; authKind: string; identity: string; enabled: boolean; priority: number; proxyPoolId?: string; connectionProxy?: ConnectionProxy; credentialConfigured: boolean; signInMethod?: string; outcome?: string; plan?: string; project?: string; projectMissing?: boolean; profileArnMissing?: boolean; copilotMissing?: boolean; expired?: boolean; refreshable?: boolean } & ConnectionLifecycle
 type Model = { providerId: string; id: string; name?: string; contextWindow?: number; capabilities: string[]; disabled: boolean; custom?: boolean }
 type Alias = { alias: string; providerId: string; modelId: string }
 type Pricing = { providerId: string; modelId: string; inputPerMTok?: number; outputPerMTok?: number; cacheReadPerMTok?: number; cacheWritePerMTok?: number }
@@ -161,6 +161,8 @@ export function Providers({ onUnauthorized }: Props) {
   const [afterLogin, setAfterLogin] = useState<{ check?: string; quota?: string }>({})
   // The Code Assist project an operator names after a Google sign-in found none.
   const [projectInput, setProjectInput] = useState('')
+  // The profile ARN an operator names after a Kiro sign-in found none (#219).
+  const [profileArnInput, setProfileArnInput] = useState('')
   const [deviceFlow, setDeviceFlow] = useState<DeviceFlow | null>(null)
   // Which device value was last copied ('code' or 'link'), or why copying failed.
   const [copied, setCopied] = useState('')
@@ -459,7 +461,8 @@ export function Providers({ onUnauthorized }: Props) {
   // for that connection; its start button begins it (the sign-in window must open
   // in a click), after any provider fields the sign-in reads.
   function reauthenticate(connection: Connection) {
-    resetSecrets(); setOutcome(null); setMethodId('browser'); setAccountOpen(true)
+    const renew = reauthMethod(selectedProvider?.signInMethods, connection)
+    resetSecrets(); setOutcome(null); setMethodId(renew?.variant ? `browser-${renew.variant}` : 'browser'); setAccountOpen(true)
     setReauthTarget(connection)
   }
 
@@ -529,7 +532,9 @@ export function Providers({ onUnauthorized }: Props) {
     for (const [key, value] of Object.entries(metaInput)) {
       if (value.trim()) meta[key] = value.trim()
     }
-    return meta
+    // A variant method's own auth method (Kiro's google or github) is not an
+    // operator field and always wins over anything typed for another method.
+    return { ...meta, ...(method?.fixedMeta ?? {}) }
   }
 
   // Clears every credential-bearing field. Called on close and on successful save:
@@ -686,6 +691,18 @@ export function Providers({ onUnauthorized }: Props) {
       await send(`/connections/${encodeURIComponent(connection.id)}`, 'PATCH', { secret: { providerData: { projectId: project } } })
       setOutcome(current => current?.connection?.id === connection.id ? { ...current, connection: { ...current.connection, project, projectMissing: false } } : current)
       setProjectInput('')
+    })
+  }
+
+  // Names the CodeWhisperer profile of a Kiro connection whose sign-in found none.
+  // Only the ARN is sent; the server keeps the stored credential.
+  async function saveProfileArn(connection: Connection) {
+    const profileArn = profileArnInput.trim()
+    if (!validProfileArn(profileArn)) return
+    await action(`profile-${connection.id}`, '', async () => {
+      await send(`/connections/${encodeURIComponent(connection.id)}`, 'PATCH', { secret: { providerData: { profileArn } } })
+      setOutcome(current => current?.connection?.id === connection.id ? { ...current, connection: { ...current.connection, profileArnMissing: false } } : current)
+      setProfileArnInput('')
     })
   }
 
@@ -869,9 +886,10 @@ export function Providers({ onUnauthorized }: Props) {
           })}
         </div>}
         {outcome && <div className="wide-field oauth-panel" role={outcome.phase === 'success' ? 'status' : 'alert'} aria-label="Sign-in result">
-          <p><span className={`state-tag ${outcome.phase === 'success' ? 'state-good' : 'state-warn'}`}>{ATTEMPT_LABEL[outcome.phase]}</span> {outcome.message}</p>
+          <p><span className={`state-tag ${outcome.phase === 'success' && !outcome.connection?.profileArnMissing ? 'state-good' : 'state-warn'}`}>{outcome.phase === 'success' && outcome.connection?.profileArnMissing ? 'Not usable yet' : ATTEMPT_LABEL[outcome.phase]}</span> {outcome.message}</p>
           {outcome.connection && <dl className="ed-facts" aria-label="Signed-in account"><Fact label="Account" value={outcome.connection.identity || outcome.connection.name} />{outcome.connection.plan && <Fact label="Plan" value={outcome.connection.plan} />}{outcome.connection.project && <Fact label="Code Assist project" value={outcome.connection.project} />}</dl>}
-          {outcome.connection && outcome.phase === 'success' && <p>{checkedNote(outcome.connection.providerId)}</p>}
+          {outcome.connection && outcome.phase === 'success' && !outcome.connection.profileArnMissing && <p>{checkedNote(outcome.connection.providerId)}</p>}
+          {outcome.connection && profileArnNote(outcome.connection) && <div className="journey-project" role="group" aria-label="Kiro profile"><p role="alert">{profileArnNote(outcome.connection)}</p><label>Profile ARN<input value={profileArnInput} placeholder="arn:aws:codewhisperer:us-east-1:123456789012:profile/ABC" autoComplete="off" spellCheck={false} onChange={event => setProfileArnInput(event.target.value)} /></label>{profileArnInput.trim() && !validProfileArn(profileArnInput) && <small role="alert">A profile ARN looks like arn:aws:codewhisperer:region:account:profile/id.</small>}<div className="oauth-actions"><button className="button-secondary" type="button" disabled={busy !== '' || !validProfileArn(profileArnInput)} onClick={() => void saveProfileArn(outcome.connection!)}>{busy === `profile-${outcome.connection.id}` ? 'Saving…' : 'Save profile ARN'}</button></div></div>}
           {outcome.connection && copilotNote(outcome.connection) && <p role="alert">{copilotNote(outcome.connection)}</p>}
           {outcome.connection && expiredNote(outcome.connection) && <p role="alert"><span className="state-tag state-warn">Expired</span> {expiredNote(outcome.connection)}</p>}
           {outcome.connection && selectedProvider && savedReadinessNote(readinessStatus(selectedProvider), providerLabel(outcome.connection.providerId)) && <p role="note"><span className="state-tag state-warn">{READINESS_LABEL[readinessStatus(selectedProvider)]}</span> {savedReadinessNote(readinessStatus(selectedProvider), providerLabel(outcome.connection.providerId))}</p>}

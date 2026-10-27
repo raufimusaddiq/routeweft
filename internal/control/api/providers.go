@@ -1349,7 +1349,14 @@ func nodeJSON(node credentials.Node) map[string]any {
 }
 
 func connectionJSON(connection credentials.Connection) map[string]any {
-	return map[string]any{"id": connection.ID, "nodeId": connection.NodeID, "providerId": connection.ProviderID, "name": connection.Name, "authKind": connection.AuthKind, "identity": connection.Identity, "enabled": connection.Enabled, "priority": connection.Priority, "proxyPoolId": connection.ProxyPoolID, "accountId": connection.AccountID, "credentialConfigured": !connection.Secret.Empty()}
+	view := map[string]any{"id": connection.ID, "nodeId": connection.NodeID, "providerId": connection.ProviderID, "name": connection.Name, "authKind": connection.AuthKind, "identity": connection.Identity, "enabled": connection.Enabled, "priority": connection.Priority, "proxyPoolId": connection.ProxyPoolID, "accountId": connection.AccountID, "credentialConfigured": !connection.Secret.Empty()}
+	// The method that made the credential (Kiro's google, github, builder-id, …)
+	// is a label, not a secret. The dashboard offers Reauthenticate only where the
+	// browser sign-in can renew that method (#219).
+	if method := strings.TrimSpace(connection.Secret.ProviderData["authMethod"]); method != "" {
+		view["signInMethod"] = method
+	}
+	return view
 }
 
 // replacesCredential reports whether a form edit carries credential material,

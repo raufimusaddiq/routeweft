@@ -102,7 +102,10 @@ type oauthFlow struct {
 	device bool
 	// imported marks a pasted or file-chosen credential (/import), recorded as
 	// the connection's auth origin (#220).
-	imported  bool
+	imported bool
+	// renew is a browser attempt whose flow follows the same rule
+	// (Flow.RenewsSameAccount, Kiro's social sign-in).
+	renew     bool
 	expiresAt time.Time
 }
 
@@ -334,10 +337,15 @@ type OAuthClient interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
-// providerFor resolves the path provider to an implemented flow. A browser flow
-// and a device flow are mutually exclusive per provider, as in the reference.
+// providerFor resolves the path provider to the flow an endpoint family drives:
+// the device flow for the device endpoints, and for the browser endpoints the
+// provider's browser flow or the browser sign-in offered beside its device flow
+// (Kiro's Google/GitHub login, Flow.Browser).
 func (h *Handler) providerFor(id string, device bool) (onboarding.Flow, bool) {
 	flow, known := h.oauthFlows.Lookup(id)
+	if !device {
+		flow, known = h.oauthFlows.LookupBrowser(id)
+	}
 	if !known || (flow.Type == onboarding.FlowDeviceCode) != device {
 		return onboarding.Flow{}, false
 	}
@@ -380,6 +388,33 @@ func specAllowsOAuth(spec registry.Spec) bool {
 		}
 	}
 	return false
+}
+
+// startAuthMethod checks the auth method a start names against the flow's closed
+// set (Flow.AuthMethods) and returns the meta carrying the resolved one, so the
+// exchange or poll reads exactly what was admitted here. An unknown or missing
+// method is refused: falling back to the default would sign in with a method the
+// operator did not choose (a Google request becoming a Builder ID device code).
+func startAuthMethod(w http.ResponseWriter, flow onboarding.Flow, meta map[string]string) (map[string]string, bool) {
+	if len(flow.AuthMethods) == 0 {
+		return meta, true
+	}
+	method, ok := flow.AuthMethodFor(meta["authMethod"])
+	if !ok {
+		writeError(w, http.StatusBadRequest, "oauth_auth_method_invalid", "authMethod must be one of: "+strings.Join(flow.AuthMethods, ", "))
+		return nil, false
+	}
+	return withAuthMethod(meta, method), true
+}
+
+// withAuthMethod is meta with authMethod set, leaving the caller's map untouched.
+func withAuthMethod(meta map[string]string, method string) map[string]string {
+	merged := make(map[string]string, len(meta)+1)
+	for key, value := range meta {
+		merged[key] = value
+	}
+	merged["authMethod"] = method
+	return merged
 }
 
 // onboardingAccount validates the operator's optional account name and identity
@@ -444,7 +479,24 @@ func (h *Handler) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		body.Name, body.Identity = connection.Name, connection.Identity
+		// A Reauthenticate renews the connection with the method that made it (a
+		// Kiro Google connection signs in with Google again). A connection this
+		// sign-in did not make (a Kiro Builder ID one) is refused rather than
+		// rewritten as another kind of credential.
+		if len(provider.flow.AuthMethods) > 0 {
+			stored := connection.Secret.ProviderData["authMethod"]
+			if _, ok := provider.flow.AuthMethodFor(stored); !ok || stored == "" {
+				writeError(w, http.StatusBadRequest, "oauth_reauth_unsupported", "this connection was not made by this sign-in; renew it with the method that made it")
+				return
+			}
+			body.Meta = withAuthMethod(body.Meta, stored)
+		}
 	}
+	meta, ok := startAuthMethod(w, provider.flow, body.Meta)
+	if !ok {
+		return
+	}
+	body.Meta = meta
 	name, identity, ok := onboardingAccount(w, provider.flow, body.Name, body.Identity)
 	if !ok {
 		return
@@ -487,6 +539,10 @@ func (h *Handler) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "oauth_iflow_client_unconfigured", err.Error())
 		return
 	}
+	if errors.Is(err, onboarding.ErrKiroSocialMethod) {
+		writeError(w, http.StatusBadRequest, "oauth_auth_method_invalid", err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "oauth_start_failed", "could not start sign-in")
 		return
@@ -498,7 +554,7 @@ func (h *Handler) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	expiresAt, ok := h.oauth.begin(state, oauthFlow{
 		sessionID: session.ID, provider: providerID, verifier: verifier,
 		name: name, identity: identity, identityOptional: provider.flow.IdentityOptional,
-		extra: request.Extra, meta: body.Meta, target: target,
+		extra: request.Extra, meta: body.Meta, target: target, renew: provider.flow.RenewsSameAccount,
 	})
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "oauth_busy", "too many sign-ins in progress; try again shortly")
@@ -630,6 +686,11 @@ func (h *Handler) handleOAuthDeviceStart(w http.ResponseWriter, r *http.Request)
 	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
+	meta, ok := startAuthMethod(w, provider.flow, body.Meta)
+	if !ok {
+		return
+	}
+	body.Meta = meta
 	name, identity, ok := onboardingAccount(w, provider.flow, body.Name, body.Identity)
 	if !ok {
 		return
@@ -659,6 +720,10 @@ func (h *Handler) handleOAuthDeviceStart(w http.ResponseWriter, r *http.Request)
 	})
 	if errors.Is(err, onboarding.ErrRateLimited) {
 		writeError(w, http.StatusTooManyRequests, "oauth_rate_limited", "the provider has too many pending sign-ins; wait a few minutes and try again")
+		return
+	}
+	if errors.Is(err, onboarding.ErrKiroDeviceMethod) {
+		writeError(w, http.StatusBadRequest, "oauth_auth_method_invalid", err.Error())
 		return
 	}
 	if err != nil {
@@ -885,12 +950,12 @@ func (h *Handler) saveOnboardedResult(w http.ResponseWriter, r *http.Request, pr
 		writeError(w, http.StatusBadRequest, "invalid_auth_kind", "this provider does not accept the credential mode this sign-in produced")
 		return nil, persisted, false
 	}
-	if providerID == codexProviderID || flow.device {
+	if providerID == codexProviderID || flow.device || flow.renew {
 		h.connectionMu.Lock()
 		defer h.connectionMu.Unlock()
 	}
 	if flow.target != "" {
-		return h.saveReauthenticated(w, r, providerID, flow.target, identity, result)
+		return h.saveReauthenticated(w, r, providerID, flow, identity, result)
 	}
 	if providerID == codexProviderID && result.Secret.AuthType != credentials.AuthTypeAccessToken {
 		match, found, err := h.codexMatch(r.Context(), identity, result.Secret.ProviderData)
@@ -919,7 +984,7 @@ func (h *Handler) saveOnboardedResult(w http.ResponseWriter, r *http.Request, pr
 			return onboardedJSON(connection, onboardedUpdated), true, true
 		}
 	}
-	if flow.device && providerID != codexProviderID {
+	if (flow.device || flow.renew) && providerID != codexProviderID {
 		match, found, err := h.deviceMatch(r.Context(), providerID, identity)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
@@ -1006,6 +1071,15 @@ func onboardedJSON(connection credentials.Connection, outcome string) map[string
 	// discovers (wire/cloudcode.go refuses a request without one), so the result
 	// names it, or says none was found, rather than leaving that to the first
 	// failed request (#216). The project id is a label, not a credential.
+	// A Kiro connection is served only with a CodeWhisperer profile ARN
+	// (wire/kiro.go kiroTarget refuses one without it; API keys need none). The
+	// pin saves such a connection as active and fills the ARN at its first refresh
+	// (social-exchange/route.js:40-52, tokenRefresh/providers.js:316-324), so it
+	// is saved here too, but the result says it cannot serve yet instead of
+	// reporting a usable connection (#219 review); the dashboard offers to name it.
+	if connection.ProviderID == "kiro" && connection.AuthKind == credentials.AuthOAuth {
+		saved["profileArnMissing"] = strings.TrimSpace(connection.Secret.ProviderData["profileArn"]) == ""
+	}
 	if cloudCodeProviders[connection.ProviderID] {
 		project := strings.TrimSpace(connection.Secret.ProviderData["projectId"])
 		saved["project"] = project
@@ -1037,7 +1111,8 @@ func (h *Handler) providerConnection(ctx context.Context, providerID, id string)
 // Another account is refused and nothing is saved, so a Reauthenticate never
 // adds a row or overwrites a different one. Name, priority, enabled state, proxy
 // and identity are kept, as for a duplicate update.
-func (h *Handler) saveReauthenticated(w http.ResponseWriter, r *http.Request, providerID, targetID, identity string, result onboarding.Result) (map[string]any, bool, bool) {
+func (h *Handler) saveReauthenticated(w http.ResponseWriter, r *http.Request, providerID string, flow oauthFlow, identity string, result onboarding.Result) (map[string]any, bool, bool) {
+	targetID := flow.target
 	target, found, err := h.providerConnection(r.Context(), providerID, targetID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
@@ -1057,7 +1132,7 @@ func (h *Handler) saveReauthenticated(w http.ResponseWriter, r *http.Request, pr
 		writeError(w, http.StatusConflict, "oauth_account_mismatch", "a different account signed in; nothing was saved. Sign in as the account this connection belongs to, or use Add connection for a new one")
 		return nil, false, false
 	}
-	target.Secret, target.Lifecycle = result.Secret, onboardedLifecycle(oauthFlow{}, result, true)
+	target.Secret, target.Lifecycle = result.Secret, onboardedLifecycle(flow, result, true)
 	connection, persisted, err := h.publishMergedConnection(r.Context(), target, merge)
 	if err != nil {
 		if persisted {

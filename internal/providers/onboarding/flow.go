@@ -122,6 +122,23 @@ type Flow struct {
 	// single declaration that decides whether the handler must resolve one, so a
 	// flow cannot consume a URI the handler never builds, or demand one it discards.
 	RedirectSource RedirectSource
+	// AuthMethods is the closed set of Meta["authMethod"] values the flow signs in
+	// with (Kiro's builder-id/idc device sign-in, its google/github browser
+	// sign-in). The start refuses any other value instead of quietly signing in
+	// with a method the operator did not choose. DefaultAuthMethod is used when
+	// none is sent; with no default the operator must name one. Nil means the flow
+	// reads no auth method.
+	AuthMethods       []string
+	DefaultAuthMethod string
+	// Browser is a browser sign-in offered beside a device flow for the same
+	// provider (Kiro's Google/GitHub login beside its AWS SSO device code). The
+	// device endpoints drive this flow and the browser endpoints drive Browser, so
+	// each endpoint family still has exactly one flow per provider.
+	Browser *Flow
+	// RenewsSameAccount means a browser sign-in of an account already connected
+	// renews that row instead of adding a second, as every device sign-in does
+	// (the reference's oauth duplicate rule, connectionsRepo.js:228-283).
+	RenewsSameAccount bool
 
 	// Authorize builds the browser URL. verifier is empty for flows without PKCE.
 	Authorize func(ctx context.Context, p Params) (AuthRequest, error)
@@ -203,6 +220,31 @@ func (f Flow) ImportKeys() []string {
 		return f.ImportMetaKeys
 	}
 	return f.MetaKeys
+}
+
+// AuthMethodFor resolves the auth method a start asked for against the flow's
+// closed set: a blank value takes the default, and a value outside the set, or a
+// blank one with no default, is refused. A flow without AuthMethods accepts
+// anything and resolves to "".
+func (f Flow) AuthMethodFor(requested string) (string, bool) {
+	if len(f.AuthMethods) == 0 {
+		return "", true
+	}
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		requested = f.DefaultAuthMethod
+	}
+	for _, method := range f.AuthMethods {
+		if requested != "" && method == requested {
+			return method, true
+		}
+	}
+	return "", false
+}
+
+// browserFlow is a companion browser sign-in for Flow.Browser.
+func browserFlow(flow Flow) *Flow {
+	return &flow
 }
 
 // Startable reports whether the flow can start a browser or device sign-in.
@@ -332,6 +374,22 @@ func (r *Registry) Lookup(provider string) (Flow, bool) {
 	}
 	flow, ok := r.flows[provider]
 	return flow, ok
+}
+
+// LookupBrowser returns the browser sign-in of one provider: its flow when that is
+// a browser flow, or the browser sign-in offered beside its device flow.
+func (r *Registry) LookupBrowser(provider string) (Flow, bool) {
+	flow, ok := r.Lookup(provider)
+	if !ok {
+		return Flow{}, false
+	}
+	if flow.Type == FlowDeviceCode {
+		if flow.Browser == nil {
+			return Flow{}, false
+		}
+		return *flow.Browser, true
+	}
+	return flow, true
 }
 
 // Providers lists the providers with an implemented flow, sorted.
