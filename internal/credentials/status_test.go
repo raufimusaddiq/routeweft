@@ -51,31 +51,45 @@ func TestValidationStatusLifecycle(t *testing.T) {
 	if status, _ = store.GetConnectionStatus(ctx, connection.ID); status.TestStatus != StatusActive {
 		t.Fatalf("after toggle: %+v", status)
 	}
-	if err := store.MarkCredentialUntested(ctx, connection.ID, OriginManual); err != nil {
-		t.Fatal(err)
+	// A save with a new secret records its lifecycle in the same write and
+	// clears the results that described the old one.
+	save := func(secret Secret, lifecycle Lifecycle) {
+		t.Helper()
+		update := connection
+		update.Secret, update.Lifecycle = secret, lifecycle
+		if _, err := store.PutConnection(ctx, update); err != nil {
+			t.Fatal(err)
+		}
 	}
+	save(Secret{AccessToken: "fixture-status-key-2"}, Lifecycle{Status: StatusUntested, Origin: OriginManual})
 	status, _ = store.GetConnectionStatus(ctx, connection.ID)
 	if status.TestStatus != StatusUntested || status.AuthOrigin != OriginManual || status.LastTestedAt != "" || status.ModelsAvailable != nil {
 		t.Fatalf("replaced: %+v", status)
 	}
-	if err := store.RecordValidation(ctx, connection.ID, 0, Validation{Error: "boom"}); err != nil {
+	stored, _ := store.GetConnection(ctx, connection.ID)
+	if err := store.RecordValidation(ctx, connection.ID, stored.CredentialRevision, Validation{Error: "boom"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.MarkCredentialAccepted(ctx, connection.ID, OriginOAuth); err != nil {
-		t.Fatal(err)
-	}
+	// An empty status keeps the stored lifecycle (a soft-validated duplicate),
+	// and a save without a new secret never changes it, whatever it names.
+	save(Secret{AccessToken: "fixture-status-key-3"}, Lifecycle{Origin: OriginImport})
+	save(Secret{}, Lifecycle{Status: StatusActive, Origin: OriginOAuth})
 	status, _ = store.GetConnectionStatus(ctx, connection.ID)
-	if status.TestStatus != StatusActive || status.AuthOrigin != OriginOAuth || status.LastError != "" || status.LastTestedAt == "" {
+	if status.TestStatus != StatusFailed || status.LastError != "boom" || status.AuthOrigin != OriginImport {
+		t.Fatalf("kept: %+v", status)
+	}
+	save(Secret{AccessToken: "fixture-status-key-4"}, Lifecycle{Status: StatusActive, Origin: OriginOAuth})
+	status, _ = store.GetConnectionStatus(ctx, connection.ID)
+	if status.TestStatus != StatusActive || status.AuthOrigin != OriginOAuth || status.LastError != "" || status.LastTestedAt != "" {
 		t.Fatalf("accepted: %+v", status)
 	}
-	for _, write := range []error{
-		store.RecordValidation(ctx, "missing", 0, Validation{OK: true}),
-		store.MarkCredentialAccepted(ctx, "missing", OriginOAuth),
-		store.MarkCredentialUntested(ctx, "missing", OriginManual),
-	} {
-		if !errors.Is(write, ErrNotFound) {
-			t.Fatalf("missing connection: %v", write)
-		}
+	bad := connection
+	bad.Secret, bad.Lifecycle = Secret{AccessToken: "fixture-status-key-5"}, Lifecycle{Status: StatusFailed}
+	if _, err := store.PutConnection(ctx, bad); err == nil {
+		t.Fatal("a save recorded a failed status")
+	}
+	if err := store.RecordValidation(ctx, "missing", 0, Validation{OK: true}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing connection: %v", err)
 	}
 	if _, err := store.GetConnectionStatus(ctx, "missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing status: %v", err)
@@ -250,11 +264,8 @@ func TestValidationIsRefusedForAReplacedCredential(t *testing.T) {
 	}
 	// The relink.
 	replaced := connection
-	replaced.Secret = Secret{AccessToken: "fixture-new"}
+	replaced.Secret, replaced.Lifecycle = Secret{AccessToken: "fixture-new"}, Lifecycle{Status: StatusUntested, Origin: OriginManual}
 	if _, err := store.PutConnection(ctx, replaced); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.MarkCredentialUntested(ctx, connection.ID, OriginManual); err != nil {
 		t.Fatal(err)
 	}
 	for _, result := range []Validation{{OK: true, ModelsAvailable: 4}, {Error: "provider rejected credentials"}} {

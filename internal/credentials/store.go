@@ -69,6 +69,23 @@ type Connection struct {
 	// only against the revision it tested (RecordValidation). It is not
 	// configuration: a save ignores it and the store keeps the count.
 	CredentialRevision int64
+	// Lifecycle is what a save that writes a new secret records about that
+	// secret, in the same statement (v13), so no other save or check can land
+	// between the credential and its status. A save without a new secret never
+	// changes the stored lifecycle. Not configuration.
+	Lifecycle Lifecycle
+}
+
+// Lifecycle is the validation state a new secret is saved with. Status is
+// StatusActive (a provider issued or accepted it) or StatusUntested (no
+// provider has confirmed it); a new secret clears the last test, error and
+// model count, which describe the one it replaced. An empty Status keeps the
+// stored lifecycle whole (Xiaomi's soft-validated duplicate,
+// xiaomi-mimo/api-key/route.js:79); a new row then starts untested. An empty
+// Origin keeps the stored origin.
+type Lifecycle struct {
+	Status string
+	Origin string
 }
 
 // Secret is one decryptable credential payload. Fields are optional per auth
@@ -255,6 +272,11 @@ func (s *Store) PutConnection(ctx context.Context, connection Connection) (Conne
 	default:
 		return Connection{}, errors.New("unsupported auth kind")
 	}
+	switch connection.Lifecycle.Status {
+	case "", StatusActive, StatusUntested:
+	default:
+		return Connection{}, errors.New("a saved credential is active or untested")
+	}
 	if connection.ID == "" {
 		connection.ID = uuid.NewString()
 	}
@@ -273,11 +295,25 @@ func (s *Store) PutConnection(ctx context.Context, connection Connection) (Conne
 	if blob != nil {
 		expiry = expiryColumn(connection.Secret)
 	}
-	const upsert = `INSERT INTO provider_connections(id,node_id,name,auth_kind,identity,secret_blob,enabled,priority,proxy_pool_id,account_id,credential_expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_kind=excluded.auth_kind,identity=excluded.identity,secret_blob=COALESCE(excluded.secret_blob,provider_connections.secret_blob),enabled=excluded.enabled,priority=excluded.priority,proxy_pool_id=excluded.proxy_pool_id,account_id=excluded.account_id,credential_expires_at=CASE WHEN excluded.secret_blob IS NULL THEN provider_connections.credential_expires_at ELSE excluded.credential_expires_at END,credential_revision=CASE WHEN excluded.secret_blob IS NULL THEN provider_connections.credential_revision ELSE provider_connections.credential_revision+1 END,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+	// ?14 is whether this save resets the lifecycle: it writes a new secret and
+	// names its status (Lifecycle).
+	reset := 0
+	if blob != nil && connection.Lifecycle.Status != "" {
+		reset = 1
+	}
+	const upsert = `INSERT INTO provider_connections(id,node_id,name,auth_kind,identity,secret_blob,enabled,priority,proxy_pool_id,account_id,credential_expires_at,test_status,auth_origin)
+VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,COALESCE(NULLIF(?12,''),'untested'),?13)
+ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_kind=excluded.auth_kind,identity=excluded.identity,secret_blob=COALESCE(excluded.secret_blob,provider_connections.secret_blob),enabled=excluded.enabled,priority=excluded.priority,proxy_pool_id=excluded.proxy_pool_id,account_id=excluded.account_id,credential_expires_at=CASE WHEN excluded.secret_blob IS NULL THEN provider_connections.credential_expires_at ELSE excluded.credential_expires_at END,credential_revision=CASE WHEN excluded.secret_blob IS NULL THEN provider_connections.credential_revision ELSE provider_connections.credential_revision+1 END,
+test_status=CASE WHEN ?14 THEN excluded.test_status ELSE provider_connections.test_status END,
+auth_origin=CASE WHEN excluded.secret_blob IS NOT NULL AND ?13<>'' THEN ?13 ELSE provider_connections.auth_origin END,
+last_tested_at=CASE WHEN ?14 THEN NULL ELSE provider_connections.last_tested_at END,
+last_error=CASE WHEN ?14 THEN NULL ELSE provider_connections.last_error END,
+last_error_at=CASE WHEN ?14 THEN NULL ELSE provider_connections.last_error_at END,
+models_available=CASE WHEN ?14 THEN NULL ELSE provider_connections.models_available END,
+updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 	change := func(c *Configuration) error {
 		metadata := connection
-		metadata.Secret = Secret{}
+		metadata.Secret, metadata.Lifecycle = Secret{}, Lifecycle{}
 		for i := range c.Connections {
 			if c.Connections[i].ID == connection.ID {
 				if blob == nil {
@@ -291,7 +327,7 @@ ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_k
 		c.Connections = append(c.Connections, metadata)
 		return nil
 	}
-	if err := s.exec(ctx, change, upsert, connection.ID, connection.NodeID, connection.Name, string(connection.AuthKind), nullable(connection.Identity), blob, enabled, connection.Priority, nullable(connection.ProxyPoolID), connection.AccountID, expiry); err != nil {
+	if err := s.exec(ctx, change, upsert, connection.ID, connection.NodeID, connection.Name, string(connection.AuthKind), nullable(connection.Identity), blob, enabled, connection.Priority, nullable(connection.ProxyPoolID), connection.AccountID, expiry, connection.Lifecycle.Status, connection.Lifecycle.Origin, reset); err != nil {
 		return Connection{}, fmt.Errorf("persist provider connection %q: %w", connection.Name, err)
 	}
 	return connection, nil

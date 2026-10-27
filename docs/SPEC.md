@@ -2108,7 +2108,11 @@ new secret, including a refresh rotation (`RotateSecret`). Neither is credential
 material.
 
 Transitions, after the reference (`testUtils.js:892-899`,
-`[provider]/[action]/route.js:69`, `connectionsRepo.js:64-75`):
+`[provider]/[action]/route.js:69`, `connectionsRepo.js:64-75`). A save's status
+and origin are written by the same statement that writes its credential
+(`credentials.Lifecycle` on `PutConnection`), so no concurrent save or check
+can pair one credential with another's status; a new credential also clears
+the last test, error and model count:
 
 - A browser or device sign-in, a Reauthenticate, a single import, an import or
   sign-in that updates a stored duplicate, and every saved bulk item mark the
@@ -2126,7 +2130,7 @@ Transitions, after the reference (`testUtils.js:892-899`,
   or `failed` with the error, the time and the listed model count. A canceled
   test and a disabled connection record nothing. A result is recorded only
   against the `credential_revision` read with the credential it tested: every
-  save that writes a new secret increments it (a refresh rotation does not), so
+  save that writes a secret increments it (a refresh rotation does not), so
   a check that started before a relink and ends after it is refused and the
   replacement keeps its own status. The error is the probe's bounded text with
   every credential value of the connection (stored and as the registry

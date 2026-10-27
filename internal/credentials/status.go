@@ -68,22 +68,6 @@ func (s *Store) RecordValidation(ctx context.Context, id string, revision int64,
 	return err
 }
 
-// MarkCredentialAccepted records a credential a provider just issued or accepted
-// (a sign-in, device approval or import) as active with its origin, clearing the
-// last error as the reference's activation does (connectionsRepo.js:64-75). The
-// last test time and model count stay: no test ran.
-func (s *Store) MarkCredentialAccepted(ctx context.Context, id, origin string) error {
-	return requireAffected(s.db.ExecContext(ctx, "UPDATE provider_connections SET test_status='active',auth_origin=?,last_error=NULL,last_error_at=NULL WHERE id=?", origin, id))
-}
-
-// MarkCredentialUntested records a new credential no provider has confirmed: one
-// the operator entered by hand, or an import whose validation soft-failed.
-// Every earlier result describes another credential and is cleared: the
-// connection is untested until it is checked.
-func (s *Store) MarkCredentialUntested(ctx context.Context, id, origin string) error {
-	return requireAffected(s.db.ExecContext(ctx, "UPDATE provider_connections SET test_status='untested',auth_origin=?,last_tested_at=NULL,last_error=NULL,last_error_at=NULL,models_available=NULL WHERE id=?", origin, id))
-}
-
 // ConnectionStatus is the persisted lifecycle of one connection.
 type ConnectionStatus struct {
 	TestStatus      string

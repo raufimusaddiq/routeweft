@@ -2,10 +2,13 @@ package api
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"sort"
 	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
 	"github.com/raufimusaddiq/routeweft/internal/telemetry"
 )
 
@@ -24,33 +27,48 @@ func (h *Handler) recordValidation(ctx context.Context, c credentials.Connection
 	}
 	// c was read with its credential revision; a relink since then makes the
 	// store refuse this result (ErrCredentialChanged).
-	_ = h.opts.Credentials.RecordValidation(context.WithoutCancel(ctx), c.ID, c.CredentialRevision, credentials.Validation{OK: result.OK, Error: result.Error, ModelsAvailable: result.ModelsAvailable})
+	err := h.opts.Credentials.RecordValidation(context.WithoutCancel(ctx), c.ID, c.CredentialRevision, credentials.Validation{OK: result.OK, Error: result.Error, ModelsAvailable: result.ModelsAvailable})
+	// A replaced or deleted connection is expected to refuse the result; any
+	// other failure leaves the stored status behind the check and is logged.
+	if err != nil && !errors.Is(err, credentials.ErrCredentialChanged) && !errors.Is(err, credentials.ErrNotFound) {
+		slog.Warn("connection validation status not recorded", "connection", c.ID, "error", err)
+	}
 }
 
-// markOnboarded records an onboarded credential's status with its origin. One a
-// provider issued or accepted is active, as the reference writes testStatus
-// "active" on every sign-in ([provider]/[action]/route.js:69). One stored
-// unvalidated (Xiaomi's soft validation) is untested when new and keeps a
-// stored duplicate's status (xiaomi-mimo/api-key/route.js:79,115). The
-// credential is already saved and live; a failure here leaves the status as it
-// was rather than undoing the save.
-func (h *Handler) markOnboarded(ctx context.Context, saved map[string]any, origin string, unvalidated bool) {
+// onboardedLifecycle is what an onboarding save records with the credential it
+// writes, in the same statement (credentials.Lifecycle). A credential a provider
+// issued or accepted is active, as the reference writes testStatus "active" on
+// every sign-in ([provider]/[action]/route.js:69). One stored unvalidated
+// (Xiaomi's soft validation) is untested when new and keeps a stored
+// duplicate's status (xiaomi-mimo/api-key/route.js:79,115).
+func onboardedLifecycle(flow oauthFlow, result onboarding.Result, update bool) credentials.Lifecycle {
+	origin := credentials.OriginOAuth
+	if flow.device {
+		origin = credentials.OriginDevice
+	} else if flow.imported {
+		origin = credentials.OriginImport
+	}
+	switch {
+	case !result.Unvalidated:
+		return credentials.Lifecycle{Status: credentials.StatusActive, Origin: origin}
+	case update:
+		return credentials.Lifecycle{Origin: origin}
+	default:
+		return credentials.Lifecycle{Status: credentials.StatusUntested, Origin: origin}
+	}
+}
+
+// bulkLifecycle is a bulk item's: every item is a credential the provider issued.
+var bulkLifecycle = credentials.Lifecycle{Status: credentials.StatusActive, Origin: credentials.OriginImport}
+
+// reportLifecycle adds the saved connection's status and origin to an
+// onboarding answer. It only reads what the save wrote.
+func (h *Handler) reportLifecycle(ctx context.Context, saved map[string]any) {
 	id, _ := saved["id"].(string)
 	if h.opts.Credentials == nil || id == "" {
 		return
 	}
-	ctx = context.WithoutCancel(ctx)
-	var err error
-	switch {
-	case !unvalidated:
-		err = h.opts.Credentials.MarkCredentialAccepted(ctx, id, origin)
-	case saved["outcome"] == onboardedAdded:
-		err = h.opts.Credentials.MarkCredentialUntested(ctx, id, origin)
-	}
-	if err != nil {
-		return
-	}
-	if status, err := h.opts.Credentials.GetConnectionStatus(ctx, id); err == nil {
+	if status, err := h.opts.Credentials.GetConnectionStatus(context.WithoutCancel(ctx), id); err == nil {
 		saved["testStatus"] = status.TestStatus
 		if status.AuthOrigin != "" {
 			saved["authOrigin"] = status.AuthOrigin

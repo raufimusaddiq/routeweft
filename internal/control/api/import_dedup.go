@@ -117,7 +117,7 @@ func (h *Handler) saveImportedDuplicate(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusBadRequest, "invalid_auth_kind", "this provider does not accept the credential mode this sign-in produced")
 		return true
 	}
-	match.Secret = result.Secret
+	match.Secret, match.Lifecycle = result.Secret, onboardedLifecycle(oauthFlow{imported: true}, result, true)
 	connection, persisted, err := h.publishMergedConnection(r.Context(), match, func(existing, update credentials.Secret) credentials.Secret {
 		return importedSecret(providerID, existing, update)
 	})
@@ -131,7 +131,7 @@ func (h *Handler) saveImportedDuplicate(w http.ResponseWriter, r *http.Request, 
 	}
 	h.clearConnectionHealth(connection.ID)
 	saved := onboardedJSON(connection, onboardedUpdated)
-	h.markOnboarded(r.Context(), saved, credentials.OriginImport, result.Unvalidated)
+	h.reportLifecycle(r.Context(), saved)
 	writeJSON(w, http.StatusOK, saved)
 	return true
 }

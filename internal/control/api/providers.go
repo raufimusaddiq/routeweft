@@ -337,13 +337,15 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	connection, persisted, err := h.publishConnection(r.Context(), credentials.Connection{ID: r.PathValue("id"), NodeID: node.ID, ProviderID: node.ProviderID, Name: body.Name, AuthKind: authKind, Identity: body.Identity, Secret: body.Secret, Enabled: enabled, Priority: priority, ProxyPoolID: proxyPool, AccountID: accountID})
 	// A credential typed into the form is new to every provider: a create, or an
-	// edit that replaces the credential (a relink), is untested until checked.
-	// An edit of name, order, proxy or state keeps the stored result (#220).
-	if persisted && (r.Method != http.MethodPatch || replacesCredential(body.Secret)) {
-		_ = h.opts.Credentials.MarkCredentialUntested(context.WithoutCancel(r.Context()), connection.ID, credentials.OriginManual)
+	// edit that replaces the credential (a relink), is saved untested, in the
+	// same write as the credential. An edit of name, order, proxy or state keeps
+	// the stored result (#220).
+	var lifecycle credentials.Lifecycle
+	if r.Method != http.MethodPatch || replacesCredential(body.Secret) {
+		lifecycle = credentials.Lifecycle{Status: credentials.StatusUntested, Origin: credentials.OriginManual}
 	}
+	connection, _, err := h.publishConnection(r.Context(), credentials.Connection{ID: r.PathValue("id"), NodeID: node.ID, ProviderID: node.ProviderID, Name: body.Name, AuthKind: authKind, Identity: body.Identity, Secret: body.Secret, Enabled: enabled, Priority: priority, ProxyPoolID: proxyPool, AccountID: accountID, Lifecycle: lifecycle})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity, auth mode, and proxy pool")
 		return

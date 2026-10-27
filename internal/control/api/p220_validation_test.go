@@ -3,10 +3,12 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -362,6 +364,44 @@ func TestCheckStartedBeforeRelinkDoesNotRecordOverIt(t *testing.T) {
 		view := listedConnection(t, mux, cookie, c.ID, relinkKeyOne, relinkKeyTwo)
 		if view.TestStatus != credentials.StatusUntested || view.LastTestedAt != "" || view.LastError != "" || view.ModelsAvailable != nil {
 			t.Fatalf("%s: old check recorded over the relinked credential: %+v", outcome.name, view)
+		}
+	}
+}
+
+// The lifecycle is written with the credential, so concurrent saves of one
+// connection cannot pair one save's credential with another's status: an
+// imported credential (accepted) is always active from import, a relinked one
+// (typed by hand) always untested from manual.
+func TestConcurrentImportAndRelinkKeepStatusWithItsCredential(t *testing.T) {
+	env := newImportEnv(t, map[string]string{})
+	status, body := env.importAs(t, "grok-cli", "grok@example.invalid", `{"access_token":"tok-seed","email":"grok@example.invalid"}`, nil)
+	if status != http.StatusOK {
+		t.Fatalf("seed: %d %v", status, body)
+	}
+	id := body["id"].(string)
+	for round := 0; round < 8; round++ {
+		var wg sync.WaitGroup
+		for i := 0; i < 3; i++ {
+			wg.Add(2)
+			go func(i int) {
+				defer wg.Done()
+				env.importAs(t, "grok-cli", "grok@example.invalid", fmt.Sprintf(`{"access_token":"tok-%d-%d","email":"grok@example.invalid"}`, round, i), nil)
+			}(i)
+			go func(i int) {
+				defer wg.Done()
+				doJSON(t, env.mux, env.cookie, http.MethodPatch, "/admin/v1/connections/"+id, fmt.Sprintf(`{"secret":{"accessToken":"sk-manual-%d-%d"}}`, round, i))
+			}(i)
+		}
+		wg.Wait()
+		stored := connectionByID(t, env.creds, id)
+		lifecycle, err := env.creds.GetConnectionStatus(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		imported := strings.HasPrefix(stored.Secret.AccessToken, "tok-")
+		if imported && (lifecycle.TestStatus != credentials.StatusActive || lifecycle.AuthOrigin != credentials.OriginImport) ||
+			!imported && (lifecycle.TestStatus != credentials.StatusUntested || lifecycle.AuthOrigin != credentials.OriginManual) {
+			t.Fatalf("round %d: imported=%v but status %+v", round, imported, lifecycle)
 		}
 	}
 }
