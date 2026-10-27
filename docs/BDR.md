@@ -371,7 +371,8 @@ Antares); light and dark set the same token names.
 Kept as Routeweft's own: the weave mark; Space Grotesk prose with JetBrains Mono
 for technical values and labels; cyan `--live` for current data; the editorial
 layout of UI_STYLE §1 and §5; the black rail; its own pink, yellow and cyan
-palette; the asymmetric shadow; a square status mark beside a word. Excluded:
+palette; the asymmetric shadow; a status mark that always sits beside its word.
+Excluded:
 Richmod's Fraunces and cream/teal palette, Antares' cobalt action colour, marker
 gradient and two-tone focus halo.
 
@@ -397,9 +398,9 @@ error-state, accent-surface, active-nav, focus, theme-color and favicon checks
 take D's values. `docs/UI_STYLE.md` §2 carries D's tokens with their measured
 contrast, and §12 specifies every guard change and the new assertions (3:1
 control boundaries, the menu button against its header, shell edges, shadows,
-titles at 320px) for phase 2. The phase 1 previews showed a 10px round status
-mark; #263 froze "square dot plus word", so the contract keeps the square
-unless the owner lifts that freeze.
+titles at 320px) for phase 2. Status marks: #263 first froze "square dot plus
+word". The owner lifted the shape part on 2026-10-28, so the mark is D's 10px
+round dot; the word beside it stays frozen (status is never colour alone).
 
 Phase 2 implements the tokens, the shell and the §12 guards; phases 3 (page
 bodies) and 4 (charts, mark) follow. Each phase changes code, guards and the

@@ -75,6 +75,7 @@ const { join } = require('node:path');
             '24px': '.accent-surface, .empty-state, .empty-keys, .page-error, .auth-error',
             '22px': '.provider-option',
             '20px': 'textarea',
+            '50%': '.dot',
           };
           const radii = elements.flatMap(element => ['', '::before', '::after'].flatMap(pseudo => {
             const style = getComputedStyle(element, pseudo || null);
@@ -122,6 +123,10 @@ const { join } = require('node:path');
             const ok = match && ['10,6', '5,3'].includes(`${match[1]},${match[2]}`) && match[3] === '0' && match[4] === '0';
             return ok ? [] : [`${element.className}: ${value}`];
           });
+          // Status marks: every visible dot is round (owner, 2026-10-28) and never stands alone: its parent carries a word.
+          const dots = elements.filter(visible).filter(element => element.matches('.dot'));
+          const squareDots = dots.filter(element => getComputedStyle(element).borderTopLeftRadius !== '50%').map(element => element.className);
+          const unlabelledDots = dots.filter(element => !element.parentElement.textContent.trim()).map(element => element.className);
           const slabElement = [...document.querySelectorAll('.accent-surface')].find(visible);
           const slabStyle = slabElement && getComputedStyle(slabElement);
           const slab = slabElement && {
@@ -136,7 +141,7 @@ const { join } = require('node:path');
           return {
             resolvedTheme: document.documentElement.dataset.theme,
             overflow: document.documentElement.scrollWidth - innerWidth,
-            lowContrast, radii, states, sizes, eleven, accents, weakControls, menuBars, edges, shadows, slab,
+            lowContrast, radii, states, sizes, eleven, accents, weakControls, menuBars, edges, shadows, slab, dots: dots.length, squareDots, unlabelledDots,
             active: { width: marker.width, color: marker.backgroundColor, weight: activeStyle.fontWeight, inactiveWeight: getComputedStyle(document.querySelector('.nav-link:not(.nav-link-active)')).fontWeight, highlight: same(rgba(activeStyle.backgroundColor), token('--highlight')), radius: activeStyle.borderTopLeftRadius, text: ratio(rgba(activeStyle.color), rgba(activeStyle.backgroundColor)) },
           };
         });
@@ -163,6 +168,9 @@ const { join } = require('node:path');
         for (const [name, value] of Object.entries(checks.edges)) if (value !== null) assert.ok(value >= 3, `${view}/${theme}/${width}: ${name} edge ${value} against the page`);
         assert.ok(width < 700 ? checks.edges.header !== null : checks.edges.rail !== null, `${view}/${theme}/${width}: shell edge measured`);
         assert.deepEqual(checks.shadows, [], `${view}/${theme}/${width}: a shadow that is not a hard offset token`);
+        if (view === 'overview' || view === 'providers') assert.ok(checks.dots > 0, `${view}/${theme}/${width}: status dots measured`);
+        assert.deepEqual(checks.squareDots, [], `${view}/${theme}/${width}: a status dot that is not round`);
+        assert.deepEqual(checks.unlabelledDots, [], `${view}/${theme}/${width}: a status dot without a word beside it`);
         if (width === 1440) {
           await page.locator('.brand').focus();
           await page.keyboard.press('Tab');

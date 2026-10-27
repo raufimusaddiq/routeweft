@@ -41,8 +41,9 @@ D after the choice (round 3, `d-signal.css` only):
   Holding Sign out at full width without wrapping made it worse (22px), because
   the title cannot shrink below "Capability". No guard-breaking change was
   needed beyond the type-scale rewrite D already implies.
-- Status marks: the preview draws 10px circles. #263 froze "square dot plus
-  word", so the contract keeps squares unless the owner lifts the freeze.
+- Status marks: the preview draws 10px circles. #263 first froze "square dot
+  plus word"; the owner lifted the shape part on 2026-10-28, so phase 2 ships
+  the round dot. The word beside it stays frozen.
 
 ## Run
 
@@ -183,7 +184,7 @@ Adapter at 320px. B, not chosen: its light phone menu button is invisible (bars
 
 Pre-existing in every direction and in the current UI: the phone request log
 truncates the route (`openai / gpt…`) even when there is room, because
-`.log-route` shares the row with the latency (phase 3). The provider square in
+`.log-route` shares the row with the latency (phase 3). The provider mark in
 "Needs a look" on Providers sits below its word at 390px.
 
 ## Executable guards that encode the BDR-015 contract (at `f15b350`)

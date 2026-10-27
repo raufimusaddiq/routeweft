@@ -828,7 +828,8 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
 .accent-surface .chart-ghost { stroke: var(--accent-fg); }
 
 /* status squares: the word is always beside the mark */
-.dot { display: inline-block; width: 8px; height: 8px; flex: 0 0 auto; background: var(--text-muted); }
+/* Status marks are round (owner, 2026-10-28) and never stand alone: the word sits beside the dot. */
+.dot { display: inline-block; width: 10px; height: 10px; flex: 0 0 auto; border-radius: 50%; background: var(--text-muted); }
 .dot-live { background: var(--live); }
 .dot-good { background: var(--success); }
 .dot-warn { background: var(--warning); }
