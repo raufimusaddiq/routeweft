@@ -81,7 +81,7 @@ var notReady = map[string]Readiness{
 	"grok-web":       unavailable("served end to end through its hook Codec (wire.GrokWeb*, ingress codecTranslation) but fenced in ingress.unwired: the owner keeps it unrouted until a supervised live check; live acceptance is unproven (PARITY 6.19, #195)"),
 
 	"azure":          experimental("deployment, API-version and endpoint provider data and specialized URL rules are open (PARITY P02/C06)"),
-	"vertex-partner": experimental("project-id probe, service-account/ADC minting and raw-key auth are not built; unverified against a real gateway (PARITY #115 PR-E2)"),
+	"vertex-partner": experimental("the project-id probe, service-account/ADC minting and raw-key auth are built and tested offline (#204); unverified against a real gateway (PARITY #115 PR-E2, 6.19)"),
 	"cloudflare-ai":  experimental("account-scoped URLs are implemented from the pin and unverified against a live Workers AI gateway (PARITY #115 PR-H)"),
 	"github":         experimental("Copilot token exchange and live models/limits are open; the Claude Messages path and Chat-to-Responses escalation are unverified against a live gateway (PARITY P02-P05)"),
 	"ollama-local":   experimental("local model discovery, private-URL policy and native codecs need contracts (PARITY P02/P03)"),

@@ -57,11 +57,11 @@ Cells by kind and column:
 | Quota / usage read | 24 | 0 | 0 | 0 | 0 | 0 | 57 |
 | Applicable unavailability | 21 | 1 | 0 | 54 | 3 | 2 | 0 |
 | Import / refresh | 18 | 0 | 3 | 0 | 0 | 3 | 57 |
-| Streaming | 22 | 2 | 51 | 1 | 2 | 3 | 0 |
-| Non-streaming | 23 | 1 | 50 | 1 | 2 | 4 | 0 |
+| Streaming | 23 | 2 | 51 | 1 | 2 | 2 | 0 |
+| Non-streaming | 24 | 1 | 50 | 1 | 2 | 3 | 0 |
 | Error shapes | 29 | 2 | 1 | 47 | 2 | 0 | 0 |
 | Cached vs ordinary tokens | 18 | 2 | 5 | 54 | 2 | 0 | 0 |
-| **All cells** | **177** | **8** | **130** | **159** | **11** | **15** | **148** |
+| **All cells** | **179** | **8** | **130** | **159** | **11** | **13** | **148** |
 
 648 cells in all (81 providers x 8 behaviours). `N` cells carry a pin citation in the evidence tables below.
 
@@ -119,7 +119,7 @@ Cells by kind and column:
 | `ollama` | ready | P | P | P | N | P | P | P | P |
 | `ollama-local` | experimental | G | N | S | N | S | S | S | S |
 | `typesafe` | unavailable | N | N | U | N | P | P | P | P |
-| `vertex-partner` | experimental | N | N | S | N | G | G | P | S |
+| `vertex-partner` | experimental | N | N | S | N | P | P | P | S |
 | `tokenrouter` | ready | S | N | S | N | T | T | S | S |
 | `perplexity-agent` | ready | P | N | S | N | T | T | S | S |
 | `opencode-go` | experimental | N | P | P | N | T | T | S | S |
@@ -390,6 +390,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `opencode` — forced stream (registry/opencode.js:20), Zen target Tests: `ingress:TestOpenCodeForcedStreamFoldsToOneJSONBody`, `providers/wire:TestOpenCodeForcesStream`.
 - **P** `ollama` — NDJSON stream conversion Tests: `ingress:TestOllamaFinalLineWithoutNewlineIsAccounted`, `ingress:TestTruncatedOllamaStreamIsAFailure`, `protocol/ollama:TestStreamIsConvertedLineByLine`.
 - **P** `typesafe` — System One stream, usage at EOF Tests: `app:TestConfiguredSystemOneWireAndAccounting`, `ingress:TestSystemOneStreamUsageAtEOFAndAfterOversizedOpaqueLine`.
+- **P** `vertex-partner` — a raw key with no project is probed for it (vertex.js:35-49,158-164), then streamed with the key in X-Goog-Api-Key; unverified against a live gateway (provider is experimental) Tests: `ingress:TestVertexPartnerRawKeyIsProbedAndServed`, `providers/wire:TestVertexPartnerProbesTheProjectOfARawKey`, `providers/wire:TestVertexPartnerProbeEndsWithTheRequest`.
 - **P** `cloudflare-ai` — the System One leg; the Chat leg is verified at the URL seam only (wire:TestCloudflareTargetURLs) Tests: `app:TestConfiguredSystemOneWireAndAccounting`, `app:TestConfiguredSystemOneCloudflareFallback`.
 - **P** `cline`, `clinepass` — an SSE body is not unwrapped Tests: `ingress:TestClineEnvelopeOnlyUnwrapsNonStreamSuccess`.
 - **P** `codebuddy-cn`, `codebuddy-intl` — gateway answers only streams; empty tool_calls stripped, cancellation reaches the upstream Tests: `ingress:TestCodeBuddyStreamingClientKeepsItsStreamMinusEmptyToolCalls`, `ingress:TestCodeBuddyForcedStreamCancellationReachesUpstream`, `ingress:TestCodeBuddyInbandStreamErrorRelaysParsedMessage`.
@@ -417,7 +418,6 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **S** `ollama-local` — the shared Ollama codec; no test names ollama-local (experimental) Tests: `ingress:TestTruncatedOllamaStreamIsAFailure`, `protocol/ollama:TestBufferedBodyIsConverted`.
 - **U** `grok-web`, `perplexity-web` — refused by its immutable readiness; the hook Codec is proved with the fence lifted for the test run only (ingress:TestGrokWebIsServedToEveryClientWire, ingress:TestPerplexityWebThreadIsContinuedOnlyOnTheSameConnection) Tests: `ingress:TestReadinessMatchesIngressReachability`.
 - **G** `codex` — the table row proves the URL, bearer and CLI headers only. The pin's executor also forces stream:true and store:false, injects default instructions, maps review models, drops unsupported fields and filters to an allowlist (executors/codex.js:415-515); Routeweft forwards the client's body (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`, `ingress:TestCodexProviderHeadersCarryCLIFingerprint`.
-- **G** `vertex-partner` — only the URL seam is tested; the target is an absolute Google host, so no request is dispatched in a test (provider is experimental) Tests: `providers/wire:TestVertexPartnerTargetUsesTheConnectionProject`.
 - **G** `grok-cli` — the table row proves the URL and bearer only. The pin's executor sends the grok-shell identity (x-grok-session-id, conv-id, req-id, turn-idx, model-override, email, userid), forces stream:true and store:false and normalizes input and tools (executors/grok-cli.js:362-470); Routeweft sends none of that at inference, though its listing needs the identity (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`.
 
 ### Non-streaming
@@ -429,6 +429,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `opencode` — folded to one JSON body Tests: `ingress:TestOpenCodeForcedStreamFoldsToOneJSONBody`.
 - **P** `ollama` — buffered body conversion Tests: `protocol/ollama:TestBufferedBodyIsConverted`, `ingress:TestOllamaRefusalMovesToTheNextCandidate`.
 - **P** `typesafe` — System One non-stream Tests: `app:TestConfiguredSystemOneWireAndAccounting`.
+- **P** `vertex-partner` — project from the service account, the ADC or projectId (vertex.js:71-74); SA/ADC minted into a bearer; unverified against a live gateway (provider is experimental) Tests: `ingress:TestVertexPartnerRawKeyIsProbedAndServed`, `providers/wire:TestVertexPartnerProjectPrecedence`, `providers/wire:TestVertexPartnerAuthorizesWithAMintedToken`.
 - **P** `cloudflare-ai` — the System One leg; the Chat leg is verified at the URL seam only Tests: `app:TestConfiguredSystemOneWireAndAccounting`.
 - **P** `kimi` — Chat fixture replayed byte for byte; Messages beta query and device headers; Responses through the table Tests: `ingress:TestProviderKimiChatNativeReplaysFixture`, `ingress:TestMessagesBetaQueryAndKimiDeviceHeaders`, `ingress:TestRegistryNativeTransportWires`.
 - **P** `xiaomi-mimo` — Messages fixture posts to the provider path; Chat through the table. Open: Preview models served through the account-session route (executors/xiaomi-mimo.js:21-99) are not replicated Tests: `ingress:TestProviderXiaomiMimoMessagesNativeUsesProviderPath`, `ingress:TestRegistryNativeTransportWires`.
@@ -455,7 +456,6 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **S** `ollama-local` — the shared Ollama codec; no test names ollama-local (experimental) Tests: `ingress:TestTruncatedOllamaStreamIsAFailure`, `protocol/ollama:TestBufferedBodyIsConverted`.
 - **U** `grok-web`, `perplexity-web` — refused by its immutable readiness; the hook Codec is proved with the fence lifted for the test run only (ingress:TestGrokWebIsServedToEveryClientWire, ingress:TestPerplexityWebThreadIsContinuedOnlyOnTheSameConnection) Tests: `ingress:TestReadinessMatchesIngressReachability`.
 - **G** `codex` — the table row proves the URL, bearer and CLI headers only. The pin's executor also forces stream:true and store:false, injects default instructions, maps review models, drops unsupported fields and filters to an allowlist (executors/codex.js:415-515); Routeweft forwards the client's body (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`, `ingress:TestCodexProviderHeadersCarryCLIFingerprint`.
-- **G** `vertex-partner` — only the URL seam is tested; the target is an absolute Google host, so no request is dispatched in a test (provider is experimental) Tests: `providers/wire:TestVertexPartnerTargetUsesTheConnectionProject`.
 - **G** `qoder` — the pin always asks for a stream and folds it into one body above the executor (qoder.js:613-734); the unwrap that feeds the fold is tested, the fold for a Chat, Responses or Messages client is wiring that is not done; the provider is unavailable Tests: `providers/wire:TestQoderUnwrapSSEMatchesPin`.
 - **G** `grok-cli` — the table row proves the URL and bearer only. The pin's executor sends the grok-shell identity (x-grok-session-id, conv-id, req-id, turn-idx, model-override, email, userid), forces stream:true and store:false and normalizes input and tools (executors/grok-cli.js:362-470); Routeweft sends none of that at inference, though its listing needs the identity (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`.
 
@@ -473,7 +473,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `opencode` — models served on another wire are refused, not posted a Chat body Tests: `providers/wire:TestOpenCodeRefusesModelsServedOnAnotherWire`.
 - **P** `ollama` — a refusal moves on; a truncated stream is a failure Tests: `ingress:TestOllamaRefusalMovesToTheNextCandidate`, `ingress:TestTruncatedOllamaStreamIsAFailure`.
 - **P** `typesafe` — validation errors and an opaque upstream error Tests: `app:TestConfiguredSystemOneValidationAndOpaqueErrorWithoutDatabase`, `ingress:TestSystemOneRelayDistinguishesReadFailureFromEOF`.
-- **P** `vertex-partner` — no project or an unsafe project is refused before dispatch Tests: `providers/wire:TestVertexPartnerRefusesWithoutAProject`, `providers/wire:TestVertexPartnerRejectsAProjectThatIsNotAPathSegment`, `ingress:TestTargetRefusalFallsThroughToTheNextCandidate`.
+- **P** `vertex-partner` — an OAuth credential with no project, an unsafe project, or a key whose probe names none is refused before dispatch Tests: `providers/wire:TestVertexPartnerRefusesWithoutAProject`, `providers/wire:TestVertexPartnerRejectsAProjectThatIsNotAPathSegment`, `providers/wire:TestVertexPartnerSendsNothingWhenTheProbeFindsNoProject`, `ingress:TestTargetRefusalFallsThroughToTheNextCandidate`.
 - **P** `cloudflare-ai` — an unsafe or missing account id is refused; System One fallback Tests: `providers/wire:TestCloudflareTargetFailsClosed`, `app:TestConfiguredSystemOneCloudflareFallback`.
 - **P** `iflow` — an empty credential is refused, not signed Tests: `ingress:TestIflowWithoutCredentialFailsClosed`, `providers/wire:TestIflowHeadersRefuseToSignAnEmptyKey`.
 - **P** `kimi` — rate_limit_reached_error body Tests: `ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin`.
