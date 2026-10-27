@@ -8,7 +8,7 @@ import { READINESS_LABEL, readinessNote, readinessStatus, type Readiness } from 
 import { attemptExpired, attemptStillOpen, cancelResult, connectMethods, phaseForError, type AttemptPhase, type Completion, type ConnectMethod, type SignInMethod, type SignInMode } from './signIn'
 import { bulkSummary, canReauthenticate, closeSignInWindow, duplicateNote, openSignInWindow, outcomeMessage, parseBulkInput, sendSignInWindow, signInURL, type BulkResponse, type SignInWindow } from './onboarding'
 import { quotaLine, quotaQuery, type QuotaItem } from './quotaView'
-import { browserJourney, checkedNote, copilotNote, deviceCopyItems, deviceJourney, devicePollDelay, devicePollingOver, identityPrompt, importJourney, projectNote, validProjectId } from './journeys'
+import { browserJourney, checkedNote, copilotNote, DEVICE_REQUEST_TIMEOUT_MS, deviceCopyItems, deviceJourney, devicePollDelay, devicePollingOver, identityPrompt, importJourney, projectNote, requestBound, validProjectId } from './journeys'
 
 function ReadinessTag({ provider }: { provider: { readiness?: Readiness } }) {
   const status = readinessStatus(provider)
@@ -74,6 +74,8 @@ const EMPTY_ACCOUNT = { name: '', identity: '', accessToken: '', refreshToken: '
 // earlier request saved it (a lost response, a save that finished as time ran
 // out), so the operator is pointed at the connection list instead of told.
 const CLOSED_MESSAGE = 'This sign-in is no longer open on the server: it expired or was already used. Check the connections below for anything it saved.'
+// Browser timers for requestBound, so a fake clock in the smoke drives them too.
+const WINDOW_TIMERS = { set: (callback: () => void, ms: number) => window.setTimeout(callback, ms), clear: (handle: unknown) => window.clearTimeout(handle as number) }
 const errorCodeOf = (cause: unknown) => cause instanceof RequestError ? (cause.body as { error?: { code?: string } } | null)?.error?.code : undefined
 
 class RequestError extends Error {
@@ -207,8 +209,12 @@ export function Providers({ onUnauthorized }: Props) {
         return
       }
       polled = true
+      // One poll waits at most DEVICE_REQUEST_TIMEOUT_MS: a request the server
+      // never answers is aborted and counted as no answer, so the retry cap and
+      // the deadline above still end the polling.
+      const bound = requestBound(controller.signal, DEVICE_REQUEST_TIMEOUT_MS, WINDOW_TIMERS)
       try {
-        const result = await send(`/oauth/${encodeURIComponent(flow.provider)}/poll`, 'POST', { state: flow.state }, controller.signal) as { status: string; connection?: Connection; intervalSeconds?: number }
+        const result = await send(`/oauth/${encodeURIComponent(flow.provider)}/poll`, 'POST', { state: flow.state }, bound.signal) as { status: string; connection?: Connection; intervalSeconds?: number }
         if (cancelled) return
         failures = 0
         if (result.status === 'connected') {
@@ -222,14 +228,15 @@ export function Providers({ onUnauthorized }: Props) {
         }
         timer = window.setTimeout(poll, delay)
       } catch (cause) {
-        // An abort is the operator ending the sign-in, not a failure to report.
-        if (cancelled || (cause instanceof DOMException && cause.name === 'AbortError')) return
+        // An abort is the operator ending the sign-in, not a failure to report;
+        // a timed-out poll is no answer, handled below like an unreachable server.
+        if (cancelled || (cause instanceof DOMException && cause.name === 'AbortError' && !bound.timedOut())) return
         // Without an answer that ends it, the attempt is still open on the server
         // (and may be saving), so it stays tracked. An unreachable server or
         // provider is retried, then paused; any other open answer (a save that
         // persisted nothing, which the server releases for another try) pauses
         // at once with the server's message. The operator checks again or cancels.
-        const code = errorCodeOf(cause)
+        const code = bound.timedOut() ? undefined : errorCodeOf(cause)
         if (attemptStillOpen(code, 'poll')) {
           const unreachable = code === undefined || code === 'oauth_poll_failed'
           if (unreachable && ++failures < DEVICE_POLL_RETRIES) { timer = window.setTimeout(poll, delay); return }
@@ -240,7 +247,7 @@ export function Providers({ onUnauthorized }: Props) {
           return
         }
         endAttempt(); attemptFailed(cause)
-      }
+      } finally { bound.done() }
     }, delay)
     return () => { cancelled = true; window.clearTimeout(timer); controller.abort() }
   }, [deviceFlow, pollStalled, load])
@@ -447,14 +454,17 @@ export function Providers({ onUnauthorized }: Props) {
     const state = flow.state
     setBusy('oauth-cancel'); setError(''); setAttemptNote('')
     let status: number | undefined, code: string | undefined, message = ''
+    // A cancel the server never answers is no answer (retry below), not a
+    // button stuck on Cancelling.
+    const bound = requestBound(undefined, DEVICE_REQUEST_TIMEOUT_MS, WINDOW_TIMERS)
     try {
-      await send(`/oauth/${encodeURIComponent(flow.provider)}/cancel`, 'POST', { state })
+      await send(`/oauth/${encodeURIComponent(flow.provider)}/cancel`, 'POST', { state }, bound.signal)
       status = 200
     } catch (cause) {
       status = cause instanceof RequestError ? cause.status : undefined
       code = errorCodeOf(cause)
-      message = cause instanceof Error ? cause.message : ''
-    } finally { setBusy('') }
+      message = bound.timedOut() ? 'no answer from the server' : cause instanceof Error ? cause.message : ''
+    } finally { bound.done(); setBusy('') }
     // A poll may have finished the attempt while the cancel was in flight; its
     // result is the truth, not this cancel's.
     if (liveState.current !== state) return true
@@ -541,8 +551,16 @@ export function Providers({ onUnauthorized }: Props) {
     if (!selectedProvider || deviceMissingMeta.length > 0 || (askIdentity && !account.identity.trim())) return
     endAttempt(); setOutcome(null); setCopied('')
     await action('device-start', '', async () => {
-      const flow = await send(`/oauth/${encodeURIComponent(selected)}/device`, 'POST', { ...signInAccount(), meta: flowMeta() }) as Omit<DeviceFlow, 'provider'>
-      setDeviceFlow({ ...flow, provider: selected })
+      // A start the server never answers leaves no attempt on screen and the
+      // button free again; any attempt it made expires on the server unused.
+      const bound = requestBound(undefined, DEVICE_REQUEST_TIMEOUT_MS, WINDOW_TIMERS)
+      try {
+        const flow = await send(`/oauth/${encodeURIComponent(selected)}/device`, 'POST', { ...signInAccount(), meta: flowMeta() }, bound.signal) as Omit<DeviceFlow, 'provider'>
+        setDeviceFlow({ ...flow, provider: selected })
+      } catch (cause) {
+        if (bound.timedOut()) throw new Error('The server did not answer the sign-in start in time; try again.')
+        throw cause
+      } finally { bound.done() }
     })
   }
 

@@ -42,6 +42,11 @@ const PROVIDERS = {
   let states = 0;
   // What the next polls answer, in order; an empty queue answers pending.
   const pollScript = [];
+  // Requests the stub accepts and never answers ({ hang: true } in pollScript,
+  // hangStart, hangCancel), released only when the run ends.
+  const hung = [];
+  let hangStart = false;
+  let hangCancel = false;
   let expiresAt = LATER;
   const starts = [];
   const polls = [];
@@ -65,6 +70,8 @@ const PROVIDERS = {
     if (match && method === 'POST') {
       const [, provider, step] = match;
       const body = route.request().postDataJSON();
+      if (step === 'device' && hangStart) { starts.push({ provider, body }); hung.push(route); return new Promise(() => {}); }
+      if (step === 'cancel' && hangCancel) { cancels.push({ provider, body }); hung.push(route); return new Promise(() => {}); }
       if (step === 'device') {
         starts.push({ provider, body });
         states += 1;
@@ -74,6 +81,7 @@ const PROVIDERS = {
       if (step === 'cancel') { cancels.push({ provider, body }); return json(route, 200, { status: 'cancelled' }); }
       polls.push({ provider, body });
       const next = pollScript.shift() || { status: 'pending', intervalSeconds: 5 };
+      if (next.hang) { hung.push(route); return new Promise(() => {}); }
       if (next.error) return fail(route, next.http, next.error, next.message);
       if (next.status === 'connected') {
         const p = PROVIDERS[provider];
@@ -207,16 +215,54 @@ const PROVIDERS = {
     await pollUntil(id, beforeExpiry + 1);
     await result.getByText('Expired', { exact: true }).waitFor();
 
-    // A server that keeps answering pending past the deadline: the browser stops
-    // on its own and offers to check again.
+    // A start the server accepts and never answers is given up after 30 s; the
+    // button is free again and no attempt is shown.
+    await fill(id, p);
+    hangStart = true;
+    await start.click();
+    await form.getByRole('button', { name: 'Starting…', exact: true }).waitFor();
+    await page.clock.runFor(30000);
+    await page.getByText('The server did not answer the sign-in start in time; try again.').waitFor();
+    hangStart = false;
+    assert.equal(await form.getByText('Pending', { exact: true }).count(), 0, `${id}: a hung start showed an attempt`);
+    assert.equal(await start.isDisabled(), false, `${id}: the start button stayed busy`);
+
+    // Polls the server accepts and never answer are aborted after 30 s each and
+    // count as no answer: five of them pause polling, which then stays paused.
+    const beforeHang = pollsFor(id);
+    pollScript.push(...Array.from({ length: 5 }, () => ({ hang: true })));
+    await start.click();
+    await form.getByText('Pending', { exact: true }).waitFor();
+    await pollUntil(id, beforeHang + 5);
+    await page.clock.runFor(30000);
+    await form.getByText(/The server or the provider could not be reached/).waitFor();
+    const paused = pollsFor(id);
+    await page.clock.runFor(180000); await page.waitForTimeout(20);
+    assert.equal(pollsFor(id), paused, `${id}: kept polling after hung polls`);
+    // A cancel the server never answers is no answer either: the attempt stays
+    // and the operator can cancel again.
+    hangCancel = true;
+    await form.getByRole('button', { name: 'Cancel sign-in', exact: true }).click();
+    await form.getByRole('button', { name: 'Cancelling…', exact: true }).waitFor();
+    await page.clock.runFor(30000);
+    await form.getByText(/could not be cancelled \(no answer from the server\)/).waitFor();
+    hangCancel = false;
+    await form.getByRole('button', { name: 'Cancel sign-in', exact: true }).click();
+    await result.getByText('Cancelled', { exact: true }).waitFor();
+
+    // Past the deadline with a poll the server never answers: the poll is
+    // aborted, and the browser stops on its own and offers to check again.
     await fill(id, p);
     expiresAt = new Date(NOW - 10 * 60 * 1000).toISOString();
+    const beforeDeadline = pollsFor(id);
+    pollScript.push({ hang: true });
     await start.click();
-    await form.getByText(/The time limit passed without an answer from the server/).waitFor({ timeout: 2000 }).catch(async () => {
-      await page.clock.runFor(5000);
-      await form.getByText(/The time limit passed without an answer from the server/).waitFor();
-    });
+    await pollUntil(id, beforeDeadline + 1);
+    await page.clock.runFor(30000);
+    await page.clock.runFor(5000);
+    await form.getByText(/The time limit passed without an answer from the server/).waitFor();
     const stalled = pollsFor(id);
+    assert.equal(stalled, beforeDeadline + 1, `${id}: polled again past the deadline`);
     await page.clock.runFor(120000); await page.waitForTimeout(20);
     assert.equal(pollsFor(id), stalled, `${id}: kept polling past the deadline`);
     // Check again asks the server once more; here it says the attempt is gone.
@@ -234,8 +280,12 @@ const PROVIDERS = {
   report.starts = starts.length;
   report.polls = polls.length;
   report.cancels = cancels.length;
+  report.hung = hung.length;
+  // Per provider: one start, five polls, one cancel and one past-deadline poll never answered.
+  assert.equal(hung.length, Object.keys(PROVIDERS).length * 8);
   assert.deepEqual(errors, []);
   writeFileSync(join(artifacts, 'device-approval-report.json'), JSON.stringify(report, null, 2) + '\n');
-  console.log(`device approval: ${Object.keys(report.providers).length} providers, ${starts.length} starts, ${polls.length} polls, ${cancels.length} cancels`);
+  console.log(`device approval: ${Object.keys(report.providers).length} providers, ${starts.length} starts, ${polls.length} polls, ${cancels.length} cancels, ${hung.length} requests never answered`);
+  for (const route of hung) await route.abort().catch(() => {});
   await chrome.close();
 })().catch(e => { console.error('FAIL', e); process.exit(1); });

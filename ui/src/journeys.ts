@@ -264,6 +264,29 @@ export function deviceCopyItems(flow: { userCode?: string; verificationUrl?: str
 // still has time to report.
 export const DEVICE_DEADLINE_GRACE_MS = 60_000
 
+// The longest the dashboard waits for one sign-in request (a device start, a
+// poll, a cancel). A request the server accepted but never answers would
+// otherwise hold the attempt forever: no answer, no next poll, no deadline. Past
+// this it is aborted and counted as no answer, which the caller already handles.
+export const DEVICE_REQUEST_TIMEOUT_MS = 30_000
+
+// A signal that aborts when parent does or when ms pass, whichever is first.
+// timedOut tells the two apart (a timeout is no answer; a parent abort is the
+// operator ending the sign-in); done clears the timer and the listener.
+export function requestBound(parent: AbortSignal | undefined, ms: number, timers: { set: (callback: () => void, ms: number) => unknown; clear: (handle: unknown) => void }) {
+  const controller = new AbortController()
+  let expired = false
+  const forward = () => controller.abort()
+  if (parent?.aborted) controller.abort()
+  else parent?.addEventListener('abort', forward, { once: true })
+  const handle = timers.set(() => { expired = true; controller.abort() }, ms)
+  return {
+    signal: controller.signal,
+    timedOut: () => expired,
+    done: () => { timers.clear(handle); parent?.removeEventListener('abort', forward) },
+  }
+}
+
 // Whether the browser should stop polling an attempt on its own.
 export function devicePollingOver(expiresAt: string | undefined, now: number): boolean {
   if (!expiresAt) return false

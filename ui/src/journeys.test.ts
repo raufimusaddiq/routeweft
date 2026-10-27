@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { browserJourney, checkedNote, copilotNote, DEVICE_DEADLINE_GRACE_MS, deviceCopyItems, deviceJourney, devicePollDelay, devicePollingOver, identityPrompt, importJourney, loopbackHint, projectNote, validProjectId } from './journeys.ts'
+import { browserJourney, checkedNote, copilotNote, DEVICE_DEADLINE_GRACE_MS, DEVICE_REQUEST_TIMEOUT_MS, requestBound, deviceCopyItems, deviceJourney, devicePollDelay, devicePollingOver, identityPrompt, importJourney, loopbackHint, projectNote, validProjectId } from './journeys.ts'
 import { connectMethods, type ProviderAuth } from './signIn.ts'
 
 const origin = 'https://routeweft.example.test/callback'
@@ -172,4 +172,48 @@ test('polling follows the server interval within 2 to 30 seconds and stops on it
   assert.equal(devicePollingOver(deadline, at + DEVICE_DEADLINE_GRACE_MS + 1), true)
   assert.equal(devicePollingOver(undefined, at), false)
   assert.equal(devicePollingOver('not a date', at), false)
+})
+
+// A scripted clock: set records the pending callback, fire runs it.
+function fakeTimers() {
+  const pending = new Map<number, () => void>()
+  let next = 0
+  return {
+    set: (callback: () => void) => { next += 1; pending.set(next, callback); return next },
+    clear: (handle: unknown) => { pending.delete(handle as number) },
+    fire: () => { for (const [handle, callback] of [...pending]) { pending.delete(handle); callback() } },
+    size: () => pending.size,
+  }
+}
+
+test('a request the server never answers is aborted at the bound and reads as timed out', () => {
+  assert.equal(DEVICE_REQUEST_TIMEOUT_MS, 30_000)
+  const timers = fakeTimers()
+  const bound = requestBound(undefined, DEVICE_REQUEST_TIMEOUT_MS, timers)
+  assert.equal(bound.signal.aborted, false)
+  timers.fire()
+  assert.equal(bound.signal.aborted, true)
+  assert.equal(bound.timedOut(), true)
+})
+
+test('the operator ending the sign-in aborts the request without reading as a timeout, and done clears the timer', () => {
+  const timers = fakeTimers()
+  const parent = new AbortController()
+  const bound = requestBound(parent.signal, DEVICE_REQUEST_TIMEOUT_MS, timers)
+  parent.abort()
+  assert.equal(bound.signal.aborted, true)
+  assert.equal(bound.timedOut(), false)
+  bound.done()
+  assert.equal(timers.size(), 0)
+  const already = new AbortController(); already.abort()
+  assert.equal(requestBound(already.signal, 1, fakeTimers()).signal.aborted, true)
+})
+
+test('an answered request clears its bound, so it never aborts later', () => {
+  const timers = fakeTimers()
+  const bound = requestBound(undefined, DEVICE_REQUEST_TIMEOUT_MS, timers)
+  bound.done()
+  timers.fire()
+  assert.equal(bound.signal.aborted, false)
+  assert.equal(bound.timedOut(), false)
 })
