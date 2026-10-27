@@ -1324,7 +1324,7 @@ Mirrored though odd, each asserted by a test:
 
 | Upstream | Chat | Notes |
 | --- | --- | --- |
-| `text`; `thought:true` text; `functionCall`; `inlineData` | `content`; `reasoning_content`; `tool_calls[]` (`index`, `id`, name restored); `images` | the pin's buffered path appended markdown for an image; the stream form is used for both (G10) |
+| `text`; `thought:true` text; `functionCall`; `inlineData` | `content`; `reasoning_content`; `tool_calls[]` (`index`, `id`, name restored); `images` | the pin's buffered path appended markdown for an image; the stream form is used for both (G10). A Responses or Messages client gets the markdown text instead (6.27) |
 | `thoughtSignature` on a call, or on a part before it | kept under the scope (G2) | |
 | `finishReason` | per G12 | |
 | `usageMetadata` | `usage` (cache-inclusive prompt; reasoning inside completion) | G10 |
@@ -2861,7 +2861,7 @@ Oracle: `1c3b9f47`, `open-sse/executors/antigravity.js` and `open-sse/handlers/c
 | Contents | `:150-158`: each turn's parts with a `text` kept as `{text}`, under the turn's role or `user`; a turn with none left out; everything else dropped | the same for text; a thought signature goes as at the pin. `TestAntigravityImageContentsAreThePins` |
 | Sampling | `:170-175`: `temperature 1.0`, `topP 0.95`, `topK 40`, `maxOutputTokens 8192`, whatever the client sent | each of temperature, `top_p` and `max_tokens` the client set is carried (an explicit 0 stays 0, as 6.9 A4 decides for the Claude path); unset ones take the pin's value; `topK` is always 40 (Chat has no `top_k`, 6.9 F1). The 64000 ceiling (6.9 A5) still applies |
 | IDE request id | `buildIdeRequestId` with the stripped model and `image_gen` in the trajectory seed (`:186`) | `withIDERequestID` takes the kind from the envelope's `requestType` (agent when absent). `TestAntigravityImageRequestIDIsThePins` reproduces both recorded ids |
-| Answer | the call is always buffered (`chatCore.js:149-154`), so `translateToClientShape` (`nonStreamingHandler.js:196-255`) writes it: text parts and each image, in part order, into the message content, the image as `\n![image](data:<mime>;base64,<data>)\n` (`:218-223`; mime `image/png` when absent, an empty `data` skipped). A Responses client gets that text as `output_text` (`:167-175`); a Messages client is sent the same `chat.completion` (`:191` converts only for an OpenAI target) | `ResponseOptions.ImagesAsText` on the Gemini response leg, set for an Antigravity image model: the same text, buffered and streamed, for every client, each in its own framing. `TestAntigravityImageAnswerTextIsThePins` over every recorded answer, `TestAntigravityImageModelIsServedToEveryClientWire`, `TestAntigravityImageOnlyAnswerReachesEveryClientWire`. Other Gemini-family models keep the `images` entry (`gemini-to-openai.js:114-126`; its reach to Responses and Messages clients is #259) |
+| Answer | the call is always buffered (`chatCore.js:149-154`), so `translateToClientShape` (`nonStreamingHandler.js:196-255`) writes it: text parts and each image, in part order, into the message content, the image as `\n![image](data:<mime>;base64,<data>)\n` (`:218-223`; mime `image/png` when absent, an empty `data` skipped). A Responses client gets that text as `output_text` (`:167-175`); a Messages client is sent the same `chat.completion` (`:191` converts only for an OpenAI target) | `ResponseOptions.ImagesAsText` on the Gemini response leg, set for an Antigravity image model: the same text, buffered and streamed, for every client, each in its own framing. `TestAntigravityImageAnswerTextIsThePins` over every recorded answer, `TestAntigravityImageModelIsServedToEveryClientWire`, `TestAntigravityImageOnlyAnswerReachesEveryClientWire`. Other Gemini-family models keep the `images` entry for a Chat client (`gemini-to-openai.js:114-126`); a Responses or Messages client gets the same text (6.27, #259) |
 | An Antigravity client's `requestType: "image_gen"` | ignored (`antigravity-to-openai.js:12` reads the body only) | accepted and dropped: the routed model decides (6.9 C1). `search` and any other value stay refused |
 
 **Differences, each on purpose.**
@@ -2875,6 +2875,38 @@ Oracle: `1c3b9f47`, `open-sse/executors/antigravity.js` and `open-sse/handlers/c
 - **An image model is never also a Claude model** (the pin's order, `:145` before the Claude path), so `claude-image` takes the image path.
 
 **Open.**
-- **The `images` entry of other Gemini-family answers** does not reach Responses and Messages clients (the Chat-to-Responses and Chat-to-Messages legs have no `images` mapping, at the pin and here). Antigravity image models no longer depend on it (their picture is in the text, as at the pin); the rest is #259.
-- **Gemini CLI image models.** `chatCore.js:152` also forces `stream = false` for `gemini-cli`, whose executor has no image request shape (`executors/gemini-cli.js`). Not in #205's scope (Antigravity); unchanged here, and recorded so it is not lost.
+- **The `images` entry of other Gemini-family answers.** Closed by #259: a Responses or Messages client of every Gemini-family wire gets the picture in the text (6.27).
+- **Gemini CLI image models, Chat client.** `chatCore.js:152` also forces `stream = false` for `gemini-cli`, whose executor has no image request shape (`executors/gemini-cli.js:10-11` only picks the action). Responses and Messages clients receive the pin's text since #259 (6.27); a Chat client still gets the `images` entry (6.7 G10) from a streamed call where the pin answers one buffered `chat.completion` with the text. Unchanged here, and recorded so it is not lost.
 - **Live behaviour is U.** No request has reached Google's `image_gen` bucket from this repository.
+
+## 6.27 Gemini-family images for Responses and Messages clients (#259)
+
+Oracle: `1c3b9f47`, read with `git show` in `/home/ubuntu/9router`; its working tree is not used. The audit oracle `264a26d0` has the same lines (`git diff 1c3b9f47 264a26d0` is empty for `open-sse/handlers/chatCore/nonStreamingHandler.js`, `open-sse/translator/index.js` and the three response legs below).
+
+**Boundary.** Same as 6.26: a picture the model put in its answer, inside a retained LLM protocol (PRD §4.2, BDR-016). No endpoint, catalog kind, provider or routability changes. Every Gemini-family wire is in scope: `gemini`, `vertex`, `gemini-cli` and `antigravity`.
+
+**What the pin sends.**
+
+| Client | Buffered (client `stream: false`, and every image model of `antigravity` and `gemini-cli`, `chatCore.js:149-154`) | Streamed |
+|---|---|---|
+| Chat | `translateToClientShape` (`nonStreamingHandler.js:196-255`) writes text parts and each image, in part order, into `message.content`, the image as `\n![image](data:<mime>;base64,<data>)\n` (`:218-223`) | `gemini-to-openai.js:114-127` sends the image as `delta.images[{type:"image_url"}]` |
+| Responses | that `chat.completion`, converted by `openAICompletionToResponses` (`:167-175`): the same text as one `output_text` (`:51-59`) | `translateResponse` (`translator/index.js:215-240`) feeds the Chat chunk to `openai-responses.js`, which reads `delta.content` and `delta.tool_calls` only (`:115,148`): **the image is dropped** |
+| Messages | the same `chat.completion` with the text; `:191` converts to a Messages body only for an OpenAI target, so a Messages client receives Chat framing | `openai-to-claude.js` reads `delta.content` and `delta.tool_calls` only (`:161,183`): **the image is dropped** |
+
+The same branch (`:197`) serves `gemini`, `gemini-cli`, `vertex` and `antigravity`, and `gemini-to-openai.js:159-162` registers one stream leg for all four.
+
+**How it is checked.** `compat/parity/generate-gemini-image-answers.mjs` evaluates the pin's own `translateNonStreamingResponse`, `translateResponse`, `initState` and the three response legs, for each of the four wires and three clients, over three answers (text and image, image only without a MIME type, two images around text), with the clock fixed, and writes `internal/ingress/testdata/gemini_image_answers_pin.json` (36 answers). The Go tests read the file; none regenerates it.
+
+| Behaviour | Routeweft | Test |
+|---|---|---|
+| Responses and Messages clients, buffered | `geminiTranslation` sets `ResponseOptions.ImagesAsText` for every Gemini-family wire when the client is Responses or Messages (`TranslateResponses`, `TranslateMessages`), so the Gemini response leg writes the pin's markdown text and the client's usual leg carries it: `output_text` for Responses, a text block for Messages. The text is the pin's byte for byte | `TestGeminiFamilyImageAnswerIsThePinsForEveryClient` (all 36 recorded answers), `TestGeminiFamilyImageReachesResponsesAndMessagesClients` (over HTTP: `gemini`, `vertex`, `gemini-cli`, `antigravity` with a non-image and an image model, both modes, usage recorded) |
+| Chat clients | unchanged: the `images` entry, buffered and streamed (6.7 G10), which is the pin's stream form; text without the picture | the same two tests assert the Chat text and image URLs |
+| Antigravity image models | unchanged (6.26): already the text for every client | `TestAntigravityImageModelIsServedToEveryClientWire`, and the image-model case above |
+
+**Differences, each on purpose.**
+- **A streaming Responses or Messages client gets the picture.** The pin drops it there, silently, and answers 200 with the text alone; here the stream carries the same markdown text the pin's buffered path gives the same client, in content deltas of at most 2 MiB (6.26 `splitText`). A picture lost from a successful answer is the silent drop this document refuses elsewhere (6.9 R6), and the buffered answer already shows what the pin gives that client.
+- **A Messages client is answered in Messages framing**, a text block holding the pin's text; the pin sends it a `chat.completion` body (`nonStreamingHandler.js:191`). Same decision as 6.26.
+
+**Open.**
+- **Gemini CLI image models, Chat client** (6.26 Open), unchanged.
+- **Live behaviour is U.** No request has reached a Gemini-family image model from this repository.
