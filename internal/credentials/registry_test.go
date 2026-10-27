@@ -630,3 +630,115 @@ func TestRefreshWaitersRecheckAfterUpdate(t *testing.T) {
 		})
 	}
 }
+
+// A refresh that a newer install supersedes (a direct re-registration, a Load
+// that re-seeds the stored record, an import) checks what was installed as any
+// request does: it is served if valid and refreshed from its own refresh token
+// otherwise, once for the refresher and every waiter, so no caller is handed an
+// expired credential (#250; the reference adopts the latest stored credential
+// and then checks its expiry, tokenRefresh.js:175-197).
+func TestSupersededRefreshRechecksInstalledCredential(t *testing.T) {
+	expired, valid := time.Now().Add(-time.Hour), time.Now().Add(time.Hour)
+	for _, tc := range []struct {
+		name    string
+		install func(context.Context, *Registry, Connection) error
+		want    string // access token every caller gets
+		reuses  string // refresh token the second exchange spends; "" means no second exchange
+	}{
+		{"register installs an expired credential", func(_ context.Context, r *Registry, c Connection) error {
+			c.Secret = Secret{AccessToken: "installed", RefreshToken: "r-installed", Expiry: expired}
+			r.Register(c, nil)
+			return nil
+		}, "fresh", "r-installed"},
+		{"register installs a valid credential", func(_ context.Context, r *Registry, c Connection) error {
+			c.Secret = Secret{AccessToken: "installed", RefreshToken: "r-installed", Expiry: valid}
+			r.Register(c, nil)
+			return nil
+		}, "installed", ""},
+		{"load re-seeds the stored expired credential", func(ctx context.Context, r *Registry, _ Connection) error {
+			loaded, err := r.Load(ctx, "codex")
+			if err == nil && len(loaded) != 1 {
+				err = fmt.Errorf("load re-seeded %d connections, want 1", len(loaded))
+			}
+			return err
+		}, "fresh", "r0"},
+		{"import installs an expired credential", func(ctx context.Context, r *Registry, c Connection) error {
+			return r.Import(ctx, c.ID, "acct", Secret{AccessToken: "imported", RefreshToken: "r-imported", Expiry: expired})
+		}, "fresh", "r-imported"},
+		{"import installs a valid credential", func(ctx context.Context, r *Registry, c Connection) error {
+			return r.Import(ctx, c.ID, "acct", Secret{AccessToken: "imported", RefreshToken: "r-imported", Expiry: valid})
+		}, "imported", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store, _ := testStore(t)
+			node := seedNode(t, store, "codex")
+			connection, err := store.PutConnection(ctx, Connection{NodeID: node.ID, Name: "primary", AuthKind: AuthOAuth, Identity: "acct", Enabled: true, Secret: Secret{AccessToken: "expired", RefreshToken: "r0", Expiry: expired}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			registry := NewRegistry(store, nil)
+			started, release := make(chan struct{}), make(chan struct{})
+			var mu sync.Mutex
+			var spent []string
+			exchanger := func(_ context.Context, current Secret) (Secret, error) {
+				mu.Lock()
+				spent = append(spent, current.RefreshToken)
+				first := len(spent) == 1
+				mu.Unlock()
+				if first {
+					close(started)
+					<-release
+					return Secret{AccessToken: "late", RefreshToken: "r-late", Expiry: valid}, nil
+				}
+				return Secret{AccessToken: "fresh", RefreshToken: current.RefreshToken + "-next", Expiry: valid}, nil
+			}
+			registry.SetExchangerResolver(func(Connection) Exchanger { return exchanger })
+			registry.Register(connection, nil)
+
+			const callers = 4
+			got := make(chan Secret, callers)
+			call := func() {
+				secret, err := registry.Secret(ctx, connection.ID)
+				if err != nil {
+					t.Errorf("secret: %v", err)
+				}
+				got <- secret
+			}
+			go call()
+			<-started
+			for i := 1; i < callers; i++ {
+				go call()
+			}
+			time.Sleep(50 * time.Millisecond) // the waiters join the exchange in flight
+			if err := tc.install(ctx, registry, connection); err != nil {
+				t.Fatal(err)
+			}
+			close(release)
+			for i := 0; i < callers; i++ {
+				if secret := <-got; secret.AccessToken != tc.want {
+					t.Fatalf("caller got access %q, want %q", secret.AccessToken, tc.want)
+				}
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			want := []string{"r0"}
+			if tc.reuses != "" {
+				want = append(want, tc.reuses)
+			}
+			if fmt.Sprint(spent) != fmt.Sprint(want) {
+				t.Fatalf("exchanges spent %v, want %v", spent, want)
+			}
+			loaded, err := store.GetConnection(ctx, connection.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.Secret.AccessToken == "late" {
+				t.Fatal("the superseded exchange result was committed")
+			}
+			if tc.reuses != "" && (loaded.Secret.AccessToken != "fresh" || loaded.Secret.RefreshToken != tc.reuses+"-next") {
+				t.Fatalf("durable after the second refresh: %+v", loaded.Secret)
+			}
+		})
+	}
+}

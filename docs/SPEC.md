@@ -938,6 +938,12 @@ Per identity:
 - callers wait for one refresh rather than stampeding;
 - a successful refresh updates in-memory credentials immediately;
 - rotated refresh token is committed durably before success is considered stable;
+- a refresh that a newer install (re-registration, startup or on-demand load,
+  import) lands during is discarded, and the installed credential is checked like
+  any request's: served if valid, otherwise refreshed once from its own refresh
+  token for the refresher and every waiter, never served expired (#250; the
+  reference adopts the latest stored credential and then checks its expiry,
+  `src/sse/services/tokenRefresh.js:175-197`);
 - credential identity/dedup keys are provider-defined and must not collapse distinct accounts.
 
 Inference resolves the provider-declared credential through the memory-first
