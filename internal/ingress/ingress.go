@@ -149,6 +149,10 @@ type ChatTranslation struct {
 	// one repair retry (kiroadapter.Gate; executors/kiro.js:370-627). Nil for every
 	// other wire.
 	Integrity *kiroadapter.ResponseOptions
+	// WholeAnswer says the upstream answers a streaming client with one JSON
+	// document, not a stream (an Antigravity image model, PARITY 6.26), so its
+	// usage is read from that document rather than from SSE lines.
+	WholeAnswer bool
 }
 
 // ChatTranslator selects the adapter for a different target protocol.
@@ -654,6 +658,9 @@ type usageScanner struct {
 	kiro shared.KiroUsageScanner
 	// commandCode follows CommandCode's finish report, which replaces any other.
 	commandCode shared.CommandCodeUsageReader
+	// whole reads the body as one JSON document, kept up to the translated
+	// response limit; past it nothing is read and the usage is unobserved.
+	whole bool
 }
 
 // linesOf reports the families that stream bare JSON lines rather than SSE.
@@ -666,6 +673,16 @@ func (s *usageScanner) Write(chunk []byte) (int, error) {
 		return s.kiro.Write(chunk)
 	}
 	n := len(chunk)
+	if s.whole {
+		if !s.skipping {
+			if len(s.buffer)+n > openaiadapter.MaxTranslatedResponseBytes {
+				s.buffer, s.skipping = nil, true
+			} else {
+				s.buffer = append(s.buffer, chunk...)
+			}
+		}
+		return n, nil
+	}
 	if s.skipping {
 		index := bytes.IndexByte(chunk, '\n')
 		if index < 0 {
@@ -742,6 +759,12 @@ func (s *usageScanner) usage() (promptcache.Usage, bool) {
 	}
 	if s.family == shared.FamilyCommandCode {
 		return s.commandCode.Usage()
+	}
+	if s.whole && !s.found && !s.skipping && len(s.buffer) > 0 {
+		if usage, ok := shared.ParseUsage(s.family, s.buffer); ok {
+			s.merged, s.found, s.complete = usage, true, true
+		}
+		s.buffer = nil
 	}
 	return s.merged, s.found
 }
