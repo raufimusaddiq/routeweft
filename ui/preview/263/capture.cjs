@@ -2,7 +2,7 @@
 // injected over the built app, light and dark, 1440px and 390px, plus the drawer and a provider
 // selection, and measures what the contract guards measure. Nothing here ships: the app never
 // imports ui/preview. Run against `npx vite preview --port 4173` of a fresh `npm run build`.
-// Usage: node preview/263/capture.cjs <outDir> [current|a|b ...]
+// Usage: node preview/263/capture.cjs <outDir> [current|a|b|c|d ...]
 const { chromium } = require('playwright-core');
 const { mkdirSync, readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
@@ -13,6 +13,8 @@ const directions = [
   { key: 'current', label: 'Current contract (BDR-015), for comparison', css: '' },
   { key: 'a', label: 'PREVIEW #263 · Direction A "Loom" · not shipped', css: readFileSync(join(__dirname, 'a-loom.css'), 'utf8') },
   { key: 'b', label: 'PREVIEW #263 · Direction B "Patchwork" · not shipped', css: readFileSync(join(__dirname, 'b-patchwork.css'), 'utf8') },
+  { key: 'c', label: 'PREVIEW #263 · Direction C "Ledger" · not shipped', css: readFileSync(join(__dirname, 'c-ledger.css'), 'utf8') },
+  { key: 'd', label: 'PREVIEW #263 · Direction D "Signal" · not shipped', css: readFileSync(join(__dirname, 'd-signal.css'), 'utf8') },
 ].filter(direction => wanted.length === 0 || wanted.includes(direction.key));
 
 // Sanitized fixture, the same shape as scripts/shell-smoke.cjs; 30 days so Fig. 1 has a real comparison.
@@ -76,7 +78,11 @@ const measure = () => {
   const radii = elements.filter(visible).flatMap(element => ['borderTopLeftRadius'].filter(key => parseFloat(getComputedStyle(element)[key]) > 2).map(() => element.className));
   const shadows = [...new Set(elements.map(element => getComputedStyle(element).boxShadow).filter(value => value !== 'none'))];
   const blurred = elements.filter(element => /blur/.test(getComputedStyle(element).filter + getComputedStyle(element).backdropFilter)).length;
-  return { overflow: document.documentElement.scrollWidth - innerWidth, lowContrast, weakBoundaries, smallTargets: [...new Set(smallTargets)], roundedElements: radii.length, shadows, blurred, accents: [...document.querySelectorAll('.accent-surface')].filter(visible).length };
+  // The phone menu button is frameless: its bars are its boundary, so they need 3:1 against the header behind them.
+  const menu = document.querySelector('.mobile-menu');
+  if (menu && visible(menu)) { const value = ratio(rgba(getComputedStyle(menu).color), background(document.querySelector('.mobile-header') || document.body)); if (value < 3) weakBoundaries.push({ element: 'mobile-menu bars', ratio: +value.toFixed(2) }); }
+  const sizes = [...new Set(elements.filter(visible).filter(hasText).map(element => getComputedStyle(element).fontSize))].sort((a, b) => parseFloat(a) - parseFloat(b));
+  return { sizes, overflow: document.documentElement.scrollWidth - innerWidth, lowContrast, weakBoundaries, smallTargets: [...new Set(smallTargets)], roundedElements: radii.length, shadows, blurred, accents: [...document.querySelectorAll('.accent-surface')].filter(visible).length };
 };
 
 (async () => {

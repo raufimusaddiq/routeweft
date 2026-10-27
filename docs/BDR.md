@@ -33,6 +33,7 @@ This document records binding architecture/build choices so implementation agent
 | BDR-023 | Generic Provider unifies Chat/Responses/Messages compatible nodes | Accepted |
 | BDR-024 | Product requirements freeze gates Codex implementation | Accepted |
 | BDR-025 | OpenAI Chat Completions is the conversion hub | Accepted |
+| BDR-026 | Model capabilities are generated from the parity pin | Accepted |
 | BDR-027 | Retro neo-brutalist visual language (supersedes BDR-015's visual part) | Accepted; direction pending owner approval of #263 previews |
 
 ## BDR-001 — Standalone product
@@ -374,9 +375,28 @@ shadows. `box-shadow` is allowed only as the hard-offset tokens `--hard` and
 `--hard-sm`.
 
 `docs/UI_STYLE.md` carries the tokens and the acceptance checks. Phase 1 of #263
-records the contract and an isolated preview (`ui/preview/263/`); the direction
-(A "Loom", recommended, or B "Patchwork") is the owner's choice from those
-screenshots, and the token tables follow that choice before phase 2. Until
+records the contract and an isolated preview (`ui/preview/263/`). The direction
+is the owner's choice from those screenshots, and the token tables follow that
+choice before phase 2. The owner judged round 1 (A, B) "not brutal enough"
+(2026-10-27), so round 2 adds C and D. Options, with the guards each rewrites
+(file:line in `ui/preview/263/README.md`):
+
+- A "Loom": square, linen paper, 4px shadow, lime marker. Fewest changes, but
+  judged too soft. Rewrites the error-border assert (`shell-smoke.cjs:1553`).
+- B "Patchwork": rounded tiles, pills, pastel patches. Still soft. Rewrites the
+  radius guard (`shell-smoke.cjs:55-58`, `:74`) and the error-border assert.
+- C "Ledger" (recommended): square everything, a heavy black ruled grid,
+  inverted heads and nav block, a vermilion slab with an 8px hard shadow, mono
+  capital labels, stamped tags. The hardest surface that keeps Routeweft's
+  square identity; rewrites only the error-border assert.
+- D "Signal": a poster with a black rail, oversized 64px titles, pills and
+  circles, a pink slab with an asymmetric 10x6px shadow, open data. The most
+  anti-mainstream; rewrites the radius guard and the type-scale guard
+  (`shell-smoke.cjs:60`, `:77-79`, `:1558`).
+
+The "kept as Routeweft's own" list above (square geometry, the type scale)
+holds for A and C. Choosing B or D revises it in the same PR that records the
+choice. Until
 phase 2 lands, `ui/src/style.css` still implements the BDR-015 values and the
 smoke guards enforce them; each later phase changes code, guards and this
 contract together. Navigation, routes, features, aria, 44px targets, status

@@ -3,10 +3,11 @@
 Status: **Normative for frontend work**
 
 > **Transition (#263, BDR-027).** The visual language below replaces the BDR-015
-> graphite rule. Token values in §2 are direction A "Loom", the recommended
-> direction; the owner chooses the direction from the phase 1 previews
-> (`ui/preview/263/`, screenshots in `docs/evidence/263/preview/`), and §2 follows
-> that choice before phase 2. Until phase 2 lands, `ui/src/style.css` still holds
+> graphite rule. The owner chooses the direction from the phase 1 previews
+> (`ui/preview/263/`, screenshots in `docs/evidence/263/preview/`): A "Loom",
+> B "Patchwork", C "Ledger" or D "Signal" (one-line trade-offs in BDR-027). The
+> recommendation is C "Ledger". Token values in §2 are A's, kept as a
+> placeholder until the owner picks; §2 then follows that choice before phase 2. Until phase 2 lands, `ui/src/style.css` still holds
 > the BDR-015 values (git `f15b350`) and the smoke guards in §10 enforce them;
 > code, guards and this file then change together, phase by phase.
 
