@@ -267,12 +267,19 @@ func TestVertexPartnerTargetUsesTheConnectionProject(t *testing.T) {
 	}
 }
 
-// No project: refuse and name the setting. Nothing is probed or defaulted.
+// No project and nothing to probe with: an OAuth credential that names none, or no
+// credential, is refused naming the setting (executors/vertex.js:78). A raw key
+// is probed for instead (vertex_test.go).
 func TestVertexPartnerRefusesWithoutAProject(t *testing.T) {
-	for _, project := range []string{"", "   "} {
-		_, err := ResolveTarget(ref("vertex-partner", chat, "https://aiplatform.googleapis.com", routing.ProviderSettings{ProjectID: project}), "chat/completions")
-		if err == nil || !strings.Contains(err.Error(), "projectId") {
-			t.Errorf("%q: %v", project, err)
+	adc := `{"type":"authorized_user","client_id":"cid","client_secret":"csecret","refresh_token":"rtok"}`
+	for _, token := range []string{"", "   ", adc} {
+		for _, project := range []string{"", "   "} {
+			provider := ref("vertex-partner", chat, "https://aiplatform.googleapis.com", routing.ProviderSettings{ProjectID: project})
+			provider.APIToken = token
+			_, err := ResolveTarget(provider, "chat/completions")
+			if err == nil || !strings.Contains(err.Error(), "projectId") {
+				t.Errorf("token %q project %q: %v", token, project, err)
+			}
 		}
 	}
 }
@@ -288,7 +295,9 @@ func TestVertexPartnerRejectsAProjectThatIsNotAPathSegment(t *testing.T) {
 // A hook refusal is a *TargetError, so a caller can fall through to the next
 // candidate; a bad base is not one.
 func TestHookRefusalIsATargetError(t *testing.T) {
-	_, err := ResolveTarget(ref("vertex-partner", chat, "https://aiplatform.googleapis.com", routing.ProviderSettings{}), "chat/completions")
+	provider := ref("vertex-partner", chat, "https://aiplatform.googleapis.com", routing.ProviderSettings{})
+	provider.APIToken = ""
+	_, err := ResolveTarget(provider, "chat/completions")
 	var refused *TargetError
 	if !errors.As(err, &refused) {
 		t.Fatalf("want *TargetError, got %T %v", err, err)

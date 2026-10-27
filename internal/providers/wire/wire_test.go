@@ -94,8 +94,8 @@ var tokens = []string{
 // (commandcode_test.go pins them).
 // API.airforce adds its registry referer/title pair (airforce_wire_test.go).
 // github adds the pin's per-request x-request-id (github_test.go).
-// vertex sends no bearer: its credential is a JSON document or a key that VertexDo places (vertex_test.go).
-var headersChanged = map[string]bool{"azure": true, "api-airforce": true, "kimi": true, "kilocode": true, "iflow": true, "kiro": true, "commandcode": true, "opencode": true, "github": true, "vertex": true, "grok-web": true, "perplexity-web": true}
+// vertex and vertex-partner send no bearer: the credential is a JSON document or a key that VertexDo places (vertex_test.go).
+var headersChanged = map[string]bool{"azure": true, "api-airforce": true, "kimi": true, "kilocode": true, "iflow": true, "kiro": true, "commandcode": true, "opencode": true, "github": true, "vertex": true, "vertex-partner": true, "grok-web": true, "perplexity-web": true}
 
 func TestOpenAIHeadersMatchLegacyForEveryProvider(t *testing.T) {
 	for _, id := range providerIDs() {
