@@ -32,7 +32,7 @@ var nativeWireSkips = map[string]string{
 	"mmf":              "the same executor under its alias (TestMimoFreeAndMmfAreServedWithABootstrappedJWT)",
 	"azure":            "deployment path and api-version from connection settings (TestAzureRequestShape)",
 	"cloudflare-ai":    "account-scoped URL from connection settings (wire.TestCloudflareTargetURLs)",
-	"vertex-partner":   "project-scoped URL from connection settings (wire.TestVertexPartnerTargetUsesTheConnectionProject)",
+	"vertex-partner":   "project-scoped URL from the credential or connection settings, a probed project for a raw key (wire.TestVertexPartnerProjectPrecedence, TestVertexPartnerRawKeyIsProbedAndServed)",
 	"xiaomi-tokenplan": "region host from connection settings (TestTokenplanRoutesPerWire)",
 	"opencode":         "model-dependent Zen target and forced stream (TestOpenCodeForcedStreamFoldsToOneJSONBody)",
 	"api-airforce":     "forced stream (TestAirforceForcedStreamAcrossClientProtocols)",

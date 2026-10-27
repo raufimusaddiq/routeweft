@@ -176,7 +176,7 @@ var hooks = map[string]Hook{
 	"mmf":              mimoFreeHook,
 	"opencode-go":      {ForceStream: true, ForceStreamFor: openCodeGoForcesStream, ForcedTransport: openCodeGoTransport, FinalizeAccount: openCodeGoFinalize, RequestHeaders: openCodeGoSessionFallback, ClientRequestHeaders: openCodeGoSession},
 	"opencode":         {Target: opencodeTarget, OpenAIHeaders: opencodeHeaders, ForceStream: true, Finalize: codebuddyStream},
-	"vertex-partner":   {Target: vertexPartnerTarget},
+	"vertex-partner":   vertexPartnerHook,
 	"vertex":           vertexHook,
 	"cloudflare-ai":    {Target: cloudflareTarget},
 	"commandcode":      commandCodeHook,

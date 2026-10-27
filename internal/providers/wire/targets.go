@@ -324,21 +324,23 @@ var vertexProject = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*$`)
 
 // vertexPartnerTarget builds
 // {base}/v1/projects/{projectId}/locations/global/endpoints/openapi/chat/completions
-// (executors/vertex.js:76-81). The pin takes the project from the service
-// account JSON, the ADC quota project or the connection's projectId
-// (vertex.js:71-74); Routeweft reads only the last, the connection's projectId.
-//
-// Divergences from the pin: it probes the API with a dummy request to discover
-// the project of a raw key (vertex.js:35-49,158-164), which Routeweft never
-// does, and it appends a raw key as ?key= (vertex.js:80), which would put a
-// credential in a URL. With no projectId the request is refused naming the
-// setting.
+// (executors/vertex.js:76-81). The project is the service account's project_id,
+// else the ADC's quota_project_id, else the connection's projectId
+// (vertex.js:71-74). A raw key with none has its project probed for when the
+// request is sent (vertex.js:158-164): the path carries vertexUnresolvedProject
+// until VertexDo resolves it. An OAuth credential with none, or no credential at
+// all, is refused naming the setting (vertex.js:78). The credential itself is
+// VertexDo's: a raw key travels in X-Goog-Api-Key, not as ?key= (vertex.js:80;
+// see the divergences in vertex.go).
 func vertexPartnerTarget(provider routing.ProviderRef) (Target, error) {
-	project := strings.TrimSpace(provider.Connection.Settings.ProjectID)
-	if project == "" {
-		return Target{}, errors.New("vertex-partner connection has no projectId: add a Project ID to the connection (Providers > New connection) or set providerData.projectId when creating it through the API")
-	}
-	if !vertexProject.MatchString(project) || strings.Contains(project, "..") {
+	credential := parseVertexCredential(provider.APIToken)
+	project := firstNonEmpty(credential.project, provider.Connection.Settings.ProjectID)
+	switch {
+	case project == "" && (credential.oauth() || credential.raw == ""):
+		return Target{}, errors.New("vertex-partner connection has no projectId: add a Project ID to the connection (Providers > New connection), set providerData.projectId when creating it through the API, or use a service account JSON")
+	case project == "":
+		project = vertexUnresolvedProject
+	case !vertexProject.MatchString(project) || strings.Contains(project, ".."):
 		return Target{}, errors.New("vertex-partner projectId is not a valid GCP project id")
 	}
 	return Target{Endpoint: "v1/projects/" + project + "/locations/global/endpoints/openapi/chat/completions"}, nil

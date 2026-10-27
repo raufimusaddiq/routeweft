@@ -411,7 +411,10 @@ func modeCell(t *testing.T, spec registry.Spec, stream bool, chat, skips map[str
 		return pair(ref("app:TestConfiguredSystemOneWireAndAccounting", "app:TestConfiguredSystemOneCloudflareFallback"), ref("app:TestConfiguredSystemOneWireAndAccounting"),
 			"the System One leg; the Chat leg is verified at the URL seam only (wire:TestCloudflareTargetURLs)", "the System One leg; the Chat leg is verified at the URL seam only")
 	case "vertex-partner":
-		return cell{kindG, ref("providers/wire:TestVertexPartnerTargetUsesTheConnectionProject"), "only the URL seam is tested; the target is an absolute Google host, so no request is dispatched in a test (provider is experimental)"}
+		return pair(ref("ingress:TestVertexPartnerRawKeyIsProbedAndServed", "providers/wire:TestVertexPartnerProbesTheProjectOfARawKey", "providers/wire:TestVertexPartnerProbeEndsWithTheRequest"),
+			ref("ingress:TestVertexPartnerRawKeyIsProbedAndServed", "providers/wire:TestVertexPartnerProjectPrecedence", "providers/wire:TestVertexPartnerAuthorizesWithAMintedToken"),
+			"a raw key with no project is probed for it (vertex.js:35-49,158-164), then streamed with the key in X-Goog-Api-Key; unverified against a live gateway (provider is experimental)",
+			"project from the service account, the ADC or projectId (vertex.js:71-74); SA/ADC minted into a bearer; unverified against a live gateway (provider is experimental)")
 	case "cursor":
 		if stream {
 			return cell{kindC, ref("providers/wire:TestCursorConsumeStreamsTextAndStops", "providers/wire:TestCursorDoStopsUpstreamWhenTheClientLeaves"), "Connect stream codec and cancellation; the provider is unavailable"}
@@ -540,7 +543,7 @@ func errorsCell(spec registry.Spec) cell {
 		"typesafe":         {kindP, ref("app:TestConfiguredSystemOneValidationAndOpaqueErrorWithoutDatabase", "ingress:TestSystemOneRelayDistinguishesReadFailureFromEOF"), "validation errors and an opaque upstream error"},
 		"cloudflare-ai":    {kindP, ref("providers/wire:TestCloudflareTargetFailsClosed", "app:TestConfiguredSystemOneCloudflareFallback"), "an unsafe or missing account id is refused; System One fallback"},
 		"azure":            {kindP, ref("ingress:TestAzureWithoutAnEndpointOrAValidDeploymentSendsNothing", "ingress:TestTargetRefusalMessageReachesTheClient"), "no endpoint or an unsafe deployment sends nothing and says why"},
-		"vertex-partner":   {kindP, ref("providers/wire:TestVertexPartnerRefusesWithoutAProject", "providers/wire:TestVertexPartnerRejectsAProjectThatIsNotAPathSegment", "ingress:TestTargetRefusalFallsThroughToTheNextCandidate"), "no project or an unsafe project is refused before dispatch"},
+		"vertex-partner":   {kindP, ref("providers/wire:TestVertexPartnerRefusesWithoutAProject", "providers/wire:TestVertexPartnerRejectsAProjectThatIsNotAPathSegment", "providers/wire:TestVertexPartnerSendsNothingWhenTheProbeFindsNoProject", "ingress:TestTargetRefusalFallsThroughToTheNextCandidate"), "an OAuth credential with no project, an unsafe project, or a key whose probe names none is refused before dispatch"},
 		"xiaomi-tokenplan": {kindP, ref("providers/wire:TestTokenplanNeverMovesAKeyToAnotherRegionUnlessAsked"), "a key is never sent to another region"},
 		"iflow":            {kindP, ref("ingress:TestIflowWithoutCredentialFailsClosed", "providers/wire:TestIflowHeadersRefuseToSignAnEmptyKey"), "an empty credential is refused, not signed"},
 		"api-airforce":     {kindP, ref("ingress:TestAirforceStreamFailureDoesNotReturnPartialJSON"), "a failed forced stream is a 502, never partial JSON"},

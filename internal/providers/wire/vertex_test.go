@@ -1,6 +1,7 @@
 package wire
 
 import (
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -250,5 +251,180 @@ func TestVertexSendsNothingWhenTheTokenCannotBeMinted(t *testing.T) {
 	_, brokenPEM := "", `{"type":"service_account","client_email":"e","private_key":"not a key","project_id":"p"}`
 	if err := sendVertex(t, vertexRef(brokenPEM, routing.ProviderSettings{}), client); !errors.As(err, &credential) {
 		t.Fatalf("err %v", err)
+	}
+}
+
+func partnerRef(token string, settings routing.ProviderSettings) routing.ProviderRef {
+	provider := vertexRef(token, settings)
+	provider.ProviderID, provider.Protocol, provider.UpstreamModel = "vertex-partner", "openai-chat", "zai-org/glm-5-maas"
+	return provider
+}
+
+const partnerPath = "/locations/global/endpoints/openapi/chat/completions"
+
+// executors/vertex.js:71-74: the service account's project, else the ADC's quota
+// project, else the connection's; a raw key with none is left for the probe.
+func TestVertexPartnerProjectPrecedence(t *testing.T) {
+	for _, c := range []struct {
+		name, token, project, want string
+	}{
+		{"service account over the setting", vertexSA, "set-project", "sa-project"},
+		{"adc quota project over the setting", vertexADC, "set-project", "adc-project"},
+		{"adc without one takes the setting", strings.Replace(vertexADC, `,"quota_project_id":"adc-project"`, "", 1), "set-project", "set-project"},
+		{"key takes the setting", "AIza-fixture", " set-project ", "set-project"},
+		{"key without one is probed", "AIza-fixture", "", vertexUnresolvedProject},
+	} {
+		target, err := ResolveTarget(partnerRef(c.token, routing.ProviderSettings{ProjectID: c.project}), "chat/completions")
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		u, err := target.URL(transport.ValidatePublicURL)
+		if err != nil || u.Path != "/v1/projects/"+c.want+partnerPath || u.RawQuery != "" {
+			t.Errorf("%s: %v %v", c.name, u, err)
+		}
+	}
+}
+
+type probeServer struct {
+	mu      sync.Mutex
+	probes  []*http.Request
+	reply   string
+	api     *http.Request
+	apiSeen int
+}
+
+func (s *probeServer) client() *http.Client {
+	return &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if strings.HasSuffix(r.URL.Path, "/models/__probe__:generateContent") {
+			raw, _ := io.ReadAll(r.Body)
+			if string(raw) != "{}" {
+				return nil, errors.New("probe body " + string(raw))
+			}
+			s.probes = append(s.probes, r)
+			return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader(s.reply))}, nil
+		}
+		s.api, s.apiSeen = r, s.apiSeen+1
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}"))}, nil
+	})}
+}
+
+func sendPartner(t *testing.T, provider routing.ProviderRef, client *http.Client) error {
+	t.Helper()
+	target, err := ResolveTarget(provider, "chat/completions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := target.URL(transport.ValidatePublicURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, _ := http.NewRequest(http.MethodPost, u.String(), strings.NewReader(`{"model":"m"}`))
+	response, err := Send(provider, client, request)
+	if err == nil {
+		response.Body.Close()
+	}
+	return err
+}
+
+// executors/vertex.js:35-49,158-164: a partner key with no project is probed with
+// a dummy request whose error names the project, and the project is cached for
+// the key. The key never enters a URL (see vertex.go).
+func TestVertexPartnerProbesTheProjectOfARawKey(t *testing.T) {
+	for name, reply := range map[string]string{
+		"array":  `[{"error":{"code":404,"message":"Publisher Model ` + "`projects/key-project/locations/us-central1/publishers/google/models/__probe__`" + ` was not found.","status":"NOT_FOUND"}}]`,
+		"object": `{"error":{"code":404,"message":"Publisher Model projects/key-project/locations/global/publishers/google/models/__probe__ not found"}}`,
+	} {
+		vertexReset()
+		server := &probeServer{reply: reply}
+		client := server.client()
+		provider := partnerRef("AIza-"+name, routing.ProviderSettings{})
+		for i := 0; i < 2; i++ {
+			if err := sendPartner(t, provider, client); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+		}
+		if len(server.probes) != 1 {
+			t.Fatalf("%s: probed %d times", name, len(server.probes))
+		}
+		probe := server.probes[0]
+		if probe.Method != http.MethodPost || probe.URL.Host != "aiplatform.googleapis.com" || probe.URL.Path != "/v1/publishers/google/models/__probe__:generateContent" ||
+			probe.URL.RawQuery != "" || probe.Header.Get("X-Goog-Api-Key") != "AIza-"+name || probe.Header.Get("Content-Type") != "application/json" {
+			t.Fatalf("%s: probe %s %v", name, probe.URL, probe.Header)
+		}
+		api := server.api
+		if api.URL.Path != "/v1/projects/key-project"+partnerPath || api.URL.RawQuery != "" || strings.Contains(api.URL.String(), "AIza") ||
+			api.Header.Get("X-Goog-Api-Key") != "AIza-"+name || api.Header.Get("Authorization") != "" {
+			t.Fatalf("%s: request %s %v", name, api.URL, api.Header)
+		}
+	}
+	vertexReset()
+}
+
+// vertex.js:161: no project in the answer sends nothing, says what to set, and
+// is not cached; a project that is not a path segment is not spliced in.
+func TestVertexPartnerSendsNothingWhenTheProbeFindsNoProject(t *testing.T) {
+	for name, reply := range map[string]string{
+		"no project":     `{"error":{"code":403,"message":"API key not valid. Please pass a valid API key."}}`,
+		"not json":       `<html>nope</html>`,
+		"unsafe project": `{"error":{"message":"projects/a..b/locations/x"}}`,
+		"empty":          ``,
+	} {
+		vertexReset()
+		server := &probeServer{reply: reply}
+		client := server.client()
+		provider := partnerRef("AIza-secret-fixture", routing.ProviderSettings{})
+		for i := 0; i < 2; i++ {
+			err := sendPartner(t, provider, client)
+			if err == nil || !strings.Contains(err.Error(), "Project ID") || strings.Contains(err.Error(), "AIza") {
+				t.Fatalf("%s: %v", name, err)
+			}
+		}
+		if server.apiSeen != 0 || len(server.probes) != 2 {
+			t.Fatalf("%s: api %d probes %d", name, server.apiSeen, len(server.probes))
+		}
+	}
+	vertexReset()
+}
+
+// A client that leaves during the probe ends it; nothing else is sent.
+func TestVertexPartnerProbeEndsWithTheRequest(t *testing.T) {
+	vertexReset()
+	defer vertexReset()
+	ctx, cancel := context.WithCancel(context.Background())
+	sent := 0
+	client := &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		sent++
+		cancel()
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})}
+	provider := partnerRef("AIza-fixture", routing.ProviderSettings{})
+	target, _ := ResolveTarget(provider, "chat/completions")
+	u, _ := target.URL(transport.ValidatePublicURL)
+	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), strings.NewReader("{}"))
+	if _, err := Send(provider, client, request); !errors.Is(err, context.Canceled) || sent != 1 {
+		t.Fatalf("err %v sent %d", err, sent)
+	}
+}
+
+// vertex.js:112-123,140-156: a partner service account or ADC credential is
+// minted into a bearer as for Gemini on Vertex; nothing is probed, and the
+// credential is never the bearer as it stands.
+func TestVertexPartnerAuthorizesWithAMintedToken(t *testing.T) {
+	vertexReset()
+	defer vertexReset()
+	server := &tokenServer{}
+	client, api := server.client(t)
+	provider := partnerRef(vertexADC, routing.ProviderSettings{})
+	if headers := OpenAIHeaders(provider); headers.Get("Authorization") != "" {
+		t.Fatalf("a bearer was set: %v", headers)
+	}
+	if err := sendPartner(t, provider, client); err != nil {
+		t.Fatal(err)
+	}
+	if got := api(); got.Header.Get("Authorization") != "Bearer ya29.minted" || got.Header.Get("X-Goog-Api-Key") != "" || got.URL.Path != "/v1/projects/adc-project"+partnerPath {
+		t.Fatalf("request %s %v", got.URL, got.Header)
 	}
 }
