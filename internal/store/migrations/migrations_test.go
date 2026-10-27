@@ -2,7 +2,9 @@ package migrations
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
@@ -287,7 +289,8 @@ INSERT INTO provider_connections(id,node_id,name,auth_kind,identity,secret_blob,
 VALUES('conn-legacy','node-codex','legacy','oauth','acct-legacy','sealed-blob',0,3,'pool-1','2026-01-01T00:00:00.000Z','2026-01-02T00:00:00.000Z','acct-header');`); err != nil {
 		t.Fatal(err)
 	}
-	if err := NewRunner(s.DB()).Apply(ctx); err != nil {
+	// Stop at v11: v12 lets the Codex node hold duplicates and has its own test.
+	if err := NewRunner(s.DB(), v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11).Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var name, kind, identity, blob, pool, created, updated, account string
@@ -317,6 +320,112 @@ VALUES('conn-legacy','node-codex','legacy','oauth','acct-legacy','sealed-blob',0
 	}
 	var left int
 	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM provider_connections`).Scan(&left); err != nil || left != 0 {
+		t.Fatalf("node delete no longer cascades: %d %v", left, err)
+	}
+}
+
+// v12 copies every connection unchanged, lets the built-in Codex node hold one
+// identity more than once (#241), and keeps every other node, a Generic node that
+// names codex included, refusing a duplicate identity on insert and on update.
+// NULL identities still never collide and an empty one is still refused.
+func TestV12KeepsConnectionsAndAllowsCodexDuplicates(t *testing.T) {
+	ctx := context.Background()
+	s, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "routeweft.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := NewRunner(s.DB(), v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `INSERT INTO proxy_pools(id,name) VALUES('pool-1','pool');
+INSERT INTO provider_nodes(id,kind,provider_id,name) VALUES('node-codex','builtin','codex','Codex'),('node-claude','builtin','claude','Claude'),('node-generic','generic','codex','Lookalike');
+INSERT INTO provider_connections(id,node_id,name,auth_kind,identity,secret_blob,enabled,priority,proxy_pool_id,created_at,updated_at,account_id) VALUES
+('conn-legacy','node-codex','legacy','oauth','acct-legacy','sealed-legacy',0,3,'pool-1','2026-01-01T00:00:00.000Z','2026-01-02T00:00:00.000Z','acct-header'),
+('conn-email','node-codex','mail','oauth','shared@example.invalid','sealed-email',1,1,NULL,'2026-01-03T00:00:00.000Z','2026-01-04T00:00:00.000Z',''),
+('conn-none','node-codex','Account 3','oauth',NULL,'sealed-none',1,2,NULL,'2026-01-05T00:00:00.000Z','2026-01-06T00:00:00.000Z',''),
+('conn-claude','node-claude','claude','oauth','user@example.invalid','sealed-claude',1,0,NULL,'2026-01-07T00:00:00.000Z','2026-01-08T00:00:00.000Z','');`); err != nil {
+		t.Fatal(err)
+	}
+	const columns = `id,node_id,name,auth_kind,COALESCE(identity,'<null>'),secret_blob,enabled,priority,COALESCE(proxy_pool_id,''),created_at,updated_at,account_id`
+	dump := func() []string {
+		rows, err := s.DB().QueryContext(ctx, `SELECT `+columns+` FROM provider_connections ORDER BY id`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var id, node, name, kind, identity, blob, pool, created, updated, account string
+			var enabled, priority int
+			if err := rows.Scan(&id, &node, &name, &kind, &identity, &blob, &enabled, &priority, &pool, &created, &updated, &account); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, fmt.Sprint(id, node, name, kind, identity, blob, enabled, priority, pool, created, updated, account))
+		}
+		return out
+	}
+	before := dump()
+	if err := NewRunner(s.DB()).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if after := dump(); fmt.Sprint(after) != fmt.Sprint(before) {
+		t.Fatalf("v12 changed stored connections:\nbefore %v\nafter  %v", before, after)
+	}
+
+	insert := `INSERT INTO provider_connections(id,node_id,name,auth_kind,identity) VALUES(?,?,?,?,?)`
+	for _, id := range []string{"conn-email-2", "conn-email-3"} {
+		if _, err := s.DB().ExecContext(ctx, insert, id, "node-codex", "mail", "oauth", "shared@example.invalid"); err != nil {
+			t.Fatalf("codex duplicate identity refused: %v", err)
+		}
+	}
+	if _, err := s.DB().ExecContext(ctx, insert, "conn-legacy-2", "node-codex", "legacy", "oauth", "acct-legacy"); err != nil {
+		t.Fatalf("codex duplicate of the pre-#239 identity refused: %v", err)
+	}
+	for _, tc := range []struct{ id, node, identity string }{
+		{"conn-claude-2", "node-claude", "user@example.invalid"},
+		{"conn-generic-1", "node-generic", "dup@example.invalid"},
+	} {
+		if tc.node == "node-generic" {
+			if _, err := s.DB().ExecContext(ctx, insert, tc.id, tc.node, "first", "api-key", tc.identity); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := s.DB().ExecContext(ctx, insert, tc.id+"-dup", tc.node, "dup", "oauth", tc.identity); err == nil || !strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			t.Fatalf("%s accepted a duplicate identity: %v", tc.node, err)
+		}
+	}
+	// An upsert of the same row is not its own duplicate; moving a row onto a taken
+	// identity, or onto a node where it is taken, is.
+	if _, err := s.DB().ExecContext(ctx, `INSERT INTO provider_connections(id,node_id,name,auth_kind,identity) VALUES('conn-claude','node-claude','renamed','oauth','user@example.invalid')
+ON CONFLICT(id) DO UPDATE SET name=excluded.name,identity=excluded.identity`); err != nil {
+		t.Fatalf("upsert of the same row refused: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, insert, "conn-claude-b", "node-claude", "b", "oauth", "other@example.invalid"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE provider_connections SET identity='user@example.invalid' WHERE id='conn-claude-b'`); err == nil {
+		t.Fatal("an update onto a taken identity was accepted")
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE provider_connections SET node_id='node-claude' WHERE id='conn-email'`); err != nil {
+		t.Fatalf("moving a free identity refused: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE provider_connections SET node_id='node-claude', identity='user@example.invalid' WHERE id='conn-email-2'`); err == nil {
+		t.Fatal("moving a row onto a node where its identity is taken was accepted")
+	}
+	for _, id := range []string{"conn-null-a", "conn-null-b"} {
+		if _, err := s.DB().ExecContext(ctx, insert, id, "node-claude", "Account", "oauth", nil); err != nil {
+			t.Fatalf("connection without identity refused: %v", err)
+		}
+	}
+	if _, err := s.DB().ExecContext(ctx, insert, "conn-blank", "node-codex", "blank", "oauth", ""); err == nil {
+		t.Fatal("an empty identity was accepted")
+	}
+	if _, err := s.DB().ExecContext(ctx, `DELETE FROM provider_nodes WHERE id='node-codex'`); err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM provider_connections WHERE node_id='node-codex'`).Scan(&left); err != nil || left != 0 {
 		t.Fatalf("node delete no longer cascades: %d %v", left, err)
 	}
 }

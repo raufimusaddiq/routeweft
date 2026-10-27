@@ -635,6 +635,21 @@ If the new Routeweft release fails:
 
 Release policy should prefer additive/backward-compatible migrations during the daily-drive stabilization window.
 
+Schema v12 (#241) is forward-only. It drops `UNIQUE(node_id, identity)` from
+`provider_connections` so the built-in Codex node can hold several connections
+with one email, as LiteRouter does, and keeps the rule for every other node by
+trigger. A release built before v12 refuses to start on a v12 database (schema
+newer than supported), and once two Codex connections share an identity the
+pre-v12 schema cannot hold them, so rolling back past v12 always means restoring
+the pre-upgrade backup (step 6) and losing connections added since.
+
+The same release records how each new Codex connection was signed in (SPEC
+§19.1). A Codex connection stored before it, whose credential says
+`authMethod: access_token`, is never updated by a later sign-in or bulk item for
+the same account: a new connection is added beside it. If the operator knows it
+was a bulk re-import, not a token import, they can delete it after the new
+connection works.
+
 ## 15. SQLite maintenance
 
 Monitor:

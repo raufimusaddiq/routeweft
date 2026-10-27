@@ -155,7 +155,33 @@ type BulkAccount struct {
 	Identity string
 	AuthKind credentials.AuthKind
 	Secret   credentials.Secret
+	// ItemName is the item's own "name", the only label that replaces a matched
+	// Codex connection's name: the reference spreads the item over the row
+	// (connectionsRepo.js:283) and displayName is a separate field there.
+	ItemName string
+	// Disabled is an item that says isActive: false; any other item is stored or
+	// updated enabled (bulk-import/route.js:103, connectionsRepo.js:308).
+	Disabled bool
+	// Carries names the credential keys the item sets, with or without a value:
+	// only those replace a matched Codex connection's (connectionsRepo.js:283).
+	Carries Carries
+	// Priority is the item's numeric priority when HasPriority. A non-zero one
+	// places a new connection (connectionsRepo.js:293-294); any one replaces a
+	// matched connection's, and zero or null there sorts it last as the
+	// reference's (priority || 999) does (connectionsRepo.js:159).
+	Priority    int
+	HasPriority bool
 }
+
+// Carries names which of a credential's optional keys an import sets, so that
+// a matched Codex connection keeps the ones it leaves out and clears the ones it
+// sets to nothing, as a spread does.
+type Carries struct {
+	RefreshToken, IDToken, Expiry bool
+}
+
+// CarriesAll is a credential that sets every key, as a sign-in does.
+var CarriesAll = Carries{RefreshToken: true, IDToken: true, Expiry: true}
 
 // ImportKeys is the operator input the flow's Import step reads.
 func (f Flow) ImportKeys() []string {

@@ -82,7 +82,21 @@ type Secret struct {
 	Cookie       string            `json:"cookie,omitempty"`
 	Expiry       time.Time         `json:"expiry,omitempty"`
 	ProviderData map[string]string `json:"providerData,omitempty"`
+	// AuthType is the reference's authType for a connection whose sign-in path
+	// sets one apart from its auth kind: a Codex token import or pasted raw token
+	// is AuthTypeAccessToken, never matched as a duplicate, while a Codex sign-in
+	// or bulk item is AuthTypeOAuth (#241). It is written only by those paths,
+	// carried across refresh, import and edits, and empty on every connection
+	// stored before it existed. It is sealed with the credential; no request
+	// sets it.
+	AuthType string `json:"authType,omitempty"`
 }
+
+// The reference authTypes a Codex connection records (Secret.AuthType).
+const (
+	AuthTypeOAuth       = "oauth"
+	AuthTypeAccessToken = "access_token"
+)
 
 // Empty reports whether the secret holds no credential material at all. A
 // refresh must never replace a durable credential with an empty payload
@@ -345,6 +359,27 @@ WHERE n.provider_id=? ORDER BY c.priority,c.name,c.id`
 		connections = append(connections, connection)
 	}
 	return connections, rows.Err()
+}
+
+// ConnectionCreationOrder returns a provider's connection ids oldest first: by
+// creation time, then by row order for connections created in one millisecond.
+func (s *Store) ConnectionCreationOrder(ctx context.Context, providerID string) ([]string, error) {
+	const query = `SELECT c.id FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id
+WHERE n.provider_id=? ORDER BY c.created_at,c.rowid`
+	rows, err := s.db.QueryContext(ctx, query, providerID)
+	if err != nil {
+		return nil, fmt.Errorf("list provider connection creation order: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // SetConnectionEnabled toggles a connection without touching its secret.

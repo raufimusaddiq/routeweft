@@ -212,12 +212,21 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, 1<<20, &body) {
 		return
 	}
+	// How a connection was signed in is recorded by onboarding only; the form can
+	// neither set it nor clear it (mergeConnectionSecret keeps the stored one).
+	body.Secret.AuthType = ""
+	// The Codex identity check below and the save it allows are one step, as are
+	// an edit's read of the stored row and its write (connectionMu).
+	h.connectionMu.Lock()
+	defer h.connectionMu.Unlock()
+	oldIdentity := ""
 	if r.Method == http.MethodPatch {
 		old, err := h.opts.Credentials.GetConnection(r.Context(), r.PathValue("id"))
 		if err != nil {
 			providerNotFound(w, err)
 			return
 		}
+		oldIdentity = old.Identity
 		if body.NodeID == "" {
 			body.NodeID = old.NodeID
 		}
@@ -316,6 +325,16 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity, auth mode, and proxy pool")
 		return
 	}
+	// v12 lets the built-in Codex node hold one identity twice for onboarding
+	// (#241); a manual create, or an edit that changes the identity, still may not
+	// take one another Codex connection holds.
+	if node.Kind == credentials.NodeBuiltin && node.ProviderID == codexProviderID && (r.Method != http.MethodPatch || body.Identity != oldIdentity) {
+		taken, err := h.codexIdentityTaken(r.Context(), node.ID, r.PathValue("id"), body.Identity)
+		if err != nil || taken {
+			writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity, auth mode, and proxy pool")
+			return
+		}
+	}
 	connection, _, err := h.publishConnection(r.Context(), credentials.Connection{ID: r.PathValue("id"), NodeID: node.ID, ProviderID: node.ProviderID, Name: body.Name, AuthKind: authKind, Identity: body.Identity, Secret: body.Secret, Enabled: enabled, Priority: priority, ProxyPoolID: proxyPool, AccountID: accountID})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity, auth mode, and proxy pool")
@@ -330,7 +349,9 @@ func (h *Handler) handleDeleteConnection(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	id := r.PathValue("id")
+	h.connectionMu.Lock()
 	err := h.opts.Credentials.DeleteConnection(r.Context(), id)
+	h.connectionMu.Unlock()
 	if errors.Is(err, credentials.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "connection_not_found", "provider connection was not found")
 		return
@@ -1092,7 +1113,9 @@ func (h *Handler) handleSetConnectionProxy(w http.ResponseWriter, r *http.Reques
 	if !decodeJSON(w, r, 8<<10, &body) {
 		return
 	}
+	h.connectionMu.Lock()
 	err := h.opts.Credentials.SetConnectionProxy(r.Context(), r.PathValue("id"), body.ProxyPoolID)
+	h.connectionMu.Unlock()
 	if errors.Is(err, credentials.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "connection_not_found", "provider connection was not found")
 		return
@@ -1132,7 +1155,9 @@ func (h *Handler) handleMoveConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_direction", "direction must be up or down")
 		return
 	}
+	h.connectionMu.Lock()
 	err := h.opts.Credentials.MoveConnection(r.Context(), r.PathValue("id"), direction)
+	h.connectionMu.Unlock()
 	if errors.Is(err, credentials.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "connection_not_found", "provider connection was not found")
 		return

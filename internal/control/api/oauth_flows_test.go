@@ -688,6 +688,10 @@ func TestBulkImportNormalizesAndPersists(t *testing.T) {
 		provider := provider
 		t.Run(provider, func(t *testing.T) {
 			body := `[{"access_token":"fixture-access","refresh_token":"fixture-refresh","email":"bulk-` + provider + `@example.invalid"}]`
+			if provider == "codex" {
+				// The codex route reads camelCase only (bulk-import/route.js:72-99).
+				body = `[{"accessToken":"fixture-access","refreshToken":"fixture-refresh","email":"bulk-codex@example.invalid"}]`
+			}
 			recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/"+provider+"/bulk-import", body)
 			if recorder.Code != http.StatusOK {
 				t.Fatalf("%s declares a Bulk hook but /bulk-import answered %d %s", provider, recorder.Code, recorder.Body.String())

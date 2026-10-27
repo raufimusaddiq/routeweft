@@ -157,6 +157,13 @@ type Handler struct {
 	// import/cookie/PAT flows that have no browser step.
 	oauthFlows  *onboarding.Registry
 	manualFlows map[string]onboarding.Flow
+	// connectionMu makes a Codex duplicate lookup and the write it decides one
+	// step, as the reference runs both in one transaction (connectionsRepo.js:210).
+	// Every other connection write the API makes holds it too: the manual form's
+	// Codex identity check and save, and the edits, moves, proxy changes and
+	// deletes a Codex update read-modify-writes over, which it must neither
+	// overwrite nor bring back.
+	connectionMu sync.Mutex
 }
 
 // New builds the control API handler.

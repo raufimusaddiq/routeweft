@@ -270,43 +270,125 @@ func splitCodeState(input string) (string, string) {
 // exported account object, with identity and ChatGPT account claims backfilled
 // from the JWT when the exporter omitted them.
 func codexBulkAccount(item map[string]any) (BulkAccount, error) {
-	access := bulkString(item, "accessToken", "access_token")
-	if access == "" {
+	// The route reads camelCase keys only (bulk-import/route.js:72-99); a
+	// snake_case key is spread into the row as an unknown field and never used,
+	// so an item with only access_token is "Missing accessToken" (:72-74).
+	access, _ := item["accessToken"].(string)
+	if strings.TrimSpace(access) == "" {
 		return BulkAccount{}, errors.New("missing accessToken")
 	}
-	refresh := bulkString(item, "refreshToken", "refresh_token")
-	idToken := bulkString(item, "idToken", "id_token")
-	// An exported email and providerSpecificData win; the JWT only backfills what
-	// is missing, read from the id token when there is one and the access token
-	// otherwise (bulk-import/route.js:76-95). An item that names no email is
-	// imported without one.
-	providerData := map[string]string{}
-	if given, ok := item["providerSpecificData"].(map[string]any); ok {
-		for key, value := range given {
-			if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
-				providerData[key] = strings.TrimSpace(text)
-			}
-		}
-	}
+	refresh, _ := item["refreshToken"].(string)
+	idToken, _ := item["idToken"].(string)
+	// An exported email and providerSpecificData win; the JWT only backfills a
+	// value that is missing or falsy, read from the id token when there is one and
+	// the access token otherwise (bulk-import/route.js:76-95). An item that names
+	// no email is imported without one.
+	given, _ := item["providerSpecificData"].(map[string]any)
+	providerData := codexItemProviderData(given)
 	identity := bulkString(item, "email")
 	email, accountID, planType := codexAccountInfo(firstNonEmpty(idToken, access))
 	if identity == "" {
 		identity = email
 	}
 	for key, value := range codexProviderData(accountID, planType) {
-		if providerData[key] == "" {
+		if jsFalsy(given[key]) {
 			providerData[key] = value
 		}
 	}
-	return BulkAccount{
+	account := BulkAccount{
 		Name:     bulkString(item, "displayName", "name"),
+		ItemName: bulkString(item, "name"),
+		Disabled: item["isActive"] == false,
 		Identity: identity,
 		AuthKind: credentials.AuthOAuth,
 		Secret: credentials.Secret{
 			AccessToken: access, RefreshToken: refresh, IDToken: idToken,
-			Expiry: bulkExpiry(item, time.Now()), ProviderData: providerData,
+			Expiry: codexBulkExpiry(item, time.Now()), ProviderData: providerData,
+			// The route stores every item as authType "oauth" (:106-108), whatever
+			// its providerSpecificData.authMethod says.
+			AuthType: credentials.AuthTypeOAuth,
 		},
-	}, nil
+		// The keys the item spreads over a matched row (connectionsRepo.js:283),
+		// expiresAt included when the route computes it from expiresIn (:96-99).
+		Carries: Carries{
+			RefreshToken: bulkHas(item, "refreshToken"),
+			IDToken:      bulkHas(item, "idToken"),
+			Expiry:       bulkHas(item, "expiresAt") || !codexBulkExpiry(item, time.Now()).IsZero(),
+		},
+	}
+	if value, ok := item["priority"]; ok {
+		account.HasPriority = true
+		if number, ok := value.(float64); ok {
+			account.Priority = int(number)
+		}
+	}
+	return account, nil
+}
+
+// codexItemProviderData keeps an exported providerSpecificData as the route
+// does, which stores the object as given (bulk-import/route.js:77,92-94): a
+// string is kept verbatim, empty included, and any other value as its JSON
+// text, since the stored map holds strings. A null is left out; it reads as
+// absent either way.
+func codexItemProviderData(given map[string]any) map[string]string {
+	data := map[string]string{}
+	for key, value := range given {
+		switch value := value.(type) {
+		case nil:
+		case string:
+			data[key] = value
+		default:
+			if raw, err := json.Marshal(value); err == nil {
+				data[key] = string(raw)
+			}
+		}
+	}
+	return data
+}
+
+// jsFalsy is the reference's !value for a decoded JSON value.
+func jsFalsy(value any) bool {
+	switch value := value.(type) {
+	case nil:
+		return true
+	case string:
+		return value == ""
+	case bool:
+		return !value
+	case float64:
+		return value == 0
+	}
+	return false
+}
+
+// codexBulkExpiry is the route's expiry (bulk-import/route.js:96-99): an exported
+// expiresAt as given, else one computed from a positive numeric expiresIn. An
+// expiresAt that is not an RFC 3339 time reads as unknown, which never triggers
+// a proactive refresh, as an unparseable date does not in the reference.
+func codexBulkExpiry(item map[string]any, now time.Time) time.Time {
+	if !jsFalsy(item["expiresAt"]) {
+		if at, ok := item["expiresAt"].(string); ok {
+			if parsed, err := time.Parse(time.RFC3339, at); err == nil {
+				return parsed
+			}
+		}
+		return time.Time{}
+	}
+	if seconds, ok := item["expiresIn"].(float64); ok && seconds > 0 {
+		return now.Add(time.Duration(seconds * float64(time.Second)))
+	}
+	return time.Time{}
+}
+
+// bulkHas reports whether the item sets any of the key spellings, with or
+// without a value.
+func bulkHas(item map[string]any, keys ...string) bool {
+	for _, key := range keys {
+		if _, ok := item[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // grokBulkAccount mirrors src/app/api/oauth/grok-cli/bulk-import/route.js, which
@@ -423,6 +505,9 @@ func codexFlow() Flow {
 			})
 		},
 		Exchange: func(ctx context.Context, p Params) (Result, error) {
+			if code := strings.TrimSpace(p.Input); strings.HasPrefix(code, "eyJ") && strings.Contains(code, ".") {
+				return codexRawTokenResult(code), nil
+			}
 			tokens, err := postForm(ctx, p.Client, tokenURL, url.Values{
 				"grant_type":    {"authorization_code"},
 				"client_id":     {clientID},
@@ -453,9 +538,27 @@ func codexFlow() Flow {
 					IDToken:      tokens.IDToken,
 					Expiry:       tokens.expiry(p.now()),
 					ProviderData: providerData,
+					AuthType:     credentials.AuthTypeOAuth,
 				},
 			}, nil
 		},
+	}
+}
+
+// codexRawTokenResult mirrors the reference's sign-in branch for a raw access
+// token pasted where the authorization code goes ([provider]/[action]/route.js:414-454):
+// nothing is exchanged; the token is stored as an access_token connection, which
+// is always inserted and never matched (connectionsRepo.js:232,264), with the
+// email, account id and plan its claims name. No name is sent, so it is labelled
+// by its email or "Account N" (connectionsRepo.js:289-291).
+func codexRawTokenResult(token string) Result {
+	email, accountID, planType := codexAccountInfo(token)
+	providerData := codexProviderData(accountID, planType)
+	providerData["authMethod"] = "access_token"
+	return Result{
+		AuthKind: credentials.AuthOAuth,
+		Identity: email,
+		Secret:   credentials.Secret{AccessToken: token, ProviderData: providerData, AuthType: credentials.AuthTypeAccessToken},
 	}
 }
 

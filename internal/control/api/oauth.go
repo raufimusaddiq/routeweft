@@ -770,6 +770,37 @@ func (h *Handler) saveOnboardedConnection(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid_auth_kind", "this provider does not accept the credential mode this sign-in produced")
 		return nil, persisted, false
 	}
+	if providerID == codexProviderID {
+		h.connectionMu.Lock()
+		defer h.connectionMu.Unlock()
+	}
+	if providerID == codexProviderID && result.Secret.AuthType != credentials.AuthTypeAccessToken {
+		match, found, err := h.codexMatch(r.Context(), identity, result.Secret.ProviderData)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
+			return nil, persisted, false
+		}
+		if found {
+			// The matched row keeps its id, name, priority, enabled flag, proxy pool and
+			// identity: a sign-in sends none of them (codex.js:48-66,
+			// [provider]/[action]/route.js:471-479). It takes the new credential whole:
+			// a reply without a refresh token or expires_in clears the stored ones.
+			match.Secret = result.Secret
+			connection, persisted, err := h.publishMergedConnection(r.Context(), match, func(existing, update credentials.Secret) credentials.Secret {
+				return codexMergedSecret(existing, update, onboarding.CarriesAll)
+			})
+			if err != nil {
+				if persisted {
+					writeError(w, http.StatusInternalServerError, "connection_publish_failed", "connection saved but could not be published to the runtime")
+				} else {
+					writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
+				}
+				return nil, persisted, false
+			}
+			h.clearConnectionHealth(connection.ID)
+			return connectionJSON(connection), true, true
+		}
+	}
 	if name == "" {
 		label, err := h.accountLabel(r.Context(), providerID)
 		if err != nil {
@@ -1139,6 +1170,14 @@ func decodeBulkBody(w http.ResponseWriter, r *http.Request) ([]map[string]any, b
 // whether a sign-in attempt may be closed: a publish failure after the write must
 // not discard a token the provider already issued.
 func (h *Handler) publishConnection(ctx context.Context, connection credentials.Connection) (stored credentials.Connection, persisted bool, err error) {
+	return h.publishMergedConnection(ctx, connection, mergeConnectionSecret)
+}
+
+// publishMergedConnection is publishConnection with the rule that combines an
+// existing connection's stored secret with the update's: a Codex duplicate
+// replaces its providerSpecificData whole (codexMergedSecret), every other edit
+// merges it key by key (mergeConnectionSecret).
+func (h *Handler) publishMergedConnection(ctx context.Context, connection credentials.Connection, merge func(existing, update credentials.Secret) credentials.Secret) (stored credentials.Connection, persisted bool, err error) {
 	// A caller that already resolved its node keeps it: a Generic Provider node has
 	// no built-in spec to look up, and a second resolution could disagree with the
 	// first. Onboarding callers pass only the provider and get the built-in node.
@@ -1163,20 +1202,25 @@ func (h *Handler) publishConnection(ctx context.Context, connection credentials.
 		connection.AuthKind = credentials.AuthOAuth
 	}
 	if connection.ID != "" {
-		existing, err := h.opts.Credentials.GetConnection(ctx, connection.ID)
-		if err != nil {
-			return credentials.Connection{}, false, err
+		// An edit merges onto the credential as stored when it is written, never an
+		// earlier read a refresh may since have rotated (updateConnection).
+		stored, err = h.updateConnection(ctx, connection.ID, func(existing credentials.Connection) (credentials.Connection, error) {
+			update := connection
+			update.Secret = merge(existing.Secret, connection.Secret)
+			return update, nil
+		})
+	} else {
+		stored, err = h.opts.Credentials.PutConnection(ctx, connection)
+		if err == nil {
+			h.register(stored)
 		}
-		connection.Secret = mergeConnectionSecret(existing.Secret, connection.Secret)
 	}
-	stored, err = h.opts.Credentials.PutConnection(ctx, connection)
 	if err != nil {
 		return credentials.Connection{}, false, err
 	}
 	// PutConnection returns the metadata as given; the registry's exchanger lookup
 	// keys on the provider.
 	stored.ProviderID = node.ProviderID
-	h.register(stored)
 	if h.opts.PoolBindings != nil {
 		if _, err := h.opts.PoolBindings.RefreshPoolBindings(ctx); err != nil {
 			return stored, true, err
@@ -1189,18 +1233,69 @@ func (h *Handler) publishConnection(ctx context.Context, connection credentials.
 // runtime, without recompiling the snapshot. Bulk import calls it per item and
 // publishes once; a single import goes through publishConnection, which does both.
 func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name string, account onboarding.BulkAccount) (credentials.Connection, error) {
+	if providerID == codexProviderID {
+		// Held from before the node is resolved: builtinNode creates the node on
+		// first use, and two first imports racing there would each create one.
+		h.connectionMu.Lock()
+		defer h.connectionMu.Unlock()
+	}
 	node, err := h.builtinNode(ctx, providerID)
 	if err != nil {
 		return credentials.Connection{}, err
+	}
+	if providerID == codexProviderID {
+		match, found, err := h.codexMatch(ctx, account.Identity, account.Secret.ProviderData)
+		if err != nil {
+			return credentials.Connection{}, err
+		}
+		if found {
+			// {...existing, ...item} (connectionsRepo.js:283): the keys of the
+			// credential the item carries replace the stored ones, its own name
+			// replaces the label, its priority the row's, and its isActive, true
+			// unless it says false (bulk-import/route.js:103), sets enabled. The id,
+			// proxy pool and identity are kept. The merge is onto the credential as
+			// stored when it is written, so a refresh's rotated token is kept when
+			// the item carries none (updateConnection).
+			priority := account.Priority
+			if account.HasPriority && priority == 0 {
+				// The reference sorts a zero or null priority as 999, after the rest
+				// of the pool (connectionsRepo.js:159).
+				if priority, err = h.codexLastPriority(ctx, match.ID); err != nil {
+					return credentials.Connection{}, err
+				}
+			}
+			stored, err := h.updateConnection(ctx, match.ID, func(existing credentials.Connection) (credentials.Connection, error) {
+				existing.Secret = codexMergedSecret(existing.Secret, account.Secret, account.Carries)
+				if account.ItemName != "" {
+					existing.Name = account.ItemName
+				}
+				if account.HasPriority {
+					existing.Priority = priority
+				}
+				existing.Enabled = !account.Disabled
+				return existing, nil
+			})
+			if err != nil {
+				return credentials.Connection{}, err
+			}
+			stored.ProviderID = node.ProviderID
+			h.clearConnectionHealth(stored.ID)
+			return stored, nil
+		}
 	}
 	existing, err := h.opts.Credentials.ListConnections(ctx, providerID)
 	if err != nil {
 		return credentials.Connection{}, err
 	}
+	priority := len(existing)
+	if account.Priority != 0 {
+		// An item's own non-zero priority places it (connectionsRepo.js:293-294).
+		priority = account.Priority
+	}
 	stored, err := h.opts.Credentials.PutConnection(ctx, credentials.Connection{
 		NodeID: node.ID, Name: name, Identity: account.Identity,
-		AuthKind: account.AuthKind, Secret: account.Secret, Enabled: true,
-		Priority: len(existing),
+		AuthKind: account.AuthKind, Secret: account.Secret, Enabled: !account.Disabled,
+		Priority: priority,
 	})
 	if err != nil {
 		return credentials.Connection{}, err
@@ -1224,6 +1319,37 @@ func (h *Handler) accountLabel(ctx context.Context, providerID string) (string, 
 // register publishes one stored connection to the runtime registry. It is separate
 // from the store write so a batch can write many connections and publish the
 // recompiled snapshot once.
+// updateConnection changes one stored connection from its record as stored at
+// the write, and publishes it to the runtime. With a credential registry that
+// holds the connection, the read, change, durable write and publication are one
+// step with refresh (Registry.Update), so a refresh can neither rotate the
+// credential between the read and the write nor commit over the result.
+// Refresh runs only through the registry, so a connection it does not hold (or
+// no registry at all) has none to race, and the store is read and written
+// directly.
+func (h *Handler) updateConnection(ctx context.Context, id string, change func(credentials.Connection) (credentials.Connection, error)) (credentials.Connection, error) {
+	if registry := h.opts.CredentialRegistry; registry != nil {
+		stored, err := registry.Update(ctx, id, change)
+		if !errors.Is(err, credentials.ErrNotFound) {
+			return stored, err
+		}
+	}
+	existing, err := h.opts.Credentials.GetConnection(ctx, id)
+	if err != nil {
+		return credentials.Connection{}, err
+	}
+	updated, err := change(existing)
+	if err != nil {
+		return credentials.Connection{}, err
+	}
+	stored, err := h.opts.Credentials.PutConnection(ctx, updated)
+	if err != nil {
+		return credentials.Connection{}, err
+	}
+	h.register(stored)
+	return stored, nil
+}
+
 func (h *Handler) register(connection credentials.Connection) {
 	if h.opts.CredentialRegistry != nil {
 		h.opts.CredentialRegistry.Register(connection, nil)
@@ -1244,6 +1370,9 @@ func (h *Handler) publishBindings(ctx context.Context) error {
 // Nil provider data leaves all existing provider fields unchanged.
 func mergeConnectionSecret(existing, update credentials.Secret) credentials.Secret {
 	data := update.ProviderData
+	if update.AuthType == "" {
+		update.AuthType = existing.AuthType
+	}
 	if update.Empty() {
 		// Same material rule as sealSecret: an ID token alone is a real update.
 		idToken := update.IDToken

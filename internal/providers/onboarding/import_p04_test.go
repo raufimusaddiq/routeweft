@@ -2,6 +2,7 @@ package onboarding
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -370,9 +371,15 @@ func TestBulkImportKeepsAnUnknownExpiryUnknown(t *testing.T) {
 		if err != nil || !dated.Secret.Expiry.Equal(time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)) {
 			t.Errorf("%s: expiresAt not honored: %v %v", provider, dated.Secret.Expiry, err)
 		}
-		timed, err := bulk(map[string]any{"access_token": jwt, "expires_in": float64(600)})
+		// The codex route reads camelCase only (bulk-import/route.js:72-99); the
+		// grok-cli route takes either spelling.
+		lifetime := map[string]any{"access_token": jwt, "expires_in": float64(600)}
+		if provider == "codex" {
+			lifetime = map[string]any{"accessToken": jwt, "expiresIn": float64(600)}
+		}
+		timed, err := bulk(lifetime)
 		if err != nil || time.Until(timed.Secret.Expiry) < 9*time.Minute || time.Until(timed.Secret.Expiry) > 11*time.Minute {
-			t.Errorf("%s: expires_in not honored: %v %v", provider, timed.Secret.Expiry, err)
+			t.Errorf("%s: lifetime not honored: %v %v", provider, timed.Secret.Expiry, err)
 		}
 	}
 }
@@ -524,5 +531,47 @@ func TestXiaomiImportRejectsCookieInjectionWithoutEcho(t *testing.T) {
 		if err == nil || strings.Contains(err.Error(), "fixture-private") || strings.Contains(err.Error(), "other=secret") {
 			t.Fatal("invalid account value accepted or echoed")
 		}
+	}
+}
+
+// The codex bulk route reads camelCase keys only (bulk-import/route.js:72-99): an
+// item with only access_token is "Missing accessToken", and a snake_case
+// refresh_token beside a camelCase accessToken is never the refresh token.
+func TestCodexBulkReadsCamelCaseOnly(t *testing.T) {
+	jwt := fixtureJWT(t, `{"email":"person@example.invalid","https://api.openai.com/auth":{"chatgpt_account_id":"acct-jwt"}}`)
+	if _, err := codexBulkAccount(map[string]any{"access_token": jwt}); err == nil || err.Error() != "missing accessToken" {
+		t.Fatalf("snake_case access token: %v", err)
+	}
+	account, err := codexBulkAccount(map[string]any{"accessToken": jwt, "refresh_token": "snake", "id_token": jwt, "expires_in": float64(600)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if account.Secret.RefreshToken != "" || account.Secret.IDToken != "" || !account.Secret.Expiry.IsZero() || account.Carries != (Carries{}) {
+		t.Fatalf("snake_case keys were read: %+v carries=%+v", account.Secret, account.Carries)
+	}
+}
+
+// The route keeps an exported providerSpecificData as given
+// (bulk-import/route.js:77,92-94): strings verbatim, empty included, other
+// values as their JSON text, and the JWT backfills only a falsy account id or
+// plan (:78-91).
+func TestCodexBulkKeepsExportedProviderData(t *testing.T) {
+	jwt := fixtureJWT(t, `{"https://api.openai.com/auth":{"chatgpt_account_id":"acct-jwt","chatgpt_plan_type":"plus"}}`)
+	account, err := codexBulkAccount(map[string]any{
+		"accessToken": jwt,
+		"providerSpecificData": map[string]any{
+			"chatgptAccountId": "", "workspaceId": " ws-1 ", "connectionProxyEnabled": true,
+			"jwtExp": float64(1893456000), "nested": map[string]any{"a": float64(1)}, "gone": nil,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"chatgptAccountId": "acct-jwt", "chatgptPlanType": "plus", "workspaceId": " ws-1 ",
+		"connectionProxyEnabled": "true", "jwtExp": "1893456000", "nested": `{"a":1}`,
+	}
+	if fmt.Sprint(account.Secret.ProviderData) != fmt.Sprint(want) {
+		t.Fatalf("providerSpecificData=%v, want %v", account.Secret.ProviderData, want)
 	}
 }

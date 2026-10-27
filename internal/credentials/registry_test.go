@@ -408,3 +408,225 @@ func TestRefreshAndImportCarryProviderDataForward(t *testing.T) {
 	}
 	check("import", "imported", "westus")
 }
+
+// How a Codex connection was signed in (Secret.AuthType, #241) survives a
+// refresh and an import, whose exchangers and payloads never carry it.
+func TestRefreshAndImportCarryAuthTypeForward(t *testing.T) {
+	ctx := context.Background()
+	store, _ := testStore(t)
+	node := seedNode(t, store, "codex")
+	connection, err := store.PutConnection(ctx, Connection{NodeID: node.ID, Name: "primary", AuthKind: AuthOAuth, Identity: "acct", Enabled: true, Secret: Secret{AccessToken: "stale", RefreshToken: "r0", Expiry: time.Now().Add(-time.Minute), AuthType: AuthTypeOAuth}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := NewRegistry(store, nil)
+	registry.Register(connection, func(context.Context, Secret) (Secret, error) {
+		return Secret{AccessToken: "fresh", Expiry: time.Now().Add(time.Hour)}, nil
+	})
+	if _, err := registry.Secret(ctx, connection.ID); err != nil {
+		t.Fatal(err)
+	}
+	check := func(stage, token string) {
+		t.Helper()
+		loaded, err := store.GetConnection(ctx, connection.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loaded.Secret.AccessToken != token || loaded.Secret.AuthType != AuthTypeOAuth {
+			t.Fatalf("%s: durable secret token=%q authType=%q", stage, loaded.Secret.AccessToken, loaded.Secret.AuthType)
+		}
+	}
+	check("refresh", "fresh")
+	if err := registry.Import(ctx, connection.ID, "acct", Secret{AccessToken: "imported", ProviderData: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	check("import", "imported")
+}
+
+// An update that lands while a refresh is exchanging waits for the refresh to
+// commit and merges onto its rotated credential: the rotated refresh token is
+// kept, and memory and storage agree afterwards (#241).
+func TestUpdateWaitsForRefreshInFlight(t *testing.T) {
+	ctx := context.Background()
+	store, _ := testStore(t)
+	node := seedNode(t, store, "codex")
+	connection, err := store.PutConnection(ctx, Connection{NodeID: node.ID, Name: "primary", AuthKind: AuthOAuth, Identity: "acct", Enabled: true, Secret: Secret{AccessToken: "a0", RefreshToken: "r0", Expiry: time.Now().Add(-time.Minute)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := NewRegistry(store, nil)
+	entered, release := make(chan struct{}), make(chan struct{})
+	registry.Register(connection, func(_ context.Context, current Secret) (Secret, error) {
+		close(entered)
+		<-release
+		return Secret{AccessToken: "a1", RefreshToken: "r1", Expiry: time.Now().Add(time.Hour)}, nil
+	})
+	refreshed := make(chan error, 1)
+	go func() {
+		_, err := registry.Secret(ctx, connection.ID)
+		refreshed <- err
+	}()
+	<-entered
+	updated := make(chan error, 1)
+	go func() {
+		_, err := registry.Update(ctx, connection.ID, func(stored Connection) (Connection, error) {
+			stored.Secret.AccessToken = "imported"
+			stored.Name = "renamed"
+			return stored, nil
+		})
+		updated <- err
+	}()
+	select {
+	case err := <-updated:
+		t.Fatalf("update did not wait for the refresh in flight: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-refreshed; err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if err := <-updated; err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	loaded, err := store.GetConnection(ctx, connection.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Name != "renamed" || loaded.Secret.AccessToken != "imported" || loaded.Secret.RefreshToken != "r1" {
+		t.Fatalf("durable after update: name=%q access=%q refresh=%q", loaded.Name, loaded.Secret.AccessToken, loaded.Secret.RefreshToken)
+	}
+	memory, err := registry.Secret(ctx, connection.ID)
+	if err != nil || memory.AccessToken != "imported" || memory.RefreshToken != "r1" {
+		t.Fatalf("memory after update: %+v %v", memory, err)
+	}
+}
+
+// A refresh that would start while an update is between its read and its
+// write waits for the update and gets the credential it published; no exchange
+// spends the refresh token the update read (#241).
+func TestRefreshWaitsForUpdate(t *testing.T) {
+	ctx := context.Background()
+	store, _ := testStore(t)
+	node := seedNode(t, store, "codex")
+	connection, err := store.PutConnection(ctx, Connection{NodeID: node.ID, Name: "primary", AuthKind: AuthOAuth, Identity: "acct", Enabled: true, Secret: Secret{AccessToken: "a0", RefreshToken: "r0", Expiry: time.Now().Add(-time.Minute)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := NewRegistry(store, nil)
+	var exchanges atomic.Int32
+	registry.Register(connection, func(context.Context, Secret) (Secret, error) {
+		exchanges.Add(1)
+		return Secret{AccessToken: "a1", RefreshToken: "r1", Expiry: time.Now().Add(time.Hour)}, nil
+	})
+	inChange, release := make(chan struct{}), make(chan struct{})
+	updated := make(chan error, 1)
+	go func() {
+		_, err := registry.Update(ctx, connection.ID, func(stored Connection) (Connection, error) {
+			close(inChange)
+			<-release
+			stored.Secret = Secret{AccessToken: "imported", RefreshToken: "r-imported", Expiry: time.Now().Add(time.Hour)}
+			return stored, nil
+		})
+		updated <- err
+	}()
+	<-inChange
+	got := make(chan Secret, 1)
+	go func() {
+		secret, _ := registry.Secret(ctx, connection.ID)
+		got <- secret
+	}()
+	select {
+	case secret := <-got:
+		t.Fatalf("refresh did not wait for the update: %+v", secret)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-updated; err != nil {
+		t.Fatal(err)
+	}
+	if secret := <-got; secret.AccessToken != "imported" || exchanges.Load() != 0 {
+		t.Fatalf("waiter got %+v after %d exchanges", secret, exchanges.Load())
+	}
+	loaded, err := store.GetConnection(ctx, connection.ID)
+	if err != nil || loaded.Secret.RefreshToken != "r-imported" {
+		t.Fatalf("durable after update: %+v %v", loaded.Secret, err)
+	}
+}
+
+// Requests that find an expired credential while an update holds the refresh
+// slot check it again when the update is done: whether the update succeeded but
+// left the token expired (an edit that does not touch it, an import of an
+// expired one) or failed and left the old one, they refresh it, once for all of
+// them, and none is handed the expired credential (#241).
+func TestRefreshWaitersRecheckAfterUpdate(t *testing.T) {
+	for name, change := range map[string]func(Connection) (Connection, error){
+		"update keeps the expired token": func(stored Connection) (Connection, error) {
+			stored.Name = "renamed"
+			return stored, nil
+		},
+		"update stores another expired token": func(stored Connection) (Connection, error) {
+			stored.Secret.AccessToken = "imported-expired"
+			stored.Secret.Expiry = time.Now().Add(-time.Hour)
+			return stored, nil
+		},
+		"update fails": func(Connection) (Connection, error) {
+			return Connection{}, errors.New("change refused")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			store, _ := testStore(t)
+			node := seedNode(t, store, "codex")
+			connection, err := store.PutConnection(ctx, Connection{NodeID: node.ID, Name: "primary", AuthKind: AuthOAuth, Identity: "acct", Enabled: true, Secret: Secret{AccessToken: "expired", RefreshToken: "r0", Expiry: time.Now().Add(-time.Minute)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			registry := NewRegistry(store, nil)
+			var exchanges atomic.Int32
+			registry.Register(connection, func(_ context.Context, current Secret) (Secret, error) {
+				exchanges.Add(1)
+				return Secret{AccessToken: "fresh", RefreshToken: "r1", Expiry: time.Now().Add(time.Hour)}, nil
+			})
+			inChange, release := make(chan struct{}), make(chan struct{})
+			updated := make(chan error, 1)
+			go func() {
+				_, err := registry.Update(ctx, connection.ID, func(stored Connection) (Connection, error) {
+					close(inChange)
+					<-release
+					return change(stored)
+				})
+				updated <- err
+			}()
+			<-inChange
+			const waiters = 4
+			got := make(chan Secret, waiters)
+			for i := 0; i < waiters; i++ {
+				go func() {
+					secret, err := registry.Secret(ctx, connection.ID)
+					if err != nil {
+						t.Errorf("secret: %v", err)
+					}
+					got <- secret
+				}()
+			}
+			time.Sleep(50 * time.Millisecond)
+			if exchanges.Load() != 0 {
+				t.Fatal("a refresh started while the update held the slot")
+			}
+			close(release)
+			<-updated
+			for i := 0; i < waiters; i++ {
+				if secret := <-got; secret.AccessToken != "fresh" {
+					t.Fatalf("waiter got access %q, want the refreshed credential", secret.AccessToken)
+				}
+			}
+			if n := exchanges.Load(); n != 1 {
+				t.Fatalf("exchanges=%d, want one shared refresh", n)
+			}
+			loaded, err := store.GetConnection(ctx, connection.ID)
+			if err != nil || loaded.Secret.AccessToken != "fresh" || loaded.Secret.RefreshToken != "r1" {
+				t.Fatalf("durable after refresh: %+v %v", loaded.Secret, err)
+			}
+		})
+	}
+}

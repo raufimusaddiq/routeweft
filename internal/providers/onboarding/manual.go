@@ -106,9 +106,12 @@ func codexImportFlow() Flow {
 				// The label the reference falls back to after the operator's name and
 				// the email (import-token/route.js:68).
 				FallbackName: "ChatGPT Access Token",
+				// The reference stores it as authType "access_token", always inserted and
+				// never matched (connectionsRepo.js:232,264).
 				Secret: credentials.Secret{
 					AccessToken:  token,
 					ProviderData: providerData,
+					AuthType:     credentials.AuthTypeAccessToken,
 				},
 			}, nil
 		},

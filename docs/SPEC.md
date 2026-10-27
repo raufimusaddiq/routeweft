@@ -1067,16 +1067,77 @@ id is never used as one:
   labelled `Account N` (N is one more than the provider's connections,
   `connectionsRepo.js:289-291`) unless named, and is never matched to another
   connection, so importing it twice stores two. The store keeps `identity` NULL
-  for it (migration v11); a non-NULL identity stays unique per node, the manual
-  connection form still requires one, and an edit that sends a blank identity
-  keeps the stored one.
+  for it (migration v11). The manual connection form still requires one, and an
+  edit that sends a blank identity keeps the stored one.
 - A connection stored before #239 with the ChatGPT account id as its identity
-  is kept as is: v11 copies it unchanged and nothing rewrites it. Signing in,
-  importing or bulk-importing the same account again adds a connection beside
-  it, which the operator may delete. Routeweft still refuses a second connection
-  with an identity a node already has instead of updating it, unlike the
-  reference's merge (`connectionsRepo.js:228-287`); that is generic, not Codex
-  identity, and out of #239's scope.
+  is kept as is: v11 and v12 copy it unchanged and nothing rewrites it. An email
+  never matches it, so signing in, importing or bulk-importing the same account
+  again adds a connection beside it, which the operator may delete.
+
+Codex duplicate handling follows the same pin (#241, `connectionsRepo.js:226-292`):
+
+- A browser sign-in or bulk item with an email updates the existing Codex oauth
+  connection with that email only when both carry the same non-empty
+  `chatgptAccountId` (`:239-242`). A different account id, or none on either
+  side, inserts a new connection with the same email; so does an item with no
+  email (`:228`). When more than one stored connection matches, the oldest is
+  updated (`all.find` over the table).
+- A token import, and a raw access token pasted where the sign-in code goes
+  (`[provider]/[action]/route.js:414-454`, stored without an exchange), are the
+  reference's `access_token` connection: each always inserts and is never the
+  existing side of a match (`:232,264`, `import-token/route.js:73`). Routeweft
+  stores every Codex connection with auth kind `oauth`, so onboarding records
+  the reference's `authType` inside the sealed credential: `access_token` for
+  these two, `oauth` for a sign-in and for every bulk item, even one whose
+  exported `providerSpecificData.authMethod` is `access_token`
+  (`bulk-import/route.js:106-108`). Refresh, import and edits keep it, and no
+  request can set it. A connection stored before it existed has none; if its
+  `authMethod` is `access_token` it may be a token import or a bulk re-import of
+  one, which stored identical payloads, so it is treated as a token import and
+  never matched (a sign-in adds a row beside it). Nothing records which path
+  created such a row, so this cannot be resolved for stored rows.
+- The Codex bulk route reads camelCase keys only (`bulk-import/route.js:72-99`):
+  an item without `accessToken` fails with `missing accessToken`, and a
+  `snake_case` key is ignored. Its `providerSpecificData` is kept as given:
+  strings verbatim, other values as their JSON text; the JWT backfills only a
+  falsy account id or plan (`:78-91`).
+- An update is `{...existing, ...incoming}` (`:283`). The connection keeps its
+  id, proxy pool and identity. The access token and `providerSpecificData` are
+  replaced, the map whole. A sign-in replaces the refresh token, id token and
+  expiry too, clearing one its reply lacks (`codex.js:51-55`); a bulk item
+  replaces each of those only when it has the key, clearing it when the value is
+  empty or null, and keeps the rest. A sign-in keeps the name, priority and
+  enabled flag (it sends none of them). A bulk item replaces the name only with
+  its own `name`, sets enabled from `isActive`, true unless it says false
+  (`bulk-import/route.js:103`), and replaces the priority with its own; a zero
+  or null one sorts the connection after the rest, as `(priority || 999)` does
+  (`:159`). A new bulk connection takes the item's non-zero priority
+  (`:293-294`). Every update clears the connection's cooldown, the reference's
+  health reset on `testStatus: "active"` (`:64-82`).
+- The duplicate lookup and the write it decides are one step, as the
+  reference's create transaction is (`:210`): the control API serializes them
+  with every other connection write it makes (manual create and edit, move,
+  proxy assignment, delete), so a concurrent manual save cannot pass its identity
+  check twice and a Codex update cannot overwrite a concurrent edit or bring back
+  a deleted connection. An update of a stored connection (a matching sign-in or
+  bulk item, or an edit) is also one step with that connection's credential
+  refresh: a refresh in flight commits first and the update merges onto its
+  rotated credential, a refresh that would start waits for the update and then
+  checks the credential again, refreshing it if the update left it expired or
+  failed, and the write and its runtime publication happen together
+  (`Registry.Update`). The reference checks every request's credential against
+  the latest stored one and refreshes it when due (`tokenRefresh.js:175-196`,
+  `chat.js:287`). The
+  reference's update and refresh are each one read-merge-write transaction
+  (`:210,266-286`; `:334-352`).
+- Migration v12 drops `UNIQUE(node_id, identity)` and keeps it by trigger for
+  every node except the built-in Codex node, so every other provider (built-in
+  or Generic, including a Generic node that names `codex`) still refuses a second
+  connection with an identity its node has. The manual connection form keeps that
+  refusal for Codex too: it is Routeweft's own (the reference's manual create
+  stores only API-key and cookie rows, `providers/route.js:179-181`), so a create,
+  or an edit that changes the identity, onto one another Codex connection holds is
+  refused, while an edit that keeps it succeeds. v12 is forward-only (RUNBOOK 14).
 
 `POST /admin/v1/oauth/{provider}/cancel` (body: `state`) ends a pending browser
 or device attempt so it can no longer complete, and answers
