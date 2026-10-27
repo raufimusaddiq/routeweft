@@ -456,3 +456,72 @@ func TestMetadataEditDuringCheckKeepsItsResult(t *testing.T) {
 		}
 	}
 }
+
+// A validated reimport that returns the stored token makes a failed connection
+// active again (connectionsRepo.js:64-75).
+func TestSameTokenReimportReactivatesAFailedConnection(t *testing.T) {
+	env := newImportEnv(t, map[string]string{})
+	grok := `{"access_token":"tok-same","refresh_token":"tok-same-r","email":"grok@example.invalid"}`
+	status, body := env.importAs(t, "grok-cli", "grok@example.invalid", grok, nil)
+	if status != http.StatusOK {
+		t.Fatalf("import: %d %v", status, body)
+	}
+	id := body["id"].(string)
+	if err := env.creds.RecordValidation(context.Background(), id, connectionByID(t, env.creds, id).CredentialRevision, credentials.Validation{Error: "provider rejected credentials"}); err != nil {
+		t.Fatal(err)
+	}
+	status, body = env.importAs(t, "grok-cli", "grok@example.invalid", grok, nil)
+	if status != http.StatusOK || body["outcome"] != onboardedUpdated || body["testStatus"] != credentials.StatusActive {
+		t.Fatalf("same-token reimport: %d %v", status, body)
+	}
+	if view := listedConnection(t, env.mux, env.cookie, id, "tok-same"); view.TestStatus != credentials.StatusActive || view.LastError != "" || view.LastErrorAt != "" {
+		t.Fatalf("same-token reimport left: %+v", view)
+	}
+}
+
+// A connection stored before credential_digest existed keeps a running check's
+// result through its first metadata edit.
+func TestUpgradedRowMetadataEditDuringCheckKeepsItsResult(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if r.URL.Path == "/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"relink-a"}]}`)
+			return
+		}
+		started <- struct{}{}
+		<-release
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"OK"}}]}`)
+	}))
+	defer upstream.Close()
+	_, mux, store, creds, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	c := workflowAccount(t, creds, "legacy", upstream.URL, "legacy@example.invalid")
+	if _, err := store.DB().Exec("UPDATE provider_connections SET credential_digest=NULL WHERE id=?", c.ID); err != nil {
+		t.Fatal(err)
+	}
+	before := connectionByID(t, creds, c.ID).CredentialRevision
+	done := make(chan int, 1)
+	go func() {
+		done <- doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"relink-a"}`).Code
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("check did not reach the upstream")
+	}
+	if recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"name":"Renamed"}`); recorder.Code != http.StatusOK {
+		t.Fatalf("rename: %d %s", recorder.Code, recorder.Body.String())
+	}
+	release <- struct{}{}
+	if code := <-done; code != http.StatusOK {
+		t.Fatalf("check: %d", code)
+	}
+	if view := listedConnection(t, mux, cookie, c.ID); view.TestStatus != credentials.StatusActive || view.LastTestedAt == "" {
+		t.Fatalf("upgraded row lost the check result: %+v", view)
+	}
+	if got := connectionByID(t, creds, c.ID).CredentialRevision; got != before {
+		t.Fatalf("rename of an upgraded row counted as a replacement: %d -> %d", before, got)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -93,6 +94,40 @@ func (s *Store) GetConnectionStatus(ctx context.Context, id string) (ConnectionS
 	}
 	status.ModelsAvailable = models
 	return status, err
+}
+
+// initDigest fills in the digest of a connection stored before credential_digest
+// existed (v13 leaves it NULL; computing it needs the master key), from its
+// stored secret, so that the next save compares against the credential it
+// actually holds and a reseal of it is not taken for a replacement. The write
+// applies only while the row still holds the secret that was read; if another
+// save replaced it meanwhile, that save wrote its own digest. A row with no
+// secret, or one that cannot be opened, is left as is.
+func (s *Store) initDigest(ctx context.Context, id string) error {
+	if id == "" {
+		return nil
+	}
+	var blob string
+	var digest sql.NullString
+	err := s.db.QueryRowContext(ctx, "SELECT COALESCE(secret_blob,''),credential_digest FROM provider_connections WHERE id=?", id).Scan(&blob, &digest)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && (digest.Valid || blob == "") {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read provider connection digest: %w", err)
+	}
+	plaintext, err := s.sealer.Open(blob)
+	if err != nil {
+		return nil
+	}
+	var stored Secret
+	if json.Unmarshal(plaintext, &stored) != nil {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, "UPDATE provider_connections SET credential_digest=? WHERE id=? AND credential_digest IS NULL AND secret_blob=?", s.sealer.Digest(credentialMaterial(stored)), id, blob); err != nil {
+		return fmt.Errorf("record provider connection digest: %w", err)
+	}
+	return nil
 }
 
 // credentialMaterial is what a credential is, for Digest: the access, refresh

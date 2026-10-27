@@ -2149,8 +2149,15 @@ the last test, error and model count:
   key), from the stored one. An edit that reseals the same credential (name,
   order, proxy, provider settings) and a refresh rotation do not, so a check
   survives them, while a check that started before a relink and ends after it
-  is refused and the replacement keeps its own status. A save's lifecycle is
-  likewise applied only on a replacement. The error is the probe's bounded text with
+  is refused and the replacement keeps its own status. A connection stored
+  before the digest existed has its digest filled in from its stored secret by
+  its first save, before the comparison, so that save is not mistaken for a
+  replacement. An `untested` lifecycle and the clearing of the last test and
+  model count apply only on a replacement. An `active` one applies on any save
+  of a credential a provider issued or accepted, the same credential included
+  (a reauthentication or validated reimport returning the stored token), and
+  clears the last error, as the reference's activation does
+  (`connectionsRepo.js:64-75,282,347`). The error is the probe's bounded text with
   every credential value of the connection (stored and as the registry
   currently holds it), whatever its length, replaced by `[redacted]`, in both
   the answer and the stored row: the access, refresh and ID tokens, the cookie,

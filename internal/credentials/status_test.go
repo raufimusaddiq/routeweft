@@ -2,6 +2,7 @@ package credentials
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -295,5 +296,94 @@ func TestValidationIsRefusedForAReplacedCredential(t *testing.T) {
 	}
 	if err := store.RecordValidation(ctx, connection.ID, revision(), Validation{OK: true}); err != nil {
 		t.Fatalf("current revision: %v", err)
+	}
+}
+
+// A provider that accepts the stored credential again (a reauthentication or
+// validated reimport returning the same token) makes it active and clears its
+// last error, as the reference's activation does (connectionsRepo.js:64-75);
+// the last test it describes stays. Typing the same credential in again is not
+// a replacement and leaves the lifecycle alone.
+func TestSameCredentialAcceptedAgainIsActive(t *testing.T) {
+	ctx := context.Background()
+	store, _ := testStore(t)
+	node := seedNode(t, store, "claude")
+	connection, err := store.PutConnection(ctx, Connection{NodeID: node.ID, Name: "primary", AuthKind: AuthOAuth, Identity: "acct", Enabled: true, Secret: Secret{AccessToken: "fixture-same", RefreshToken: "fixture-same-r"}, Lifecycle: Lifecycle{Status: StatusActive, Origin: OriginOAuth}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := store.GetConnection(ctx, connection.ID)
+	if err := store.RecordValidation(ctx, connection.ID, stored.CredentialRevision, Validation{Error: "provider rejected credentials", ModelsAvailable: 5}); err != nil {
+		t.Fatal(err)
+	}
+	same := connection
+	same.Lifecycle = Lifecycle{Status: StatusUntested, Origin: OriginManual}
+	if _, err := store.PutConnection(ctx, same); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := store.GetConnectionStatus(ctx, connection.ID); status.TestStatus != StatusFailed || status.AuthOrigin != OriginOAuth {
+		t.Fatalf("same credential typed again changed the lifecycle: %+v", status)
+	}
+	same.Lifecycle = Lifecycle{Status: StatusActive, Origin: OriginDevice}
+	if _, err := store.PutConnection(ctx, same); err != nil {
+		t.Fatal(err)
+	}
+	status, _ := store.GetConnectionStatus(ctx, connection.ID)
+	if status.TestStatus != StatusActive || status.LastError != "" || status.LastErrorAt != "" || status.AuthOrigin != OriginDevice || status.LastTestedAt == "" || status.ModelsAvailable == nil {
+		t.Fatalf("same credential accepted again: %+v", status)
+	}
+	if after, _ := store.GetConnection(ctx, connection.ID); after.CredentialRevision != stored.CredentialRevision {
+		t.Fatalf("same credential counted as a replacement: %d -> %d", stored.CredentialRevision, after.CredentialRevision)
+	}
+}
+
+// A connection stored before credential_digest existed has none. Its first
+// save that reseals the same credential is not a replacement; its first real
+// replacement still is.
+func TestUpgradedRowWithoutDigest(t *testing.T) {
+	ctx := context.Background()
+	store, _ := testStore(t)
+	node := seedNode(t, store, "claude")
+	connection, err := store.PutConnection(ctx, Connection{NodeID: node.ID, Name: "legacy", AuthKind: AuthAPIKey, Identity: "acct", Enabled: true, Secret: Secret{AccessToken: "fixture-legacy"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upgrade := func() {
+		t.Helper()
+		if _, err := store.db.ExecContext(ctx, "UPDATE provider_connections SET credential_digest=NULL WHERE id=?", connection.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	revision := func() int64 {
+		t.Helper()
+		stored, err := store.GetConnection(ctx, connection.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stored.CredentialRevision
+	}
+	upgrade()
+	before := revision()
+	renamed := connection
+	renamed.Name = "renamed"
+	renamed.Lifecycle = Lifecycle{Status: StatusUntested, Origin: OriginManual}
+	if _, err := store.PutConnection(ctx, renamed); err != nil {
+		t.Fatal(err)
+	}
+	if got := revision(); got != before {
+		t.Fatalf("reseal of an upgraded row counted as a replacement: %d -> %d", before, got)
+	}
+	var digest sql.NullString
+	if err := store.db.QueryRowContext(ctx, "SELECT credential_digest FROM provider_connections WHERE id=?", connection.ID).Scan(&digest); err != nil || !digest.Valid {
+		t.Fatalf("digest not initialized: %v %v", digest, err)
+	}
+	upgrade()
+	replaced := connection
+	replaced.Secret = Secret{AccessToken: "fixture-replacement"}
+	if _, err := store.PutConnection(ctx, replaced); err != nil {
+		t.Fatal(err)
+	}
+	if got := revision(); got != before+1 {
+		t.Fatalf("replacement of an upgraded row: revision %d -> %d", before, got)
 	}
 }

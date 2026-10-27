@@ -77,11 +77,14 @@ type Connection struct {
 	Lifecycle Lifecycle
 }
 
-// Lifecycle is the validation state a new secret is saved with. Status is
-// StatusActive (a provider issued or accepted it) or StatusUntested (no
-// provider has confirmed it); a new secret clears the last test, error and
-// model count, which describe the one it replaced. An empty Status keeps the
-// stored lifecycle whole (Xiaomi's soft-validated duplicate,
+// Lifecycle is the validation state a credential is saved with, applied in the
+// save's own statement. StatusActive (a provider issued or accepted it) applies
+// to any save of a credential, the same one included, and clears the last
+// error, as the reference's activation does (connectionsRepo.js:64-75).
+// StatusUntested (no provider has confirmed it) applies only when the
+// credential is replaced by a different one. A replacement also clears the last
+// test and model count, which describe the credential it replaced. An empty
+// Status keeps the stored lifecycle whole (Xiaomi's soft-validated duplicate,
 // xiaomi-mimo/api-key/route.js:79); a new row then starts untested. An empty
 // Origin keeps the stored origin.
 type Lifecycle struct {
@@ -303,23 +306,34 @@ func (s *Store) PutConnection(ctx context.Context, connection Connection) (Conne
 	var digest any
 	if blob != nil {
 		digest = s.sealer.Digest(credentialMaterial(connection.Secret))
+		if err := s.initDigest(ctx, connection.ID); err != nil {
+			return Connection{}, err
+		}
 	}
-	named := 0
+	named, active := 0, 0
 	if connection.Lifecycle.Status != "" {
 		named = 1
 	}
-	// "replaced" below is: a new secret whose digest differs from the stored one.
-	// SET expressions read the row as it was before this update.
+	if connection.Lifecycle.Status == StatusActive {
+		active = 1
+	}
+	// "Replaced" below is a new secret whose digest differs from the stored one;
+	// only a replacement counts in the revision and resets the last test and
+	// model count. "Accepted" is any save of a credential a provider just issued
+	// or accepted (?16): it is active and clears the last error even when the
+	// provider returned the same credential, as the reference's activation does
+	// (connectionsRepo.js:64-75,282,347). SET expressions read the row as it was
+	// before this update.
 	const upsert = `INSERT INTO provider_connections(id,node_id,name,auth_kind,identity,secret_blob,enabled,priority,proxy_pool_id,account_id,credential_expires_at,test_status,auth_origin,credential_digest)
 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,COALESCE(NULLIF(?12,''),'untested'),?13,?15)
 ON CONFLICT(id) DO UPDATE SET node_id=excluded.node_id,name=excluded.name,auth_kind=excluded.auth_kind,identity=excluded.identity,secret_blob=COALESCE(excluded.secret_blob,provider_connections.secret_blob),enabled=excluded.enabled,priority=excluded.priority,proxy_pool_id=excluded.proxy_pool_id,account_id=excluded.account_id,credential_expires_at=CASE WHEN excluded.secret_blob IS NULL THEN provider_connections.credential_expires_at ELSE excluded.credential_expires_at END,
 credential_revision=CASE WHEN excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN provider_connections.credential_revision+1 ELSE provider_connections.credential_revision END,
 credential_digest=CASE WHEN excluded.secret_blob IS NULL THEN provider_connections.credential_digest ELSE ?15 END,
-test_status=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN excluded.test_status ELSE provider_connections.test_status END,
-auth_origin=CASE WHEN ?13<>'' AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN ?13 ELSE provider_connections.auth_origin END,
+test_status=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN excluded.test_status WHEN ?16 AND excluded.secret_blob IS NOT NULL THEN 'active' ELSE provider_connections.test_status END,
+auth_origin=CASE WHEN ?13<>'' AND (excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 OR ?16 AND excluded.secret_blob IS NOT NULL) THEN ?13 ELSE provider_connections.auth_origin END,
 last_tested_at=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN NULL ELSE provider_connections.last_tested_at END,
-last_error=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN NULL ELSE provider_connections.last_error END,
-last_error_at=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN NULL ELSE provider_connections.last_error_at END,
+last_error=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 OR ?16 AND excluded.secret_blob IS NOT NULL THEN NULL ELSE provider_connections.last_error END,
+last_error_at=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 OR ?16 AND excluded.secret_blob IS NOT NULL THEN NULL ELSE provider_connections.last_error_at END,
 models_available=CASE WHEN ?14 AND excluded.secret_blob IS NOT NULL AND provider_connections.credential_digest IS NOT ?15 THEN NULL ELSE provider_connections.models_available END,
 updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 	change := func(c *Configuration) error {
@@ -338,7 +352,7 @@ updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 		c.Connections = append(c.Connections, metadata)
 		return nil
 	}
-	if err := s.exec(ctx, change, upsert, connection.ID, connection.NodeID, connection.Name, string(connection.AuthKind), nullable(connection.Identity), blob, enabled, connection.Priority, nullable(connection.ProxyPoolID), connection.AccountID, expiry, connection.Lifecycle.Status, connection.Lifecycle.Origin, named, digest); err != nil {
+	if err := s.exec(ctx, change, upsert, connection.ID, connection.NodeID, connection.Name, string(connection.AuthKind), nullable(connection.Identity), blob, enabled, connection.Priority, nullable(connection.ProxyPoolID), connection.AccountID, expiry, connection.Lifecycle.Status, connection.Lifecycle.Origin, named, digest, active); err != nil {
 		return Connection{}, fmt.Errorf("persist provider connection %q: %w", connection.Name, err)
 	}
 	return connection, nil
