@@ -2140,13 +2140,19 @@ the last test, error and model count:
   `ProviderData.apiKey`, which onboarding keeps beside the access token for
   kimi, iflow and xiaomi-mimo and which usage readers prefer, and any other
   credential entry that held the old access token; other provider data is
-  kept. The
+  kept. A relink replaces only the credential field it names: a cookie-only
+  relink keeps the stored access, refresh and ID tokens and expiry (iflow keeps
+  the API key minted from its cookie as the access token,
+  `onboarding/manual.go:251-260`), and an access-token relink keeps the stored
+  cookie. The
   reference keeps the previous status on such an edit; Routeweft does not
   report a result for a credential that was never tested. An edit of name,
   identity, order, proxy or enabled state keeps the stored lifecycle.
 - `POST /admin/v1/connections/{id}/test` and each account of
   `POST /admin/v1/providers/test-batch` record `active` (clearing the error)
-  or `failed` with the error, the time and the listed model count. A canceled
+  with the time and the listed model count, or `failed` with the error and the
+  time, keeping the last confirmed model count: a failed probe's listing is not
+  a count of usable models. A canceled
   test and a disabled connection record nothing. A result is recorded only
   against the `credential_revision` read with the credential it tested. Only a
   replacement increments it: a save whose credential material differs, by a

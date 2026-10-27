@@ -47,8 +47,9 @@ type Validation struct {
 var ErrCredentialChanged = errors.New("connection credential changed since it was tested")
 
 // RecordValidation persists one connection test's outcome, as the reference's
-// testSingleConnection does (testUtils.js:892-899): a pass is active and clears
-// the stored error, a failure is failed with its error and time. revision is
+// testSingleConnection does (testUtils.js:892-899): a pass is active, clears
+// the stored error and records the listed model count; a failure is failed with
+// its error and time and keeps the last confirmed model count. revision is
 // the CredentialRevision the test read with the credential it tested; if the
 // credential was replaced meanwhile (a relink), the result describes the old
 // one and is refused with ErrCredentialChanged, leaving the new one's status.
@@ -62,7 +63,14 @@ func (s *Store) RecordValidation(ctx context.Context, id string, revision int64,
 	if !v.OK {
 		status, lastError, lastErrorAt = StatusFailed, strings.TrimSpace(v.Error), stamp
 	}
-	err := requireAffected(s.db.ExecContext(ctx, "UPDATE provider_connections SET test_status=?,last_tested_at=?,last_error=?,last_error_at=?,models_available=? WHERE id=? AND credential_revision=?", status, stamp, lastError, lastErrorAt, v.ModelsAvailable, id, revision))
+	// A pass records the model count it listed. A failure keeps the last
+	// confirmed count: a failed probe's listing (often none) is not a count of
+	// the models the credential can use.
+	query, args := "UPDATE provider_connections SET test_status=?,last_tested_at=?,last_error=?,last_error_at=?,models_available=? WHERE id=? AND credential_revision=?", []any{status, stamp, lastError, lastErrorAt, v.ModelsAvailable, id, revision}
+	if !v.OK {
+		query, args = "UPDATE provider_connections SET test_status=?,last_tested_at=?,last_error=?,last_error_at=? WHERE id=? AND credential_revision=?", []any{status, stamp, lastError, lastErrorAt, id, revision}
+	}
+	err := requireAffected(s.db.ExecContext(ctx, query, args...))
 	if errors.Is(err, ErrNotFound) {
 		var exists int
 		if s.db.QueryRowContext(ctx, "SELECT 1 FROM provider_connections WHERE id=?", id).Scan(&exists) == nil {

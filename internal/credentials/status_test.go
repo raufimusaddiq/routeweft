@@ -314,7 +314,10 @@ func TestSameCredentialAcceptedAgainIsActive(t *testing.T) {
 		t.Fatal(err)
 	}
 	stored, _ := store.GetConnection(ctx, connection.ID)
-	if err := store.RecordValidation(ctx, connection.ID, stored.CredentialRevision, Validation{Error: "provider rejected credentials", ModelsAvailable: 5}); err != nil {
+	if err := store.RecordValidation(ctx, connection.ID, stored.CredentialRevision, Validation{OK: true, ModelsAvailable: 5}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordValidation(ctx, connection.ID, stored.CredentialRevision, Validation{Error: "provider rejected credentials"}); err != nil {
 		t.Fatal(err)
 	}
 	same := connection
@@ -436,9 +439,39 @@ func TestReplacementNamingNoStatusClearsTheOldResult(t *testing.T) {
 		t.Fatalf("replacement of an active credential: %+v", status)
 	}
 	// Resealing the same credential is not a replacement and clears nothing.
-	record(Validation{Error: "provider rejected credentials", ModelsAvailable: 2})
+	record(Validation{OK: true, ModelsAvailable: 2})
+	record(Validation{Error: "provider rejected credentials"})
 	status = replace("fixture-mimo-3")
 	if status.TestStatus != StatusFailed || status.LastError == "" || status.ModelsAvailable == nil {
 		t.Fatalf("reseal cleared the result: %+v", status)
+	}
+}
+
+// A failed check keeps the last confirmed model count: the failed probe's
+// listing is not a count of the models the credential can use.
+func TestFailedCheckKeepsTheConfirmedModelCount(t *testing.T) {
+	ctx := context.Background()
+	store, _ := testStore(t)
+	node := seedNode(t, store, "claude")
+	connection, err := store.PutConnection(ctx, Connection{NodeID: node.ID, Name: "primary", AuthKind: AuthAPIKey, Identity: "acct", Enabled: true, Secret: Secret{AccessToken: "fixture-count"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := store.GetConnection(ctx, connection.ID)
+	if err := store.RecordValidation(ctx, connection.ID, stored.CredentialRevision, Validation{Error: "listing failed", ModelsAvailable: 0}); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := store.GetConnectionStatus(ctx, connection.ID); status.TestStatus != StatusFailed || status.ModelsAvailable != nil {
+		t.Fatalf("failure before any pass recorded a count: %+v", status)
+	}
+	if err := store.RecordValidation(ctx, connection.ID, stored.CredentialRevision, Validation{OK: true, ModelsAvailable: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordValidation(ctx, connection.ID, stored.CredentialRevision, Validation{Error: "provider rejected credentials", ModelsAvailable: 0}); err != nil {
+		t.Fatal(err)
+	}
+	status, _ := store.GetConnectionStatus(ctx, connection.ID)
+	if status.TestStatus != StatusFailed || status.LastError != "provider rejected credentials" || status.ModelsAvailable == nil || *status.ModelsAvailable != 7 {
+		t.Fatalf("failure overwrote the confirmed count: %+v", status)
 	}
 }

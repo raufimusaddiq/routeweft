@@ -1361,18 +1361,35 @@ func connectionJSON(connection credentials.Connection) map[string]any {
 	return view
 }
 
-// relinkedSecret makes a relink's new key replace every stored copy of the old
-// one. Onboarding keeps the key twice for some providers, as the access token
-// and as ProviderData["apiKey"] (kimi, onboarding/providers.go:98-101; iflow,
+// relinkedSecret makes a relink replace the credential field it names and only
+// that. The edit merge takes an update's token fields whole once it carries any
+// credential (mergeConnectionSecret), so without this a cookie-only relink of a
+// connection that also holds an API key (iflow keeps the key minted from its
+// cookie as the access token, onboarding/manual.go:251-260) would drop the key
+// and break the connection, and an access-token relink would drop a stored
+// cookie. Here a cookie-only relink keeps the stored tokens and expiry, and an
+// access-token relink keeps the stored cookie.
+//
+// An access-token relink also replaces every stored copy of the old key.
+// Onboarding keeps the key twice for some providers, as the access token and as
+// ProviderData["apiKey"] (kimi, onboarding/providers.go:98-101; iflow,
 // manual.go:251,260; xiaomi-mimo, manual.go:342), and usage readers prefer the
-// provider-data copy (usage/oauth.go:21-26), so a relink that changed only the
-// access token would leave quota reads on the old key. The edit merge keeps
-// every provider-data entry the edit does not name (mergeConnectionSecret), so
-// the relink names apiKey, and any other credential entry that held the old
-// access token, with the new one. Other entries (a Copilot or session token
-// minted separately, metadata) are kept.
+// provider-data copy (usage/oauth.go:21-26), so the relink names apiKey, and
+// any other credential entry that held the old access token, with the new key.
+// Other entries (a Copilot or session token minted separately, metadata) are
+// kept by the merge.
 func relinkedSecret(stored, edit credentials.Secret) credentials.Secret {
+	if !replacesCredential(edit) {
+		return edit
+	}
 	key := strings.TrimSpace(edit.AccessToken)
+	tokens := key != "" || strings.TrimSpace(edit.RefreshToken) != "" || strings.TrimSpace(edit.IDToken) != ""
+	if !tokens {
+		edit.AccessToken, edit.RefreshToken, edit.IDToken, edit.Expiry = stored.AccessToken, stored.RefreshToken, stored.IDToken, stored.Expiry
+	}
+	if strings.TrimSpace(edit.Cookie) == "" {
+		edit.Cookie = stored.Cookie
+	}
 	if key == "" {
 		return edit
 	}

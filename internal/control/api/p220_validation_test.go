@@ -582,3 +582,74 @@ func TestUpgradedRowMetadataEditDuringCheckKeepsItsResult(t *testing.T) {
 		t.Fatalf("rename of an upgraded row counted as a replacement: %d -> %d", before, got)
 	}
 }
+
+// A relink replaces only the credential field it names. A cookie-only relink of
+// an iflow connection, which keeps the key minted from its cookie as the access
+// token and as ProviderData["apiKey"] (onboarding/manual.go:251-260), keeps
+// that key: dropping it would break the connection with no way back. An
+// access-token relink keeps the stored cookie.
+func TestCookieRelinkKeepsTheStoredKey(t *testing.T) {
+	env := newImportEnv(t, map[string]string{})
+	mux, creds, cookie := env.mux, env.creds, env.cookie
+	node, err := creds.PutNode(context.Background(), credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "iflow", Name: "iflow"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := creds.PutConnection(context.Background(), credentials.Connection{NodeID: node.ID, Name: "iflow", Identity: "iflow@example.invalid", AuthKind: credentials.AuthCookie, Enabled: true,
+		Secret: credentials.Secret{AccessToken: "stored-api-key", Cookie: "BXAuth=old;", ProviderData: map[string]string{"apiKey": "stored-api-key", "expireTime": "2026-12-01"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"cookie":"BXAuth=new;"}}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("cookie relink: %d %s", recorder.Code, recorder.Body.String())
+	}
+	assertNoSecret(t, "cookie relink response", recorder.Body.String(), "stored-api-key", "BXAuth=")
+	got := connectionByID(t, creds, c.ID).Secret
+	if got.Cookie != "BXAuth=new;" || got.AccessToken != "stored-api-key" || got.ProviderData["apiKey"] != "stored-api-key" || got.ProviderData["expireTime"] != "2026-12-01" {
+		t.Fatalf("cookie relink: cookie=%v access=%v apiKey=%v expire=%q", got.Cookie == "BXAuth=new;", got.AccessToken == "stored-api-key", got.ProviderData["apiKey"] == "stored-api-key", got.ProviderData["expireTime"])
+	}
+	if view := listedConnection(t, mux, cookie, c.ID, "stored-api-key", "BXAuth="); view.TestStatus != credentials.StatusUntested {
+		t.Fatalf("cookie relink status: %+v", view)
+	}
+	recorder = doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"accessToken":"new-api-key"}}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("key relink: %d %s", recorder.Code, recorder.Body.String())
+	}
+	got = connectionByID(t, creds, c.ID).Secret
+	if got.Cookie != "BXAuth=new;" || got.AccessToken != "new-api-key" || got.ProviderData["apiKey"] != "new-api-key" {
+		t.Fatalf("key relink: cookie=%v access=%v apiKey=%v", got.Cookie == "BXAuth=new;", got.AccessToken == "new-api-key", got.ProviderData["apiKey"] == "new-api-key")
+	}
+}
+
+// A failed check never reports a count it did not confirm.
+func TestFailedCheckDoesNotReportZeroModels(t *testing.T) {
+	var reject atomic.Bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if reject.Load() {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path == "/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"relink-a"},{"id":"relink-b"},{"id":"relink-c"}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"OK"}}]}`)
+	}))
+	defer upstream.Close()
+	_, mux, store, creds, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	c := workflowAccount(t, creds, "count", upstream.URL, "count@example.invalid")
+	if code := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"relink-a"}`).Code; code != http.StatusOK {
+		t.Fatalf("pass: %d", code)
+	}
+	reject.Store(true)
+	if code := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"relink-a"}`).Code; code != http.StatusBadGateway {
+		t.Fatalf("failure: %d", code)
+	}
+	view := listedConnection(t, mux, cookie, c.ID)
+	if view.TestStatus != credentials.StatusFailed || view.ModelsAvailable == nil || *view.ModelsAvailable != 3 {
+		t.Fatalf("failed check reported its own count: %+v", view)
+	}
+}
