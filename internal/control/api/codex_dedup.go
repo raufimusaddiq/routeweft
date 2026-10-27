@@ -66,6 +66,32 @@ func (h *Handler) codexMatch(ctx context.Context, identity string, data map[stri
 	return credentials.Connection{}, false, nil
 }
 
+// deviceMatch is the reference's oauth duplicate lookup for a device sign-in
+// (connectionsRepo.js:228-262, non-workspace branch): the provider's oauth
+// connection on its built-in node with the same identity. The reference keys on
+// email; Routeweft's identity is that key, and the store already keeps it unique
+// per node (migration v12), so at most one row matches. No identity matches
+// nothing. Callers hold connectionMu across the lookup and the write it decides.
+func (h *Handler) deviceMatch(ctx context.Context, providerID, identity string) (credentials.Connection, bool, error) {
+	if identity == "" {
+		return credentials.Connection{}, false, nil
+	}
+	node, err := h.builtinNode(ctx, providerID)
+	if err != nil {
+		return credentials.Connection{}, false, err
+	}
+	existing, err := h.opts.Credentials.ListConnections(ctx, providerID)
+	if err != nil {
+		return credentials.Connection{}, false, err
+	}
+	for _, connection := range existing {
+		if connection.NodeID == node.ID && connection.AuthKind == credentials.AuthOAuth && connection.Identity == identity {
+			return connection, true, nil
+		}
+	}
+	return credentials.Connection{}, false, nil
+}
+
 // codexTokenOnly reports whether a stored Codex connection is the reference's
 // access_token connection, which is never the existing side of a match
 // (connectionsRepo.js:232,264). Onboarding records it (Secret.AuthType): a token
