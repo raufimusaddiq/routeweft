@@ -138,6 +138,7 @@ export function Providers({ onUnauthorized }: Props) {
   const [importShown, setImportShown] = useState(false)
   const [importError, setImportError] = useState('')
   const [bulkFile, setBulkFile] = useState('')
+  const [bulkShown, setBulkShown] = useState(false)
   // The sign-in window opened in the click that started the attempt, and whether
   // the browser refused it (the panel then points at the link instead).
   const popupRef = useRef<SignInWindow | null>(null)
@@ -506,6 +507,7 @@ export function Providers({ onUnauthorized }: Props) {
     setImportError('')
     setBulkInput('')
     setBulkFile('')
+    setBulkShown(false)
     setBulkError('')
     setBulkResult(null)
     setAfterLogin({})
@@ -808,7 +810,7 @@ export function Providers({ onUnauthorized }: Props) {
             : <p>{importJourney(selected).note ?? `Paste the credential ${providerLabel(selected)} issued. It is validated with the provider before it is stored${askIdentity ? '' : ', and the account is read from it'}.`}</p>}
           <p className="import-privacy">Routeweft never reads credentials from this server’s disk or your computer on its own; only what you paste or choose here is sent, then sealed at rest.</p>
           {importShape.json ? <>
-            <label>{importShape.field}<textarea className={`bulk-input${importShown ? '' : ' masked-text'}`} autoComplete="off" spellCheck={false} value={importInput} onChange={event => { setImportInput(event.target.value); setImportFile(''); setImportError('') }} /></label>
+            <label>{importShape.field}<MaskedCredential shown={importShown} value={importInput} onChange={value => { setImportInput(value); setImportFile(''); setImportError('') }} /></label>
             <div className="oauth-actions"><label className="button-secondary file-pick">Choose file…<input type="file" accept=".json,application/json,text/plain" onChange={event => { void chooseImportFile(event.target.files); event.target.value = '' }} /></label><button className="button-ghost" type="button" aria-pressed={importShown} disabled={!importInput} onClick={() => setImportShown(value => !value)}>{importShown ? 'Hide' : 'Show'}</button></div>
             {importFile && <p role="status">Loaded {importFile}. Its contents are masked above.</p>}
           </> : <label>{importShape.field}<input type="password" autoComplete="off" spellCheck={false} value={importInput} onChange={event => { setImportInput(event.target.value); setImportError('') }} /></label>}
@@ -818,8 +820,8 @@ export function Providers({ onUnauthorized }: Props) {
         </div>}
         {method.kind === 'bulk' && !outcome?.connection && <div className="wide-field oauth-panel" role="group" aria-label={method.label}>
           <p>Paste accounts exported from {providerLabel(selected)}, or choose one or more exported .json files: a JSON array of objects with accessToken, and ideally refreshToken and idToken (snake_case or camelCase). Each is stored sealed; each item is reported on its own, so a bad item does not stop the rest. An account that is already connected updates its connection instead of adding a duplicate.</p>
-          <label>Exported accounts (JSON)<textarea className="bulk-input masked-text" autoComplete="off" spellCheck={false} value={bulkInput} onChange={event => { setBulkInput(event.target.value); setBulkFile(''); setBulkError('') }} /></label>
-          <div className="oauth-actions"><label className="button-secondary file-pick">Choose files…<input type="file" multiple accept=".json,application/json" onChange={event => { void chooseBulkFiles(event.target.files); event.target.value = '' }} /></label></div>
+          <label>Exported accounts (JSON)<MaskedCredential shown={bulkShown} value={bulkInput} onChange={value => { setBulkInput(value); setBulkFile(''); setBulkError('') }} /></label>
+          <div className="oauth-actions"><label className="button-secondary file-pick">Choose files…<input type="file" multiple accept=".json,application/json" onChange={event => { void chooseBulkFiles(event.target.files); event.target.value = '' }} /></label><button className="button-ghost" type="button" aria-pressed={bulkShown} disabled={!bulkInput} onClick={() => setBulkShown(value => !value)}>{bulkShown ? 'Hide' : 'Show'}</button></div>
           {bulkFile && <p role="status">Loaded {bulkFile}. The accounts are masked above.</p>}
           {bulkError && <p role="alert">{bulkError}</p>}
           <div className="oauth-actions"><button className="button-primary" type="button" disabled={busy !== '' || !bulkInput.trim()} onClick={() => void importBulk()}>{busy === 'bulk-import' ? 'Importing…' : 'Import all'}</button></div>
@@ -852,4 +854,16 @@ export function Providers({ onUnauthorized }: Props) {
       <section className="detail-panel" aria-labelledby="pricing-title"><div className="section-heading"><div><h3 id="pricing-title">Pricing overrides</h3><p>Rates per million tokens. Empty fields stay unset.</p></div></div><form className="provider-inline-form pricing-form" onSubmit={event => void addPricing(event)}><input required list="provider-model-choices" aria-label="Pricing model" placeholder="Model ID" value={price.modelId} onChange={event => setPrice({...price,modelId:event.target.value})} /><input aria-label="Input price per million" type="number" min="0" step="any" placeholder="Input / MTok" value={price.input} onChange={event => setPrice({...price,input:event.target.value})} /><input aria-label="Output price per million" type="number" min="0" step="any" placeholder="Output / MTok" value={price.output} onChange={event => setPrice({...price,output:event.target.value})} /><input aria-label="Cache read price per million" type="number" min="0" step="any" placeholder="Cache read" value={price.cacheRead} onChange={event => setPrice({...price,cacheRead:event.target.value})} /><input aria-label="Cache write price per million" type="number" min="0" step="any" placeholder="Cache write" value={price.cacheWrite} onChange={event => setPrice({...price,cacheWrite:event.target.value})} /><button className="button-secondary" type="submit">Save rates</button></form>{priceList.error && <p className="auth-error" role="alert">{priceList.error}</p>}{priceList.items.map(item => <div className="model-row" key={item.modelId}><code>{item.modelId}</code><span>in {item.inputPerMTok ?? '—'} · out {item.outputPerMTok ?? '—'}</span><span>cache {item.cacheReadPerMTok ?? '—'} / {item.cacheWritePerMTok ?? '—'}</span><button className="button-danger" type="button" onClick={() => void action(`price-${item.modelId}`,'Pricing override deleted.',() => send('/pricing','DELETE',{providerId:selected,modelId:item.modelId}).then(() => undefined))}>Delete</button></div>)}<Pager label="Pricing" page={priceList.page} total={priceList.total} loading={priceList.loading} onPage={priceList.setPage} /></section>
     </>}</section></div>
   </div>
+}
+
+// A credential field that may hold a whole JSON file (#218). Masked, it is a
+// native password field, which every browser masks (a CSS text-security rule is
+// Chromium- and WebKit-only). The browser drops line breaks from what that field
+// displays, which in JSON is only whitespace, and the text as pasted or read from
+// the file stays in state, so what is sent is unchanged. Shown, it is a plain
+// multi-line field the operator asked to see.
+function MaskedCredential({ shown, value, onChange }: { shown: boolean; value: string; onChange: (value: string) => void }) {
+  return shown
+    ? <textarea className="bulk-input" autoComplete="off" spellCheck={false} value={value} onChange={event => onChange(event.target.value)} />
+    : <input type="password" autoComplete="off" spellCheck={false} value={value} onChange={event => onChange(event.target.value)} />
 }

@@ -290,7 +290,6 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .oauth-panel a.button-secondary { justify-self: start; text-decoration: none; }
 .oauth-actions { display: flex; gap: 8px; }
 .oauth-panel textarea.bulk-input { width: 100%; min-height: 160px; resize: vertical; font-family: var(--font-mono); }
-.masked-text { -webkit-text-security: disc; }
 .file-pick { position: relative; overflow: hidden; }
 .file-pick input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .file-pick:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
