@@ -39,8 +39,9 @@ func (h *Handler) recordValidation(ctx context.Context, c credentials.Connection
 // writes, in the same statement (credentials.Lifecycle). A credential a provider
 // issued or accepted is active, as the reference writes testStatus "active" on
 // every sign-in ([provider]/[action]/route.js:69). One stored unvalidated
-// (Xiaomi's soft validation) is untested when new and keeps a stored
-// duplicate's status (xiaomi-mimo/api-key/route.js:79,115).
+// (Xiaomi's soft validation, or an import the flow only parsed) is untested
+// when new and keeps a stored duplicate's status (xiaomi-mimo/api-key/route.js:79,115),
+// except a failure, which belonged to the credential it replaces.
 func onboardedLifecycle(flow oauthFlow, result onboarding.Result, update bool) credentials.Lifecycle {
 	origin := credentials.OriginOAuth
 	if flow.device {
@@ -58,8 +59,12 @@ func onboardedLifecycle(flow oauthFlow, result onboarding.Result, update bool) c
 	}
 }
 
-// bulkLifecycle is a bulk item's: every item is a credential the provider issued.
-var bulkLifecycle = credentials.Lifecycle{Status: credentials.StatusActive, Origin: credentials.OriginImport}
+// bulkLifecycle is a bulk item's. Bulk items are parsed, never sent to the
+// provider, so they are imported as unvalidated: active means a provider
+// confirmed the credential, which no provider has done for a pasted item.
+func bulkLifecycle(update bool) credentials.Lifecycle {
+	return onboardedLifecycle(oauthFlow{imported: true}, onboarding.Result{Unvalidated: true}, update)
+}
 
 // reportLifecycle adds the saved connection's status and origin to an
 // onboarding answer. It only reads what the save wrote.

@@ -2128,11 +2128,22 @@ and origin are written by the same statement that writes its credential
 can pair one credential with another's status; a new credential also clears
 the last test, error and model count:
 
-- A browser or device sign-in, a Reauthenticate, a single import, an import or
-  sign-in that updates a stored duplicate, and every saved bulk item mark the
-  connection `active` with its origin and clear the last error. The response
-  carries `testStatus` and `authOrigin`, beside the existing `outcome`
-  (`added`, `updated`, `reauthenticated`).
+- A browser or device sign-in, a Reauthenticate, and an import the provider
+  confirmed (an exchange, refresh or verification call: iflow cookie, Kiro
+  token or API key, GitLab PAT, Xiaomi with a successful model listing),
+  including one that updates a stored duplicate, mark the connection `active`
+  with its origin and clear the last error. An import the flow only parses (a
+  pasted Codex, grok-cli or Cursor token, a Kiro CLI-proxy file) and every
+  bulk item reach no provider: they are saved `untested` with origin `import`
+  when new and, on a stored duplicate, keep an `active` status but turn a
+  `failed` one `untested`, as a soft-validated Xiaomi key does. `active` means
+  a provider confirmed the credential; the reference writes `active` on these
+  imports too (`codex/import-token/route.js:78`, `cursor/import/route.js:56`,
+  `kiro/import-cli-proxy/route.js:23`, `grok-cli/bulk-import/route.js:99`,
+  `codex/bulk-import/route.js:102`), which Routeweft does not: the status is
+  a dashboard label and no routing decision reads it. The response carries
+  `testStatus` and `authOrigin`, beside the existing `outcome` (`added`,
+  `updated`, `reauthenticated`).
 - A manual create, or a manual edit that carries credential material (a
   relink), marks it `untested` with origin `manual` and clears the last test,
   model count and error: no provider has seen the new credential. A relink's
@@ -2140,11 +2151,16 @@ the last test, error and model count:
   `ProviderData.apiKey`, which onboarding keeps beside the access token for
   kimi, iflow and xiaomi-mimo and which usage readers prefer, and any other
   credential entry that held the old access token; other provider data is
-  kept. A relink replaces only the credential field it names: a cookie-only
-  relink keeps the stored access, refresh and ID tokens and expiry (iflow keeps
-  the API key minted from its cookie as the access token,
-  `onboarding/manual.go:251-260`), and an access-token relink keeps the stored
-  cookie. The
+  kept. A relink replaces only the credential fields it names and keeps every
+  stored access, refresh and ID token and cookie it does not name: a
+  cookie-only relink keeps the stored tokens (iflow keeps the API key minted
+  from its cookie as the access token, `onboarding/manual.go:251-260`), an
+  access-token relink keeps the refresh and ID tokens and cookie, and an
+  ID-token or refresh-token edit keeps the access token and its expiry. A
+  relink resets the connection even when the operator types the stored key
+  again: it is `untested`, its last test, error and model count are cleared
+  and a check started before it is refused, so the dashboard's "Credential
+  replaced" never sits beside the previous result. The
   reference keeps the previous status on such an edit; Routeweft does not
   report a result for a credential that was never tested. An edit of name,
   identity, order, proxy or enabled state keeps the stored lifecycle.
@@ -2155,7 +2171,8 @@ the last test, error and model count:
   a count of usable models. A canceled
   test and a disabled connection record nothing. A result is recorded only
   against the `credential_revision` read with the credential it tested. Only a
-  replacement increments it: a save whose credential material differs, by a
+  replacement increments it: a manual relink, or a save whose credential
+  material differs, by a
   keyed digest (`credential_digest`, HMAC under a key derived from the master
   key), from the stored one. An edit that reseals the same credential (name,
   order, proxy, provider settings) and a refresh rotation do not, so a check

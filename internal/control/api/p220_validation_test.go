@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -243,12 +244,14 @@ func TestRecordValidationRedactsEchoedCredential(t *testing.T) {
 	}
 }
 
-// Onboarding records the credential as accepted, with its origin, on the add,
-// the duplicate update and every bulk item.
-func TestOnboardedCredentialIsActiveWithItsOrigin(t *testing.T) {
+// An import the flow only parses (a pasted grok-cli account) reaches no
+// provider, so it is untested with its origin on the add, the duplicate update
+// and every bulk item: active means a provider confirmed the credential. A
+// replacement clears the old credential's failure.
+func TestParsedImportIsUntestedWithItsOrigin(t *testing.T) {
 	env := newImportEnv(t, map[string]string{})
 	status, body := env.importAs(t, "grok-cli", "grok@example.invalid", `{"access_token":"tok-g1","refresh_token":"tok-r1","email":"grok@example.invalid"}`, nil)
-	if status != http.StatusOK || body["testStatus"] != credentials.StatusActive || body["authOrigin"] != credentials.OriginImport {
+	if status != http.StatusOK || body["testStatus"] != credentials.StatusUntested || body["authOrigin"] != credentials.OriginImport {
 		t.Fatalf("import: %d %v", status, body)
 	}
 	id := body["id"].(string)
@@ -256,11 +259,11 @@ func TestOnboardedCredentialIsActiveWithItsOrigin(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, body = env.importAs(t, "grok-cli", "grok@example.invalid", `{"access_token":"tok-g2","email":"grok@example.invalid"}`, nil)
-	if status != http.StatusOK || body["outcome"] != onboardedUpdated || body["testStatus"] != credentials.StatusActive {
+	if status != http.StatusOK || body["outcome"] != onboardedUpdated || body["testStatus"] != credentials.StatusUntested {
 		t.Fatalf("reimport: %d %v", status, body)
 	}
 	view := listedConnection(t, env.mux, env.cookie, id, "tok-")
-	if view.TestStatus != credentials.StatusActive || view.LastError != "" || view.AuthOrigin != credentials.OriginImport {
+	if view.TestStatus != credentials.StatusUntested || view.LastError != "" || view.AuthOrigin != credentials.OriginImport {
 		t.Fatalf("reimported: %+v", view)
 	}
 	recorder := doJSON(t, env.mux, env.cookie, http.MethodPost, "/admin/v1/oauth/grok-cli/bulk-import", `[{"access_token":"tok-b1","email":"bulk@example.invalid"}]`)
@@ -276,8 +279,18 @@ func TestOnboardedCredentialIsActiveWithItsOrigin(t *testing.T) {
 	if len(bulk.Results) != 1 {
 		t.Fatalf("bulk: %s", recorder.Body.String())
 	}
-	if view := listedConnection(t, env.mux, env.cookie, bulk.Results[0].ID, "tok-"); view.TestStatus != credentials.StatusActive || view.AuthOrigin != credentials.OriginImport {
+	if view := listedConnection(t, env.mux, env.cookie, bulk.Results[0].ID, "tok-"); view.TestStatus != credentials.StatusUntested || view.AuthOrigin != credentials.OriginImport {
 		t.Fatalf("bulk item: %+v", view)
+	}
+	// A bulk item that replaces a failed connection's credential is untested.
+	if err := env.creds.RecordValidation(context.Background(), id, connectionByID(t, env.creds, id).CredentialRevision, credentials.Validation{Error: "revoked"}); err != nil {
+		t.Fatal(err)
+	}
+	if recorder = doJSON(t, env.mux, env.cookie, http.MethodPost, "/admin/v1/oauth/grok-cli/bulk-import", `[{"access_token":"tok-b2","email":"grok@example.invalid"}]`); recorder.Code != http.StatusOK {
+		t.Fatalf("bulk update: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if view := listedConnection(t, env.mux, env.cookie, id, "tok-"); view.TestStatus != credentials.StatusUntested || view.LastError != "" || view.AuthOrigin != credentials.OriginImport {
+		t.Fatalf("bulk update: %+v", view)
 	}
 }
 
@@ -427,8 +440,8 @@ func TestCheckStartedBeforeRelinkDoesNotRecordOverIt(t *testing.T) {
 
 // The lifecycle is written with the credential, so concurrent saves of one
 // connection cannot pair one save's credential with another's status: an
-// imported credential (accepted) is always active from import, a relinked one
-// (typed by hand) always untested from manual.
+// imported credential is always from import, a relinked one (typed by hand)
+// always from manual, and neither was confirmed, so both are untested.
 func TestConcurrentImportAndRelinkKeepStatusWithItsCredential(t *testing.T) {
 	env := newImportEnv(t, map[string]string{})
 	status, body := env.importAs(t, "grok-cli", "grok@example.invalid", `{"access_token":"tok-seed","email":"grok@example.invalid"}`, nil)
@@ -456,8 +469,8 @@ func TestConcurrentImportAndRelinkKeepStatusWithItsCredential(t *testing.T) {
 			t.Fatal(err)
 		}
 		imported := strings.HasPrefix(stored.Secret.AccessToken, "tok-")
-		if imported && (lifecycle.TestStatus != credentials.StatusActive || lifecycle.AuthOrigin != credentials.OriginImport) ||
-			!imported && (lifecycle.TestStatus != credentials.StatusUntested || lifecycle.AuthOrigin != credentials.OriginManual) {
+		if lifecycle.TestStatus != credentials.StatusUntested || imported && lifecycle.AuthOrigin != credentials.OriginImport ||
+			!imported && lifecycle.AuthOrigin != credentials.OriginManual {
 			t.Fatalf("round %d: imported=%v but status %+v", round, imported, lifecycle)
 		}
 	}
@@ -465,7 +478,8 @@ func TestConcurrentImportAndRelinkKeepStatusWithItsCredential(t *testing.T) {
 
 // An edit that keeps the credential (name, enabled state, order, proxy) during a
 // check reseals the same credential, so the check still records its result:
-// only a replacement makes a running check's result stale.
+// only a replacement or a relink makes a running check's result stale (a relink
+// of the same key included, TestSameKeyRelinkResetsTheResult).
 func TestMetadataEditDuringCheckKeepsItsResult(t *testing.T) {
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
@@ -487,7 +501,7 @@ func TestMetadataEditDuringCheckKeepsItsResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := connectionByID(t, creds, c.ID).CredentialRevision
-	for i, edit := range []string{`{"name":"Renamed"}`, `{"priority":3}`, `{"accountId":"acct-2"}`, `{"secret":{"accessToken":"` + relinkKeyOne + `"}}`} {
+	for i, edit := range []string{`{"name":"Renamed"}`, `{"priority":3}`, `{"accountId":"acct-2"}`} {
 		done := make(chan int, 1)
 		go func() {
 			done <- doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"relink-a"}`).Code
@@ -515,11 +529,12 @@ func TestMetadataEditDuringCheckKeepsItsResult(t *testing.T) {
 }
 
 // A validated reimport that returns the stored token makes a failed connection
-// active again (connectionsRepo.js:64-75).
+// active again (connectionsRepo.js:64-75): Xiaomi's import lists the key's
+// models, so the provider confirmed it.
 func TestSameTokenReimportReactivatesAFailedConnection(t *testing.T) {
-	env := newImportEnv(t, map[string]string{})
-	grok := `{"access_token":"tok-same","refresh_token":"tok-same-r","email":"grok@example.invalid"}`
-	status, body := env.importAs(t, "grok-cli", "grok@example.invalid", grok, nil)
+	env := newImportEnv(t, map[string]string{"/models": `{"data":[{"id":"mimo"}]}`})
+	key := `{"apiKey":"sk-fixture-same-0001","uid":"7"}`
+	status, body := env.importAs(t, "xiaomi-mimo", "7@xiaomi", key, nil)
 	if status != http.StatusOK {
 		t.Fatalf("import: %d %v", status, body)
 	}
@@ -527,11 +542,11 @@ func TestSameTokenReimportReactivatesAFailedConnection(t *testing.T) {
 	if err := env.creds.RecordValidation(context.Background(), id, connectionByID(t, env.creds, id).CredentialRevision, credentials.Validation{Error: "provider rejected credentials"}); err != nil {
 		t.Fatal(err)
 	}
-	status, body = env.importAs(t, "grok-cli", "grok@example.invalid", grok, nil)
+	status, body = env.importAs(t, "xiaomi-mimo", "7@xiaomi", key, nil)
 	if status != http.StatusOK || body["outcome"] != onboardedUpdated || body["testStatus"] != credentials.StatusActive {
 		t.Fatalf("same-token reimport: %d %v", status, body)
 	}
-	if view := listedConnection(t, env.mux, env.cookie, id, "tok-same"); view.TestStatus != credentials.StatusActive || view.LastError != "" || view.LastErrorAt != "" {
+	if view := listedConnection(t, env.mux, env.cookie, id, "sk-fixture-same"); view.TestStatus != credentials.StatusActive || view.LastError != "" || view.LastErrorAt != "" {
 		t.Fatalf("same-token reimport left: %+v", view)
 	}
 }
@@ -651,5 +666,94 @@ func TestFailedCheckDoesNotReportZeroModels(t *testing.T) {
 	view := listedConnection(t, mux, cookie, c.ID)
 	if view.TestStatus != credentials.StatusFailed || view.ModelsAvailable == nil || *view.ModelsAvailable != 3 {
 		t.Fatalf("failed check reported its own count: %+v", view)
+	}
+}
+
+// A relink keeps every stored token field the edit does not name. The PATCH
+// goes through the whole edit path (relinkedSecret, then the edit merge): an
+// access-token relink keeps the refresh token, ID token and cookie; an
+// ID-token edit keeps the access and refresh tokens; a refresh-token edit
+// keeps the access token and its expiry.
+func TestRelinkKeepsEveryStoredFieldItDoesNotName(t *testing.T) {
+	env := newImportEnv(t, map[string]string{})
+	mux, creds, cookie := env.mux, env.creds, env.cookie
+	node, err := creds.PutNode(context.Background(), credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "iflow", Name: "iflow"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiry := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	c, err := creds.PutConnection(context.Background(), credentials.Connection{NodeID: node.ID, Name: "iflow", Identity: "iflow@example.invalid", AuthKind: credentials.AuthCookie, Enabled: true,
+		Secret: credentials.Secret{AccessToken: "old-access", RefreshToken: "old-refresh", IDToken: "old-id", Cookie: "BXAuth=old;", Expiry: expiry}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch := func(body string) credentials.Secret {
+		t.Helper()
+		if recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, body); recorder.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", body, recorder.Code, recorder.Body.String())
+		}
+		return connectionByID(t, creds, c.ID).Secret
+	}
+	describe := func(s credentials.Secret) string {
+		return fmt.Sprintf("access=%q refresh=%q id=%q cookie=%q expiry=%v", s.AccessToken, s.RefreshToken, s.IDToken, s.Cookie, s.Expiry)
+	}
+	if got := patch(`{"secret":{"accessToken":"new-access"}}`); got.AccessToken != "new-access" || got.RefreshToken != "old-refresh" || got.IDToken != "old-id" || got.Cookie != "BXAuth=old;" {
+		t.Fatalf("access-token relink: %s", describe(got))
+	}
+	if got := patch(`{"secret":{"idToken":"new-id"}}`); got.AccessToken != "new-access" || got.RefreshToken != "old-refresh" || got.IDToken != "new-id" || got.Cookie != "BXAuth=old;" {
+		t.Fatalf("id-token edit: %s", describe(got))
+	}
+	if got := patch(`{"secret":{"refreshToken":"new-refresh"}}`); got.AccessToken != "new-access" || got.RefreshToken != "new-refresh" || got.IDToken != "new-id" || got.Cookie != "BXAuth=old;" {
+		t.Fatalf("refresh-token edit: %s", describe(got))
+	}
+	c2, err := creds.PutConnection(context.Background(), credentials.Connection{NodeID: node.ID, Name: "iflow-2", Identity: "iflow2@example.invalid", AuthKind: credentials.AuthCookie, Enabled: true,
+		Secret: credentials.Secret{AccessToken: "kept-access", RefreshToken: "old-refresh", Expiry: expiry}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c = c2
+	if got := patch(`{"secret":{"refreshToken":"rotated-refresh"}}`); got.AccessToken != "kept-access" || got.RefreshToken != "rotated-refresh" || !got.Expiry.Equal(expiry) {
+		t.Fatalf("refresh-token edit lost the access token's expiry: %s", describe(got))
+	}
+}
+
+// A relink resets the connection even when the operator types the stored key
+// again: the dashboard says "Credential replaced. Check the connection to
+// confirm it.", so the previous failure, its error and a running check's
+// result do not stay beside it.
+func TestSameKeyRelinkResetsTheResult(t *testing.T) {
+	_, mux, store, creds, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	c := workflowAccount(t, creds, "same", "http://127.0.0.1:9", "same@example.invalid")
+	const key = "sk-fixture-same-key-0001"
+	if recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"accessToken":"`+key+`"}}`); recorder.Code != http.StatusOK {
+		t.Fatalf("first relink: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if err := creds.RecordValidation(context.Background(), c.ID, connectionByID(t, creds, c.ID).CredentialRevision, credentials.Validation{OK: true, ModelsAvailable: 4}); err != nil {
+		t.Fatal(err)
+	}
+	if err := creds.RecordValidation(context.Background(), c.ID, connectionByID(t, creds, c.ID).CredentialRevision, credentials.Validation{Error: "provider rejected credentials"}); err != nil {
+		t.Fatal(err)
+	}
+	stale := connectionByID(t, creds, c.ID).CredentialRevision
+	if recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"accessToken":"`+key+`"}}`); recorder.Code != http.StatusOK {
+		t.Fatalf("same-key relink: %d %s", recorder.Code, recorder.Body.String())
+	}
+	view := listedConnection(t, mux, cookie, c.ID, key)
+	if view.TestStatus != credentials.StatusUntested || view.LastError != "" || view.LastErrorAt != "" || view.LastTestedAt != "" || view.ModelsAvailable != nil || view.AuthOrigin != credentials.OriginManual {
+		t.Fatalf("same-key relink kept the previous result: %+v", view)
+	}
+	if err := creds.RecordValidation(context.Background(), c.ID, stale, credentials.Validation{Error: "late"}); !errors.Is(err, credentials.ErrCredentialChanged) {
+		t.Fatalf("a check started before the relink recorded over it: %v", err)
+	}
+	// An edit that names no credential still keeps the result.
+	if err := creds.RecordValidation(context.Background(), c.ID, connectionByID(t, creds, c.ID).CredentialRevision, credentials.Validation{Error: "after"}); err != nil {
+		t.Fatal(err)
+	}
+	if recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"name":"renamed"}`); recorder.Code != http.StatusOK {
+		t.Fatalf("rename: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if view = listedConnection(t, mux, cookie, c.ID, key); view.TestStatus != credentials.StatusFailed || view.LastError != "after" {
+		t.Fatalf("rename reset the result: %+v", view)
 	}
 }

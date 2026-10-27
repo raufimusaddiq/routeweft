@@ -1709,7 +1709,7 @@ func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name 
 		}
 		if found {
 			stored, err := h.updateConnection(ctx, match.ID, func(existing credentials.Connection) (credentials.Connection, error) {
-				existing.Secret, existing.Lifecycle = importedSecret(providerID, existing.Secret, account.Secret), bulkLifecycle
+				existing.Secret, existing.Lifecycle = importedSecret(providerID, existing.Secret, account.Secret), bulkLifecycle(true)
 				return existing, nil
 			})
 			if err != nil {
@@ -1742,7 +1742,7 @@ func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name 
 				}
 			}
 			stored, err := h.updateConnection(ctx, match.ID, func(existing credentials.Connection) (credentials.Connection, error) {
-				existing.Secret, existing.Lifecycle = codexMergedSecret(existing.Secret, account.Secret, account.Carries), bulkLifecycle
+				existing.Secret, existing.Lifecycle = codexMergedSecret(existing.Secret, account.Secret, account.Carries), bulkLifecycle(true)
 				if account.ItemName != "" {
 					existing.Name = account.ItemName
 				}
@@ -1772,7 +1772,7 @@ func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name 
 	stored, err := h.opts.Credentials.PutConnection(ctx, credentials.Connection{
 		NodeID: node.ID, Name: name, Identity: account.Identity,
 		AuthKind: account.AuthKind, Secret: account.Secret, Enabled: !account.Disabled,
-		Priority: priority, Lifecycle: bulkLifecycle,
+		Priority: priority, Lifecycle: bulkLifecycle(false),
 	})
 	if err != nil {
 		return credentials.Connection{}, false, err

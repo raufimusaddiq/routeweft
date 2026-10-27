@@ -101,8 +101,10 @@ func codexImportFlow() Flow {
 			providerData := codexProviderData(accountID, planType)
 			providerData["authMethod"] = "access_token"
 			return Result{
-				AuthKind: credentials.AuthOAuth,
-				Identity: email,
+				// Parsed, never sent to the provider: nothing confirmed it (Unvalidated).
+				Unvalidated: true,
+				AuthKind:    credentials.AuthOAuth,
+				Identity:    email,
 				// The label the reference falls back to after the operator's name and
 				// the email (import-token/route.js:68).
 				FallbackName: "ChatGPT Access Token",
@@ -168,6 +170,8 @@ func grokCLIImportFlow() Flow {
 				providerData["email"] = identity
 			}
 			return Result{
+				// Parsed, never sent to the provider: nothing confirmed it (Unvalidated).
+				Unvalidated: true,
 				AuthKind:    credentials.AuthOAuth,
 				Identity:    identity,
 				DisplayName: account.DisplayName,

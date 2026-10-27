@@ -319,8 +319,13 @@ type Result struct {
 	// Unvalidated marks a credential stored although the provider did not
 	// confirm it: Xiaomi's soft validation keeps a key whose model listing
 	// failed and records it untested, or leaves a stored duplicate's status as
-	// it was (xiaomi-mimo/api-key/route.js:52-55,79,115). Every other result is
-	// a credential the provider issued or accepted.
+	// it was (xiaomi-mimo/api-key/route.js:52-55,79,115). An import the flow
+	// only parses (a pasted Codex, grok-cli or Cursor token, a Kiro CLI-proxy
+	// file) is unvalidated too: no provider saw it, so it is not recorded active
+	// although the reference writes testStatus "active" there
+	// (codex/import-token/route.js:78, cursor/import/route.js:56,
+	// kiro/import-cli-proxy/route.js:23). Every other result is a credential the
+	// provider issued or accepted.
 	Unvalidated bool
 }
 
