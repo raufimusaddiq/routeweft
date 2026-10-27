@@ -8,12 +8,31 @@
 #   npm ci
 #   npm install --no-save --no-package-lock playwright-core@1.49.1
 #   npm run smoke
+#
+# scripts/smoke-cleanup-check.sh verifies that every exit path stops the preview.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 npm run build
+# The preview runs in its own process group (set -m) so that cleanup can stop
+# npx and the vite child it spawns together, by group ID, on every exit path.
+preview_pid=
+stop_preview() {
+  [ -n "$preview_pid" ] || return 0
+  kill -TERM -- "-$preview_pid" 2>/dev/null || return 0
+  for _ in $(seq 1 20); do
+    kill -0 -- "-$preview_pid" 2>/dev/null || break
+    sleep 0.25
+  done
+  kill -KILL -- "-$preview_pid" 2>/dev/null || true
+  wait "$preview_pid" 2>/dev/null || true
+}
+trap stop_preview EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+set -m
 npx vite preview --host 127.0.0.1 --port 4173 >/tmp/routeweft-ui-preview.log 2>&1 &
 preview_pid=$!
-trap 'kill "$preview_pid" 2>/dev/null || true' EXIT
+set +m
 for _ in $(seq 1 60); do
   if curl -fsS http://127.0.0.1:4173 >/dev/null; then break; fi
   sleep 0.5
