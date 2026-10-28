@@ -13,7 +13,9 @@ ticket maps to one. Two things the ticket does not say:
   read the server's own home directory and **return the raw credential to the
   browser** (`refreshToken`, `clientSecret`, `apiKey`, `mimoPassToken`). Routeweft's
   rule is that raw provider credentials never reach the browser (AGENTS.md §11), so
-  these are absent by design, not by omission. Section 4 says what replaces them.
+  these are absent by design, not by omission. Section 4 says what replaces them;
+  #296 (BDR-028) later brought back Xiaomi's as a server-side, consented import
+  that returns nothing secret.
 - The dispatcher `R/[provider]/[action]/route.js` carries host actions the ticket
   does not list: loopback listeners (`start-proxy` `:139`, `stop-proxy` `:218`,
   `poll-status` `:182`), `ide-status` `:229`, `register-session` `:303` (which calls
@@ -42,7 +44,7 @@ Routeweft stores the same fields in the sealed secret payload.
 | kiro auto-import | `R/kiro/auto-import/route.js:12-132` | scans `~/.aws/sso/cache` for `aorAAAAAG…` | returns token + client secret to the browser | **deliberately absent** (§4) |
 | kiro device | `L/providers/kiro.js:6`, `L/providers/index.js:175-179` | AWS SSO OIDC registration + device authorization; a missing profile ARN is looked up | client registration kept for refresh | already implemented (`custom.go:kiroFlow`); the ARN lookup added in #219 |
 | xiaomi-mimo key | `R/xiaomi-mimo/api-key/route.js:11-136` | `sk-` prefix; `GET {base}/models` is *soft* (`:49-56`) | key, `uid`, `baseUrl`, `modelCount`, `mimoPassToken`/`UserId`/`CUserId` | **key and sealed account-field import implemented** (#181, §5) |
-| xiaomi-mimo auto-import | `R/xiaomi-mimo/auto-import/route.js:52-140` | reads `~/.local/share/mimocode/auth.json` and Desktop's cookie store | returns key + `passToken` to the browser | **deliberately absent** (§4); the file's *contents* are now accepted pasted |
+| xiaomi-mimo auto-import | `R/xiaomi-mimo/auto-import/route.js:52-140` | reads `~/.local/share/mimocode/auth.json` and Desktop's cookie store | returns key + `passToken` to the browser | **implemented with two consents** (#296, BDR-028): `POST /admin/v1/oauth/xiaomi-mimo/discover` reads both on the server and seals them; nothing secret is returned. The file's contents are also accepted pasted |
 | refresh (all) | `open-sse/services/tokenRefresh.js:131-160`, `…/providers.js:326-455` | per-provider grant | rotated pair written back | table already mirrored; **kiro now covers its three shapes** |
 
 ## 2. What changed, and why each is a real difference
@@ -83,9 +85,10 @@ Routeweft stores the same fields in the sealed secret payload.
 
 ## 4. Host-secret access
 
-Routeweft does not read the host's home directory for any import, and no route
-returns a stored credential. The three pin `auto-import` routes are replaced by a
-paste of the *same file contents*: Kiro's `kiro-auth-token.json` as written (its
+No route returns a stored credential, and the host's home directory is read for
+one import only: MiMo Desktop discovery, when the host allows it and the operator
+consents in the request (#296, BDR-028; SPEC 19). Otherwise the three pin
+`auto-import` routes are replaced by a paste of the *same file contents*: Kiro's `kiro-auth-token.json` as written (its
 `accessToken` is ignored; the refresh token is proven by refreshing) plus the client
 registration's `clientId`/`clientSecret` (or `client_id`/`client_secret`) go in the
 token-import JSON, and MiMo
@@ -105,7 +108,7 @@ What is **not** on this host, and left named rather than invented:
 - **MiMo Desktop's account-session `passToken`.** It lives in Desktop's Chromium cookie
   database (`open-sse/shared/mimoAccount.js`), which only exists on the machine where
   Desktop runs. The import accepts pasted `mimoPassToken`/`mimoUserId`/
-  `mimoCUserId` (#181); host discovery stays open; see §5.
+  `mimoCUserId` (#181), and #296 reads it from that database with consent; see §5.
 - Cursor's `state.vscdb` (token and machine id) and Kiro's `~/.aws/sso/cache`, for the
   same reason.
 
@@ -117,10 +120,12 @@ The quota reader derives the five-step SSO session and reads the account usage
 service (`open-sse/shared/mimoAccount.js:119-175,246-260` at `1c3b9f47`).
 
 Preview inference remains unwired: its route switch and defaults are separate
-executor work (`open-sse/executors/xiaomi-mimo.js:30-94`). Host auto-import remains
-open because neither the MiMoCode auth file nor Desktop cookie database exists
-on this host. See PARITY’s MiMo account quota section for evidence and remaining
-gaps; #181 changes neither provider readiness nor inference dispatch.
+executor work (`open-sse/executors/xiaomi-mimo.js:30-94`). Host auto-import was
+left open by #181 and is implemented by #296 behind two consents (BDR-028):
+discovery reads `auth.json` and Desktop's account cookies on the server, and a
+Xiaomi sign-in started with consent attaches the session. Neither file exists on
+this development host, so the evidence is fixture homes (PARITY §6.33). #181 and
+#296 change neither provider readiness nor inference dispatch.
 
 ## 6. Durable rotation
 

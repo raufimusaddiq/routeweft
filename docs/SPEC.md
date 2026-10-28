@@ -1158,9 +1158,31 @@ connection's key and never echoed in read models, logs, or errors. Quota reads
 prefer the derived account session; if the session or account usage read fails,
 the stored API key is tried. If neither path yields quota, return an error
 observation with no fabricated window; failed reads retain the last good view.
-Routeweft never reads the host's home directory for an import and never returns a
-stored credential; the reference's `auto-import` routes are replaced by pasting the
-same file contents (docs/P04_ONBOARDING_AUDIT.md). A refresh dispatches on the
+Routeweft never returns a stored credential, and reads the host's home directory
+for one import only: MiMo Desktop discovery (BDR-028, #296). Every other
+reference `auto-import` route is replaced by pasting the same file contents
+(docs/P04_ONBOARDING_AUDIT.md). Discovery needs two consents: the server started
+with `ROUTEWEFT_ALLOW_HOST_CREDENTIAL_DISCOVERY=true` (default false), and
+`consent: true` in the admin-session request
+`POST /admin/v1/oauth/xiaomi-mimo/discover` (`{name?, identity?, consent}`).
+Without the first it answers 403 `host_discovery_disabled`, without the second
+400 `consent_required`, and nothing is opened. With both it reads the first
+readable MiMoCode `auth.json` of the reference's candidates
+(`~/.local/share/mimocode/auth.json`; then `%APPDATA%/Xiaomi MiMo/auth.json` on
+Windows or `~/Library/Application Support/mimocode/auth.json` on macOS), checks
+it with the reference's messages (missing file 404 `discovery_not_found` naming
+the paths checked; invalid JSON, no `xiaomi.key`, no `sk-` prefix or a control
+character 400 `import_invalid`; no uid and no identity given 400
+`oauth_identity_unresolved`), then reads `passToken`, `userId` and `cUserId`
+from the `.account.xiaomi.com` rows of a private copy of Desktop's Chromium
+cookie store (`value` only; a locked, missing or unusable store imports the key
+alone). The result goes through the Xiaomi import above, duplicate merge
+included, and the answer is the saved connection plus
+`discovery: {source, accountSession}`, never a key or session. A Xiaomi `/start`
+with `desktopSession: true` (403 without the host's consent, 400 for another
+provider) attaches the same session when its callback completes. The provider
+read model reports `hostDiscovery: true` only where this endpoint would read. A
+refresh dispatches on the
 stored credential shape, and a rotation is committed before it is published
 (SPEC 19); an export that carries no lifetime has an unknown expiry, never `now`.
 

@@ -66,6 +66,10 @@ type Options struct {
 	// stale. Zero uses defaultQuotaStaleAfter.
 	QuotaStaleAfter       time.Duration
 	AllowPrivateUpstreams bool
+	// HostCredentialDiscovery is the host's consent to reading MiMo Desktop's
+	// credentials from the server user's home directory (#296). Off, nothing on the
+	// host is read; on, each read still needs the operator's consent in its request.
+	HostCredentialDiscovery bool
 	// PXPIPE is the process-level sink compiled saver pipelines report into;
 	// it backs the PXPIPE logs and stats routes.
 	PXPIPE *pxpipe.Service
@@ -166,6 +170,8 @@ type Handler struct {
 	// deletes a Codex update read-modify-writes over, which it must neither
 	// overwrite nor bring back.
 	connectionMu sync.Mutex
+	// mimoDesktop reads MiMo Desktop's files when discovery is allowed (#296).
+	mimoDesktop mimoDesktopSource
 }
 
 // New builds the control API handler.
@@ -183,7 +189,7 @@ func New(opts Options) *Handler {
 	if opts.OAuthClient == nil {
 		opts.OAuthClient = client
 	}
-	h := &Handler{opts: opts, throttler: newThrottler(), probeTransport: client.Transport, proxyClients: transport.NewPooledClients(), proxyTestTarget: defaultProxyTestTarget, saverClient: client, oauth: newOAuthFlows(), oauthFlows: onboarding.NewRegistry(), manualFlows: onboarding.ManualFlows()}
+	h := &Handler{opts: opts, throttler: newThrottler(), probeTransport: client.Transport, proxyClients: transport.NewPooledClients(), proxyTestTarget: defaultProxyTestTarget, saverClient: client, oauth: newOAuthFlows(), oauthFlows: onboarding.NewRegistry(), manualFlows: onboarding.ManualFlows(), mimoDesktop: hostMimoDesktop()}
 	if strings.TrimSpace(opts.ProxyTestURL) != "" {
 		h.proxyTestTarget = strings.TrimSpace(opts.ProxyTestURL)
 	}
@@ -236,6 +242,7 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.Handle("POST /admin/v1/oauth/{provider}/poll", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthDevicePoll)))
 	mux.Handle("POST /admin/v1/oauth/{provider}/cancel", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthCancel)))
 	mux.Handle("POST /admin/v1/oauth/{provider}/import", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthImport)))
+	mux.Handle("POST /admin/v1/oauth/{provider}/discover", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthDiscover)))
 	// Bulk import is only served where the reference exposes it (codex, grok-cli);
 	// the handler refuses the rest rather than accepting a batch it would drop.
 	mux.Handle("POST /admin/v1/oauth/{provider}/bulk-import", h.requireSessionHandler(http.HandlerFunc(h.handleOAuthBulkImport)))

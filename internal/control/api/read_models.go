@@ -193,7 +193,11 @@ type providerReadModel struct {
 	SignInMethods []signInMethodReadModel `json:"signInMethods,omitempty"`
 	// BulkImport means POST /oauth/{id}/bulk-import accepts this provider, by the
 	// rule that endpoint applies, so the dashboard offers it only where it works.
-	BulkImport      bool `json:"bulkImport,omitempty"`
+	BulkImport bool `json:"bulkImport,omitempty"`
+	// HostDiscovery means POST /oauth/{id}/discover may read this provider's
+	// desktop credentials on this host and a sign-in may attach its account
+	// session: MiMo Desktop, when the host allows it (#296).
+	HostDiscovery   bool `json:"hostDiscovery,omitempty"`
 	ConfiguredNodes int  `json:"configuredNodes"`
 	EnabledAccounts int  `json:"enabledAccounts"`
 	// Readiness is the build's immutable capability for this provider (SPEC §36).
@@ -291,6 +295,7 @@ FROM provider_nodes n LEFT JOIN provider_connections c ON c.node_id=n.id GROUP B
 		if flow, ok := h.importFlowFor(spec.ID); ok && flow.Bulk != nil && specAllowsOAuth(spec) {
 			item.BulkImport = true
 		}
+		item.HostDiscovery = spec.ID == mimoProviderID && h.opts.HostCredentialDiscovery && specAllowsOAuth(spec)
 		for _, transport := range spec.Transports {
 			item.Transports = append(item.Transports, string(transport))
 		}

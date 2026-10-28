@@ -407,3 +407,46 @@ bodies) and 4 (charts, mark) follow. Each phase changes code, guards and the
 contract together. Navigation, routes, features, aria, 44px targets, status
 never shown by colour alone and no horizontal overflow at 320px are unchanged.
 This decision authorizes no API, backend or product-scope change.
+
+## BDR-028 — MiMo Desktop credentials are read from the host only with two consents
+
+Decision (owner, issue #296, 2026-10-29): Routeweft may read Xiaomi MiMo
+Desktop's credentials from the server user's home directory, as LiteRouter does,
+but never silently. This changes the P04/R11 decision recorded in
+`P04_ONBOARDING_AUDIT.md` §4, SPEC 19 and PARITY row 41 ("Routeweft never reads
+the host's home directory for an import"). That decision stays in force for
+every other provider and for every read this one does not name.
+
+What the pin does (`1c3b9f47`): its Xiaomi modal calls auto-import as soon as it
+opens, which reads MiMoCode's `auth.json` and copies Desktop's Chromium cookie
+store to read `passToken`, `userId` and `cUserId`, and returns all of them to the
+browser (`auto-import/route.js:25-131`, `mimoAccount.js:36-94`,
+`XiaomiMimoAuthModal.js:22-55`). Its OAuth exchange attaches the same session to
+every Xiaomi sign-in (`[provider]/[action]/route.js:335-361`), and its quota
+reader reads the cookie store again on every read of a connection without a
+stored passToken (`mimoAccount.js:181-185`).
+
+Rules:
+
+- **Two consents.** The host's: the server starts with
+  `ROUTEWEFT_ALLOW_HOST_CREDENTIAL_DISCOVERY=true` (default false). The
+  operator's: the admin-session request that reads carries it
+  (`POST /admin/v1/oauth/xiaomi-mimo/discover` with `consent: true`, or a Xiaomi
+  `/start` with `desktopSession: true`). Without both, nothing on the host is
+  opened.
+- **Only the pin's paths, only these fields.** `auth.json` at the pin's
+  candidates and the `.account.xiaomi.com` rows of Desktop's cookie store,
+  read from a private copy (mode 0600, removed afterwards) by the bundled
+  SQLite driver. No keychain, no decryption of `encrypted_value`, no other
+  browser store.
+- **Nothing returns to the browser.** What is read goes through the same import
+  as a pasted file and is sealed into the connection; the answer names only the
+  file it came from and whether a session was found.
+- **No read behind the operator's back.** Quota readers keep using only the
+  sealed account fields (SPEC, P05 quota readers). The pin's per-read fallback
+  (`mimoAccount.js:181-185`) is an **open parity gap, tracked in #299**. Until
+  then, an operator renews a session by discovering again. #299 implements it
+  as an explicit per-connection opt-in under the same two consents, which is
+  revocable and bounded to the pin's 30-minute cache (proposal: PARITY §6.33).
+
+Any other host-secret source needs its own reviewed BDR change.

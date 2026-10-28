@@ -211,6 +211,8 @@ const { join } = require('node:path');
     // build; Kiro's import takes a key, an IDE token file or a CLIProxyAPI export.
     { id: 'cursor', transports: ['cursor'], auth: 'oauth', authModes: [], modelCatalog: 'static', passthroughModels: false, reportsUsage: false, flowType: 'import_token', signInModes: ['import'], metaKeys: ['machineId'], signInMethods: [{ mode: 'import', authKind: 'oauth', resolvesIdentity: true, metaKeys: ['machineId'] }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'unavailable', served: false, reason: 'smoke fixture: no ingress binding' } },
     { id: 'kiro', transports: ['anthropic'], auth: 'oauth', authModes: ['oauth', 'api-key'], modelCatalog: 'static', passthroughModels: false, reportsUsage: true, flowType: 'device_code', signInModes: ['import'], metaKeys: ['region'], signInMethods: [{ mode: 'import', authKind: 'api-key', resolvesIdentity: false, metaKeys: ['region'] }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'ready', served: true } },
+    // #296: MiMo Desktop discovery, offered because the host allows it.
+    { id: 'xiaomi-mimo', hostDiscovery: true, transports: ['openai-chat'], auth: 'oauth', authModes: ['oauth', 'api-key'], modelCatalog: 'static', passthroughModels: false, reportsUsage: true, flowType: 'authorization_code', signInModes: ['browser', 'import'], metaKeys: ['keyName', 'baseUrl', 'uid'], signInMethods: [{ mode: 'browser', authKind: 'oauth', resolvesIdentity: false, infersIdentity: true, completion: 'callback', metaKeys: ['keyName'], redirectUri: 'https://dashboard.example.test/' }, { mode: 'import', authKind: 'api-key', resolvesIdentity: false, metaKeys: ['baseUrl', 'uid'] }], configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'ready', served: true } },
   ];
   const fulfillCancel = (route, mode) => {
     if (mode === 'abort') return route.abort('failed');
@@ -245,6 +247,9 @@ const { join } = require('node:path');
   const signInStarts = [];
   // #218: bodies the specialized import panels sent.
   const credentialImports = [];
+  // #296: bodies MiMo Desktop discovery and its sign-in sent.
+  const hostDiscoveries = [];
+  const mimoStarts = [];
   const signInCancels = [];
   const signInCallbacks = [];
   const signInPatches = [];
@@ -361,7 +366,7 @@ const { join } = require('node:path');
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: createdKeyID, revoked: true, configRevision: 10 }) });
   }
   if (url.pathname === '/admin/v1/providers' && method === 'GET') {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [...(signInProviders ? signInFixtureProviders : []), { id: 'openai', transports: ['openai-chat','openai-responses'], auth: 'api-key', authModes: ['api-key'], defaultBaseURL: 'https://api.openai.com/v1', modelCatalog: 'static', passthroughModels: false, reportsUsage: false, configuredNodes: 1, enabledAccounts: 1, readiness: { status: 'ready', served: true } }, { id: 'openrouter', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'unavailable', served: false, reason: 'smoke fixture: wire not bound' } }], page: 1, pageSize: 100, total: signInProviders ? 7 : 2 }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [...(signInProviders ? signInFixtureProviders : []), { id: 'openai', transports: ['openai-chat','openai-responses'], auth: 'api-key', authModes: ['api-key'], defaultBaseURL: 'https://api.openai.com/v1', modelCatalog: 'static', passthroughModels: false, reportsUsage: false, configuredNodes: 1, enabledAccounts: 1, readiness: { status: 'ready', served: true } }, { id: 'openrouter', transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key'], modelCatalog: 'dynamic', passthroughModels: true, reportsUsage: false, configuredNodes: 0, enabledAccounts: 0, readiness: { status: 'unavailable', served: false, reason: 'smoke fixture: wire not bound' } }], page: 1, pageSize: 100, total: signInProviders ? 8 : 2 }) });
   }
   if (url.pathname === '/admin/v1/oauth/codex/start' && method === 'POST') {
     signInStarts.push(route.request().postDataJSON());
@@ -406,6 +411,17 @@ const { join } = require('node:path');
     if (url.pathname.includes('cursor')) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-cursor', nodeId: 'node-cursor', providerId: 'cursor', name: 'cursor@example.test', authKind: 'oauth', identity: 'cursor@example.test', enabled: true, priority: 0, credentialConfigured: true, outcome: 'added' }) });
     if (credentialImports.filter(item => item.identity === 'kiro@example.test').length === 1) return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: { code: 'identity_conflict', message: 'this account is already connected, with a different credential mode or username; edit or delete that connection first' } }) });
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-kiro', nodeId: 'node-kiro', providerId: 'kiro', name: 'kiro@example.test', authKind: 'oauth', identity: 'kiro@example.test', enabled: true, priority: 0, credentialConfigured: true, outcome: 'updated', expired: true, refreshable: true }) });
+  }
+  if (url.pathname === '/admin/v1/oauth/xiaomi-mimo/discover' && method === 'POST') {
+    hostDiscoveries.push(route.request().postDataJSON());
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-mimo', nodeId: 'node-mimo', providerId: 'xiaomi-mimo', name: '7@xiaomi', authKind: 'api-key', identity: '7@xiaomi', enabled: true, priority: 0, credentialConfigured: true, outcome: 'added', discovery: { source: '/home/routeweft/.local/share/mimocode/auth.json', accountSession: true } }) });
+  }
+  if (url.pathname === '/admin/v1/oauth/xiaomi-mimo/start' && method === 'POST') {
+    mimoStarts.push(route.request().postDataJSON());
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ state: 'smoke-mimo-state', authorizeUrl: 'https://platform.xiaomimimo.com/authorize?pk=x', completion: 'callback', flowType: 'authorization_code', expiresAt: '2099-01-01T00:00:00Z' }) });
+  }
+  if (url.pathname === '/admin/v1/oauth/xiaomi-mimo/cancel' && method === 'POST') {
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ cancelled: true }) });
   }
   if (url.pathname === '/admin/v1/oauth/codex/bulk-import' && method === 'POST') {
     bulkImports.push(route.request().postDataJSON());
@@ -958,6 +974,48 @@ const { join } = require('node:path');
   report.kiroExpired = await signInForm.getByText(/had already expired/).textContent();
   assert.match(report.kiroExpired, /refresh token/);
   assert.equal((await page.content()).includes(kiroSecret), false, 'no imported secret stays in the page');
+  await signInForm.getByRole('button', { name: 'Done', exact: true }).click();
+  await signInForm.waitFor({ state: 'detached' });
+  // #296: MiMo Desktop discovery reads the server's files only after the operator
+  // ticks consent, sends nothing secret, and the consent is not kept; the browser
+  // sign-in sends desktopSession only when its own box is ticked.
+  await page.fill('#provider-filter', 'xiaomi-mimo');
+  await page.locator('.provider-option', { hasText: 'xiaomi-mimo' }).first().click();
+  await page.getByRole('button', { name: 'Add connection', exact: true }).click();
+  await signInForm.waitFor();
+  await signInForm.getByText(/Sign in with/).first().waitFor();
+  const mimoSignIn = signInForm.getByRole('button', { name: /^Sign in with/ }).first();
+  await mimoSignIn.click();
+  await signInForm.getByRole('button', { name: 'Cancel sign-in', exact: true }).click();
+  await signInForm.getByText(/Sign-in cancelled/).waitFor();
+  const mimoConsent = signInForm.getByLabel(/Also attach MiMo Desktop’s account session/);
+  assert.equal(await mimoConsent.isChecked(), false, 'the sign-in consent is never preset');
+  await mimoConsent.check();
+  await mimoSignIn.click();
+  await signInForm.getByRole('button', { name: 'Cancel sign-in', exact: true }).click();
+  await signInForm.getByText(/Sign-in cancelled/).waitFor();
+  assert.equal(mimoStarts.length, 2);
+  assert.equal(mimoStarts[0].desktopSession, undefined, 'no consent, no desktopSession');
+  assert.equal(mimoStarts[1].desktopSession, true);
+  assert.equal(await mimoConsent.isChecked(), false, 'a cancelled sign-in does not keep the consent');
+  await signInForm.getByRole('button', { name: 'Close', exact: true }).click();
+  await signInForm.waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: 'Add connection', exact: true }).click();
+  await signInForm.waitFor();
+  await signInForm.getByRole('radio', { name: 'Import API key', exact: true }).check();
+  const discoverButton = signInForm.getByRole('button', { name: 'Find on this server', exact: true });
+  await discoverButton.waitFor();
+  assert.equal(await discoverButton.isDisabled(), true, 'discovery waits for consent');
+  const hostConsent = signInForm.getByLabel(/I allow Routeweft to read MiMo Desktop’s credentials on this server, once/);
+  assert.equal(await hostConsent.isChecked(), false, 'the discovery consent is never preset');
+  await hostConsent.check();
+  await discoverButton.click();
+  await signInForm.getByText('Connected', { exact: true }).waitFor();
+  assert.equal(hostDiscoveries.length, 1);
+  assert.equal(hostDiscoveries[0].consent, true);
+  assert.equal(Object.keys(hostDiscoveries[0]).some(key => /input|key|token|pass/i.test(key)), false, 'the browser sends no credential');
+  report.mimoDiscovery = await signInForm.getByText(/account session was attached/).textContent();
+  assert.match(report.mimoDiscovery, /mimocode\/auth\.json on the server/);
   await signInForm.getByRole('button', { name: 'Done', exact: true }).click();
   await signInForm.waitFor({ state: 'detached' });
   // Device sign-in: a failed cancel leaves the poll running, and a cancel that

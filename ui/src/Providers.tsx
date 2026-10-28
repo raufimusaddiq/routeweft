@@ -10,13 +10,13 @@ import { bulkSummary, canReauthenticate, closeSignInWindow, duplicateNote, openS
 import { quotaLine, quotaQuery, type QuotaItem } from './quotaView'
 import { browserJourney, checkedNote, copilotNote, DEVICE_REQUEST_TIMEOUT_MS, deviceCopyItems, deviceJourney, devicePollDelay, devicePollingOver, identityPrompt, importJourney, profileArnNote, projectNote, requestBound, validProfileArn, validProjectId } from './journeys'
 import { canRelink, lifecycleLine, relinkPatch, TEST_STATUS_LABEL, testStatusOf, testStatusTone, type ConnectionLifecycle } from './connectionStatus'
-import { BULK_MAX_BYTES, IMPORT_MAX_BYTES, expiredNote, importShapes, missingMeta as missingImportMeta, readBulkFiles, readCredentialFile, savedReadinessNote } from './credentialImport'
+import { BULK_MAX_BYTES, IMPORT_MAX_BYTES, expiredNote, hostDiscoveryNote, importShapes, type HostDiscovery, missingMeta as missingImportMeta, readBulkFiles, readCredentialFile, savedReadinessNote } from './credentialImport'
 
 function ReadinessTag({ provider }: { provider: { readiness?: Readiness } }) {
   const status = readinessStatus(provider)
   return <span className={`state-tag readiness-tag readiness-${status}`} title={provider.readiness?.reason || 'Set by this build, not by account settings.'}>{READINESS_LABEL[status]}</span>
 }
-type Provider = { id: string; transports: string[]; auth: string; authModes: string[]; defaultBaseURL?: string; modelCatalog: string; passthroughModels: boolean; staticModels?: string[]; reportsUsage: boolean; flowType?: string; signInModes?: SignInMode[]; metaKeys?: string[]; signInMethods?: SignInMethod[]; bulkImport?: boolean; configuredNodes: number; enabledAccounts: number; readiness?: Readiness }
+type Provider = { id: string; transports: string[]; auth: string; authModes: string[]; defaultBaseURL?: string; modelCatalog: string; passthroughModels: boolean; staticModels?: string[]; reportsUsage: boolean; flowType?: string; signInModes?: SignInMode[]; metaKeys?: string[]; signInMethods?: SignInMethod[]; bulkImport?: boolean; hostDiscovery?: boolean; configuredNodes: number; enabledAccounts: number; readiness?: Readiness }
 type Node = { id: string; kind: string; providerId: string; name: string; prefix?: string; baseUrl?: string; transports: string[] }
 type Connection = { id: string; nodeId: string; providerId: string; name: string; authKind: string; identity: string; enabled: boolean; priority: number; proxyPoolId?: string; connectionProxy?: ConnectionProxy; credentialConfigured: boolean; signInMethod?: string; outcome?: string; plan?: string; project?: string; projectMissing?: boolean; profileArnMissing?: boolean; copilotMissing?: boolean; expired?: boolean; refreshable?: boolean } & ConnectionLifecycle
 type Model = { providerId: string; id: string; name?: string; contextWindow?: number; capabilities: string[]; disabled: boolean; custom?: boolean }
@@ -114,6 +114,9 @@ export function Providers({ onUnauthorized }: Props) {
   // Set when a flow that normally reads the account from the provider came back
   // without one, so the next attempt asks the operator instead.
   const [needIdentity, setNeedIdentity] = useState(false)
+  // The operator's consent to read MiMo Desktop's credentials on the server, for
+  // the one discovery or sign-in it is given to (#296). Never preset or kept.
+  const [hostConsent, setHostConsent] = useState(false)
   // What a request that did not end the attempt found out (a save in progress, no
   // answer, a cancel the server did not confirm). Shown on the pending attempt,
   // which stays tracked.
@@ -417,7 +420,7 @@ export function Providers({ onUnauthorized }: Props) {
   // carries over to the next attempt.
   function endAttempt() {
     setOauthFlow(null); setOauthInput(''); setDeviceFlow(null)
-    setAttemptNote(''); setPollStalled(false)
+    setAttemptNote(''); setPollStalled(false); setHostConsent(false)
     closeSignInWindow(popupRef.current); popupRef.current = null; setPopupBlocked(false); setReauthTarget(null)
   }
 
@@ -445,7 +448,8 @@ export function Providers({ onUnauthorized }: Props) {
     setReauthTarget(target ?? null)
     let started = false
     await action('oauth-start', '', async () => {
-      const flow = await send(`/oauth/${encodeURIComponent(selected)}/start`, 'POST', target ? { connectionId: target.id, meta: flowMeta() } : { ...signInAccount(), meta: flowMeta() }) as Omit<OAuthFlow, 'provider'>
+      const desktop = selectedProvider.hostDiscovery && hostConsent ? { desktopSession: true } : {}
+      const flow = await send(`/oauth/${encodeURIComponent(selected)}/start`, 'POST', target ? { connectionId: target.id, meta: flowMeta(), ...desktop } : { ...signInAccount(), meta: flowMeta(), ...desktop }) as Omit<OAuthFlow, 'provider'>
       setOauthFlow({ ...flow, provider: selected })
       setPopupBlocked(sendSignInWindow(popup, flow.authorizeUrl) === 'blocked')
       started = true
@@ -553,6 +557,7 @@ export function Providers({ onUnauthorized }: Props) {
     setBulkShown(false)
     setBulkError('')
     setBulkResult(null)
+    setHostConsent(false)
     setAfterLogin({})
     closeSignInWindow(popupRef.current)
     popupRef.current = null
@@ -616,6 +621,23 @@ export function Providers({ onUnauthorized }: Props) {
         }
         throw cause
       }
+    })
+  }
+
+  // MiMo Desktop discovery (#296): the server reads Desktop's files only with the
+  // consent given here, seals what it finds, and answers where the key came from.
+  async function discoverOnHost() {
+    if (!selectedProvider?.hostDiscovery || !hostConsent) return
+    setOutcome(null)
+    await action('host-discover', '', async () => {
+      try {
+        const saved = await send(`/oauth/${encodeURIComponent(selected)}/discover`, 'POST', { ...signInAccount(), consent: true }) as Connection & { discovery?: HostDiscovery }
+        signedIn(saved)
+        setOutcome(current => current && { ...current, message: `${current.message} ${hostDiscoveryNote(saved.discovery)}` })
+      } catch (cause) {
+        if (errorCodeOf(cause) === 'oauth_identity_unresolved') setNeedIdentity(true)
+        throw cause
+      } finally { setHostConsent(false) }
     })
   }
 
@@ -926,6 +948,11 @@ export function Providers({ onUnauthorized }: Props) {
           {importMissing.length > 0 && <p role="note">Enter the {importMissing.map(key => META_FIELDS.find(field => field.key === key)?.label ?? key).join(' and ')} above to import.</p>}
           {importError && <p role="alert">{importError}</p>}
           <div className="oauth-actions"><button className="button-primary" type="button" disabled={busy !== '' || !importInput.trim() || importMissing.length > 0 || (askIdentity && !account.identity.trim())} onClick={() => void importOnly()}>{busy === 'oauth-import' ? 'Saving…' : 'Import credential'}</button></div>
+          {selectedProvider.hostDiscovery && <div className="host-discovery" role="group" aria-label="Find MiMo Desktop on this server">
+            <p>Or let the server find MiMo Desktop’s auth.json and account session in its own user’s home directory, if Desktop runs on the machine Routeweft runs on. The account is read from the file; the key and session are sealed on the server and never shown here.</p>
+            <label className="host-consent"><input type="checkbox" checked={hostConsent} onChange={event => setHostConsent(event.target.checked)} />I allow Routeweft to read MiMo Desktop’s credentials on this server, once.</label>
+            <div className="oauth-actions"><button className="button-secondary" type="button" disabled={busy !== '' || !hostConsent} onClick={() => void discoverOnHost()}>{busy === 'host-discover' ? 'Finding…' : 'Find on this server'}</button></div>
+          </div>}
         </div>}
         {method.kind === 'bulk' && !outcome?.connection && <div className="wide-field oauth-panel" role="group" aria-label={method.label}>
           <p>Paste accounts exported from {providerLabel(selected)}, or choose one or more exported .json files: a JSON array of objects with accessToken, and ideally refreshToken and idToken (snake_case or camelCase). Each is stored sealed; each item is reported on its own, so a bad item does not stop the rest. An account that is already connected updates its connection instead of adding a duplicate.</p>
@@ -940,6 +967,7 @@ export function Providers({ onUnauthorized }: Props) {
           {reauthTarget && <p role="note">Renewing “{reauthTarget.name}”{reauthTarget.identity ? ` (${reauthTarget.identity})` : ''}. Sign in as that account: another account is refused and nothing is saved.</p>}
           {!oauthFlow && journey && journey.before.length > 0 && <ul className="journey-notes" aria-label={`Before you sign in to ${providerLabel(selected)}`}>{journey.before.map(note => <li key={note}>{note}</li>)}</ul>}
           {!oauthFlow && missingMeta.length > 0 && <p role="note">Enter the {missingMeta.map(key => key === 'clientId' ? 'application client id' : key).join(' and ')} above to start.</p>}
+          {!oauthFlow && selectedProvider.hostDiscovery && <label className="host-consent"><input type="checkbox" checked={hostConsent} onChange={event => setHostConsent(event.target.checked)} />Also attach MiMo Desktop’s account session from this server, which reads the weekly quota. I allow Routeweft to read it once, when this sign-in finishes.</label>}
           {!oauthFlow ? reauthTarget ? <div><button className="button-primary" type="button" disabled={busy !== '' || cannotStart} onClick={() => void startOAuth(reauthTarget)}>{busy === 'oauth-start' ? 'Starting…' : 'Reauthenticate'}</button></div>
             : <><p>Sign in on the provider's page instead of copying tokens by hand.{askIdentity ? '' : ' The account is read from the provider, and you can name it afterwards.'}</p>{duplicateNote(selected) && <p>{duplicateNote(selected)}</p>}<div><button className="button-primary" type="button" disabled={busy !== '' || cannotStart || (askIdentity && !account.identity.trim())} onClick={() => void startOAuth()}>{busy === 'oauth-start' ? 'Starting…' : method.label}</button></div></>
             : <><p>{journey?.hint}</p>{popupBlocked ? <p role="alert">Your browser blocked the sign-in window. Open the sign-in page with the button below; the rest is the same.</p> : <p>The sign-in page opened in a new window. If you cannot see it, open it with the button below.</p>}<div><a className="button-secondary" href={signInURL(oauthFlow.authorizeUrl) ?? undefined} target="_blank" rel="noopener noreferrer">Open {providerLabel(oauthFlow.provider)} sign-in page</a></div>
