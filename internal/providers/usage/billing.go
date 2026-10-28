@@ -45,7 +45,15 @@ func toFinite(raw json.RawMessage) float64 {
 	return value
 }
 
-func amount(value float64) *float64 { return &value }
+// amount is a reported amount for a count. A non-finite one (Vercel's
+// `Number("Infinity")`) is no amount: the pin's JSON writes it as null, and Go
+// cannot encode it.
+func amount(value float64) *float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return nil
+	}
+	return &value
+}
 
 // share is the remaining fraction of a positive total, clamped to [0,1].
 func share(left, total float64) *float64 {

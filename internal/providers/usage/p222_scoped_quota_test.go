@@ -262,10 +262,14 @@ func sameFraction(got *float64, want float64) bool {
 	return got != nil && math.Abs(*got-want) < 1e-9
 }
 
-// noSecret proves neither the read model nor an error carries the token.
+// noSecret proves the read model encodes as JSON and that neither it nor an
+// error carries the token.
 func noSecret(t *testing.T, state quota.State, err error) {
 	t.Helper()
-	encoded, _ := json.Marshal(state)
+	encoded, encodeErr := json.Marshal(state)
+	if encodeErr != nil {
+		t.Fatalf("read model does not encode: %v", encodeErr)
+	}
 	if bytes.Contains(encoded, []byte(scopedToken)) || (err != nil && strings.Contains(err.Error(), scopedToken)) {
 		t.Fatalf("token exposed: state=%s err=%v", encoded, err)
 	}

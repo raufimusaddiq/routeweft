@@ -5443,6 +5443,170 @@
         }
       ]
     },
+    "amount-infinite": {
+      "upstream": [
+        {
+          "status": 200,
+          "body": {
+            "balance": "Infinity",
+            "total_used": 1
+          }
+        }
+      ],
+      "result": {
+        "plan": "Pay-as-you-go",
+        "quotas": {
+          "Used (USD)": {
+            "used": 1,
+            "total": 0,
+            "remaining": 0,
+            "remainingPercentage": 100,
+            "unlimited": true
+          },
+          "Remaining (USD)": {
+            "used": null,
+            "total": 5,
+            "remaining": null,
+            "remainingPercentage": null,
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://ai-gateway.vercel.sh/v1/credits",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "amount-negative-infinite": {
+      "upstream": [
+        {
+          "status": 200,
+          "body": {
+            "balance": "-Infinity",
+            "total_used": 1
+          }
+        }
+      ],
+      "result": {
+        "plan": "Pay-as-you-go",
+        "quotas": {
+          "Used (USD)": {
+            "used": 1,
+            "total": 0,
+            "remaining": 0,
+            "remainingPercentage": 100,
+            "unlimited": true
+          },
+          "Remaining (USD)": {
+            "used": null,
+            "total": 5,
+            "remaining": null,
+            "remainingPercentage": null,
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://ai-gateway.vercel.sh/v1/credits",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "spent-infinite": {
+      "upstream": [
+        {
+          "status": 200,
+          "body": {
+            "balance": "1",
+            "total_used": "Infinity"
+          }
+        }
+      ],
+      "result": {
+        "plan": "Pay-as-you-go",
+        "quotas": {
+          "Used (USD)": {
+            "used": null,
+            "total": 0,
+            "remaining": 0,
+            "remainingPercentage": 100,
+            "unlimited": true
+          },
+          "Remaining (USD)": {
+            "used": 1,
+            "total": 5,
+            "remaining": 1,
+            "remainingPercentage": 20,
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://ai-gateway.vercel.sh/v1/credits",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "both-infinite": {
+      "upstream": [
+        {
+          "status": 200,
+          "body": {
+            "balance": "Infinity",
+            "total_used": "-Infinity"
+          }
+        }
+      ],
+      "result": {
+        "plan": "Pay-as-you-go",
+        "quotas": {
+          "Used (USD)": {
+            "used": null,
+            "total": 0,
+            "remaining": 0,
+            "remainingPercentage": 100,
+            "unlimited": true
+          },
+          "Remaining (USD)": {
+            "used": null,
+            "total": 5,
+            "remaining": null,
+            "remainingPercentage": null,
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://ai-gateway.vercel.sh/v1/credits",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
     "auth401": {
       "upstream": [
         {

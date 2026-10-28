@@ -186,20 +186,28 @@ func TestOllamaQuotaIsThePins(t *testing.T) {
 // vercelDollars: "Used (USD)" keeps the amount spent, unbounded;
 // "Remaining (USD)" keeps the balance against the $5 allocation. The pin also
 // sets the balance as that row's `used`, which is not a spent amount and is
-// not copied.
+// not copied. An amount the pin writes as null (a non-finite `Number()`) is
+// no amount here, and the balance then has no remaining fraction.
 func vercelDollars(t *testing.T, name string, window quota.Window, pin regionalQuota) {
 	count := window.Count
 	if count == nil || count.Currency != "USD" {
 		t.Fatalf("%s count=%+v", name, count)
 	}
+	same := func(got *float64, want json.RawMessage) bool {
+		if shared.Nullish(want) {
+			return got == nil
+		}
+		return near(got, pinAmount(t, want))
+	}
 	switch name {
 	case "Used (USD)":
-		if !near(count.Used, pinAmount(t, pin.Used)) || count.Total != nil || count.Remaining != nil || window.Remaining != nil {
+		if !same(count.Used, pin.Used) || count.Total != nil || count.Remaining != nil || window.Remaining != nil {
 			t.Fatalf("%s=%+v count=%+v", name, window, count)
 		}
 	case "Remaining (USD)":
-		if count.Used != nil || !near(count.Total, pinAmount(t, pin.Total)) || !near(count.Remaining, pinAmount(t, pin.Remaining)) {
-			t.Fatalf("%s count=%+v", name, count)
+		if count.Used != nil || !same(count.Total, pin.Total) || !same(count.Remaining, pin.Remaining) ||
+			shared.Nullish(pin.RemainingPercentage) != (window.Remaining == nil) {
+			t.Fatalf("%s=%+v count=%+v", name, window, count)
 		}
 	default:
 		t.Fatalf("window %s", name)
@@ -450,5 +458,28 @@ func TestBillingSharedValueSemantics(t *testing.T) {
 	}
 	if got := encodeURIComponent("https://x/a?b=c&d=e f!'()*~"); got != "https%3A%2F%2Fx%2Fa%3Fb%3Dc%26d%3De%20f!'()*~" {
 		t.Fatalf("encodeURIComponent %s", got)
+	}
+}
+
+// TestVercelNonFiniteAmountsEncode: `Number("Infinity")` is a reported amount
+// the pin writes as null (fixtures amount-infinite, spent-infinite). It is no
+// amount and no fraction here, so the read model still encodes as JSON.
+func TestVercelNonFiniteAmountsEncode(t *testing.T) {
+	for _, body := range []string{`{"balance":"Infinity","total_used":1}`, `{"balance":"-Infinity","total_used":1}`,
+		`{"balance":"1","total_used":"Infinity"}`, `{"balance":"Infinity","total_used":"-Infinity"}`} {
+		state, err := reader(t, "vercel-ai-gateway", &stubClient{status: http.StatusOK, body: body}).Usage(context.Background(), quota.Credential{AccessToken: "k"})
+		if err != nil || len(state.Windows) != 2 {
+			t.Fatalf("%s: %+v, %v", body, state, err)
+		}
+		if _, err := json.Marshal(state); err != nil {
+			t.Fatalf("%s: read model does not encode: %v", body, err)
+		}
+		for _, window := range state.Windows {
+			for _, value := range []*float64{window.Remaining, window.Count.Used, window.Count.Total, window.Count.Remaining} {
+				if value != nil && (math.IsInf(*value, 0) || math.IsNaN(*value)) {
+					t.Fatalf("%s: %s carries %v", body, window.Name, *value)
+				}
+			}
+		}
 	}
 }

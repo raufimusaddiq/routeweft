@@ -253,6 +253,11 @@ const vercelCases = {
   'amount-shapes': { balance: 2, total_used: '' },
   'amount-coercion': { balance: '0x2', total_used: true },
   'amount-invalid': { balance: 'abc', total_used: '1' },
+  // Number("Infinity") is Infinity, which JSON.stringify writes as null.
+  'amount-infinite': { balance: 'Infinity', total_used: 1 },
+  'amount-negative-infinite': { balance: '-Infinity', total_used: 1 },
+  'spent-infinite': { balance: '1', total_used: 'Infinity' },
+  'both-infinite': { balance: 'Infinity', total_used: '-Infinity' },
 };
 
 // ---- Xiaomi MiMo (U/xiaomi-mimo.js:22-125, shared/mimoAccount.js:96-264) ------
