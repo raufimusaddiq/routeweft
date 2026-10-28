@@ -31,6 +31,9 @@ type apiKeyReader struct {
 
 	// mimo keeps Xiaomi MiMo account sessions between reads.
 	mimo *mimoSessions
+	// desktop is the consented MiMo Desktop session renewal (#299); nil never
+	// reads host credentials.
+	desktop MimoDesktopRenewal
 }
 
 func (r apiKeyReader) key(credential quota.Credential) string {

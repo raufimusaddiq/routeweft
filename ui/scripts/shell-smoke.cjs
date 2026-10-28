@@ -250,6 +250,9 @@ const { join } = require('node:path');
   // #296: bodies MiMo Desktop discovery and its sign-in sent.
   const hostDiscoveries = [];
   const mimoStarts = [];
+  // #299: bodies the MiMo session renewal toggle sent, and its state.
+  const mimoRenewals = [];
+  let mimoRenewal = false;
   const signInCancels = [];
   const signInCallbacks = [];
   const signInPatches = [];
@@ -416,6 +419,12 @@ const { join } = require('node:path');
     hostDiscoveries.push(route.request().postDataJSON());
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-mimo', nodeId: 'node-mimo', providerId: 'xiaomi-mimo', name: '7@xiaomi', authKind: 'api-key', identity: '7@xiaomi', enabled: true, priority: 0, credentialConfigured: true, outcome: 'added', discovery: { source: '/home/routeweft/.local/share/mimocode/auth.json', accountSession: true } }) });
   }
+  if (url.pathname === '/admin/v1/connections/conn-mimo/desktop-session-renewal' && method === 'PUT') {
+    const body = route.request().postDataJSON() || {};
+    mimoRenewals.push(body);
+    mimoRenewal = body.enabled === true;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'conn-mimo', providerId: 'xiaomi-mimo', name: '7@xiaomi', desktopSessionRenewal: mimoRenewal }) });
+  }
   if (url.pathname === '/admin/v1/oauth/xiaomi-mimo/start' && method === 'POST') {
     mimoStarts.push(route.request().postDataJSON());
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ state: 'smoke-mimo-state', authorizeUrl: 'https://platform.xiaomimimo.com/authorize?pk=x', completion: 'callback', flowType: 'authorization_code', expiresAt: '2099-01-01T00:00:00Z' }) });
@@ -439,7 +448,7 @@ const { join } = require('node:path');
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'node-openai', kind: 'builtin', providerId: 'openai', name: 'openai', baseUrl: 'https://api.openai.com/v1', transports: ['openai-chat','openai-responses'] }, { id: 'node-jev', kind: 'builtin', providerId: 'typesafe', name: 'typesafe', baseUrl: 'https://api.typesafe.ai/v1/systemone', transports: ['systemone'] }], page: 1, pageSize: 100, total: 2 }) });
   }
   if (url.pathname === '/admin/v1/connections' && method === 'GET') {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'conn-1', nodeId: 'node-openai', providerId: 'openai', name: 'primary', authKind: 'api-key', identity: 'acct-1', enabled: providerPatches === 0, priority: 0, credentialConfigured: true, connectionProxy: { url: 'http://proxy.example.test:3128', noProxy: 'localhost' } }, { id: 'conn-jev', nodeId: 'node-jev', providerId: 'typesafe', name: 'jev', authKind: 'api-key', identity: 'acct-jev', enabled: true, priority: 0, credentialConfigured: true }, ...(signInProviders ? [{ id: 'conn-codex-a', nodeId: 'node-codex', providerId: 'codex', name: 'Work A', authKind: 'oauth', identity: 'a@example.test', enabled: true, priority: 0, credentialConfigured: true }] : [])], page: 1, pageSize: 100, total: signInProviders ? 3 : 2 }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'conn-1', nodeId: 'node-openai', providerId: 'openai', name: 'primary', authKind: 'api-key', identity: 'acct-1', enabled: providerPatches === 0, priority: 0, credentialConfigured: true, connectionProxy: { url: 'http://proxy.example.test:3128', noProxy: 'localhost' } }, { id: 'conn-jev', nodeId: 'node-jev', providerId: 'typesafe', name: 'jev', authKind: 'api-key', identity: 'acct-jev', enabled: true, priority: 0, credentialConfigured: true }, ...(signInProviders ? [{ id: 'conn-codex-a', nodeId: 'node-codex', providerId: 'codex', name: 'Work A', authKind: 'oauth', identity: 'a@example.test', enabled: true, priority: 0, credentialConfigured: true }] : []), ...(hostDiscoveries.length ? [{ id: 'conn-mimo', nodeId: 'node-mimo', providerId: 'xiaomi-mimo', name: '7@xiaomi', authKind: 'api-key', identity: '7@xiaomi', enabled: true, priority: 0, credentialConfigured: true, desktopSessionRenewal: mimoRenewal, ...(mimoRenewal ? { desktopSessionReadAt: '2026-09-25T19:50:00Z' } : {}) }] : [])], page: 1, pageSize: 100, total: 2 + (signInProviders ? 1 : 0) + (hostDiscoveries.length ? 1 : 0) }) });
   }
   if (url.pathname === '/admin/v1/systemone' && method === 'GET') {
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: systemOneModelAdded ? [{ providerId: 'typesafe', id: 'jev', name: 'jev', capabilities: [], disabled: false }, { providerId: 'typesafe', id: 'jev-mini', name: 'jev-mini', capabilities: [], disabled: false }] : [{ providerId: 'typesafe', id: 'jev', name: 'jev', capabilities: [], disabled: false }], page: 1, pageSize: 100, total: 1 }) });
@@ -1018,6 +1027,30 @@ const { join } = require('node:path');
   assert.match(report.mimoDiscovery, /mimocode\/auth\.json on the server/);
   await signInForm.getByRole('button', { name: 'Done', exact: true }).click();
   await signInForm.waitFor({ state: 'detached' });
+  // #299: quota-read session renewal is turned on only through a confirmation
+  // that names the connection; dismissing it sends nothing, and turning it off
+  // asks for nothing. The browser never sends or sees a session value.
+  const renewOn = page.getByRole('button', { name: 'Renew session from this server', exact: true });
+  await renewOn.waitFor();
+  const dialogs = [];
+  page.once('dialog', dialog => { dialogs.push(dialog.message()); void dialog.dismiss(); });
+  await renewOn.click();
+  await page.waitForTimeout(200);
+  assert.equal(dialogs.length, 1);
+  assert.match(dialogs[0], /“7@xiaomi”.*at most every 30 minutes/);
+  assert.equal(mimoRenewals.length, 0, 'a dismissed confirmation sends nothing');
+  page.once('dialog', dialog => void dialog.accept());
+  await renewOn.click();
+  const renewOff = page.getByRole('button', { name: 'Stop session renewal', exact: true });
+  await renewOff.waitFor();
+  assert.deepEqual(mimoRenewals, [{ enabled: true, consent: true }]);
+  report.mimoRenewal = await page.locator('.connection-renewal').first().textContent();
+  assert.match(report.mimoRenewal, /may renew the account session from MiMo Desktop on this server · last read \S/);
+  page.once('dialog', () => assert.fail('turning renewal off asked for consent'));
+  await renewOff.click();
+  await renewOn.waitFor();
+  assert.deepEqual(mimoRenewals[1], { enabled: false });
+  page.removeAllListeners('dialog');
   // Device sign-in: a failed cancel leaves the poll running, and a cancel that
   // meets a save in progress claims neither cancelled nor saved until the poll says.
   await page.fill('#provider-filter', 'github');

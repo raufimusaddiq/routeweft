@@ -28,17 +28,32 @@ const mimoSessionRequired = "Weekly quota requires Xiaomi account session. API k
 // xiaomi mirrors getXiaomiMimoUsage (open-sse/services/usage/xiaomi-mimo.js:22-125).
 // With an account credential the weekly quota is read through the account
 // session (mimoAccount.js:246-264); if that yields no finite percent, or there
-// is no account credential, the key path reads the aistudio endpoint. MiMo
-// Desktop's cookie store is never read here: #296 seals its session into the
-// connection only on a consented discovery, and the pin's read-time fallback
-// (mimoAccount.js:181-185) is the open parity gap #299.
+// is no account credential, the key path reads the aistudio endpoint.
+//
+// The pin reads MiMo Desktop's cookie store for the session whenever the
+// connection stores none (mimoAccount.js:181-185). Here the reader never opens
+// it: it asks desktop (MimoDesktopRenewal), which reads and seals a session
+// only with the host's and the operator's consent (#299, BDR-028), when there
+// is no sealed session or the sealed one just failed the handshake.
 func (r apiKeyReader) xiaomi(ctx context.Context, credential quota.Credential) (quota.State, error) {
 	// Bound the SSO exchange and key fallback together, beyond Client.call’s per-hop deadline.
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
-	if credential.ProviderData["mimoPassToken"] != "" {
-		if state, read, err := r.mimoAccountUsage(ctx, credential.ProviderData); read {
-			return state, err
+	account := credential.ProviderData
+	renew := account["mimoPassToken"] == ""
+	if !renew {
+		state, read, handshakeFailed, err := r.mimoAccountUsage(ctx, account)
+		if read {
+			return r.mimoDesktopNote(state, account), err
+		}
+		renew = handshakeFailed && ctx.Err() == nil
+	}
+	if renew && r.desktop != nil {
+		if renewed := r.desktop.Renew(ctx, credential.ConnectionID, account); renewed["mimoPassToken"] != "" {
+			account = renewed
+			if state, read, _, err := r.mimoAccountUsage(ctx, account); read {
+				return r.mimoDesktopNote(state, account), err
+			}
 		}
 	}
 	// `accessToken || providerSpecificData.apiKey`, then trimmed (xiaomi-mimo.js:47-58).
@@ -76,26 +91,55 @@ func (r apiKeyReader) xiaomi(ctx context.Context, credential quota.Credential) (
 
 const mimoPlan = "Xiaomi MiMo Desktop"
 
+// MimoDesktopRenewal reads and seals MiMo Desktop's account session for one
+// connection, or returns nil; onboarding.MimoDesktopRenewal in production.
+type MimoDesktopRenewal interface {
+	Renew(ctx context.Context, connectionID string, stored map[string]string) map[string]string
+}
+
+// WithMimoDesktopRenewal gives the Xiaomi MiMo reader in readers the consented
+// host renewal (#299). Without it the reader never reads host credentials.
+func WithMimoDesktopRenewal(readers map[string]quota.UsageClient, renewal MimoDesktopRenewal) {
+	if reader, ok := readers["xiaomi-mimo"].(apiKeyReader); ok {
+		reader.desktop = renewal
+		readers["xiaomi-mimo"] = reader
+	}
+}
+
+// mimoDesktopNote records on an account-path read when a quota read last sealed
+// a session from MiMo Desktop (#299): the time only, never a value.
+func (r apiKeyReader) mimoDesktopNote(state quota.State, data map[string]string) quota.State {
+	if at := data["mimoDesktopReadAt"]; at != "" {
+		if state.Metadata == nil {
+			state.Metadata = map[string]string{}
+		}
+		state.Metadata["desktopSessionReadAt"] = at
+	}
+	return state
+}
+
 // mimoAccountUsage is the account path. read is false when the pin would move
 // on to the key: no session, or a usage answer without a finite percent.
-func (r apiKeyReader) mimoAccountUsage(ctx context.Context, account map[string]string) (state quota.State, read bool, err error) {
+// handshakeFailed is whether the session itself could not be used, as opposed
+// to a usage answer that could not be read with it.
+func (r apiKeyReader) mimoAccountUsage(ctx context.Context, account map[string]string) (state quota.State, read, handshakeFailed bool, err error) {
 	cookie, err := r.mimo.cookie(ctx, account["mimoPassToken"], r.now, func() (string, error) { return r.mimoSession(ctx, account) })
 	if err != nil {
-		return quota.State{}, false, nil
+		return quota.State{}, false, true, nil
 	}
 	reply, err := r.callWithin(ctx, mimoUsageTimeout, http.MethodGet, mimoAccountBase+"/api/user/usage", map[string]string{
 		"User-Agent": mimoAPIUserAgent, "Cookie": cookie, "Accept": "application/json",
 	}, nil)
 	if err != nil || reply.status < 200 || reply.status >= 300 {
-		return quota.State{}, false, nil
+		return quota.State{}, false, false, nil
 	}
 	data, ok := mimoData(reply.body)
 	if !ok {
-		return quota.State{}, false, nil
+		return quota.State{}, false, false, nil
 	}
 	percent, ok := shared.IsNumber(shared.Field(data, "percent"))
 	if !ok {
-		return quota.State{}, false, nil
+		return quota.State{}, false, false, nil
 	}
 	// A positive numeric resetAt is Unix seconds and wins over resetDate
 	// (xiaomi-mimo.js:30-36). One past the Date range throws outside the pin's
@@ -104,12 +148,12 @@ func (r apiKeyReader) mimoAccountUsage(ctx context.Context, account map[string]s
 	if seconds, ok := shared.IsNumber(shared.Field(data, "resetAt")); ok && seconds > 0 {
 		if math.Abs(seconds*1000) > jsMaxTime {
 			state, err = failure("Xiaomi MiMo usage reset is out of range")
-			return state, true, err
+			return state, true, false, err
 		}
 		at := time.UnixMilli(int64(seconds * 1000)).UTC()
 		reset = &at
 	}
-	return r.state(mimoPlan, mimoWeekly(percent, reset)), true, nil
+	return r.state(mimoPlan, mimoWeekly(percent, reset)), true, false, nil
 }
 
 // mimoData is `data.data` of a usage answer whose `code` is the number 0;

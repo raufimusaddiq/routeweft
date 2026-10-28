@@ -79,6 +79,16 @@ container there is no Desktop profile, so leave it false there; a discovery then
 answers `host_discovery_disabled`. To renew a session, quit Desktop (it locks its
 cookie store while it runs) and find it again.
 
+Quota reads can also renew it (#299): "Renew session from this server" on a
+Xiaomi MiMo connection row (`PUT /admin/v1/connections/{id}/desktop-session-renewal`
+with `{"enabled":true,"consent":true}`) asks for confirmation and then lets that
+connection's quota reads read Desktop's session when the connection has none or
+its session stops working, at most every 30 minutes, sealing what they read.
+The row shows when that last happened. "Stop session renewal"
+(`{"enabled":false}`) turns it off at once and works even after the host flag
+is turned off; it leaves the session already sealed in place. Restarting
+without the host flag stops every such read.
+
 `ROUTEWEFT_UI_DIR` (`--ui-dir`) points at the built Vite output; the Go binary
 then serves the dashboard at `/`. The image sets it to `/ui`. UI routes are
 hash-based, so only `/` returns `index.html`; `/assets/*` is immutable-cached and

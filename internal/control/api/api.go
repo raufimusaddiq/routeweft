@@ -189,7 +189,7 @@ func New(opts Options) *Handler {
 	if opts.OAuthClient == nil {
 		opts.OAuthClient = client
 	}
-	h := &Handler{opts: opts, throttler: newThrottler(), probeTransport: client.Transport, proxyClients: transport.NewPooledClients(), proxyTestTarget: defaultProxyTestTarget, saverClient: client, oauth: newOAuthFlows(), oauthFlows: onboarding.NewRegistry(), manualFlows: onboarding.ManualFlows(), mimoDesktop: hostMimoDesktop()}
+	h := &Handler{opts: opts, throttler: newThrottler(), probeTransport: client.Transport, proxyClients: transport.NewPooledClients(), proxyTestTarget: defaultProxyTestTarget, saverClient: client, oauth: newOAuthFlows(), oauthFlows: onboarding.NewRegistry(), manualFlows: onboarding.ManualFlows(), mimoDesktop: onboarding.HostMimoDesktop()}
 	if strings.TrimSpace(opts.ProxyTestURL) != "" {
 		h.proxyTestTarget = strings.TrimSpace(opts.ProxyTestURL)
 	}
@@ -281,6 +281,7 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/v1/pxpipe/health", h.requireSession(h.handlePXPIPEHealth))
 	mux.HandleFunc("GET /admin/v1/pxpipe/logs", h.requireSession(h.handlePXPIPELogs))
 	mux.HandleFunc("GET /admin/v1/pxpipe/stats", h.requireSession(h.handlePXPIPEStats))
+	mux.Handle("PUT /admin/v1/connections/{id}/desktop-session-renewal", h.requireSessionHandler(http.HandlerFunc(h.handleDesktopSessionRenewal)))
 	mux.Handle("POST /admin/v1/connections/{id}/proxy", h.requireSessionHandler(http.HandlerFunc(h.handleSetConnectionProxy)))
 	mux.Handle("POST /admin/v1/connections/{id}/order", h.requireSessionHandler(http.HandlerFunc(h.handleMoveConnection)))
 	for _, path := range []string{"overview", "providers", "provider-nodes", "connections", "models", "aliases", "pricing", "combos", "proxy-pools", "keys", "usage", "requests", "quota", "token-saver", "systemone"} {

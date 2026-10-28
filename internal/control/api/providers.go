@@ -219,6 +219,8 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 	// How a connection was signed in is recorded by onboarding only; the form can
 	// neither set it nor clear it (mergeConnectionSecret keeps the stored one).
 	body.Secret.AuthType = ""
+	// Nor can it allow a quota read to read host credentials (#299).
+	withoutDesktopRenewal(body.Secret.ProviderData)
 	// The Codex identity check below and the save it allows are one step, as are
 	// an edit's read of the stored row and its write (connectionMu).
 	h.connectionMu.Lock()
@@ -1372,6 +1374,15 @@ func connectionJSON(connection credentials.Connection) map[string]any {
 	// browser sign-in can renew that method (#219).
 	if method := strings.TrimSpace(connection.Secret.ProviderData["authMethod"]); method != "" {
 		view["signInMethod"] = method
+	}
+	// Whether quota reads may renew the session from MiMo Desktop, and when one
+	// last did (#299); never a value read.
+	if connection.ProviderID == mimoProviderID {
+		data := connection.Secret.ProviderData
+		view["desktopSessionRenewal"] = onboarding.MimoDesktopRenewalEnabled(data)
+		if at := data[onboarding.MimoDesktopReadAtKey]; at != "" {
+			view["desktopSessionReadAt"] = at
+		}
 	}
 	return view
 }

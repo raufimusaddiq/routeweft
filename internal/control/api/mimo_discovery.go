@@ -7,11 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"runtime"
 	"strings"
 	"unicode"
 
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
 )
 
@@ -24,8 +23,9 @@ import (
 // with host credential discovery allowed (Options.HostCredentialDiscovery), and
 // the operator's, given in the request that reads them. What is read is sealed
 // into the connection on the server and never returned to the browser. The
-// pin's quota-read fallback (mimoAccount.js:181-185) is not built here; it is
-// the open parity gap #299.
+// pin's quota-read fallback (mimoAccount.js:181-185) is the per-connection
+// renewal below (#299): the operator turns it on for one connection with the
+// same two consents, and onboarding.MimoDesktopRenewal does the reading.
 
 const mimoProviderID = "xiaomi-mimo"
 
@@ -35,12 +35,6 @@ type mimoDesktopSource interface {
 	AuthFilePaths() []string
 	ReadAuthFile(limit int64) (string, []byte, error)
 	ReadSession(context.Context) map[string]string
-}
-
-// hostMimoDesktop is MiMo Desktop on this host, for the user the server runs as.
-func hostMimoDesktop() onboarding.MimoDesktop {
-	home, _ := os.UserHomeDir()
-	return onboarding.MimoDesktop{Home: home, GOOS: runtime.GOOS, AppData: os.Getenv("APPDATA")}
 }
 
 // hostDiscoveryRefused answers a request that would read host credentials
@@ -216,4 +210,71 @@ func (h *Handler) attachDesktopSession(ctx context.Context, flow oauthFlow, resu
 	for key, value := range session {
 		result.Secret.ProviderData[key] = value
 	}
+}
+
+// handleDesktopSessionRenewal turns a Xiaomi MiMo connection's quota-read
+// renewal on or off (#299). On, a quota read of this connection that has no
+// account session, or whose session just failed, may read MiMo Desktop's
+// session on this host and seal it into the connection: the pin does this for
+// every connection without a stored passToken (mimoAccount.js:181-185). Turning
+// it on needs both consents, as a discovery does; turning it off needs neither
+// and stops the next read. The answer is the connection's view, never a value.
+func (h *Handler) handleDesktopSessionRenewal(w http.ResponseWriter, r *http.Request) {
+	if h.opts.Credentials == nil {
+		writeError(w, http.StatusServiceUnavailable, "credentials_unavailable", "configure ROUTEWEFT_CREDENTIAL_KEY to manage provider connections")
+		return
+	}
+	var body struct {
+		Enabled *bool `json:"enabled"`
+		Consent bool  `json:"consent"`
+	}
+	if !decodeJSON(w, r, 8<<10, &body) {
+		return
+	}
+	if body.Enabled == nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "enabled must be true or false")
+		return
+	}
+	id := r.PathValue("id")
+	existing, err := h.opts.Credentials.GetConnection(r.Context(), id)
+	if err != nil {
+		providerNotFound(w, err)
+		return
+	}
+	if existing.ProviderID != mimoProviderID {
+		writeError(w, http.StatusBadRequest, "desktop_session_unsupported", "only a Xiaomi MiMo connection can renew its session from MiMo Desktop")
+		return
+	}
+	if *body.Enabled && h.hostDiscoveryRefused(w, body.Consent) {
+		return
+	}
+	h.connectionMu.Lock()
+	saved, err := h.updateConnection(r.Context(), id, func(current credentials.Connection) (credentials.Connection, error) {
+		data := make(map[string]string, len(current.Secret.ProviderData)+1)
+		for key, value := range current.Secret.ProviderData {
+			data[key] = value
+		}
+		if *body.Enabled {
+			data[onboarding.MimoDesktopRenewalKey] = onboarding.MimoDesktopRenewalOn
+		} else {
+			delete(data, onboarding.MimoDesktopRenewalKey)
+		}
+		current.Secret.ProviderData = data
+		current.Lifecycle = credentials.Lifecycle{}
+		return current, nil
+	})
+	h.connectionMu.Unlock()
+	if err != nil {
+		providerNotFound(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, connectionJSON(saved))
+}
+
+// withoutDesktopRenewal drops the #299 fields from provider data a request
+// sent, so only handleDesktopSessionRenewal (with its consents) and a renewal
+// itself can set them; an edit keeps the stored ones (mergeConnectionSecret).
+func withoutDesktopRenewal(data map[string]string) {
+	delete(data, onboarding.MimoDesktopRenewalKey)
+	delete(data, onboarding.MimoDesktopReadAtKey)
 }

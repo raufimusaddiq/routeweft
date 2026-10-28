@@ -421,6 +421,13 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 	if err != nil {
 		return fmt.Errorf("install quota readers: %w", err)
 	}
+	// A MiMo quota read may renew its account session from MiMo Desktop on this
+	// host only when the host allows it and the operator turned it on for that
+	// connection (#299, BDR-028). Without the host's consent the reader has no
+	// way to read host credentials at all.
+	if a.cfg.AllowHostCredentialDiscovery {
+		providerusage.WithMimoDesktopRenewal(clients, &onboarding.MimoDesktopRenewal{Desktop: onboarding.HostMimoDesktop(), Connections: credentialRegistry, Allowed: true})
+	}
 	clients["codex"] = quota.CodexClient{Client: usageClient}
 	clients["claude"] = quota.ClaudeClient{Client: &claudeprovider.UsageClient{Client: usageClient}}
 	observer := quota.Observer{

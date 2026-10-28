@@ -442,11 +442,40 @@ Rules:
 - **Nothing returns to the browser.** What is read goes through the same import
   as a pasted file and is sealed into the connection; the answer names only the
   file it came from and whether a session was found.
-- **No read behind the operator's back.** Quota readers keep using only the
-  sealed account fields (SPEC, P05 quota readers). The pin's per-read fallback
-  (`mimoAccount.js:181-185`) is an **open parity gap, tracked in #299**. Until
-  then, an operator renews a session by discovering again. #299 implements it
-  as an explicit per-connection opt-in under the same two consents, which is
-  revocable and bounded to the pin's 30-minute cache (proposal: PARITY §6.33).
+- **No read behind the operator's back.** A quota read opens the host only
+  for a connection the operator turned renewal on for (amended by #299, below);
+  every other quota read uses only the sealed account fields.
 
 Any other host-secret source needs its own reviewed BDR change.
+
+**Amended (issue #299, 2026-10-29, as the rule above anticipated): quota-read renewal.** This changes
+the rule above, which had kept quota readers off the host entirely. The pin
+opens Desktop's cookie store on every quota read of a connection without a
+stored passToken, before it looks at its 30-minute session cache, with no
+consent at all (`mimoAccount.js:181-192`; callers
+`services/usage/xiaomi-mimo.js:26`, `executors/xiaomi-mimo.js:75,87`).
+Routeweft keeps that capability as an explicit per-connection opt-in:
+
+- **Third consent, per connection.** `PUT
+  /admin/v1/connections/{id}/desktop-session-renewal` with
+  `{"enabled": true, "consent": true}` on a host that allows discovery turns it
+  on; `{"enabled": false}` turns it off and needs neither consent. Nothing is
+  read when it is turned on. A connection edit, import, discovery or sign-in can
+  neither set nor clear it. The host flag is checked again at every read: a host
+  restarted without it has no renewal path at all.
+- **Only when the pin would need the host, bounded.** A read opens the store
+  only when the connection has no sealed session, or its sealed session just
+  failed the account handshake (a renewal the pin cannot do), and at most once
+  per 30 minutes per connection.
+- **Sealed before used.** A session read is written into the connection first,
+  so later reads use it without opening the host. If renewal was turned off, or
+  the session replaced, while the store was being read, nothing is sealed and
+  nothing read is used.
+- **Visible, never shown.** The connection read model reports
+  `desktopSessionRenewal` and `desktopSessionReadAt` (a time); account-path
+  quota reads carry `metadata.desktopSessionReadAt`. No value is answered or
+  logged.
+
+Turning renewal off stops host reads; it does not remove a session already
+sealed (relink or delete the connection for that). Preview inference, the
+pin's other caller, stays unwired.
