@@ -30,6 +30,10 @@ type Credential struct {
 	// id, profile ARN, device id). The refresh token is deliberately absent: no
 	// reader reads one, and a live secret with no consumer is only a leak surface.
 	ProviderData map[string]string
+	// APIKey reports that AccessToken is an API key the user entered rather than
+	// a sign-in token. Kimi reads usage with either and authenticates them
+	// differently (kimi.js:109-121).
+	APIKey bool
 }
 
 // UsageClient is one provider usage reader. Each first-class provider group

@@ -273,3 +273,46 @@ func TestQuotaReadKeepsProviderMetadata(t *testing.T) {
 		t.Fatalf("unsupported quota: %s", got.Body)
 	}
 }
+
+// TestQuotaReadKeepsRegionalPackageMetadata is the #223 read-model check: a
+// CodeBuddy pack's amounts and recurring flag, a GLM window's raw limit, and a
+// reader's no-quota notice reach the API.
+func TestQuotaReadKeepsRegionalPackageMetadata(t *testing.T) {
+	h, mux, store, creds, cookie := newProvidersAPI(t, false, nil)
+	defer store.Close()
+	ctx := context.Background()
+	ids := map[string]string{}
+	for _, provider := range []string{"codebuddy-cn", "glm", "minimax"} {
+		node, err := creds.PutNode(ctx, credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: provider, Name: provider, Transports: []string{"openai-chat"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := creds.PutConnection(ctx, credentials.Connection{NodeID: node.ID, Name: provider, Identity: provider, AuthKind: credentials.AuthAPIKey, Enabled: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[c.ID] = provider
+	}
+	used, total, fraction, refill, oneShot := 6.54, 500.0, 0.98692, true, false
+	h.opts.QuotaState = func(id string) (quota.State, bool) {
+		switch ids[id] {
+		case "codebuddy-cn":
+			return quota.State{Plan: "Pro", Windows: []quota.Window{
+				{Name: "Monthly", Remaining: &fraction, Count: &quota.Count{Used: &used, Total: &total}, Recurring: &refill},
+				{Name: "Bonus Pack 1", Remaining: &fraction, Recurring: &oneShot},
+			}}, true
+		case "glm":
+			return quota.State{Plan: "Pro", Windows: []quota.Window{{Name: "Session (5h)", Remaining: &fraction,
+				Limit: &quota.Limit{Type: "TOKENS_LIMIT", Unit: json.RawMessage(`3`), Number: json.RawMessage(`"5"`)}}}}, true
+		case "minimax":
+			return quota.State{Message: "MiniMax connected. No quota data was returned."}, true
+		}
+		return quota.State{}, false
+	}
+	got := doJSON(t, mux, cookie, "GET", "/admin/v1/quota", "")
+	if body := got.Body.String(); got.Code != 200 || !containsAll(body,
+		`"count":{"used":6.54,"total":500},"recurring":true`, `"recurring":false`,
+		`"limit":{"type":"TOKENS_LIMIT","unit":3,"number":"5"}`, `"message":"MiniMax connected. No quota data was returned."`) {
+		t.Fatalf("quota: %d %s", got.Code, body)
+	}
+}

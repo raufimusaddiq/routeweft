@@ -6,10 +6,14 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/quota"
 )
 
@@ -84,8 +88,11 @@ func (r apiKeyReader) getJSON(ctx context.Context, endpoint, key string) (respon
 	}, nil)
 }
 
-// glm mirrors open-sse/services/usage/glm.js. Both TOKENS_LIMIT and CREDIT_LIMIT
-// are accepted and the window label is derived from the unit.
+// glm mirrors open-sse/services/usage/glm.js:18-88 for both regions. Values are
+// read as the pin reads them: `Number(x) || 0` for the percentage and the reset
+// (milliseconds only), strict `=== 3` / `=== 6` for the unit, the raw number in
+// the label, and a later limit with the same label replaces the earlier one in
+// its place (glm.js:69). Each window keeps the provider's type, unit and number.
 func (r apiKeyReader) glm(ctx context.Context, key string) (quota.State, error) {
 	endpoint := "https://api.z.ai/api/monitor/usage/quota/limit"
 	if r.Name == "glm-cn" {
@@ -101,84 +108,154 @@ func (r apiKeyReader) glm(ctx context.Context, key string) (quota.State, error) 
 	if reply.status < 200 || reply.status >= 300 {
 		return failure("glm quota returned HTTP %d", reply.status)
 	}
-	var body struct {
-		Data struct {
-			Level  string `json:"level"`
-			Limits []struct {
-				Type          string          `json:"type"`
-				Percentage    json.RawMessage `json:"percentage"`
-				NextResetTime json.RawMessage `json:"nextResetTime"`
-				Unit          int             `json:"unit"`
-				Number        int             `json:"number"`
-			} `json:"limits"`
-		} `json:"data"`
-	}
+	var body json.RawMessage
 	if err := decode(reply.body, &body); err != nil {
 		return failure("glm quota response: %v", err)
 	}
+	data, _ := shared.Object(shared.Field(body, "data"))
+	limits, _ := shared.Array(data["limits"])
 	var windows []quota.Window
-	for _, limit := range body.Data.Limits {
-		if limit.Type != "TOKENS_LIMIT" && limit.Type != "CREDIT_LIMIT" {
+	for _, limit := range limits {
+		var kind string
+		if json.Unmarshal(shared.Field(limit, "type"), &kind) != nil || kind != "TOKENS_LIMIT" && kind != "CREDIT_LIMIT" {
 			continue
 		}
-		used, _ := number(limit.Percentage)
-		resetMs, _ := number(limit.NextResetTime)
+		used := shared.OrZero(shared.Number(shared.Field(limit, "percentage")))
 		var reset *time.Time
-		if resetMs > 0 {
+		if resetMs := shared.OrZero(shared.Number(shared.Field(limit, "nextResetTime"))); resetMs > 0 {
+			// new Date(ms).toISOString() throws past the Date range, and the pin
+			// reports the whole read as an error (glm.js:85-86).
+			if math.Trunc(resetMs) > jsMaxTime {
+				return failure("glm quota reset time is out of range")
+			}
 			parsed := time.UnixMilli(int64(resetMs)).UTC()
 			reset = &parsed
 		}
-		label := "Tokens"
+		unit, number := shared.Field(limit, "unit"), shared.Field(limit, "number")
+		unitValue, unitIsNumber := shared.IsNumber(unit)
+		var label string
 		switch {
-		case limit.Unit == 3:
-			label = fmt.Sprintf("Session (%dh)", limit.Number)
-		case limit.Unit == 6:
+		case unitIsNumber && unitValue == 3:
+			label = "Session (" + shared.Template(number) + "h)"
+		case unitIsNumber && unitValue == 6:
 			label = "Weekly (7d)"
-		case limit.Type == "CREDIT_LIMIT":
-			label = fmt.Sprintf("Limit (%d)", limit.Number)
+		case kind == "TOKENS_LIMIT":
+			label = "Tokens"
+		default:
+			label = "Limit (" + shared.Template(number) + ")"
 		}
-		windows = append(windows, percentWindow(label, 100-used, reset))
+		next := percentWindow(label, math.Max(0, 100-used), reset)
+		next.Limit = &quota.Limit{Type: kind, Unit: append(json.RawMessage(nil), unit...), Number: append(json.RawMessage(nil), number...)}
+		windows = putWindow(windows, next)
 	}
 	plan := "Unknown"
-	if body.Data.Level != "" {
-		plan = strings.ToUpper(body.Data.Level[:1]) + strings.ToLower(body.Data.Level[1:])
+	var level string
+	if json.Unmarshal(data["level"], &level) == nil && level != "" {
+		first, size := utf8.DecodeRuneInString(level)
+		plan = strings.ToUpper(string(first)) + strings.ToLower(level[size:])
 	}
 	if len(windows) == 0 {
-		return failure("%s returned no quota windows", r.Name)
+		// The pin answers with the plan and an empty quota map; the notice keeps
+		// a windowless read from passing as a measured one.
+		return quota.State{Plan: plan, Message: "GLM connected. No quota limits were returned.", ObservedAt: r.now()}, nil
 	}
 	return quota.State{Plan: plan, Windows: windows, ObservedAt: r.now()}, nil
 }
 
-// minimax mirrors open-sse/services/usage/minimax.js. The M-series shared pool
-// reports percent-only buckets, so a zero count falls back to the percentage.
-func (r apiKeyReader) minimax(ctx context.Context, key string) (quota.State, error) {
-	endpoints := []string{
-		"https://www.minimax.io/v1/token_plan/remains",
-		"https://www.minimax.io/v1/coding_plan/remains",
-	}
-	if r.Name == "minimax-cn" {
-		endpoints = []string{
-			"https://api.minimaxi.com/v1/token_plan/remains",
-			"https://api.minimaxi.com/v1/coding_plan/remains",
+// jsMaxTime is the largest |time value| a JavaScript Date holds, in ms.
+const jsMaxTime = 8.64e15
+
+// putWindow adds a window keyed by name the way the pin's `quotas[key] = ...`
+// does: a repeated name replaces the earlier window where it stood.
+func putWindow(windows []quota.Window, next quota.Window) []quota.Window {
+	for i := range windows {
+		if windows[i].Name == next.Name {
+			windows[i] = next
+			return windows
 		}
+	}
+	return append(windows, next)
+}
+
+// miniMaxEndpoints are the pin's registry usage URLs, tried in order
+// (providers/registry/minimax.js:35-40, minimax-cn.js:35-40).
+var miniMaxEndpoints = map[string][]string{
+	"minimax": {
+		"https://www.minimax.io/v1/token_plan/remains",
+		"https://api.minimax.io/v1/api/openplatform/coding_plan/remains",
+	},
+	"minimax-cn": {
+		"https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+		"https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+	},
+}
+
+// miniMaxAuthLike is the pin's auth test over status_msg and the raw body
+// (minimax.js:165).
+var miniMaxAuthLike = regexp.MustCompile(`(?i)token plan|coding plan|invalid api key|invalid key|unauthorized|inactive`)
+
+// minimax mirrors open-sse/services/usage/minimax.js:133-234. The next endpoint
+// is tried only after a 404, a 405, a 5xx or a failed request (minimax.js:173,
+// 227-229); an auth answer (401, 403, status 1004 or auth wording anywhere in
+// the answer), any other HTTP error, an upstream status, a body that is not
+// JSON and an answer without quota all end the read. Both the snake_case and
+// the camelCase envelopes are read, snake first (`??`).
+func (r apiKeyReader) minimax(ctx context.Context, key string) (quota.State, error) {
+	endpoints := miniMaxEndpoints[r.Name]
+	headers := map[string]string{
+		"Authorization": "Bearer " + key,
+		"Accept":        "application/json",
+		"Content-Type":  "application/json",
 	}
 	var lastErr error
-	for _, endpoint := range endpoints {
-		reply, err := r.getJSON(ctx, endpoint, key)
+	for index, endpoint := range endpoints {
+		canFallback := index < len(endpoints)-1
+		reply, err := r.call(ctx, http.MethodGet, endpoint, headers, nil)
 		if err != nil {
 			lastErr = err
+			if !canFallback {
+				break
+			}
 			continue
 		}
-		if reply.status == http.StatusUnauthorized || reply.status == http.StatusForbidden {
+		payload := json.RawMessage(reply.body)
+		valid := json.Valid(payload)
+		if !valid {
+			payload = nil
+		}
+		baseResp := shared.FirstNonNullish(shared.Field(payload, "base_resp"), shared.Field(payload, "baseResp"))
+		statusCode := shared.OrZero(shared.Number(shared.FirstNonNullish(shared.Field(baseResp, "status_code"), shared.Field(baseResp, "statusCode"))))
+		statusMsg := ""
+		if raw := shared.FirstNonNullish(shared.Field(baseResp, "status_msg"), shared.Field(baseResp, "statusMsg")); raw != nil {
+			statusMsg = strings.TrimSpace(shared.Template(raw))
+		}
+		if reply.status == http.StatusUnauthorized || reply.status == http.StatusForbidden || statusCode == 1004 ||
+			miniMaxAuthLike.MatchString(statusMsg+" "+string(reply.body)) {
 			return failure("minimax API key invalid or inactive")
 		}
 		if reply.status < 200 || reply.status >= 300 {
 			lastErr = fmt.Errorf("minimax usage returned HTTP %d", reply.status)
-			continue
+			if (reply.status == http.StatusNotFound || reply.status == http.StatusMethodNotAllowed || reply.status >= 500) && canFallback {
+				continue
+			}
+			return failure("%v", lastErr)
 		}
-		state, err := parseMiniMax(reply.body, strings.Contains(endpoint, "coding_plan"), r.now())
+		if statusCode != 0 {
+			return failure("minimax quota error: %s", statusMsg)
+		}
+		if !valid {
+			// The pin reads such a body as {} and reports no quota; it is a
+			// failed read here, and like the pin it ends the read.
+			return failure("minimax usage response was not JSON")
+		}
+		state, err := parseMiniMax(payload, strings.Contains(endpoint, "/coding_plan/remains"), r.now())
 		if err != nil {
+			// A reset past the Date range throws inside the pin's loop, which
+			// moves on like a failed request (minimax.js:227-229).
 			lastErr = err
+			if !canFallback {
+				break
+			}
 			continue
 		}
 		return state, nil
@@ -189,113 +266,166 @@ func (r apiKeyReader) minimax(ctx context.Context, key string) (quota.State, err
 	return failure("minimax usage: %v", lastErr)
 }
 
-func parseMiniMax(payload []byte, countMeansRemaining bool, now time.Time) (quota.State, error) {
-	var body struct {
-		BaseResp struct {
-			StatusCode int    `json:"status_code"`
-			StatusMsg  string `json:"status_msg"`
-		} `json:"base_resp"`
-		Models []map[string]any `json:"model_remains"`
-	}
-	if err := decode(payload, &body); err != nil {
-		return quota.State{}, err
-	}
-	if body.BaseResp.StatusCode != 0 {
-		return quota.State{}, fmt.Errorf("minimax quota error: %s", body.BaseResp.StatusMsg)
-	}
+// parseMiniMax reads model_remains (minimax.js:181-226). A bucket with counts
+// keeps them as the window's count; a percent-only bucket (M-series) is
+// normalized to 100 as the pin does and has no count, since 100 is not the
+// provider's unit. The provider's remaining percent wins over the counts.
+func parseMiniMax(payload json.RawMessage, countMeansRemaining bool, now time.Time) (quota.State, error) {
+	models, _ := shared.Array(shared.FirstNonNullish(shared.Field(payload, "model_remains"), shared.Field(payload, "modelRemains")))
 	var windows []quota.Window
-	for _, model := range body.Models {
-		name := miniMaxName(model)
-		sessionTotal := miniMaxNumber(model, "current_interval_total_count", "currentIntervalTotalCount")
-		sessionUsed := miniMaxNumber(model, "current_interval_usage_count", "currentIntervalUsageCount")
-		sessionPercent, hasSessionPercent := miniMaxPercent(model, "current_interval_remaining_percent", "currentIntervalRemainingPercent")
-		if sessionTotal > 0 || hasSessionPercent {
-			total, used := miniMaxTotals(sessionTotal, sessionUsed, sessionPercent, hasSessionPercent, countMeansRemaining)
-			windows = append(windows, window(name+" (5h)", used, total, miniMaxReset(model, now, "remains_time", "remainsTime", "end_time", "endTime")))
+	for _, model := range models {
+		if !miniMaxHasQuota(model) {
+			continue
 		}
-		weeklyTotal := miniMaxNumber(model, "current_weekly_total_count", "currentWeeklyTotalCount")
-		weeklyUsed := miniMaxNumber(model, "current_weekly_usage_count", "currentWeeklyUsageCount")
-		weeklyPercent, hasWeeklyPercent := miniMaxPercent(model, "current_weekly_remaining_percent", "currentWeeklyRemainingPercent")
-		if weeklyTotal > 0 || hasWeeklyPercent {
-			total, used := miniMaxTotals(weeklyTotal, weeklyUsed, weeklyPercent, hasWeeklyPercent, countMeansRemaining)
-			windows = append(windows, window(name+" (7d)", used, total, miniMaxReset(model, now, "weekly_remains_time", "weeklyRemainsTime", "weekly_end_time", "weeklyEndTime")))
+		name := miniMaxName(model)
+		for _, bucket := range []struct {
+			suffix                string
+			total, count, percent [2]string
+			remains, end          [2]string
+		}{
+			{" (5h)", [2]string{"current_interval_total_count", "currentIntervalTotalCount"},
+				[2]string{"current_interval_usage_count", "currentIntervalUsageCount"},
+				[2]string{"current_interval_remaining_percent", "currentIntervalRemainingPercent"},
+				[2]string{"remains_time", "remainsTime"}, [2]string{"end_time", "endTime"}},
+			{" (7d)", [2]string{"current_weekly_total_count", "currentWeeklyTotalCount"},
+				[2]string{"current_weekly_usage_count", "currentWeeklyUsageCount"},
+				[2]string{"current_weekly_remaining_percent", "currentWeeklyRemainingPercent"},
+				[2]string{"weekly_remains_time", "weeklyRemainsTime"}, [2]string{"weekly_end_time", "weeklyEndTime"}},
+		} {
+			total := math.Max(0, shared.OrZero(shared.Number(miniMaxField(model, bucket.total))))
+			percent, hasPercent := miniMaxPercent(model, bucket.percent)
+			if total <= 0 && !hasPercent {
+				continue
+			}
+			count := math.Max(0, shared.OrZero(shared.Number(miniMaxField(model, bucket.count))))
+			percentOnly := total <= 0
+			if percentOnly {
+				total = 100
+				if countMeansRemaining {
+					count = jsRound(total * (percent / 100))
+				} else {
+					count = jsRound(total * (1 - percent/100))
+				}
+			}
+			used := math.Min(math.Max(0, count), total)
+			if countMeansRemaining {
+				used = math.Max(total-count, 0)
+			}
+			remaining := math.Max(total-used, 0)
+			if !hasPercent {
+				percent = math.Max(0, math.Min(100, remaining/total*100))
+			}
+			reset, err := miniMaxReset(model, now, bucket.remains, bucket.end)
+			if err != nil {
+				return quota.State{}, err
+			}
+			next := percentWindow(name+bucket.suffix, percent, reset)
+			if !percentOnly {
+				next.Count = &quota.Count{Used: &used, Total: &total, Remaining: &remaining}
+			}
+			windows = putWindow(windows, next)
 		}
 	}
 	if len(windows) == 0 {
-		return quota.State{}, fmt.Errorf("minimax returned no quota data")
+		return quota.State{Message: "MiniMax connected. No quota data was returned.", ObservedAt: now}, nil
 	}
 	return quota.State{Windows: windows, ObservedAt: now}, nil
 }
 
-// miniMaxTotals normalizes the percent-only M-series buckets to a 100 base so a
-// bucket with no counts still renders a meaningful bar.
-func miniMaxTotals(total, count float64, percent float64, hasPercent, countMeansRemaining bool) (float64, float64) {
-	if total > 0 {
-		if countMeansRemaining {
-			return total, total - count
-		}
-		return total, count
-	}
-	if !hasPercent {
-		return 0, 0
-	}
-	if countMeansRemaining {
-		return 100, 100 - percent
-	}
-	return 100, 100 - percent
+// miniMaxField is `model[snake] ?? model[camel]`.
+func miniMaxField(model json.RawMessage, keys [2]string) json.RawMessage {
+	return shared.FirstNonNullish(shared.Field(model, keys[0]), shared.Field(model, keys[1]))
 }
 
-func miniMaxName(model map[string]any) string {
-	raw := miniMaxString(model, "model_name", "modelName")
-	if raw == "" {
-		return "MiniMax"
+// miniMaxHasQuota is hasMiniMaxQuota (minimax.js:61-68).
+func miniMaxHasQuota(model json.RawMessage) bool {
+	for _, keys := range [][2]string{{"current_interval_total_count", "currentIntervalTotalCount"}, {"current_weekly_total_count", "currentWeeklyTotalCount"}} {
+		if math.Max(0, shared.OrZero(shared.Number(miniMaxField(model, keys)))) > 0 {
+			return true
+		}
 	}
-	if raw == "MiniMax-M*" || raw == "general" {
+	for _, keys := range [][2]string{{"current_interval_remaining_percent", "currentIntervalRemainingPercent"}, {"current_weekly_remaining_percent", "currentWeeklyRemainingPercent"}} {
+		if _, ok := miniMaxPercent(model, keys); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// miniMaxPercent is getMiniMaxProvidedPercent (minimax.js:44-51): a finite
+// Number() of the field, clamped to 0..100.
+func miniMaxPercent(model json.RawMessage, keys [2]string) (float64, bool) {
+	raw := miniMaxField(model, keys)
+	if shared.Nullish(raw) {
+		return 0, false
+	}
+	value := shared.Number(raw)
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, false
+	}
+	return math.Max(0, math.Min(100, value)), true
+}
+
+// miniMaxReset is getMiniMaxResetAt (minimax.js:70-74): a positive remaining
+// duration counts from the read, otherwise the end time is parsed.
+func miniMaxReset(model json.RawMessage, now time.Time, remains, end [2]string) (*time.Time, error) {
+	if remainsMs := shared.OrZero(shared.Number(miniMaxField(model, remains))); remainsMs > 0 {
+		at := math.Trunc(float64(now.UnixMilli()) + remainsMs)
+		if at > jsMaxTime {
+			return nil, fmt.Errorf("minimax reset time is out of range")
+		}
+		parsed := time.UnixMilli(int64(at)).UTC()
+		return &parsed, nil
+	}
+	return shared.ResetTime(miniMaxField(model, end)), nil
+}
+
+var (
+	miniMaxSeparators = regexp.MustCompile(`[_-]+`)
+	miniMaxSpaces     = regexp.MustCompile(`\s+`)
+	miniMaxWordStart  = regexp.MustCompile(`\b\w`)
+	miniMaxWords      = []struct {
+		word *regexp.Regexp
+		with string
+	}{{regexp.MustCompile(`\bTo\b`), "to"}, {regexp.MustCompile(`\bTts\b`), "TTS"}, {regexp.MustCompile(`\bHd\b`), "HD"}}
+)
+
+// miniMaxName is formatMiniMaxQuotaName (minimax.js:24-42).
+func miniMaxName(model json.RawMessage) string {
+	raw := shared.FirstNonNullish(shared.Field(model, "model_name"), shared.Field(model, "modelName"))
+	name := ""
+	if shared.Truthy(raw) {
+		name = strings.TrimSpace(shared.Template(raw))
+	}
+	switch name {
+	case "":
+		return "MiniMax"
+	case "MiniMax-M*", "general":
 		return "M-series"
 	}
-	return raw
-}
-
-func miniMaxString(model map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if value, ok := model[key].(string); ok && strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
+	name = strings.TrimSpace(miniMaxSpaces.ReplaceAllString(miniMaxSeparators.ReplaceAllString(name, " "), " "))
+	name = miniMaxWordStart.ReplaceAllStringFunc(name, strings.ToUpper)
+	for _, word := range miniMaxWords {
+		name = word.word.ReplaceAllString(name, word.with)
 	}
-	return ""
+	return name
 }
 
-func miniMaxNumber(model map[string]any, keys ...string) float64 {
-	for _, key := range keys {
-		if value, ok := model[key].(float64); ok {
-			return value
-		}
-	}
-	return 0
-}
+// jsRound is Math.round: halves round up.
+func jsRound(value float64) float64 { return math.Floor(value + 0.5) }
 
-func miniMaxPercent(model map[string]any, keys ...string) (float64, bool) {
-	for _, key := range keys {
-		if value, ok := model[key].(float64); ok {
-			return value, true
-		}
-	}
-	return 0, false
-}
+// codebuddyRefillGap separates a refill pack, whose cycle ends well before the
+// pack expires, from a one-shot bonus pack (codebuddy-cn.js:86-93).
+const codebuddyRefillGap = 2 * 24 * time.Hour
 
-func miniMaxReset(model map[string]any, now time.Time, keys ...string) *time.Time {
-	for _, key := range keys {
-		if value, ok := model[key].(float64); ok && value > 0 {
-			parsed := time.UnixMilli(now.UnixMilli() + int64(value)).UTC()
-			return &parsed
-		}
-	}
-	return nil
-}
-
-// codebuddy mirrors open-sse/services/usage/codebuddy-cn.js. Refill packs and
-// bonus packs are separate windows: a refill pack resets on its cycle, a bonus
-// pack simply expires.
+// codebuddy mirrors open-sse/services/usage/codebuddy-cn.js:46-146 for both
+// regions. Refill packs come first, soonest cycle end first, each labelled by
+// its cadence with a per-cadence counter and read from the Cycle* balance; bonus
+// packs follow as "Bonus Pack N", soonest expiry first, from the lifetime
+// Capacity balance. The *Precise strings win over the plain numbers (`??`).
+// Each window keeps its absolute amounts and the pin's recurring flag; a zero
+// capacity is neither unlimited nor exhausted. The plan is the first refill
+// pack's, else the first package's.
 func (r apiKeyReader) codebuddy(ctx context.Context, key string) (quota.State, error) {
 	endpoint := "https://copilot.tencent.com/v2/billing/meter/get-user-resource"
 	if r.Name == "codebuddy-intl" {
@@ -316,88 +446,107 @@ func (r apiKeyReader) codebuddy(ctx context.Context, key string) (quota.State, e
 	if reply.status < 200 || reply.status >= 300 {
 		return failure("codebuddy quota returned HTTP %d", reply.status)
 	}
-	var body struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Data struct {
-			Response struct {
-				Data struct {
-					Accounts []map[string]any `json:"Accounts"`
-				} `json:"Data"`
-			} `json:"Response"`
-		} `json:"data"`
-	}
+	var body json.RawMessage
 	if err := decode(reply.body, &body); err != nil {
 		return failure("codebuddy quota response: %v", err)
 	}
-	if body.Code != 0 {
-		return failure("codebuddy quota error: %s", body.Msg)
+	// `json?.code !== 0`: an absent or string code is an error too.
+	if code, ok := shared.IsNumber(shared.Field(body, "code")); !ok || code != 0 {
+		return failure("codebuddy quota error: %s", shared.String(shared.Field(body, "msg")))
 	}
-	accounts := body.Data.Response.Data.Accounts
+	accounts, _ := shared.Array(shared.Field(shared.Field(shared.Field(shared.Field(body, "data"), "Response"), "Data"), "Accounts"))
 	if len(accounts) == 0 {
-		return failure("codebuddy returned no credit package")
+		return quota.State{Message: "CodeBuddy connected. No credit package found.", ObservedAt: r.now()}, nil
 	}
-	var windows []quota.Window
-	refill, bonus := 0, 0
-	for _, account := range accounts {
-		cycleEnd := resetAt(account["CycleEndTime"])
-		deductionEnd, _ := number(rawJSON(account["DeductionEndTime"]))
-		refillPack := cycleEnd != nil && deductionEnd > 0 &&
-			time.UnixMilli(int64(deductionEnd)).Sub(*cycleEnd) > 48*time.Hour
-		if refillPack {
-			refill++
-			used := miniMaxNumber(account, "CycleCapacityUsedPrecise", "CycleCapacityUsed")
-			total := miniMaxNumber(account, "CycleCapacitySizePrecise", "CycleCapacitySize")
-			windows = append(windows, window(codebuddyCadence(account, refill), used, total, cycleEnd))
-			continue
+	cycleEnd := func(account json.RawMessage) float64 {
+		if end := shared.ResetTime(shared.Field(account, "CycleEndTime")); end != nil {
+			return float64(end.UnixMilli())
 		}
-		bonus++
-		used := miniMaxNumber(account, "CapacityUsedPrecise", "CapacityUsed")
-		total := miniMaxNumber(account, "CapacitySizePrecise", "CapacitySize")
-		windows = append(windows, window(fmt.Sprintf("Bonus Pack %d", bonus), used, total, cycleEnd))
+		return math.Inf(1)
 	}
-	plan := ""
-	if name, ok := accounts[0]["PackageName"].(string); ok && name != "" {
-		plan = name
-	} else if name, ok := accounts[0]["SubProductName"].(string); ok && name != "" {
-		plan = name
+	var refills, bonuses []json.RawMessage
+	for _, account := range accounts {
+		if _, ok := shared.Object(account); !ok {
+			// The pin's field reads throw on a null package and the whole read
+			// fails (codebuddy-cn.js:135-136).
+			return failure("codebuddy returned a malformed credit package")
+		}
+		end, deduction := cycleEnd(account), shared.Number(shared.Field(account, "DeductionEndTime"))
+		if !math.IsInf(end, 0) && !math.IsNaN(deduction) && !math.IsInf(deduction, 0) && deduction-end > float64(codebuddyRefillGap.Milliseconds()) {
+			refills = append(refills, account)
+		} else {
+			bonuses = append(bonuses, account)
+		}
 	}
-	if plan == "" {
-		plan = "CodeBuddy"
+	byCycleEnd := func(packs []json.RawMessage) {
+		sort.SliceStable(packs, func(i, j int) bool { return cycleEnd(packs[i]) < cycleEnd(packs[j]) })
 	}
-	if len(windows) == 0 {
-		return failure("%s returned no quota windows", r.Name)
+	byCycleEnd(refills)
+	byCycleEnd(bonuses)
+	recurring, oneShot := true, false
+	var windows []quota.Window
+	seen := map[string]int{}
+	for _, account := range refills {
+		base := codebuddyCadence(account)
+		seen[base]++
+		name := base
+		if seen[base] > 1 {
+			name = fmt.Sprintf("%s %d", base, seen[base])
+		}
+		next := codebuddyWindow(name, account, "CycleCapacityUsed", "CycleCapacitySize")
+		next.Recurring = &recurring
+		windows = putWindow(windows, next)
+	}
+	for i, account := range bonuses {
+		next := codebuddyWindow(fmt.Sprintf("Bonus Pack %d", i+1), account, "CapacityUsed", "CapacitySize")
+		next.Recurring = &oneShot
+		windows = putWindow(windows, next)
+	}
+	base := accounts[0]
+	if len(refills) > 0 {
+		base = refills[0]
+	}
+	plan := "CodeBuddy"
+	if raw := shared.FirstTruthy(shared.Field(base, "PackageName"), shared.Field(base, "SubProductName")); raw != nil {
+		plan = shared.Template(raw)
 	}
 	return quota.State{Plan: plan, Windows: windows, ObservedAt: r.now()}, nil
 }
 
-// codebuddyCadence labels a refill pack by its cycle length, and disambiguates
-// repeats so two monthly packs do not collide on one key.
-func codebuddyCadence(account map[string]any, index int) string {
-	label := "Monthly"
-	start := resetAt(account["CycleStartTime"])
-	end := resetAt(account["CycleEndTime"])
-	if start != nil && end != nil {
-		days := end.Sub(*start).Hours() / 24
-		switch {
-		case days <= 1.5:
-			label = "Daily"
-		case days <= 10:
-			label = "Weekly"
+// codebuddyWindow reads one package balance: `Number(precise ?? plain)`, 0
+// when not finite (codebuddy-cn.js:29-32). The reset is the cycle end.
+func codebuddyWindow(name string, account json.RawMessage, used, size string) quota.Window {
+	amount := func(field string) float64 {
+		value := shared.Number(shared.FirstNonNullish(shared.Field(account, field+"Precise"), shared.Field(account, field)))
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0
 		}
+		return value
 	}
-	if index > 1 {
-		return fmt.Sprintf("%s %d", label, index)
+	spent, total := amount(used), amount(size)
+	next := quota.Window{Name: name, ResetAt: shared.ResetTime(shared.Field(account, "CycleEndTime")), Count: &quota.Count{Used: &spent, Total: &total}}
+	if total > 0 {
+		remaining := math.Max(0, math.Min(1, (total-spent)/total))
+		next.Remaining = &remaining
 	}
-	return label
+	return next
 }
 
-func rawJSON(value any) json.RawMessage {
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return nil
+// codebuddyCadence labels a refill pack by its cycle length
+// (codebuddy-cn.js:35-44).
+func codebuddyCadence(account json.RawMessage) string {
+	start := shared.ResetTime(shared.Field(account, "CycleStartTime"))
+	end := shared.ResetTime(shared.Field(account, "CycleEndTime"))
+	if start != nil && end != nil {
+		days := float64(end.UnixMilli()-start.UnixMilli()) / 86400000
+		switch {
+		case days <= 1.5:
+			return "Daily"
+		case days <= 10:
+			return "Weekly"
+		}
 	}
-	return encoded
+	return "Monthly"
 }
 
 // deepseek mirrors open-sse/services/usage/deepseek.js: a credit balance per

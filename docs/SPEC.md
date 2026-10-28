@@ -2361,6 +2361,13 @@ carry `metadata` (string values: GitHub `resetDate`, Claude legacy
 `organization`), `extraUsage` (Claude `extra_usage` as reported) and `message`,
 a reader's fixed notice for an account answered without readable quota (status
 `unknown`, never `error`).
+Regional package metadata (#223): a window may also carry `recurring`, the
+provider's refill flag (CodeBuddy: `true` resets at `resetAt`, `false` expires
+there for good), and `limit` `{type, unit?, number?}`, the provider's own limit
+description with `unit` and `number` as the JSON values sent (GLM). Kimi windows,
+counted MiniMax buckets and CodeBuddy packs carry `count`; a percent-only
+MiniMax bucket does not, and a zero CodeBuddy capacity has no `remaining`
+fraction and is neither unlimited nor exhausted.
 A window a reader served from its own cache carries `observedAt`, the time it
 was read upstream, and the UI labels it "cached, read <time>"; a window without
 `observedAt` is as fresh as `windowsObservedAt`. Only the Antigravity weekly

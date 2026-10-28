@@ -133,12 +133,15 @@ func TestKimiOAuthSendsDeviceHeaders(t *testing.T) {
 	}
 }
 
-// TestKimiEntitlementIsNotExpiry keeps a 403 from being mistaken for reauth.
+// TestKimiEntitlementIsNotExpiry keeps a 403 from being mistaken for reauth:
+// a missing usage entitlement is a notice with the plan (kimi.js:54-67), which
+// derives unknown, not an error.
 func TestKimiEntitlementIsNotExpiry(t *testing.T) {
 	stub := &stubClient{status: http.StatusForbidden, body: `{"code":"permission_denied"}`}
-	_, err := reader(t, "kimi", stub).Usage(context.Background(), quota.Credential{AccessToken: "fixture"})
-	if err == nil || !strings.Contains(err.Error(), "no usage permission") {
-		t.Fatalf("403 mapped to %v", err)
+	state, err := reader(t, "kimi", stub).Usage(context.Background(), quota.Credential{AccessToken: "fixture"})
+	if err != nil || !strings.Contains(state.Message, "no permission to view usage") || state.Plan != "Kimi Coding" ||
+		state.DeriveStatus(time.Now()) != quota.StatusUnknown {
+		t.Fatalf("403 mapped to %+v %v", state, err)
 	}
 }
 

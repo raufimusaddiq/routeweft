@@ -134,6 +134,151 @@ func String(raw json.RawMessage) string {
 	return ""
 }
 
+// Number is JavaScript's Number(value) on a JSON value: absent is NaN, null is
+// 0, a boolean is 0 or 1, a string is read as a numeric literal (blank is 0), a
+// one-element array is its element, and anything else is NaN. The result may be
+// NaN or infinite, as in JavaScript, so a caller ports `Number(x) || 0` as
+// OrZero(Number(x)).
+func Number(raw json.RawMessage) float64 {
+	text := bytes.TrimSpace(raw)
+	switch {
+	case len(text) == 0:
+		return math.NaN()
+	case string(text) == "null", string(text) == "false":
+		return 0
+	case string(text) == "true":
+		return 1
+	}
+	if text[0] == '-' || (text[0] >= '0' && text[0] <= '9') {
+		value, err := strconv.ParseFloat(string(text), 64)
+		if err != nil && !math.IsInf(value, 0) {
+			return math.NaN()
+		}
+		return value
+	}
+	if array, ok := Array(text); ok {
+		switch len(array) {
+		case 0:
+			return 0
+		case 1:
+			if element := bytes.TrimSpace(array[0]); string(element) != "true" && string(element) != "false" {
+				if Nullish(element) {
+					return 0
+				}
+				return Number(element)
+			}
+		}
+		return math.NaN()
+	}
+	var value string
+	if json.Unmarshal(text, &value) != nil {
+		return math.NaN()
+	}
+	return stringNumber(value)
+}
+
+// stringNumber is ECMA-262 StringToNumber for the literals providers send.
+func stringNumber(text string) float64 {
+	text = strings.TrimSpace(text)
+	switch text {
+	case "":
+		return 0
+	case "Infinity", "+Infinity":
+		return math.Inf(1)
+	case "-Infinity":
+		return math.Inf(-1)
+	}
+	if len(text) > 2 && text[0] == '0' {
+		base := map[byte]int{'x': 16, 'X': 16, 'o': 8, 'O': 8, 'b': 2, 'B': 2}[text[1]]
+		if base != 0 {
+			value, err := strconv.ParseUint(text[2:], base, 64)
+			if err != nil {
+				return math.NaN()
+			}
+			return float64(value)
+		}
+	}
+	if !decimalLiteral(text) {
+		return math.NaN()
+	}
+	value, err := strconv.ParseFloat(text, 64)
+	if err != nil && !math.IsInf(value, 0) {
+		return math.NaN()
+	}
+	return value
+}
+
+// decimalLiteral accepts [+-] digits [. digits] [e [+-] digits], with digits on
+// at least one side of the point: the decimal forms JavaScript reads and
+// strconv.ParseFloat also reads, without Go's extra forms (inf, nan, 1_000, hex
+// floats).
+func decimalLiteral(text string) bool {
+	i := 0
+	if i < len(text) && (text[i] == '+' || text[i] == '-') {
+		i++
+	}
+	digits := 0
+	for ; i < len(text) && text[i] >= '0' && text[i] <= '9'; i++ {
+		digits++
+	}
+	if i < len(text) && text[i] == '.' {
+		for i++; i < len(text) && text[i] >= '0' && text[i] <= '9'; i++ {
+			digits++
+		}
+	}
+	if digits == 0 {
+		return false
+	}
+	if i < len(text) && (text[i] == 'e' || text[i] == 'E') {
+		i++
+		if i < len(text) && (text[i] == '+' || text[i] == '-') {
+			i++
+		}
+		exponent := 0
+		for ; i < len(text) && text[i] >= '0' && text[i] <= '9'; i++ {
+			exponent++
+		}
+		if exponent == 0 {
+			return false
+		}
+	}
+	return i == len(text)
+}
+
+// OrZero is `value || 0` on a number: NaN and zero become 0.
+func OrZero(value float64) float64 {
+	if math.IsNaN(value) {
+		return 0
+	}
+	return value
+}
+
+// Template is `${value}` (String(value)) on a JSON value: absent is
+// "undefined", null is "null", a scalar is its JavaScript spelling, an object
+// is "[object Object]" and an array joins its elements with commas, a null
+// element spelled "".
+func Template(raw json.RawMessage) string {
+	text := bytes.TrimSpace(raw)
+	switch {
+	case len(text) == 0:
+		return "undefined"
+	case string(text) == "null":
+		return "null"
+	case text[0] == '{':
+		return "[object Object]"
+	}
+	if array, ok := Array(text); ok {
+		parts := make([]string, len(array))
+		for i, element := range array {
+			if !Nullish(element) {
+				parts[i] = Template(element)
+			}
+		}
+		return strings.Join(parts, ",")
+	}
+	return String(text)
+}
+
 // ResetTime is the reference's parseResetTime (shared.js:15-43): a falsy value
 // is no reset; a number, or a string of digits, is Unix seconds below 1e12 and
 // milliseconds otherwise; another string is a date. A value JavaScript cannot
@@ -185,11 +330,13 @@ func unixStamp(value float64) *time.Time {
 }
 
 // parseDate accepts the date forms providers send: RFC 3339 with or without
-// fractional seconds, a bare date (UTC midnight, as JavaScript reads it) and
-// the RFC 1123 HTTP-date forms.
+// fractional seconds, a bare date (UTC midnight, as JavaScript reads it), the
+// RFC 1123 HTTP-date forms and Tencent's "2006-01-02 15:04:05" (CodeBuddy
+// billing). JavaScript reads that last form in the host's zone; it is read as
+// UTC here, which is the reference's answer on a UTC host.
 func parseDate(text string) *time.Time {
 	text = strings.TrimSpace(text)
-	for _, layout := range []string{time.RFC3339Nano, "2006-01-02", time.RFC1123, time.RFC1123Z} {
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02", time.RFC1123, time.RFC1123Z, time.DateTime} {
 		if parsed, err := time.Parse(layout, text); err == nil {
 			stamp := parsed.UTC().Truncate(time.Millisecond)
 			return &stamp
