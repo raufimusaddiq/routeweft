@@ -3,8 +3,11 @@ package credentials
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -24,6 +27,9 @@ var ErrKeyRequired = errors.New("credential master key is required")
 // safe for concurrent use because it holds no mutable state after construction.
 type Sealer struct {
 	aead cipher.AEAD
+	// digestKey keys Digest. It is derived from the master key for that one
+	// purpose, so a digest reveals nothing usable about the key or a credential.
+	digestKey []byte
 }
 
 // NewSealer validates the operator-supplied master key. A wrong length is a
@@ -40,7 +46,18 @@ func NewSealer(key []byte) (*Sealer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("credential cipher is unusable: %w", err)
 	}
-	return &Sealer{aead: aead}, nil
+	derive := hmac.New(sha256.New, key)
+	derive.Write([]byte("routeweft credential digest v1"))
+	return &Sealer{aead: aead, digestKey: derive.Sum(nil)}, nil
+}
+
+// Digest is a keyed, deterministic fingerprint of plaintext: equal for the same
+// credential however often it is resealed (Seal's nonce makes every envelope
+// differ), and useless without the master key.
+func (s *Sealer) Digest(plaintext []byte) string {
+	mac := hmac.New(sha256.New, s.digestKey)
+	mac.Write(plaintext)
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // Seal encrypts plaintext and returns a versioned, base64 envelope. The random

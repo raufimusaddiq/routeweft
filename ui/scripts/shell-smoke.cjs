@@ -737,7 +737,7 @@ const { join } = require('node:path');
   await page.click('.providers-content .provider-details .connection-row .button-secondary');
   await page.waitForFunction(() => document.querySelector('.providers-content .connection-row .state-tag').textContent === 'Disabled');
   report.providerPatches = providerPatches;
-  report.providerDisabledLabel = await page.locator('.connection-row .state-tag').textContent();
+  report.providerDisabledLabel = await page.locator('.connection-row .state-tag').first().textContent();
   // Provider-aware sign-in (#214): methods are separate choices, Codex starts with
   // neither name nor identity, and every attempt ends in an explicit state.
   signInProviders = true;

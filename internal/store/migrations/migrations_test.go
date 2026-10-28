@@ -2,6 +2,7 @@ package migrations
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -427,5 +428,44 @@ ON CONFLICT(id) DO UPDATE SET name=excluded.name,identity=excluded.identity`); e
 	var left int
 	if err := s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM provider_connections WHERE node_id='node-codex'`).Scan(&left); err != nil || left != 0 {
 		t.Fatalf("node delete no longer cascades: %d %v", left, err)
+	}
+}
+
+// v13 adds the validation lifecycle beside each connection (#220): rows stored
+// before it keep every column and start untested with no origin or expiry.
+func TestV13AddsValidationStatusToExistingConnections(t *testing.T) {
+	ctx := context.Background()
+	s, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "routeweft.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := NewRunner(s.DB(), v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `INSERT INTO provider_nodes(id,kind,provider_id,name) VALUES('node-claude','builtin','claude','Claude');
+INSERT INTO provider_connections(id,node_id,name,auth_kind,identity,secret_blob,enabled,priority,created_at,updated_at,account_id) VALUES
+('conn-old','node-claude','old','oauth','user@example.invalid','sealed-old',0,2,'2026-01-01T00:00:00.000Z','2026-01-02T00:00:00.000Z','acct');`); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewRunner(s.DB()).Apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var name, blob, updated, status, origin string
+	var enabled, priority int
+	var tested, lastError, expires sql.NullString
+	var models sql.NullInt64
+	if err := s.DB().QueryRowContext(ctx, `SELECT name,secret_blob,enabled,priority,updated_at,test_status,auth_origin,last_tested_at,last_error,models_available,credential_expires_at FROM provider_connections WHERE id='conn-old'`).
+		Scan(&name, &blob, &enabled, &priority, &updated, &status, &origin, &tested, &lastError, &models, &expires); err != nil {
+		t.Fatal(err)
+	}
+	if name != "old" || blob != "sealed-old" || enabled != 0 || priority != 2 || updated != "2026-01-02T00:00:00.000Z" {
+		t.Fatalf("row changed: %s %s %d %d %s", name, blob, enabled, priority, updated)
+	}
+	if status != "untested" || origin != "" || tested.Valid || lastError.Valid || models.Valid || expires.Valid {
+		t.Fatalf("lifecycle defaults: %s %q %v %v %v %v", status, origin, tested, lastError, models, expires)
+	}
+	if _, err := s.DB().ExecContext(ctx, `UPDATE provider_connections SET test_status='success' WHERE id='conn-old'`); err == nil {
+		t.Fatal("test_status accepted an unknown state")
 	}
 }

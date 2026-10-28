@@ -1,0 +1,869 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	controlevents "github.com/raufimusaddiq/routeweft/internal/control/events"
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/quota"
+	"github.com/raufimusaddiq/routeweft/internal/routing"
+)
+
+// #220: a connection's validation lifecycle is persisted apart from its sealed
+// credential. A credential typed into the form is untested, a check records
+// active or failed with the model count and a redacted error, an edit that
+// replaces the credential (a relink) starts it over, a metadata edit keeps it,
+// a failed save leaves the stored credential and its status alone, and an
+// onboarded credential is active with its origin. No credential value reaches a
+// response, the read model, a stored error or an event.
+
+const (
+	relinkKeyOne   = "sk-fixture-relink-first-0001"
+	relinkKeyTwo   = "sk-fixture-relink-second-0002"
+	relinkKeyThree = "sk-fixture-relink-third-0003"
+)
+
+type connectionView struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	TestStatus      string `json:"testStatus"`
+	LastTestedAt    string `json:"lastTestedAt"`
+	LastError       string `json:"lastError"`
+	LastErrorAt     string `json:"lastErrorAt"`
+	ModelsAvailable *int   `json:"modelsAvailable"`
+	AuthOrigin      string `json:"authOrigin"`
+	ExpiresAt       string `json:"expiresAt"`
+	Plan            string `json:"plan"`
+	QuotaObservedAt string `json:"quotaObservedAt"`
+}
+
+func listedConnection(t *testing.T, mux *http.ServeMux, cookie *http.Cookie, id string, secrets ...string) connectionView {
+	t.Helper()
+	recorder := doJSON(t, mux, cookie, http.MethodGet, "/admin/v1/connections?size=100", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("list: %d %s", recorder.Code, recorder.Body.String())
+	}
+	assertNoSecret(t, "connection read model", recorder.Body.String(), secrets...)
+	var page struct {
+		Items []connectionView `json:"items"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range page.Items {
+		if item.ID == id {
+			return item
+		}
+	}
+	t.Fatalf("connection %s not listed: %s", id, recorder.Body.String())
+	return connectionView{}
+}
+
+func TestConnectionValidationLifecycle(t *testing.T) {
+	var revoked atomic.Bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if revoked.Load() {
+			// A revoked key, echoed back the way some providers do.
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(w, `{"error":{"message":"Incorrect API key provided: `+strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")+`"}}`)
+			return
+		}
+		if r.URL.Path == "/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"relink-a"},{"id":"relink-b"}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"OK"}}]}`)
+	}))
+	defer upstream.Close()
+	h, mux, store, creds, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	bus := controlevents.New()
+	h.opts.Events = bus
+	events, unsubscribe := bus.Subscribe()
+	defer unsubscribe()
+	plan := quota.State{Plan: "pro", ObservedAt: time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC)}
+	h.opts.QuotaState = func(string) (quota.State, bool) { return plan, true }
+	secrets := []string{relinkKeyOne, relinkKeyTwo, relinkKeyThree}
+
+	node, err := creds.PutNode(context.Background(), credentials.Node{Kind: credentials.NodeGeneric, ProviderID: "relink", Prefix: "relink", Name: "relink", BaseURL: upstream.URL, Transports: []string{"openai-chat"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections", `{"nodeId":"`+node.ID+`","name":"Relink","identity":"relink@example.invalid","authKind":"api-key","secret":{"accessToken":"`+relinkKeyOne+`"}}`)
+	if created.Code != http.StatusOK {
+		t.Fatalf("create: %d %s", created.Code, created.Body.String())
+	}
+	assertNoSecret(t, "create response", created.Body.String(), secrets...)
+	var saved struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(created.Body.Bytes(), &saved)
+	id := saved.ID
+
+	// A typed credential no provider has seen yet.
+	view := listedConnection(t, mux, cookie, id, secrets...)
+	if view.TestStatus != credentials.StatusUntested || view.AuthOrigin != credentials.OriginManual || view.LastTestedAt != "" || view.ModelsAvailable != nil {
+		t.Fatalf("created: %+v", view)
+	}
+	// Quota observed is reported apart from the credential's status.
+	if view.Plan != "pro" || view.QuotaObservedAt != "2026-10-27T09:00:00Z" {
+		t.Fatalf("quota fields: %+v", view)
+	}
+
+	test := func(want int) string {
+		t.Helper()
+		recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+id+"/test", `{"modelId":"relink-a"}`)
+		if recorder.Code != want {
+			t.Fatalf("test: %d %s", recorder.Code, recorder.Body.String())
+		}
+		assertNoSecret(t, "test response", recorder.Body.String(), secrets...)
+		return recorder.Body.String()
+	}
+	test(http.StatusOK)
+	view = listedConnection(t, mux, cookie, id, secrets...)
+	if view.TestStatus != credentials.StatusActive || view.LastTestedAt == "" || view.ModelsAvailable == nil || *view.ModelsAvailable != 2 || view.LastError != "" {
+		t.Fatalf("passed: %+v", view)
+	}
+
+	// A metadata edit keeps the result: the credential is unchanged.
+	if recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+id, `{"name":"Relinked"}`); recorder.Code != http.StatusOK {
+		t.Fatalf("rename: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if view = listedConnection(t, mux, cookie, id, secrets...); view.Name != "Relinked" || view.TestStatus != credentials.StatusActive || view.LastTestedAt == "" {
+		t.Fatalf("after rename: %+v", view)
+	}
+
+	// The provider revokes the key: the check fails and says so, without the key.
+	revoked.Store(true)
+	test(http.StatusBadGateway)
+	view = listedConnection(t, mux, cookie, id, secrets...)
+	if view.TestStatus != credentials.StatusFailed || view.LastError == "" || view.LastErrorAt == "" {
+		t.Fatalf("failed: %+v", view)
+	}
+
+	// A relink replaces the credential: every earlier result is cleared.
+	revoked.Store(false)
+	if recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+id, `{"secret":{"accessToken":"`+relinkKeyTwo+`"}}`); recorder.Code != http.StatusOK {
+		t.Fatalf("relink: %d %s", recorder.Code, recorder.Body.String())
+	} else {
+		assertNoSecret(t, "relink response", recorder.Body.String(), secrets...)
+	}
+	view = listedConnection(t, mux, cookie, id, secrets...)
+	if view.TestStatus != credentials.StatusUntested || view.LastTestedAt != "" || view.LastError != "" || view.ModelsAvailable != nil || view.Name != "Relinked" {
+		t.Fatalf("relinked: %+v", view)
+	}
+	if got := connectionByID(t, creds, id); got.Secret.AccessToken != relinkKeyTwo {
+		t.Fatal("relink did not replace the credential")
+	}
+
+	// Saves that fail leave the stored credential and its status as they were.
+	test(http.StatusOK)
+	for _, body := range []string{
+		`{"accountId":"bad/segment","secret":{"accessToken":"` + relinkKeyThree + `"}}`,
+		`{"proxyPoolId":"missing-pool","secret":{"accessToken":"` + relinkKeyThree + `"}}`,
+	} {
+		recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+id, body)
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("failing edit %s: %d %s", body, recorder.Code, recorder.Body.String())
+		}
+		assertNoSecret(t, "failed edit response", recorder.Body.String(), secrets...)
+		if got := connectionByID(t, creds, id); got.Secret.AccessToken != relinkKeyTwo {
+			t.Fatalf("failed edit %s replaced the credential", body)
+		}
+		if view = listedConnection(t, mux, cookie, id, secrets...); view.TestStatus != credentials.StatusActive {
+			t.Fatalf("failed edit %s changed status: %+v", body, view)
+		}
+	}
+	// The runtime still serves with the kept credential.
+	if credential, err := h.opts.CredentialRegistry.Credential(context.Background(), id); err != nil || credential != relinkKeyTwo {
+		t.Fatalf("runtime credential after failed edit: err=%v kept=%v", err, credential == relinkKeyTwo)
+	}
+
+	// A check that did not run on the credential records nothing.
+	connection := connectionByID(t, creds, id)
+	h.recordValidation(context.Background(), connection, &validationResult{Classification: "canceled", Error: "canceled"})
+	disabled := connection
+	disabled.Enabled = false
+	h.recordValidation(context.Background(), disabled, &validationResult{Error: "enable the connection before validation"})
+	if view = listedConnection(t, mux, cookie, id, secrets...); view.TestStatus != credentials.StatusActive || view.LastError != "" {
+		t.Fatalf("canceled or disabled check recorded: %+v", view)
+	}
+
+	// Delete removes the row and its status.
+	if recorder := doJSON(t, mux, cookie, http.MethodDelete, "/admin/v1/connections/"+id, ""); recorder.Code != http.StatusOK {
+		t.Fatalf("delete: %d", recorder.Code)
+	}
+	if _, err := creds.GetConnectionStatus(context.Background(), id); err != credentials.ErrNotFound {
+		t.Fatalf("deleted status: %v", err)
+	}
+
+	unsubscribe()
+	for event := range events {
+		raw, _ := json.Marshal(event)
+		assertNoSecret(t, "event "+event.Type, string(raw), secrets...)
+	}
+}
+
+// An upstream that echoes the key in its error never gets it into the stored
+// error or the answer, including a key the registry rotated since the read.
+func TestRecordValidationRedactsEchoedCredential(t *testing.T) {
+	h, _, store, creds, _ := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	c := workflowAccount(t, creds, "echo", "https://upstream.invalid", "echo-identity")
+	c.Secret = credentials.Secret{AccessToken: relinkKeyOne, RefreshToken: "rt-fixture-relink-0001", ProviderData: map[string]string{"region": "us", "copilotToken": "copilot-fixture-relink"}}
+	result := validationResult{Error: "denied " + relinkKeyOne + " refresh rt-fixture-relink-0001 copilot copilot-fixture-relink region us"}
+	h.recordValidation(context.Background(), c, &result)
+	if want := "denied [redacted] refresh [redacted] copilot [redacted] region us"; result.Error != want {
+		t.Fatalf("redacted=%q, want %q", result.Error, want)
+	}
+	// No credential is too short to redact where it stands alone, but a short
+	// one inside an ordinary word leaves the word alone ("ak" in "make", "pt" in
+	// "accepted", "k7" in "k70"); metadata is not a credential.
+	short := c
+	short.Secret = credentials.Secret{AccessToken: "k7", Cookie: "c=1x", ProviderData: map[string]string{"apiKey": "ak", "mimoPassToken": "pt", "projectId": "proj-9"}}
+	shortResult := validationResult{Error: "bad key k7 cookie c=1x api ak pass pt project proj-9; make k70 not accepted (ak)"}
+	h.recordValidation(context.Background(), short, &shortResult)
+	if want := "bad key [redacted] cookie [redacted] api [redacted] pass [redacted] project proj-9; make k70 not accepted ([redacted])"; shortResult.Error != want {
+		t.Fatalf("short redacted=%q, want %q", shortResult.Error, want)
+	}
+	status, err := creds.GetConnectionStatus(context.Background(), c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.TestStatus != credentials.StatusFailed || status.LastError != shortResult.Error {
+		t.Fatalf("stored: %+v", status)
+	}
+}
+
+// An import the flow only parses (a pasted grok-cli account) reaches no
+// provider, so it is untested with its origin on the add, the duplicate update
+// and every bulk item: active means a provider confirmed the credential. A
+// replacement clears the old credential's failure.
+func TestParsedImportIsUntestedWithItsOrigin(t *testing.T) {
+	env := newImportEnv(t, map[string]string{})
+	status, body := env.importAs(t, "grok-cli", "grok@example.invalid", `{"access_token":"tok-g1","refresh_token":"tok-r1","email":"grok@example.invalid"}`, nil)
+	if status != http.StatusOK || body["testStatus"] != credentials.StatusUntested || body["authOrigin"] != credentials.OriginImport {
+		t.Fatalf("import: %d %v", status, body)
+	}
+	id := body["id"].(string)
+	if err := env.creds.RecordValidation(context.Background(), id, connectionByID(t, env.creds, id).CredentialRevision, credentials.Validation{Error: "revoked"}); err != nil {
+		t.Fatal(err)
+	}
+	status, body = env.importAs(t, "grok-cli", "grok@example.invalid", `{"access_token":"tok-g2","email":"grok@example.invalid"}`, nil)
+	if status != http.StatusOK || body["outcome"] != onboardedUpdated || body["testStatus"] != credentials.StatusUntested {
+		t.Fatalf("reimport: %d %v", status, body)
+	}
+	view := listedConnection(t, env.mux, env.cookie, id, "tok-")
+	if view.TestStatus != credentials.StatusUntested || view.LastError != "" || view.AuthOrigin != credentials.OriginImport {
+		t.Fatalf("reimported: %+v", view)
+	}
+	recorder := doJSON(t, env.mux, env.cookie, http.MethodPost, "/admin/v1/oauth/grok-cli/bulk-import", `[{"access_token":"tok-b1","email":"bulk@example.invalid"}]`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("bulk: %d %s", recorder.Code, recorder.Body.String())
+	}
+	var bulk struct {
+		Results []struct {
+			ID string `json:"id"`
+		} `json:"results"`
+	}
+	_ = json.Unmarshal(recorder.Body.Bytes(), &bulk)
+	if len(bulk.Results) != 1 {
+		t.Fatalf("bulk: %s", recorder.Body.String())
+	}
+	if view := listedConnection(t, env.mux, env.cookie, bulk.Results[0].ID, "tok-"); view.TestStatus != credentials.StatusUntested || view.AuthOrigin != credentials.OriginImport {
+		t.Fatalf("bulk item: %+v", view)
+	}
+	// A bulk item that replaces a failed connection's credential is untested.
+	if err := env.creds.RecordValidation(context.Background(), id, connectionByID(t, env.creds, id).CredentialRevision, credentials.Validation{Error: "revoked"}); err != nil {
+		t.Fatal(err)
+	}
+	if recorder = doJSON(t, env.mux, env.cookie, http.MethodPost, "/admin/v1/oauth/grok-cli/bulk-import", `[{"access_token":"tok-b2","email":"grok@example.invalid"}]`); recorder.Code != http.StatusOK {
+		t.Fatalf("bulk update: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if view := listedConnection(t, env.mux, env.cookie, id, "tok-"); view.TestStatus != credentials.StatusUntested || view.LastError != "" || view.AuthOrigin != credentials.OriginImport {
+		t.Fatalf("bulk update: %+v", view)
+	}
+}
+
+// Xiaomi's soft validation stores a key whose model listing failed: a new
+// connection is untested, and a stored duplicate keeps the status it had
+// (xiaomi-mimo/api-key/route.js:79,115). A listing that succeeds is accepted.
+func TestXiaomiSoftValidationKeepsTheKeyUntested(t *testing.T) {
+	env := newImportEnv(t, map[string]string{"/models": `{"data":[{"id":"mimo"}]}`})
+	xiaomi := func(key string) string { return `{"apiKey":"` + key + `","uid":"7"}` }
+	env.exchange.status = http.StatusUnauthorized
+	status, body := env.importAs(t, "xiaomi-mimo", "7@xiaomi", xiaomi("sk-fixture-soft-1"), nil)
+	if status != http.StatusOK || body["outcome"] != onboardedAdded || body["testStatus"] != credentials.StatusUntested || body["authOrigin"] != credentials.OriginImport {
+		t.Fatalf("unvalidated add: %d %v", status, body)
+	}
+	id := body["id"].(string)
+	env.exchange.status = 0
+	if status, body = env.importAs(t, "xiaomi-mimo", "7@xiaomi", xiaomi("sk-fixture-soft-2"), nil); status != http.StatusOK || body["outcome"] != onboardedUpdated || body["testStatus"] != credentials.StatusActive {
+		t.Fatalf("validated update: %d %v", status, body)
+	}
+	if err := env.creds.RecordValidation(context.Background(), id, connectionByID(t, env.creds, id).CredentialRevision, credentials.Validation{Error: "provider rejected credentials"}); err != nil {
+		t.Fatal(err)
+	}
+	env.exchange.status = http.StatusUnauthorized
+	// The replacement key was never tested: the old key's failure, error and
+	// model count are not its own, so it is untested, not rejected.
+	if status, body = env.importAs(t, "xiaomi-mimo", "7@xiaomi", xiaomi("sk-fixture-soft-3"), nil); status != http.StatusOK || body["outcome"] != onboardedUpdated || body["testStatus"] != credentials.StatusUntested {
+		t.Fatalf("unvalidated update: %d %v", status, body)
+	}
+	view := listedConnection(t, env.mux, env.cookie, id, "sk-fixture-soft")
+	if view.TestStatus != credentials.StatusUntested || view.LastError != "" || view.LastErrorAt != "" || view.LastTestedAt != "" || view.ModelsAvailable != nil {
+		t.Fatalf("replacement kept the old key's result: %+v", view)
+	}
+	// An accepted connection stays active through an unvalidated replacement,
+	// as the reference keeps existing.testStatus (xiaomi-mimo/api-key/route.js:79),
+	// but the old key's last test and model count are cleared.
+	env.exchange.status = 0
+	if status, body = env.importAs(t, "xiaomi-mimo", "7@xiaomi", xiaomi("sk-fixture-soft-4"), nil); status != http.StatusOK || body["testStatus"] != credentials.StatusActive {
+		t.Fatalf("validated update: %d %v", status, body)
+	}
+	if err := env.creds.RecordValidation(context.Background(), id, connectionByID(t, env.creds, id).CredentialRevision, credentials.Validation{OK: true, ModelsAvailable: 9}); err != nil {
+		t.Fatal(err)
+	}
+	env.exchange.status = http.StatusUnauthorized
+	if status, body = env.importAs(t, "xiaomi-mimo", "7@xiaomi", xiaomi("sk-fixture-soft-5"), nil); status != http.StatusOK || body["testStatus"] != credentials.StatusActive {
+		t.Fatalf("unvalidated update of an active key: %d %v", status, body)
+	}
+	if view = listedConnection(t, env.mux, env.cookie, id, "sk-fixture-soft"); view.TestStatus != credentials.StatusActive || view.LastTestedAt != "" || view.ModelsAvailable != nil {
+		t.Fatalf("active replacement kept the old key's test: %+v", view)
+	}
+}
+
+// A relink replaces every stored copy of the old key. Onboarding keeps some
+// providers' key twice, as the access token and as ProviderData["apiKey"]
+// (kimi, iflow, xiaomi-mimo), and usage readers prefer that copy
+// (usage/oauth.go:21-26); a relink that left it would keep quota reads on the
+// old key. Entries that are not copies of the old key are kept.
+func TestRelinkReplacesStoredCopiesOfTheKey(t *testing.T) {
+	_, mux, store, creds, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	c := workflowAccount(t, creds, "copies", "https://upstream.invalid", "copies@example.invalid")
+	if err := creds.RotateSecret(context.Background(), c.ID, credentials.Secret{AccessToken: "old-access", ProviderData: map[string]string{
+		"apiKey": "old-provider-key", "wireToken": "old-access", "mimoPassToken": "session-pass", "region": "us", "projectId": "old-access-project",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"accessToken":"new-access"}}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("relink: %d %s", recorder.Code, recorder.Body.String())
+	}
+	assertNoSecret(t, "relink response", recorder.Body.String(), "new-access", "old-provider-key", "session-pass")
+	got := connectionByID(t, creds, c.ID).Secret
+	want := map[string]string{"apiKey": "new-access", "wireToken": "new-access", "mimoPassToken": "session-pass", "region": "us", "projectId": "old-access-project"}
+	if got.AccessToken != "new-access" || len(got.ProviderData) != len(want) {
+		t.Fatalf("relinked secret: access=%v providerData=%v", got.AccessToken == "new-access", got.ProviderData)
+	}
+	for key, value := range want {
+		if got.ProviderData[key] != value {
+			t.Fatalf("providerData[%s] = %q, want %q", key, got.ProviderData[key], value)
+		}
+	}
+	// A metadata edit sends no key and changes no copy.
+	if recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"name":"Renamed"}`); recorder.Code != http.StatusOK {
+		t.Fatalf("rename: %d", recorder.Code)
+	}
+	if after := connectionByID(t, creds, c.ID).Secret; after.ProviderData["apiKey"] != "new-access" || after.AccessToken != "new-access" {
+		t.Fatal("metadata edit changed the key")
+	}
+}
+
+// A check that started before a relink and finishes after it never marks the
+// replacement credential active or failed from the old credential's result.
+func TestCheckStartedBeforeRelinkDoesNotRecordOverIt(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var rejectOld atomic.Bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if r.URL.Path == "/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"relink-a"}]}`)
+			return
+		}
+		started <- struct{}{}
+		<-release
+		if rejectOld.Load() {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(w, `{"error":{"message":"invalid key"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"OK"}}]}`)
+	}))
+	defer upstream.Close()
+	_, mux, store, creds, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	c := workflowAccount(t, creds, "race", upstream.URL, "race@example.invalid")
+	if err := creds.RotateSecret(context.Background(), c.ID, credentials.Secret{AccessToken: relinkKeyOne}); err != nil {
+		t.Fatal(err)
+	}
+	for _, outcome := range []struct {
+		name   string
+		reject bool
+		code   int
+	}{{"pass", false, http.StatusOK}, {"fail", true, http.StatusBadGateway}} {
+		rejectOld.Store(outcome.reject)
+		done := make(chan int, 1)
+		go func() {
+			done <- doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"relink-a"}`).Code
+		}()
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("check did not reach the upstream")
+		}
+		relink := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"accessToken":"`+relinkKeyTwo+outcome.name+`"}}`)
+		if relink.Code != http.StatusOK {
+			t.Fatalf("%s relink: %d %s", outcome.name, relink.Code, relink.Body.String())
+		}
+		release <- struct{}{}
+		if code := <-done; code != outcome.code {
+			t.Fatalf("%s check: %d", outcome.name, code)
+		}
+		view := listedConnection(t, mux, cookie, c.ID, relinkKeyOne, relinkKeyTwo)
+		if view.TestStatus != credentials.StatusUntested || view.LastTestedAt != "" || view.LastError != "" || view.ModelsAvailable != nil {
+			t.Fatalf("%s: old check recorded over the relinked credential: %+v", outcome.name, view)
+		}
+	}
+}
+
+// The lifecycle is written with the credential, so concurrent saves of one
+// connection cannot pair one save's credential with another's status: an
+// imported credential is always from import, a relinked one (typed by hand)
+// always from manual, and neither was confirmed, so both are untested.
+func TestConcurrentImportAndRelinkKeepStatusWithItsCredential(t *testing.T) {
+	env := newImportEnv(t, map[string]string{})
+	status, body := env.importAs(t, "grok-cli", "grok@example.invalid", `{"access_token":"tok-seed","email":"grok@example.invalid"}`, nil)
+	if status != http.StatusOK {
+		t.Fatalf("seed: %d %v", status, body)
+	}
+	id := body["id"].(string)
+	for round := 0; round < 8; round++ {
+		var wg sync.WaitGroup
+		for i := 0; i < 3; i++ {
+			wg.Add(2)
+			go func(i int) {
+				defer wg.Done()
+				env.importAs(t, "grok-cli", "grok@example.invalid", fmt.Sprintf(`{"access_token":"tok-%d-%d","email":"grok@example.invalid"}`, round, i), nil)
+			}(i)
+			go func(i int) {
+				defer wg.Done()
+				doJSON(t, env.mux, env.cookie, http.MethodPatch, "/admin/v1/connections/"+id, fmt.Sprintf(`{"secret":{"accessToken":"sk-manual-%d-%d"}}`, round, i))
+			}(i)
+		}
+		wg.Wait()
+		stored := connectionByID(t, env.creds, id)
+		lifecycle, err := env.creds.GetConnectionStatus(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		imported := strings.HasPrefix(stored.Secret.AccessToken, "tok-")
+		if lifecycle.TestStatus != credentials.StatusUntested || imported && lifecycle.AuthOrigin != credentials.OriginImport ||
+			!imported && lifecycle.AuthOrigin != credentials.OriginManual {
+			t.Fatalf("round %d: imported=%v but status %+v", round, imported, lifecycle)
+		}
+	}
+}
+
+// An edit that keeps the credential (name, enabled state, order, proxy) during a
+// check reseals the same credential, so the check still records its result:
+// only a replacement or a relink makes a running check's result stale (a relink
+// of the same key included, TestSameKeyRelinkResetsTheResult).
+func TestMetadataEditDuringCheckKeepsItsResult(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if r.URL.Path == "/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"relink-a"},{"id":"relink-b"}]}`)
+			return
+		}
+		started <- struct{}{}
+		<-release
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"OK"}}]}`)
+	}))
+	defer upstream.Close()
+	_, mux, store, creds, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	c := workflowAccount(t, creds, "edit", upstream.URL, "edit@example.invalid")
+	if err := creds.RotateSecret(context.Background(), c.ID, credentials.Secret{AccessToken: relinkKeyOne}); err != nil {
+		t.Fatal(err)
+	}
+	before := connectionByID(t, creds, c.ID).CredentialRevision
+	for i, edit := range []string{`{"name":"Renamed"}`, `{"priority":3}`, `{"accountId":"acct-2"}`} {
+		done := make(chan int, 1)
+		go func() {
+			done <- doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"relink-a"}`).Code
+		}()
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("check did not reach the upstream")
+		}
+		if recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, edit); recorder.Code != http.StatusOK {
+			t.Fatalf("edit %s: %d %s", edit, recorder.Code, recorder.Body.String())
+		}
+		release <- struct{}{}
+		if code := <-done; code != http.StatusOK {
+			t.Fatalf("check during %s: %d", edit, code)
+		}
+		view := listedConnection(t, mux, cookie, c.ID, relinkKeyOne)
+		if view.TestStatus != credentials.StatusActive || view.LastTestedAt == "" || view.ModelsAvailable == nil || *view.ModelsAvailable != 2 {
+			t.Fatalf("edit %d %s lost the check result: %+v", i, edit, view)
+		}
+		if got := connectionByID(t, creds, c.ID); got.CredentialRevision != before || got.Secret.AccessToken != relinkKeyOne {
+			t.Fatalf("edit %s replaced the credential: revision %d -> %d", edit, before, got.CredentialRevision)
+		}
+	}
+}
+
+// A validated reimport that returns the stored token makes a failed connection
+// active again (connectionsRepo.js:64-75): Xiaomi's import lists the key's
+// models, so the provider confirmed it.
+func TestSameTokenReimportReactivatesAFailedConnection(t *testing.T) {
+	env := newImportEnv(t, map[string]string{"/models": `{"data":[{"id":"mimo"}]}`})
+	key := `{"apiKey":"sk-fixture-same-0001","uid":"7"}`
+	status, body := env.importAs(t, "xiaomi-mimo", "7@xiaomi", key, nil)
+	if status != http.StatusOK {
+		t.Fatalf("import: %d %v", status, body)
+	}
+	id := body["id"].(string)
+	if err := env.creds.RecordValidation(context.Background(), id, connectionByID(t, env.creds, id).CredentialRevision, credentials.Validation{Error: "provider rejected credentials"}); err != nil {
+		t.Fatal(err)
+	}
+	status, body = env.importAs(t, "xiaomi-mimo", "7@xiaomi", key, nil)
+	if status != http.StatusOK || body["outcome"] != onboardedUpdated || body["testStatus"] != credentials.StatusActive {
+		t.Fatalf("same-token reimport: %d %v", status, body)
+	}
+	if view := listedConnection(t, env.mux, env.cookie, id, "sk-fixture-same"); view.TestStatus != credentials.StatusActive || view.LastError != "" || view.LastErrorAt != "" {
+		t.Fatalf("same-token reimport left: %+v", view)
+	}
+}
+
+// A connection stored before credential_digest existed keeps a running check's
+// result through its first metadata edit.
+func TestUpgradedRowMetadataEditDuringCheckKeepsItsResult(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if r.URL.Path == "/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"relink-a"}]}`)
+			return
+		}
+		started <- struct{}{}
+		<-release
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"OK"}}]}`)
+	}))
+	defer upstream.Close()
+	_, mux, store, creds, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	c := workflowAccount(t, creds, "legacy", upstream.URL, "legacy@example.invalid")
+	if _, err := store.DB().Exec("UPDATE provider_connections SET credential_digest=NULL WHERE id=?", c.ID); err != nil {
+		t.Fatal(err)
+	}
+	before := connectionByID(t, creds, c.ID).CredentialRevision
+	done := make(chan int, 1)
+	go func() {
+		done <- doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"relink-a"}`).Code
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("check did not reach the upstream")
+	}
+	if recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"name":"Renamed"}`); recorder.Code != http.StatusOK {
+		t.Fatalf("rename: %d %s", recorder.Code, recorder.Body.String())
+	}
+	release <- struct{}{}
+	if code := <-done; code != http.StatusOK {
+		t.Fatalf("check: %d", code)
+	}
+	if view := listedConnection(t, mux, cookie, c.ID); view.TestStatus != credentials.StatusActive || view.LastTestedAt == "" {
+		t.Fatalf("upgraded row lost the check result: %+v", view)
+	}
+	if got := connectionByID(t, creds, c.ID).CredentialRevision; got != before {
+		t.Fatalf("rename of an upgraded row counted as a replacement: %d -> %d", before, got)
+	}
+}
+
+// A cookie relink of iflow mints a new key from the new cookie, as its cookie
+// flow does (iflow/cookie/route.js:29-119): iflow serves with the minted key,
+// which the resolver prefers over the cookie, so keeping the old key would
+// leave it serving. The minted key replaces the access token and its
+// ProviderData["apiKey"] copy, with its expiry, and only BXAuth is kept. A
+// cookie the provider refuses changes nothing. An access-token relink keeps
+// the stored cookie.
+func TestCookieRelinkMintsANewKey(t *testing.T) {
+	env := newImportEnv(t, map[string]string{"apikey": `{"success":true,"data":{"name":"flow-key","apiKey":"sk-iflow-minted","expireTime":"2027-01-01"}}`})
+	mux, creds, cookie := env.mux, env.creds, env.cookie
+	node, err := creds.PutNode(context.Background(), credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "iflow", Name: "iflow"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := creds.PutConnection(context.Background(), credentials.Connection{NodeID: node.ID, Name: "iflow", Identity: "iflow@example.invalid", AuthKind: credentials.AuthCookie, Enabled: true,
+		Secret: credentials.Secret{AccessToken: "stored-api-key", Cookie: "BXAuth=old;", ProviderData: map[string]string{"apiKey": "stored-api-key", "expireTime": "2026-12-01"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"cookie":"BXAuth=new; tracking=1"}}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("cookie relink: %d %s", recorder.Code, recorder.Body.String())
+	}
+	assertNoSecret(t, "cookie relink response", recorder.Body.String(), "sk-iflow-minted", "stored-api-key", "BXAuth=")
+	got := connectionByID(t, creds, c.ID).Secret
+	if got.Cookie != "BXAuth=new;" || got.AccessToken != "sk-iflow-minted" || got.ProviderData["apiKey"] != "sk-iflow-minted" || got.ProviderData["expireTime"] != "2027-01-01" {
+		t.Fatalf("cookie relink: cookie=%v access=%v apiKey=%v expire=%q", got.Cookie == "BXAuth=new;", got.AccessToken == "sk-iflow-minted", got.ProviderData["apiKey"] == "sk-iflow-minted", got.ProviderData["expireTime"])
+	}
+	if view := listedConnection(t, mux, cookie, c.ID, "sk-iflow-minted", "BXAuth="); view.TestStatus != credentials.StatusUntested {
+		t.Fatalf("cookie relink status: %+v", view)
+	}
+	// A refused cookie, or one without BXAuth, is reported and saves nothing.
+	env.exchange.status = http.StatusUnauthorized
+	if recorder = doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"cookie":"BXAuth=revoked;"}}`); recorder.Code != http.StatusBadGateway || relinkErrorCode(recorder) != "relink_rejected" {
+		t.Fatalf("refused cookie: %d %s", recorder.Code, recorder.Body.String())
+	}
+	env.exchange.status = 0
+	if recorder = doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"cookie":"session=1"}}`); recorder.Code != http.StatusBadRequest || relinkErrorCode(recorder) != "relink_invalid" {
+		t.Fatalf("cookie without BXAuth: %d %s", recorder.Code, recorder.Body.String())
+	}
+	assertNoSecret(t, "refused relink responses", recorder.Body.String(), "BXAuth=", "session=1")
+	if after := connectionByID(t, creds, c.ID).Secret; after.Cookie != "BXAuth=new;" || after.AccessToken != "sk-iflow-minted" {
+		t.Fatalf("a refused relink changed the credential: cookie=%v access=%v", after.Cookie == "BXAuth=new;", after.AccessToken == "sk-iflow-minted")
+	}
+	recorder = doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"accessToken":"new-api-key"}}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("key relink: %d %s", recorder.Code, recorder.Body.String())
+	}
+	got = connectionByID(t, creds, c.ID).Secret
+	if got.Cookie != "BXAuth=new;" || got.AccessToken != "new-api-key" || got.ProviderData["apiKey"] != "new-api-key" {
+		t.Fatalf("key relink: cookie=%v access=%v apiKey=%v", got.Cookie == "BXAuth=new;", got.AccessToken == "new-api-key", got.ProviderData["apiKey"] == "new-api-key")
+	}
+}
+
+// A cookie relink of a provider that serves with the cookie itself (grok-web)
+// replaces the cookie and calls nothing.
+func TestCookieRelinkOfACookieServedProviderReplacesTheCookie(t *testing.T) {
+	exchange := &routeExchange{routes: map[string]string{}}
+	h, mux, creds, cookie := newOnboardingAPI(t, exchange)
+	addBuiltinSpecs(h, "grok-web")
+	env := &importEnv{mux: mux, creds: creds, cookie: cookie, exchange: exchange}
+	node, err := env.creds.PutNode(context.Background(), credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "grok-web", Name: "grok-web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := env.creds.PutConnection(context.Background(), credentials.Connection{NodeID: node.ID, Name: "grok", Identity: "grok@example.invalid", AuthKind: credentials.AuthCookie, Enabled: true, Secret: credentials.Secret{Cookie: "sso=old"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := len(env.exchange.seenURLs)
+	if recorder := doJSON(t, env.mux, env.cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"cookie":"sso=new"}}`); recorder.Code != http.StatusOK {
+		t.Fatalf("cookie relink: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if got := connectionByID(t, env.creds, c.ID).Secret; got.Cookie != "sso=new" || got.AccessToken != "" || len(env.exchange.seenURLs) != calls {
+		t.Fatalf("cookie relink: cookie=%v access=%v calls=%d", got.Cookie == "sso=new", got.AccessToken != "", len(env.exchange.seenURLs)-calls)
+	}
+}
+
+// A failed check never reports a count it did not confirm.
+func TestFailedCheckDoesNotReportZeroModels(t *testing.T) {
+	var reject atomic.Bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if reject.Load() {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path == "/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"relink-a"},{"id":"relink-b"},{"id":"relink-c"}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"OK"}}]}`)
+	}))
+	defer upstream.Close()
+	_, mux, store, creds, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	c := workflowAccount(t, creds, "count", upstream.URL, "count@example.invalid")
+	if code := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"relink-a"}`).Code; code != http.StatusOK {
+		t.Fatalf("pass: %d", code)
+	}
+	reject.Store(true)
+	if code := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"relink-a"}`).Code; code != http.StatusBadGateway {
+		t.Fatalf("failure: %d", code)
+	}
+	view := listedConnection(t, mux, cookie, c.ID)
+	if view.TestStatus != credentials.StatusFailed || view.ModelsAvailable == nil || *view.ModelsAvailable != 3 {
+		t.Fatalf("failed check reported its own count: %+v", view)
+	}
+}
+
+// A relink keeps every stored token field the edit does not name. The PATCH
+// goes through the whole edit path (relinkedSecret, then the edit merge): an
+// access-token relink keeps the refresh token, ID token and cookie; an
+// ID-token edit keeps the access and refresh tokens; a refresh-token edit
+// keeps the access token and its expiry.
+func TestRelinkKeepsEveryStoredFieldItDoesNotName(t *testing.T) {
+	env := newImportEnv(t, map[string]string{})
+	mux, creds, cookie := env.mux, env.creds, env.cookie
+	node, err := creds.PutNode(context.Background(), credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "iflow", Name: "iflow"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiry := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	c, err := creds.PutConnection(context.Background(), credentials.Connection{NodeID: node.ID, Name: "iflow", Identity: "iflow@example.invalid", AuthKind: credentials.AuthCookie, Enabled: true,
+		Secret: credentials.Secret{AccessToken: "old-access", RefreshToken: "old-refresh", IDToken: "old-id", Cookie: "BXAuth=old;", Expiry: expiry}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch := func(body string) credentials.Secret {
+		t.Helper()
+		if recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, body); recorder.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", body, recorder.Code, recorder.Body.String())
+		}
+		return connectionByID(t, creds, c.ID).Secret
+	}
+	describe := func(s credentials.Secret) string {
+		return fmt.Sprintf("access=%q refresh=%q id=%q cookie=%q expiry=%v", s.AccessToken, s.RefreshToken, s.IDToken, s.Cookie, s.Expiry)
+	}
+	if got := patch(`{"secret":{"accessToken":"new-access"}}`); got.AccessToken != "new-access" || got.RefreshToken != "old-refresh" || got.IDToken != "old-id" || got.Cookie != "BXAuth=old;" {
+		t.Fatalf("access-token relink: %s", describe(got))
+	}
+	if got := patch(`{"secret":{"idToken":"new-id"}}`); got.AccessToken != "new-access" || got.RefreshToken != "old-refresh" || got.IDToken != "new-id" || got.Cookie != "BXAuth=old;" {
+		t.Fatalf("id-token edit: %s", describe(got))
+	}
+	if got := patch(`{"secret":{"refreshToken":"new-refresh"}}`); got.AccessToken != "new-access" || got.RefreshToken != "new-refresh" || got.IDToken != "new-id" || got.Cookie != "BXAuth=old;" {
+		t.Fatalf("refresh-token edit: %s", describe(got))
+	}
+	c2, err := creds.PutConnection(context.Background(), credentials.Connection{NodeID: node.ID, Name: "iflow-2", Identity: "iflow2@example.invalid", AuthKind: credentials.AuthCookie, Enabled: true,
+		Secret: credentials.Secret{AccessToken: "kept-access", RefreshToken: "old-refresh", Expiry: expiry}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c = c2
+	if got := patch(`{"secret":{"refreshToken":"rotated-refresh"}}`); got.AccessToken != "kept-access" || got.RefreshToken != "rotated-refresh" || !got.Expiry.Equal(expiry) {
+		t.Fatalf("refresh-token edit lost the access token's expiry: %s", describe(got))
+	}
+}
+
+// A relink resets the connection even when the operator types the stored key
+// again: the dashboard says "Credential replaced. Check the connection to
+// confirm it.", so the previous failure, its error and a running check's
+// result do not stay beside it.
+func TestSameKeyRelinkResetsTheResult(t *testing.T) {
+	_, mux, store, creds, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	c := workflowAccount(t, creds, "same", "http://127.0.0.1:9", "same@example.invalid")
+	const key = "sk-fixture-same-key-0001"
+	if recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"accessToken":"`+key+`"}}`); recorder.Code != http.StatusOK {
+		t.Fatalf("first relink: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if err := creds.RecordValidation(context.Background(), c.ID, connectionByID(t, creds, c.ID).CredentialRevision, credentials.Validation{OK: true, ModelsAvailable: 4}); err != nil {
+		t.Fatal(err)
+	}
+	if err := creds.RecordValidation(context.Background(), c.ID, connectionByID(t, creds, c.ID).CredentialRevision, credentials.Validation{Error: "provider rejected credentials"}); err != nil {
+		t.Fatal(err)
+	}
+	stale := connectionByID(t, creds, c.ID).CredentialRevision
+	if recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"secret":{"accessToken":"`+key+`"}}`); recorder.Code != http.StatusOK {
+		t.Fatalf("same-key relink: %d %s", recorder.Code, recorder.Body.String())
+	}
+	view := listedConnection(t, mux, cookie, c.ID, key)
+	if view.TestStatus != credentials.StatusUntested || view.LastError != "" || view.LastErrorAt != "" || view.LastTestedAt != "" || view.ModelsAvailable != nil || view.AuthOrigin != credentials.OriginManual {
+		t.Fatalf("same-key relink kept the previous result: %+v", view)
+	}
+	if err := creds.RecordValidation(context.Background(), c.ID, stale, credentials.Validation{Error: "late"}); !errors.Is(err, credentials.ErrCredentialChanged) {
+		t.Fatalf("a check started before the relink recorded over it: %v", err)
+	}
+	// An edit that names no credential still keeps the result.
+	if err := creds.RecordValidation(context.Background(), c.ID, connectionByID(t, creds, c.ID).CredentialRevision, credentials.Validation{Error: "after"}); err != nil {
+		t.Fatal(err)
+	}
+	if recorder := doJSON(t, mux, cookie, http.MethodPatch, "/admin/v1/connections/"+c.ID, `{"name":"renamed"}`); recorder.Code != http.StatusOK {
+		t.Fatalf("rename: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if view = listedConnection(t, mux, cookie, c.ID, key); view.TestStatus != credentials.StatusFailed || view.LastError != "after" {
+		t.Fatalf("rename reset the result: %+v", view)
+	}
+}
+
+// A passing check that listed no models keeps the confirmed count instead of
+// recording 0: the listing failed, so it ran on the model the operator
+// supplied, or the provider answered an empty listing.
+func TestUnlistedPassKeepsTheConfirmedModelCount(t *testing.T) {
+	var listing atomic.Int32 // 0 lists three models, 1 fails, 2 lists none
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if r.URL.Path == "/models" {
+			switch listing.Load() {
+			case 1:
+				w.WriteHeader(http.StatusNotFound)
+				return
+			case 2:
+				_, _ = io.WriteString(w, `{"data":[]}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"data":[{"id":"relink-a"},{"id":"relink-b"},{"id":"relink-c"}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"OK"}}]}`)
+	}))
+	defer upstream.Close()
+	_, mux, store, creds, cookie := newProvidersAPI(t, true, nil)
+	defer store.Close()
+	c := workflowAccount(t, creds, "unlisted", upstream.URL, "unlisted@example.invalid")
+	if code := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"relink-a"}`).Code; code != http.StatusOK {
+		t.Fatalf("listed pass: %d", code)
+	}
+	for _, mode := range []int32{1, 2} {
+		listing.Store(mode)
+		if code := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"relink-a"}`).Code; code != http.StatusOK {
+			t.Fatalf("unlisted pass %d: %d", mode, code)
+		}
+		view := listedConnection(t, mux, cookie, c.ID)
+		if view.TestStatus != credentials.StatusActive || view.LastTestedAt == "" || view.ModelsAvailable == nil || *view.ModelsAvailable != 3 {
+			t.Fatalf("unlisted pass %d reported a count it did not list: %+v", mode, view)
+		}
+	}
+}
+
+// A provider with no model listing (Azure) is checked without one, and its
+// check is unlisted, so a pass keeps the confirmed count; a listing provider's
+// check is not.
+func TestUnlistableProviderCheckIsUnlisted(t *testing.T) {
+	h, calls := recordingHandler(t)
+	node, connection := builtinConnection("azure", routing.ProviderSettings{AzureEndpoint: "https://acme.openai.azure.com", Deployment: "d1", APIVersion: "2025-01-01"}, credentials.AuthAPIKey)
+	result := h.validateConnection(context.Background(), connection, node, "openai-chat", "model-x")
+	for _, call := range calls() {
+		if strings.Contains(call.URL, "/models") {
+			t.Fatalf("azure listed models: %s", call.URL)
+		}
+	}
+	if !result.unlisted || result.ModelsAvailable != 0 {
+		t.Fatalf("azure check: %+v unlisted=%v", result, result.unlisted)
+	}
+	node, connection = builtinConnection("kimi", routing.ProviderSettings{}, credentials.AuthAPIKey)
+	if result = h.validateConnection(context.Background(), connection, node, "openai-chat", "model-x"); result.unlisted || result.ModelsAvailable != 1 {
+		t.Fatalf("kimi check: %+v unlisted=%v", result, result.unlisted)
+	}
+}
+
+// relinkErrorCode is an error answer's code.
+func relinkErrorCode(recorder *httptest.ResponseRecorder) string {
+	var body map[string]any
+	_ = json.Unmarshal(recorder.Body.Bytes(), &body)
+	return apiErrorCode(body)
+}

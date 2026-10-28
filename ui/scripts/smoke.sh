@@ -42,5 +42,6 @@ node scripts/shell-smoke.cjs
 node scripts/oauth-journeys-smoke.cjs
 node scripts/device-approval-smoke.cjs
 node scripts/import-masking-smoke.cjs
+node scripts/connection-status-smoke.cjs
 node scripts/kiro-social-smoke.cjs
 

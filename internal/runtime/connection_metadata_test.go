@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -237,5 +238,48 @@ func TestCredentialInstallWaitHonorsDeadline(t *testing.T) {
 	durable, err := s.GetConnection(ctx, connection.ID)
 	if err != nil || durable.Secret.AccessToken != "fixture-old" {
 		t.Fatalf("timed-out install changed durable credential: %v", err)
+	}
+}
+
+// A save of a connection read back from the store carries its credential
+// revision (#220), which the runtime configuration never selects. The store
+// leaves it out of the configuration it publishes, so resaving the same
+// connection, or replacing only its credential, keeps the serving snapshot.
+func TestCredentialRevisionDoesNotReachTheSnapshot(t *testing.T) {
+	ctx := context.Background()
+	m, s := providerStore(t)
+	node, err := s.PutNode(ctx, credentials.Node{ID: "openai", Kind: credentials.NodeBuiltin, ProviderID: "openai", Name: "OpenAI", Transports: []string{"openai-chat"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection := credentials.Connection{ID: "c1", NodeID: node.ID, ProviderID: "openai", Name: "c1", AuthKind: credentials.AuthAPIKey, Enabled: true, Secret: credentials.Secret{AccessToken: "fixture-token-1"}}
+	if _, err := s.PutConnection(ctx, connection); err != nil {
+		t.Fatal(err)
+	}
+	connection.Secret.AccessToken = "fixture-token-2"
+	if _, err := s.PutConnection(ctx, connection); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := m.Load()
+	for i := 0; i < 3; i++ {
+		loaded, err := s.GetConnection(ctx, "c1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loaded.CredentialRevision == 0 {
+			t.Fatal("the replacement did not count")
+		}
+		loaded.Secret.AccessToken = fmt.Sprintf("fixture-token-renewed-%d", i)
+		if _, err := s.PutConnection(ctx, loaded); err != nil {
+			t.Fatal(err)
+		}
+		if after, _ := m.Load(); after != before {
+			t.Fatalf("save %d of a read-back connection republished the snapshot", i)
+		}
+	}
+	for _, c := range before.providerConfig.Connections {
+		if c.CredentialRevision != 0 {
+			t.Fatal("credential revision reached the snapshot")
+		}
 	}
 }

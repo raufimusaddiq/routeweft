@@ -2101,6 +2101,128 @@ whose `base_url` is exactly the old default
 base URL (operator overrides) and every other provider are untouched. Older
 binaries reject schema v8; rollback requires the pre-upgrade backup.
 
+### 33.2 Connection validation lifecycle (#220)
+
+Each connection keeps a persisted validation lifecycle beside it in
+`provider_connections` (migration v13), outside the sealed secret and outside the
+runtime snapshot: recording a result never opens a credential, recompiles
+configuration or touches the serving path. The connections read model reports
+four separate things the operator must not confuse:
+
+| Question | Field(s) | Source |
+| --- | --- | --- |
+| Did the provider accept the credential? | `testStatus`: `untested`, `active` or `failed`; `lastError`, `lastErrorAt` | sign-in/import, connection test |
+| Did a model answer? | `lastTestedAt`, `modelsAvailable` | connection test / batch test |
+| Is quota observed? | `plan`, `quotaObservedAt` | quota service (in memory) |
+| Is the provider ready? | catalog `readiness` | build-time catalog (unchanged) |
+
+`authOrigin` (`manual`, `oauth`, `device`, `import`) names how the credential
+arrived; `expiresAt` mirrors the sealed secret's expiry, rewritten with every
+new secret, including a refresh rotation (`RotateSecret`). Neither is credential
+material.
+
+Transitions, after the reference (`testUtils.js:892-899`,
+`[provider]/[action]/route.js:69`, `connectionsRepo.js:64-75`). A save's status
+and origin are written by the same statement that writes its credential
+(`credentials.Lifecycle` on `PutConnection`), so no concurrent save or check
+can pair one credential with another's status; a new credential also clears
+the last test, error and model count:
+
+- A browser or device sign-in, a Reauthenticate, and an import the provider
+  confirmed (an exchange, refresh or verification call: iflow cookie, Kiro
+  token or API key, GitLab PAT, Xiaomi with a successful model listing),
+  including one that updates a stored duplicate, mark the connection `active`
+  with its origin and clear the last error. An import the flow only parses (a
+  pasted Codex, grok-cli or Cursor token, a Kiro CLI-proxy file) and every
+  bulk item reach no provider: they are saved `untested` with origin `import`
+  when new and, on a stored duplicate, keep an `active` status but turn a
+  `failed` one `untested`, as a soft-validated Xiaomi key does. `active` means
+  a provider confirmed the credential; the reference writes `active` on these
+  imports too (`codex/import-token/route.js:78`, `cursor/import/route.js:56`,
+  `kiro/import-cli-proxy/route.js:23`, `grok-cli/bulk-import/route.js:99`,
+  `codex/bulk-import/route.js:102`), which Routeweft does not: the status is
+  a dashboard label and no routing decision reads it. The response carries
+  `testStatus` and `authOrigin`, beside the existing `outcome` (`added`,
+  `updated`, `reauthenticated`).
+- A manual create, or a manual edit that carries credential material (a
+  relink), marks it `untested` with origin `manual` and clears the last test,
+  model count and error: no provider has seen the new credential. A relink's
+  new key also replaces every stored copy of the old one:
+  `ProviderData.apiKey`, which onboarding keeps beside the access token for
+  kimi, iflow and xiaomi-mimo and which usage readers prefer, and any other
+  credential entry that held the old access token; other provider data is
+  kept. A relink replaces only the credential fields it names and keeps every
+  stored access, refresh and ID token and cookie it does not name: a
+  cookie-only relink keeps the stored tokens, an access-token relink keeps
+  the refresh and ID tokens and cookie, and an
+  ID-token or refresh-token edit keeps the access token and its expiry. A
+  cookie-only relink of a provider that serves with a key minted from its
+  cookie (iflow: the cookie flow mints the API key and stores it as the access
+  token and `ProviderData.apiKey`, `onboarding/manual.go:189-275`, and the
+  resolver prefers that key over the cookie) re-runs the provider's cookie
+  flow with the new cookie, as the reference's `iflow/cookie/route.js:29-119`
+  does, and saves what it mints: the new key, its copy and `expireTime`, and
+  only the `BXAuth` cookie. A cookie the provider refuses answers
+  `502 relink_rejected`, one without `BXAuth` `400 relink_invalid`, and
+  neither changes the stored credential. A provider that serves with the
+  cookie itself (grok-web, perplexity-web) has its cookie replaced as typed. A
+  relink resets the connection even when the operator types the stored key
+  again: it is `untested`, its last test, error and model count are cleared
+  and a check started before it is refused, so the dashboard's "Credential
+  replaced" never sits beside the previous result. The
+  reference keeps the previous status on such an edit; Routeweft does not
+  report a result for a credential that was never tested. An edit of name,
+  identity, order, proxy or enabled state keeps the stored lifecycle.
+- `POST /admin/v1/connections/{id}/test` and each account of
+  `POST /admin/v1/providers/test-batch` record `active` (clearing the error)
+  with the time and the listed model count, or `failed` with the error and the
+  time, keeping the last confirmed model count: a failed probe's listing is not
+  a count of usable models. A pass that listed no models (a provider with no
+  listing, an empty listing, or a failed listing after which the check ran on
+  the supplied model) also keeps the last confirmed count rather than recording 0. A canceled
+  test and a disabled connection record nothing. A result is recorded only
+  against the `credential_revision` read with the credential it tested. Only a
+  replacement increments it: a manual relink, or a save whose credential
+  material differs, by a
+  keyed digest (`credential_digest`, HMAC under a key derived from the master
+  key), from the stored one. An edit that reseals the same credential (name,
+  order, proxy, provider settings) and a refresh rotation do not, so a check
+  survives them, while a check that started before a relink and ends after it
+  is refused and the replacement keeps its own status. A connection stored
+  before the digest existed has its digest filled in from its stored secret by
+  its first save, before the comparison, so that save is not mistaken for a
+  replacement. Every replacement clears the last test, error and model count,
+  which describe the credential it replaced, whether or not the save names a
+  status. An `untested` lifecycle applies only on a replacement; a replacement
+  that names no status (Xiaomi's soft-validated duplicate) keeps an `active`
+  status, as the reference keeps `existing.testStatus`
+  (`xiaomi-mimo/api-key/route.js:79`), but turns a `failed` one `untested`:
+  that failure was the old credential's, and the reference's would show the
+  old error against the new key. An `active` one applies on any save
+  of a credential a provider issued or accepted, the same credential included
+  (a reauthentication or validated reimport returning the stored token), and
+  clears the last error, as the reference's activation does
+  (`connectionsRepo.js:64-75,282,347`). The error is the probe's bounded text with
+  every credential value of the connection (stored and as the registry
+  currently holds it), whatever its length, replaced by `[redacted]`, in both
+  the answer and the stored row: the access, refresh and ID tokens, the cookie,
+  and provider-data values under credential keys (the provider's named
+  credential, keys the log redaction treats as secret, proxy URLs). Provider
+  metadata such as project, region, account ids and plan is not redacted. A
+  value shorter than 8 characters is replaced only where it stands alone, with
+  no letter or digit on either side, so a short credential is still removed
+  but cannot rewrite an ordinary word that contains it. Unsaved node validation applies the same redaction.
+- A save that fails (invalid account id, unknown proxy pool, store error)
+  leaves the stored credential, its runtime registration and its lifecycle
+  unchanged. Deleting the connection deletes its lifecycle with the row.
+
+The Providers UI shows the status as a state tag, a one-line summary (last
+check, models listed, token expiry, origin, plan, quota seen) and the last error
+when failed. Edit changes name and identity and, for API-key and cookie
+connections, replaces the credential through a masked field that starts empty
+(a blank field keeps the stored one) and is cleared once saved; sign-in
+connections are renewed with Reauthenticate.
+
 ## 34. Public compatibility details
 
 Routeweft ingress must account for:

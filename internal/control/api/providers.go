@@ -15,11 +15,13 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/cloudflare"
 	"github.com/raufimusaddiq/routeweft/internal/providers/discovery"
+	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/proxy"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
+	"github.com/raufimusaddiq/routeweft/internal/telemetry"
 	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
@@ -258,6 +260,19 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 		if body.AccountID == nil {
 			body.AccountID = &old.AccountID
 		}
+		minted, mints, err := h.cookieMintedSecret(r.Context(), old.ProviderID, credentials.AuthKind(body.AuthKind), body.Secret)
+		var inputErr *onboarding.InputError
+		switch {
+		case errors.As(err, &inputErr):
+			writeError(w, http.StatusBadRequest, "relink_invalid", inputErr.Error())
+			return
+		case err != nil:
+			writeError(w, http.StatusBadGateway, "relink_rejected", "the provider did not accept the cookie; it may be invalid, expired or revoked")
+			return
+		case mints:
+			body.Secret = minted
+		}
+		body.Secret = relinkedSecret(old.Secret, body.Secret)
 	}
 	accountID := ""
 	if body.AccountID != nil {
@@ -337,7 +352,17 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	connection, _, err := h.publishConnection(r.Context(), credentials.Connection{ID: r.PathValue("id"), NodeID: node.ID, ProviderID: node.ProviderID, Name: body.Name, AuthKind: authKind, Identity: body.Identity, Secret: body.Secret, Enabled: enabled, Priority: priority, ProxyPoolID: proxyPool, AccountID: accountID})
+	// A credential typed into the form is new to every provider: a create, or an
+	// edit that replaces the credential (a relink), is saved untested, in the
+	// same write as the credential. A relink resets even when the operator typed
+	// the stored key again, so the dashboard never shows the previous result
+	// beside "Credential replaced". An edit of name, order, proxy or state keeps
+	// the stored result (#220).
+	var lifecycle credentials.Lifecycle
+	if r.Method != http.MethodPatch || replacesCredential(body.Secret) {
+		lifecycle = credentials.Lifecycle{Status: credentials.StatusUntested, Origin: credentials.OriginManual, Reset: true}
+	}
+	connection, _, err := h.publishConnection(r.Context(), credentials.Connection{ID: r.PathValue("id"), NodeID: node.ID, ProviderID: node.ProviderID, Name: body.Name, AuthKind: authKind, Identity: body.Identity, Secret: body.Secret, Enabled: enabled, Priority: priority, ProxyPoolID: proxyPool, AccountID: accountID, Lifecycle: lifecycle})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity, auth mode, and proxy pool")
 		return
@@ -395,6 +420,7 @@ func (h *Handler) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := h.validateConnection(r.Context(), connection, node, body.Transport, body.ModelID)
+	h.recordValidation(r.Context(), connection, &result)
 	if !result.OK {
 		status := http.StatusBadGateway
 		if result.Classification == "slow" || result.Classification == "canceled" {
@@ -1348,6 +1374,95 @@ func connectionJSON(connection credentials.Connection) map[string]any {
 		view["signInMethod"] = method
 	}
 	return view
+}
+
+// relinkedSecret makes a relink replace the credential fields it names and only
+// those. The edit merge takes an update's token fields whole once it carries any
+// credential (mergeConnectionSecret), so without this a cookie-only relink of a
+// connection that also holds an API key (iflow keeps the key minted from its
+// cookie as the access token, onboarding/manual.go:251-260) would drop the key
+// and break the connection, an access-token relink would drop a stored refresh
+// token, ID token and cookie, and an ID-token edit would drop the access token.
+// Here every stored access, refresh and ID token and cookie the edit does not
+// name is kept, and the stored expiry with the access token it belongs to.
+//
+// An access-token relink also replaces every stored copy of the old key.
+// Onboarding keeps the key twice for some providers, as the access token and as
+// ProviderData["apiKey"] (kimi, onboarding/providers.go:98-101; iflow,
+// manual.go:251,260; xiaomi-mimo, manual.go:342), and usage readers prefer the
+// provider-data copy (usage/oauth.go:21-26), so the relink names apiKey, and
+// any other credential entry that held the old access token, with the new key.
+// Other entries (a Copilot or session token minted separately, metadata) are
+// kept by the merge.
+func relinkedSecret(stored, edit credentials.Secret) credentials.Secret {
+	if !replacesCredential(edit) {
+		return edit
+	}
+	key := strings.TrimSpace(edit.AccessToken)
+	if key == "" {
+		edit.AccessToken = stored.AccessToken
+		if edit.Expiry.IsZero() {
+			edit.Expiry = stored.Expiry
+		}
+	}
+	if strings.TrimSpace(edit.RefreshToken) == "" {
+		edit.RefreshToken = stored.RefreshToken
+	}
+	if strings.TrimSpace(edit.IDToken) == "" {
+		edit.IDToken = stored.IDToken
+	}
+	if strings.TrimSpace(edit.Cookie) == "" {
+		edit.Cookie = stored.Cookie
+	}
+	if key == "" {
+		return edit
+	}
+	for name, value := range stored.ProviderData {
+		if _, named := edit.ProviderData[name]; named || value == "" {
+			continue
+		}
+		if name == "apiKey" || value == stored.AccessToken && telemetry.SensitiveKey(name) {
+			if edit.ProviderData == nil {
+				edit.ProviderData = map[string]string{}
+			}
+			edit.ProviderData[name] = key
+		}
+	}
+	return edit
+}
+
+// cookieMintedSecret renews the credential a cookie connection serves with when
+// a relink names a new cookie. iflow serves with the API key its cookie flow
+// mints (onboarding/manual.go, the pin's iflow/cookie/route.js:29-119) and the
+// resolver prefers that key over the cookie, so replacing the cookie alone
+// would keep the old key serving. The relink therefore re-runs the provider's
+// cookie import with the new cookie and takes everything it mints: the key, its
+// provider-data copy and expiry, and the retained BXAuth cookie. mints is false
+// for an edit that is not a cookie-only relink of such a provider (a cookie
+// provider that serves with the cookie itself, grok-web or perplexity-web, has
+// no cookie import flow), and the edit is then saved as typed.
+func (h *Handler) cookieMintedSecret(ctx context.Context, providerID string, kind credentials.AuthKind, edit credentials.Secret) (credentials.Secret, bool, error) {
+	if kind != credentials.AuthCookie || strings.TrimSpace(edit.Cookie) == "" || strings.TrimSpace(edit.AccessToken) != "" {
+		return edit, false, nil
+	}
+	flow, ok := h.importFlowFor(providerID)
+	if !ok || flow.AuthKind != credentials.AuthCookie || flow.Import == nil {
+		return edit, false, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	result, err := flow.Import(ctx, onboarding.Params{Input: edit.Cookie, Client: h.opts.OAuthClient})
+	if err != nil {
+		return credentials.Secret{}, true, err
+	}
+	return result.Secret, true, nil
+}
+
+// replacesCredential reports whether a form edit carries credential material,
+// which replaces the stored credential (mergeConnectionSecret keeps the stored
+// one for an edit that carries none).
+func replacesCredential(secret credentials.Secret) bool {
+	return !secret.Empty() || secret.IDToken != ""
 }
 
 func slicesContain(items []string, target string) bool {
