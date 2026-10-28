@@ -36,7 +36,8 @@ type pinStep struct {
 	Body    json.RawMessage `json:"body"`
 	Network string          `json:"network"`
 	// Base64 is a binary body (gRPC-web frames, #224).
-	Base64 *string `json:"base64"`
+	Base64  *string             `json:"base64"`
+	Headers map[string][]string `json:"headers"`
 }
 
 type pinRequest struct {
@@ -129,7 +130,13 @@ func (r *replay) Do(request *http.Request) (*http.Response, error) {
 			return nil, err
 		}
 	}
-	return &http.Response{StatusCode: step.Status, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(body))}, nil
+	header := http.Header{}
+	for name, values := range step.Headers {
+		for _, value := range values {
+			header.Add(name, value)
+		}
+	}
+	return &http.Response{StatusCode: step.Status, Header: header, Body: io.NopCloser(bytes.NewReader(body))}, nil
 }
 
 // wantRequests compares the requests with the pin's: the same URLs and methods

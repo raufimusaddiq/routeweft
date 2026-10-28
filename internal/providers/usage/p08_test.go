@@ -90,21 +90,29 @@ func TestOpenCodeGoUsageUsedPercentAndAbsentPeriods(t *testing.T) {
 	}
 }
 
+// A failure is an error; an answer without quota, including the missing
+// subscription, is a notice (#225), and neither is a healthy account.
 func TestOpenCodeGoUsageFailuresAreErrorsNotHealthyAccounts(t *testing.T) {
 	for _, tc := range []struct {
 		status int
 		body   string
 		want   string
+		notice bool
 	}{
-		{http.StatusUnauthorized, `{}`, "authentication failed"},
-		{http.StatusForbidden, `{"error":{"type":"EntitlementError"}}`, "subscription required"},
-		{http.StatusOK, `{"usage":{}}`, "no quota data"},
-		{http.StatusOK, `{"usage":{"rolling":{"percent":null}}}`, "no quota data"},
-		{http.StatusBadGateway, `{}`, "HTTP 502"},
+		{http.StatusUnauthorized, `{}`, "authentication failed", false},
+		{http.StatusForbidden, `{}`, "access forbidden", false},
+		{http.StatusForbidden, `{"error":{"type":"EntitlementError"}}`, "subscription required", true},
+		{http.StatusOK, `{"usage":{}}`, "did not contain valid quota data", true},
+		{http.StatusOK, `{"usage":{"rolling":{"percent":null}}}`, "did not contain valid quota data", true},
+		{http.StatusBadGateway, `{}`, "HTTP 502", false},
 	} {
 		state, err := reader(t, "opencode-go", &stubClient{status: tc.status, body: tc.body}).Usage(context.Background(), quota.Credential{AccessToken: "k"})
-		if err == nil || !strings.Contains(err.Error(), tc.want) || len(state.Windows) != 0 {
-			t.Errorf("status %d body %s: state %+v err %v, want error containing %q", tc.status, tc.body, state, err, tc.want)
+		got := state.Message
+		if err != nil {
+			got = err.Error()
+		}
+		if (err == nil) != tc.notice || !strings.Contains(got, tc.want) || len(state.Windows) != 0 || state.DeriveStatus(time.Now()) == quota.StatusAvailable {
+			t.Errorf("status %d body %s: state %+v err %v, want %q (notice %v)", tc.status, tc.body, state, err, tc.want, tc.notice)
 		}
 	}
 }
@@ -125,11 +133,13 @@ func TestOllamaUsageRatioIsUsedFractionAndNullWindowsAreSkipped(t *testing.T) {
 	}
 	wantRemaining(t, windows, "Session (5h)", 0.75)
 	wantRemaining(t, windows, "Weekly (7d)", 0)
-	if stub.request.URL.String() != "https://ollama.com/api/usage" || stub.request.Header.Get("Authorization") != "Bearer fixture-key" {
-		t.Fatalf("request %s %v", stub.request.URL, stub.request.Header)
+	// The last request is the plan lookup (misc.js:94-102), with the same key.
+	if stub.request.Method != http.MethodPost || stub.request.URL.String() != "https://ollama.com/api/me" || stub.request.Header.Get("Authorization") != "Bearer fixture-key" {
+		t.Fatalf("request %s %s %v", stub.request.Method, stub.request.URL, stub.request.Header)
 	}
-	if _, err := reader(t, "ollama", &stubClient{status: http.StatusOK, body: `{"limits":{}}`}).Usage(context.Background(), quota.Credential{AccessToken: "k"}); err == nil {
-		t.Fatal("a response with no limits was read as a healthy account")
+	empty, err := reader(t, "ollama", &stubClient{status: http.StatusOK, body: `{"limits":{}}`}).Usage(context.Background(), quota.Credential{AccessToken: "k"})
+	if err != nil || empty.Message == "" || len(empty.Windows) != 0 || empty.DeriveStatus(time.Now()) != quota.StatusUnknown {
+		t.Fatalf("a response with no limits was read as %+v, %v; want a notice", empty, err)
 	}
 }
 
@@ -150,13 +160,17 @@ func TestXiaomiMimoUsagePercentIsRemaining(t *testing.T) {
 	if stub.request.Header.Get("X-Mimo-Source") != "mimocode-cli" || stub.request.Header.Get("Authorization") != "Bearer sk-fixture" {
 		t.Fatalf("headers %v", stub.request.Header)
 	}
-	for name, body := range map[string]string{"no percent": `{"code":0,"data":{"resetDate":"2026-10-27"}}`, "non-zero code": `{"code":7,"data":{"percent":50}}`} {
-		if _, err := reader(t, "xiaomi-mimo", &stubClient{status: http.StatusOK, body: body}).Usage(context.Background(), quota.Credential{AccessToken: "sk-fixture"}); err == nil {
-			t.Errorf("%s was accepted as a quota", name)
-		}
+	if _, err := reader(t, "xiaomi-mimo", &stubClient{status: http.StatusOK, body: `{"code":7,"data":{"percent":50}}`}).Usage(context.Background(), quota.Credential{AccessToken: "sk-fixture"}); err == nil {
+		t.Error("a non-zero code was accepted as a quota")
 	}
-	if _, err := reader(t, "xiaomi-mimo", &stubClient{status: http.StatusUnauthorized, body: `{}`}).Usage(context.Background(), quota.Credential{AccessToken: "sk-fixture"}); err == nil {
-		t.Error("a 401 (key cannot read the account quota) was accepted")
+	// No percent, and a 401 (the key cannot read the account quota), are
+	// answers without quota: notices, never a window (#225).
+	for name, stub := range map[string]*stubClient{"no percent": {status: http.StatusOK, body: `{"code":0,"data":{"resetDate":"2026-10-27"}}`},
+		"401": {status: http.StatusUnauthorized, body: `{}`}} {
+		state, err := reader(t, "xiaomi-mimo", stub).Usage(context.Background(), quota.Credential{AccessToken: "sk-fixture"})
+		if err != nil || state.Message == "" || len(state.Windows) != 0 || state.DeriveStatus(time.Now()) != quota.StatusUnknown {
+			t.Errorf("%s: %+v, %v; want a notice", name, state, err)
+		}
 	}
 }
 

@@ -32,11 +32,12 @@ func TestMimoAccountSessionUsage(t *testing.T) {
 		{`{"code":0,"data":{"percent":94,"resetDate":"2026-10-27"}}`, .94, time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)},
 		{`{"code":0,"data":{"percent":0,"resetDate":"2026-10-27","resetAt":1793232000}}`, 0, time.Unix(1793232000, 0).UTC()},
 		{`{"code":0,"data":{"percent":12.6}}`, .13, time.Time{}},
-		{`{"code":0,"data":{"percent":"94"}}`, .94, time.Time{}},
-		{`{"code":"0","data":{"percent":94}}`, .94, time.Time{}},
-		{`{"code":0,"data":{"percent":94,"resetAt":"1793232000"}}`, .94, time.Unix(1793232000, 0).UTC()},
-		{`{"code":"0","data":{"percent":"94","resetDate":"2026-10-27","resetAt":"1793232000"}}`, .94, time.Unix(1793232000, 0).UTC()},
-		{`{"code":0,"data":{"percent":"94","resetDate":"2026-10-27","resetAt":"unknown"}}`, .94, time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)},
+		// Only a numeric resetAt is a reset (xiaomi-mimo.js:31); a string one
+		// leaves resetDate. A string percent or code moves on to the key
+		// (billing_quota_pin.json, account/percent-string and account/code-string).
+		{`{"code":0,"data":{"percent":94,"resetAt":"1793232000"}}`, .94, time.Time{}},
+		{`{"code":0,"data":{"percent":94,"resetDate":"2026-10-27","resetAt":"1793232000"}}`, .94, time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)},
+		{`{"code":0,"data":{"percent":94,"resetDate":"2026-10-27","resetAt":"unknown"}}`, .94, time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)},
 	} {
 		t.Run(tc.body, func(t *testing.T) {
 			calls := 0
@@ -138,7 +139,7 @@ func TestMimoMissingAndFailedSessionNeverInventsQuotaOrLeaks(t *testing.T) {
 		})
 		readers, _ := Readers(client, nil)
 		state, err := readers["xiaomi-mimo"].Usage(context.Background(), quota.Credential{AccessToken: "sk-fixture", ProviderData: data})
-		if err == nil || err.Error() != mimoSessionRequired || len(state.Windows) != 0 {
+		if err != nil || state.Message != mimoSessionRequired || len(state.Windows) != 0 || state.DeriveStatus(time.Now()) != quota.StatusUnknown {
 			t.Fatal("missing session must report unknown/message without windows")
 		}
 		encoded, _ := json.Marshal(state)
@@ -146,7 +147,7 @@ func TestMimoMissingAndFailedSessionNeverInventsQuotaOrLeaks(t *testing.T) {
 			t.Fatal("unknown became exhausted")
 		}
 		for _, secret := range []string{"fixture-account-secret", "fixture-account-user", "fixture-account-cuser"} {
-			if strings.Contains(string(encoded)+err.Error()+logs.String(), secret) {
+			if strings.Contains(string(encoded)+logs.String(), secret) {
 				t.Fatal("account credential leaked")
 			}
 		}
@@ -190,7 +191,7 @@ func TestMimoSessionFailureStagesDoNotExposeCredentials(t *testing.T) {
 					if req.Header.Get("Cookie") != "" || req.Header.Get("Authorization") != "Bearer sk-fixture" || req.Header.Get("X-Mimo-Source") != "mimocode-cli" {
 						t.Fatal("key fallback did not isolate credentials")
 					}
-					return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"code":"0","data":{"percent":"94"}}`))}, nil
+					return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"code":0,"data":{"percent":94}}`))}, nil
 				}
 				if calls == failAt {
 					if failed == 7 {

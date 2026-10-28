@@ -316,3 +316,48 @@ func TestQuotaReadKeepsRegionalPackageMetadata(t *testing.T) {
 		t.Fatalf("quota: %d %s", got.Code, body)
 	}
 }
+
+// TestQuotaReadKeepsBillingAmounts: Kenari rupiah and Vercel AI Gateway dollar
+// amounts stay in each window's count with their currency, and an answer
+// without quota (BYOK) is a notice with status unknown (#225).
+func TestQuotaReadKeepsBillingAmounts(t *testing.T) {
+	h, mux, store, creds, cookie := newProvidersAPI(t, false, nil)
+	defer store.Close()
+	ctx := context.Background()
+	ids := map[string]string{}
+	for _, provider := range []string{"kenari", "vercel-ai-gateway", "opencode-go"} {
+		node, err := creds.PutNode(ctx, credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: provider, Name: provider, Transports: []string{"openai-chat"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := creds.PutConnection(ctx, credentials.Connection{NodeID: node.ID, Name: provider, Identity: provider, AuthKind: credentials.AuthAPIKey, Enabled: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[c.ID] = provider
+	}
+	used, total, left, fraction := 250000.0, 1000000.0, 750000.0, 0.75
+	spent, allocation, balance, share := 1.75, 5.0, 3.25, 0.65
+	h.opts.QuotaState = func(id string) (quota.State, bool) {
+		switch ids[id] {
+		case "kenari":
+			return quota.State{Plan: "Pro", Windows: []quota.Window{{Name: "Monthly (IDR)", Remaining: &fraction,
+				Count: &quota.Count{Used: &used, Total: &total, Remaining: &left, Currency: "IDR"}}}}, true
+		case "vercel-ai-gateway":
+			return quota.State{Plan: "Pay-as-you-go", Windows: []quota.Window{
+				{Name: "Used (USD)", Unlimited: true, Count: &quota.Count{Used: &spent, Currency: "USD"}},
+				{Name: "Remaining (USD)", Remaining: &share, Count: &quota.Count{Total: &allocation, Remaining: &balance, Currency: "USD"}},
+			}}, true
+		case "opencode-go":
+			return quota.State{Plan: "OpenCode Go", Message: "OpenCode Go subscription required for this API key."}, true
+		}
+		return quota.State{}, false
+	}
+	got := doJSON(t, mux, cookie, "GET", "/admin/v1/quota", "")
+	if body := got.Body.String(); got.Code != 200 || !containsAll(body,
+		`"count":{"used":250000,"total":1000000,"remaining":750000,"currency":"IDR"}`,
+		`"count":{"used":1.75,"currency":"USD"}`, `"count":{"total":5,"remaining":3.25,"currency":"USD"}`,
+		`"message":"OpenCode Go subscription required for this API key."`, `"status":"unknown"`) {
+		t.Fatalf("quota: %d %s", got.Code, body)
+	}
+}
