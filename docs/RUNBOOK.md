@@ -84,7 +84,9 @@ Xiaomi MiMo connection row (`PUT /admin/v1/connections/{id}/desktop-session-rene
 with `{"enabled":true,"consent":true}`) asks for confirmation and then lets that
 connection's quota reads read Desktop's session when the connection has none or
 its session stops working, at most every 30 minutes, sealing what they read.
-The row shows when that last happened. "Stop session renewal"
+Every attempt is recorded in the connection before the store is opened, so
+restarting Routeweft does not reset the 30 minutes, and a read that found
+nothing counts. The row shows when a session was last read. "Stop session renewal"
 (`{"enabled":false}`) turns it off at once and works even after the host flag
 is turned off; it leaves the session already sealed in place. Restarting
 without the host flag stops every such read.

@@ -130,7 +130,8 @@ func TestMimoRenewalSealsTheDesktopSession(t *testing.T) {
 	if got[MimoDesktopReadAtKey] != "2026-10-29T08:00:00Z" {
 		t.Fatalf("read at = %q", got[MimoDesktopReadAtKey])
 	}
-	if sealed := env.connections.data(); sealed["mimoPassToken"] != "desktop-pass" || env.connections.writes != 1 {
+	// Two writes: the attempt claimed before the store was opened, then the seal.
+	if sealed := env.connections.data(); sealed["mimoPassToken"] != "desktop-pass" || sealed[MimoDesktopAttemptAtKey] != "2026-10-29T08:00:00Z" || env.connections.writes != 2 {
 		t.Fatalf("sealed = %v writes = %d", sealed, env.connections.writes)
 	}
 	// No private copy of the store is left behind.
@@ -166,13 +167,16 @@ func TestMimoRenewalNeedsBothConsents(t *testing.T) {
 }
 
 // An absent store, one without a passToken, or one that holds the session that
-// just failed seals nothing; the store is then not opened again for 30 minutes,
-// and is after that.
+// just failed seals nothing but still records the attempt; the store is then
+// not opened again for 30 minutes, and is after that.
 func TestMimoRenewalAbsentStoreAndTheInterval(t *testing.T) {
 	stored := renewalOn(nil)
 	env := newRenewalEnv(t, stored)
-	if got := env.renewal.Renew(context.Background(), "c1", stored); got != nil || env.connections.writes != 0 {
-		t.Fatalf("absent store: %v", got)
+	if got := env.renewal.Renew(context.Background(), "c1", stored); got != nil || env.connections.writes != 1 {
+		t.Fatalf("absent store: %v writes = %d", got, env.connections.writes)
+	}
+	if data := env.connections.data(); data["mimoPassToken"] != "" || data[MimoDesktopAttemptAtKey] != "2026-10-29T08:00:00Z" {
+		t.Fatalf("absent store recorded %v", data)
 	}
 	env.writeStore(t, "desktop-pass")
 	env.now = env.now.Add(MimoDesktopRenewalInterval - time.Second)
@@ -194,8 +198,8 @@ func TestMimoRenewalAbsentStoreAndTheInterval(t *testing.T) {
 	failed := renewalOn(map[string]string{"mimoPassToken": "same-pass"})
 	same := newRenewalEnv(t, failed)
 	same.writeStore(t, "same-pass")
-	if got := same.renewal.Renew(context.Background(), "c1", failed); got != nil || same.connections.writes != 0 {
-		t.Fatalf("same session: %v", got)
+	if got := same.renewal.Renew(context.Background(), "c1", failed); got != nil || same.connections.writes != 1 || same.connections.data()[MimoDesktopAttemptAtKey] == "" {
+		t.Fatalf("same session: %v %v", got, same.connections.data())
 	}
 
 	empty := newRenewalEnv(t, stored)
@@ -277,14 +281,15 @@ func TestMimoRenewalRevocationWaitsForTheRead(t *testing.T) {
 	}
 }
 
-// A write that fails returns nothing read.
+// A write that fails uses nothing and, failing at the claim, opens nothing.
 func TestMimoRenewalFailedWriteUsesNothing(t *testing.T) {
 	captured := renewalOn(nil)
 	env := newRenewalEnv(t, captured)
 	env.writeStore(t, "desktop-pass")
 	env.connections.fail = errors.New("disk full")
-	if got := env.renewal.Renew(context.Background(), "c1", captured); got != nil || env.connections.writes != 0 {
-		t.Fatalf("got = %v writes = %d", got, env.connections.writes)
+	// The claim cannot be recorded, so the store is not opened at all.
+	if got := env.renewal.Renew(context.Background(), "c1", captured); got != nil || env.connections.writes != 0 || env.desktop.reads.Load() != 0 {
+		t.Fatalf("got = %v writes = %d reads = %d", got, env.connections.writes, env.desktop.reads.Load())
 	}
 }
 
@@ -304,5 +309,80 @@ func TestMimoRenewalBurstReadsOnce(t *testing.T) {
 	wg.Wait()
 	if reads := env.desktop.reads.Load(); reads != 1 {
 		t.Fatalf("reads = %d", reads)
+	}
+}
+
+// Hermes #301 finding (head 4f736a0): the interval must survive a restart. A
+// read that found nothing (absent, locked or unusable store) or that was cut
+// short is recorded before the store is opened, in the connection, so a new
+// process within the interval does not open the store again, and one after it
+// does.
+func TestMimoRenewalIntervalSurvivesARestart(t *testing.T) {
+	for name, setup := range map[string]func(*testing.T, *renewalEnv){
+		"absent store": func(*testing.T, *renewalEnv) {},
+		"no passToken": func(t *testing.T, env *renewalEnv) {
+			writeMimoCookieStore(t, env.desktop.CookieStorePath(), [][3]string{{".account.xiaomi.com", "userId", "u"}})
+		},
+		"unusable value": func(t *testing.T, env *renewalEnv) {
+			writeMimoCookieStore(t, env.desktop.CookieStorePath(), [][3]string{{".account.xiaomi.com", "passToken", "bad;value"}})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			captured := renewalOn(nil)
+			env := newRenewalEnv(t, captured)
+			setup(t, env)
+			if got := env.renewal.Renew(context.Background(), "c1", captured); got != nil || env.desktop.reads.Load() != 1 {
+				t.Fatalf("first read: %v reads = %d", got, env.desktop.reads.Load())
+			}
+			// A new process: nothing in memory, the same stored connection, and a
+			// quota read that captured the credential from before the attempt.
+			env.writeStore(t, "desktop-pass")
+			restarted := &MimoDesktopRenewal{Desktop: env.desktop, Connections: env.connections, Allowed: true, Now: func() time.Time { return env.now }}
+			env.now = env.now.Add(MimoDesktopRenewalInterval - time.Second)
+			if got := restarted.Renew(context.Background(), "c1", captured); got != nil || env.desktop.reads.Load() != 1 {
+				t.Fatalf("restarted within the interval: %v reads = %d", got, env.desktop.reads.Load())
+			}
+			env.now = env.now.Add(time.Second)
+			if got := restarted.Renew(context.Background(), "c1", captured); got["mimoPassToken"] != "desktop-pass" || env.desktop.reads.Load() != 2 {
+				t.Fatalf("restarted after the interval: %v reads = %d", got, env.desktop.reads.Load())
+			}
+		})
+	}
+}
+
+// The attempt is durable before the store is opened, so a read cut short (a
+// crash while the store is open) still counts after the restart.
+func TestMimoRenewalClaimIsDurableBeforeTheStoreOpens(t *testing.T) {
+	captured := renewalOn(nil)
+	env := newRenewalEnv(t, captured)
+	env.writeStore(t, "desktop-pass")
+	claimed := ""
+	env.desktop.during = func() {
+		// Inside the read step the claim is already the connection's (the fake
+		// applies the earlier step's write before running this one).
+		claimed = env.connections.connection.Secret.ProviderData[MimoDesktopAttemptAtKey]
+	}
+	env.renewal.Renew(context.Background(), "c1", captured)
+	if claimed != "2026-10-29T08:00:00Z" {
+		t.Fatalf("claim when the store opened = %q", claimed)
+	}
+}
+
+// A recorded attempt in the future (the clock went back) delays reads rather
+// than allowing one early; an unreadable one is due. Edits cannot write either
+// (TestMimoRenewalConsentIsExplicitAndRevocable).
+func TestMimoRenewalDueReadsTheRecordedAttempt(t *testing.T) {
+	env := newRenewalEnv(t, nil)
+	r := env.renewal
+	for value, want := range map[string]bool{
+		"":                     true,
+		"not a time":           true,
+		"2026-10-29T07:30:00Z": true,
+		"2026-10-29T07:30:01Z": false,
+		"2026-10-29T09:00:00Z": false,
+	} {
+		if got := r.due(map[string]string{MimoDesktopAttemptAtKey: value}); got != want {
+			t.Errorf("due(%q) = %v, want %v", value, got, want)
+		}
 	}
 }

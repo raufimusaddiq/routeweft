@@ -466,7 +466,11 @@ Routeweft keeps that capability as an explicit per-connection opt-in:
 - **Only when the pin would need the host, bounded.** A read opens the store
   only when the connection has no sealed session, or its sealed session just
   failed the account handshake (a renewal the pin cannot do), and at most once
-  per 30 minutes per connection.
+  per 30 minutes per connection. Each attempt is recorded durably in the
+  connection (`mimoDesktopAttemptAt`) before the store is opened, whatever the
+  read then finds, so the interval holds across restarts and counts failed,
+  unusable and interrupted reads. A recorded time in the future (the clock went
+  back) delays the next read rather than allowing one early.
 - **Consent as stored at the read, ordered against revocation.** The flag and
   the session are checked on the connection as stored when the store is about
   to be opened, not on the copy the quota read captured, in the same exclusive
@@ -478,7 +482,8 @@ Routeweft keeps that capability as an explicit per-connection opt-in:
   so later reads use it without opening the host. The write is a rotation, as
   a token refresh is: the credential revision and validation status stay.
 - **Visible, never shown.** The connection read model reports
-  `desktopSessionRenewal` and `desktopSessionReadAt` (a time); account-path
+  `desktopSessionRenewal`, `desktopSessionReadAt` (last session sealed) and
+  `desktopSessionAttemptAt` (last store opening); account-path
   quota reads carry `metadata.desktopSessionReadAt`. No value is answered or
   logged.
 

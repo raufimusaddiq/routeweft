@@ -1383,6 +1383,11 @@ func connectionJSON(connection credentials.Connection) map[string]any {
 		if at := data[onboarding.MimoDesktopReadAtKey]; at != "" {
 			view["desktopSessionReadAt"] = at
 		}
+		// When a quota read last opened (or was about to open) Desktop's store,
+		// whatever it found: the 30-minute interval runs from here.
+		if at := data[onboarding.MimoDesktopAttemptAtKey]; at != "" {
+			view["desktopSessionAttemptAt"] = at
+		}
 	}
 	return view
 }

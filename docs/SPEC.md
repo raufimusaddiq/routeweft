@@ -1194,7 +1194,13 @@ set or drop. While it is on and the host allows discovery, a quota read whose
 connection has no sealed session, or whose sealed session fails the account
 handshake, reads Desktop's session at most once per 30 minutes per connection,
 seals it into the connection (with `mimoDesktopReadAt`), and reads the quota
-with it. The flag and the session being replaced are checked on the connection
+with it. The interval is durable: each attempt first records
+`mimoDesktopAttemptAt` in the connection (its own `ReviseSecret` step, after
+the consent check), and only then does a second step, which re-checks consent,
+the session and that this claim is still the latest, open the store. Failed,
+unusable and interrupted reads therefore count, a restart does not reset the
+interval, a refused claim records nothing, and a recorded time in the future
+delays the next read. Connection edits cannot set any of the three fields. The flag and the session being replaced are checked on the connection
 as stored at that moment, inside the same registry exclusion as the read and
 the write (`Registry.ReviseSecret`) that every connection update, revocation
 included, takes; so a revocation is ordered entirely before the store is opened
@@ -1203,7 +1209,8 @@ it never recreates a connection deleted during the read, and the credential
 revision and validation status stay. An absent, locked or unchanged store, a
 revoked flag, a deleted connection or a failed write uses the key path as
 before. The connection read model reports
-`desktopSessionRenewal` and `desktopSessionReadAt` for MiMo rows, and an
+`desktopSessionRenewal`, `desktopSessionReadAt` and `desktopSessionAttemptAt`
+for MiMo rows, and an
 account-path quota read carries `metadata.desktopSessionReadAt`. A
 refresh dispatches on the
 stored credential shape, and a rotation is committed before it is published

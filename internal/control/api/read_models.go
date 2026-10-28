@@ -399,8 +399,9 @@ FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where+` ORD
 			QuotaObservedAt string `json:"quotaObservedAt,omitempty"`
 			// Xiaomi MiMo only (#299): whether quota reads may renew the account
 			// session from MiMo Desktop on this host, and when one last did.
-			DesktopSessionRenewal *bool  `json:"desktopSessionRenewal,omitempty"`
-			DesktopSessionReadAt  string `json:"desktopSessionReadAt,omitempty"`
+			DesktopSessionRenewal   *bool  `json:"desktopSessionRenewal,omitempty"`
+			DesktopSessionReadAt    string `json:"desktopSessionReadAt,omitempty"`
+			DesktopSessionAttemptAt string `json:"desktopSessionAttemptAt,omitempty"`
 		}
 		var enabled, credential int
 		if err := rows.Scan(&item.ID, &item.NodeID, &item.ProviderID, &item.Name, &item.AuthKind, &item.Identity, &enabled, &item.Priority, &item.ProxyPoolID, &credential, &item.CreatedAt, &item.UpdatedAt, &item.AccountID,
@@ -424,6 +425,7 @@ FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where+` ORD
 			enabled, _ := view["desktopSessionRenewal"].(bool)
 			item.DesktopSessionRenewal = &enabled
 			item.DesktopSessionReadAt, _ = view["desktopSessionReadAt"].(string)
+			item.DesktopSessionAttemptAt, _ = view["desktopSessionAttemptAt"].(string)
 		}
 		return item, nil
 	}, args...)

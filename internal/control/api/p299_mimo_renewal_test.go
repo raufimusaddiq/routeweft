@@ -8,10 +8,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
 	"github.com/raufimusaddiq/routeweft/internal/providers/usage"
 	"github.com/raufimusaddiq/routeweft/internal/quota"
@@ -108,11 +110,11 @@ func TestMimoRenewalConsentIsExplicitAndRevocable(t *testing.T) {
 	}
 
 	// PATCH cannot set or drop the consent or forge a host read.
-	patch := doJSON(t, env.mux, env.cookie, http.MethodPatch, "/admin/v1/connections/"+id, `{"name":"renamed","secret":{"providerData":{"mimoDesktopRenewal":"","mimoDesktopReadAt":"2000-01-01T00:00:00Z"}}}`)
+	patch := doJSON(t, env.mux, env.cookie, http.MethodPatch, "/admin/v1/connections/"+id, `{"name":"renamed","secret":{"providerData":{"mimoDesktopRenewal":"","mimoDesktopReadAt":"2000-01-01T00:00:00Z","mimoDesktopAttemptAt":"2000-01-01T00:00:00Z"}}}`)
 	if patch.Code != http.StatusOK {
 		t.Fatalf("patch: %d %s", patch.Code, patch.Body.String())
 	}
-	if data := env.storedRenewal(t); !onboarding.MimoDesktopRenewalEnabled(data) || data[onboarding.MimoDesktopReadAtKey] != "" {
+	if data := env.storedRenewal(t); !onboarding.MimoDesktopRenewalEnabled(data) || data[onboarding.MimoDesktopReadAtKey] != "" || data[onboarding.MimoDesktopAttemptAtKey] != "" {
 		t.Fatalf("after patch: %v", data)
 	}
 
@@ -393,5 +395,74 @@ func TestMimoRenewalDoesNotRecreateADeletedConnection(t *testing.T) {
 	}
 	if rows := env.connections(t, "xiaomi-mimo"); len(rows) != 0 {
 		t.Fatalf("the deleted connection was saved again: %+v", rows)
+	}
+}
+
+// Hermes #301 finding (head 4f736a0), against SQLite: a read whose Desktop
+// store was absent records its attempt in the stored connection before the
+// store is opened, so after a restart (a new registry and renewal over the same
+// database, nothing in memory) a quota read within 30 minutes does not open the
+// store although it is there now, and one after 30 minutes does.
+func TestMimoRenewalIntervalSurvivesARestartOfTheStore(t *testing.T) {
+	env, id, captured := renewalEnabledConnection(t)
+	if err := os.Remove(env.desktop.CookieStorePath()); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 10, 29, 8, 0, 0, 0, time.UTC)
+	now := start
+	process := func(registry *credentials.Registry) quota.UsageClient {
+		readers, err := usage.Readers(&renewalAccount{valid: map[string]bool{discoveredPass: true}}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		usage.WithMimoDesktopRenewal(readers, &onboarding.MimoDesktopRenewal{Desktop: env.desktop, Connections: registry, Allowed: true, Now: func() time.Time { return now }})
+		return readers["xiaomi-mimo"]
+	}
+	read := func(reader quota.UsageClient, credential quota.Credential) quota.State {
+		t.Helper()
+		state, err := reader.Usage(context.Background(), credential)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+
+	reads := env.desktop.sessionReads.Load()
+	if state := read(process(env.handler.opts.CredentialRegistry), captured); len(state.Windows) != 0 || env.desktop.sessionReads.Load() != reads+1 {
+		t.Fatalf("absent store: %+v reads = %d", state, env.desktop.sessionReads.Load())
+	}
+	if data := env.storedRenewal(t); data[onboarding.MimoDesktopAttemptAtKey] != start.Format(time.RFC3339Nano) || data["mimoPassToken"] != "" {
+		t.Fatalf("stored after the absent read = %v", data)
+	}
+	if item := listedRenewal(t, env, id); item["desktopSessionAttemptAt"] != start.Format(time.RFC3339Nano) || item["desktopSessionReadAt"] != nil {
+		t.Fatalf("listed = %v", item)
+	}
+
+	// Restart: a fresh registry over the same store, Desktop's store now present.
+	writeDesktopCookieStore(t, env.desktop.MimoDesktop)
+	restarted := credentials.NewRegistry(env.creds, nil)
+	if _, err := restarted.Load(context.Background(), mimoProviderID); err != nil {
+		t.Fatal(err)
+	}
+	secret, err := restarted.Secret(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterRestart := quota.Credential{ConnectionID: id, AccessToken: secret.AccessToken, ProviderData: secret.ProviderData}
+	reader := process(restarted)
+	now = start.Add(onboarding.MimoDesktopRenewalInterval - time.Second)
+	if state := read(reader, afterRestart); len(state.Windows) != 0 || env.desktop.sessionReads.Load() != reads+1 {
+		t.Fatalf("restarted within the interval: %+v reads = %d", state, env.desktop.sessionReads.Load())
+	}
+	// The pre-restart capture, which predates the attempt, is held back as well.
+	if state := read(reader, captured); len(state.Windows) != 0 || env.desktop.sessionReads.Load() != reads+1 {
+		t.Fatalf("stale capture within the interval: %+v reads = %d", state, env.desktop.sessionReads.Load())
+	}
+	now = start.Add(onboarding.MimoDesktopRenewalInterval)
+	if state := read(reader, afterRestart); len(state.Windows) != 1 || env.desktop.sessionReads.Load() != reads+2 {
+		t.Fatalf("restarted after the interval: %+v reads = %d", state, env.desktop.sessionReads.Load())
+	}
+	if data := env.storedRenewal(t); data["mimoPassToken"] != discoveredPass || data[onboarding.MimoDesktopAttemptAtKey] != now.Format(time.RFC3339Nano) {
+		t.Fatalf("stored after renewal = %v", data)
 	}
 }

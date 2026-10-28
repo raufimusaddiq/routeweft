@@ -277,4 +277,5 @@ func (h *Handler) handleDesktopSessionRenewal(w http.ResponseWriter, r *http.Req
 func withoutDesktopRenewal(data map[string]string) {
 	delete(data, onboarding.MimoDesktopRenewalKey)
 	delete(data, onboarding.MimoDesktopReadAtKey)
+	delete(data, onboarding.MimoDesktopAttemptAtKey)
 }
