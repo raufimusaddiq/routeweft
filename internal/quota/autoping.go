@@ -133,6 +133,13 @@ func (p *AutoPinger) Tick(ctx context.Context) error {
 
 func (p *AutoPinger) ping(ctx context.Context, provider, id string, history map[string]PingRecord) error {
 	now := p.Service.Observer.now()
+	// A Claude reset is fixed, so its usage is not read again until it is near:
+	// the warmer's reads stay one per reset, not one per minute
+	// (quotaAutoPing.js:191-193, refreshAheadMs config.js:44). Codex reads every
+	// tick because an inactive window's reset slides.
+	if reset, ok := p.resets[id]; ok && provider == "claude" && now.Before(reset.Add(-5*time.Minute)) {
+		return nil
+	}
 	if failed, ok := p.failures[id]; ok && now.Sub(failed) < 15*time.Minute {
 		return nil
 	}

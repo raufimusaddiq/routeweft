@@ -473,7 +473,11 @@ const { join } = require('node:path');
   }
   if (url.pathname === '/admin/v1/quota/refresh' && method === 'POST') {
     quotaRefreshCalls += 1;
-    return route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ accepted: true }) });
+    return route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ accepted: true, joined: false, job: { id: 'shell-job', status: 'queued', requestedAt: new Date().toISOString() } }) });
+  }
+  if (url.pathname === '/admin/v1/quota/refresh' && method === 'GET') {
+    const at = new Date().toISOString();
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'succeeded', job: { id: 'shell-job', status: 'succeeded', requestedAt: at, startedAt: at, finishedAt: at } }) });
   }
   if (url.pathname === '/admin/v1/logs' && method === 'GET') {
     logRequests += 1;
@@ -1292,8 +1296,8 @@ const { join } = require('node:path');
   await page.selectOption('#quota-sort', 'default');
   await page.waitForFunction(() => document.querySelectorAll('.quota-row').length === 50);
   await page.click('.quota-toolbar .button-primary');
-  await page.waitForSelector('.inline-notice');
-  report.quotaNotice = await page.locator('.inline-notice').textContent();
+  await page.waitForSelector('[data-refresh-status="succeeded"]');
+  report.quotaNotice = await page.locator('.quota-refresh-state').textContent();
   report.quotaRefreshCalls = quotaRefreshCalls;
   // Token Saver (PRD-XFORM-001/004/005).
   await page.click('a[href="#token-saver"]');
@@ -1730,7 +1734,7 @@ const { join } = require('node:path');
   assert.ok(report.quotaURLs.includes('?page=3&pageSize=50&sort=default'), report.quotaURLs.join(' '));
   assert.ok(report.quotaURLs.includes('?page=1&pageSize=50&sort=default&provider=deepseek'), report.quotaURLs.join(' '));
   assert.ok(report.quotaURLs.includes('?page=1&pageSize=50&sort=exhausted&q=bulk-12'), report.quotaURLs.join(' '));
-  assert.match(report.quotaNotice, /never blocks inference/);
+  assert.match(report.quotaNotice, /^Quota refresh finished at .*Rows were reloaded/);
   assert.equal(report.quotaRefreshCalls, 1);
   assert.equal(report.tokenSaverFeatures, 7);
   assert.equal(report.tokenSaverRtkLabel, 'Enabled');

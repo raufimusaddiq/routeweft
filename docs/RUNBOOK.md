@@ -1084,7 +1084,14 @@ for a follow-up.
 Use session-gated GET `/admin/v1/quota/{connection-id}/codex-reset-credits` to
 inspect credits. POST at the same path with `{"confirm":true}` spends one credit.
 A 409 means no credit. After a 502, read the balance before issuing another
-POST: an ambiguous action is not retried automatically.
+POST: an ambiguous action is not retried automatically. Another 4xx means Codex
+refused and nothing was spent; 403 `reauth_required` means reconnect the account.
+On the Quota page, Credit expiry lists the credits and Use 1 reset credit asks
+before spending one.
+
+POST `/admin/v1/quota/refresh` returns 202 with a job, not an observation. Follow
+it with GET `/admin/v1/quota/refresh` until `status` is `succeeded` or `failed`,
+then read `/admin/v1/quota`; a second POST while it runs joins the same job.
 
 Quota warming is off by default. Set `claudeAutoPing` or `codexAutoPing` through
 PATCH `/admin/v1/settings` with a JSON string value, for example:

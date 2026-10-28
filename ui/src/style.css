@@ -427,6 +427,8 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .quota-windows li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: var(--t-body); }
 .quota-window-name { min-width: 120px; color: var(--text-main); }
 .quota-window-note { color: var(--text-muted); }
+.quota-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.quota-credits { flex: 1 1 100%; margin: 0; }
 
 .token-saver-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .token-saver-toolbar .count-label { margin-right: auto; }
