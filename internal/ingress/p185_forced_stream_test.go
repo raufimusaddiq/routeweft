@@ -12,8 +12,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
 func TestOpenCodeGoForcedStreamAcrossClientProtocols(t *testing.T) {
@@ -97,7 +95,7 @@ func TestNewForcedStreamsCancelUpstream(t *testing.T) {
 						}
 						zedUpstream(t, "", new([]p192Call), new(sync.Mutex))(w, r)
 					})
-					rig.settings = routing.ProviderSettings{UserID: "user-1", OrganizationID: "org-1"}
+					rig.settings = zedAccountSettings()
 					mux, key = rig.mux, rig.key
 				} else {
 					rig := newResponsesRig(t, provider, "gpt-5.6-luna", []string{"acct"}, func(_ string, w http.ResponseWriter, r *http.Request) { upstream(w, r) })
