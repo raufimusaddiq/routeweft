@@ -15,3 +15,7 @@ Tests pass these upstream envelopes directly to the production readers.
 - `gemini-cli.json`: `retrieveUserQuota` is the bucket envelope from `tests/unit/gemini-usage-projectid.test.js:23-31`; `loadCodeAssist` is the project-object envelope from `:55-58`.
 
 Tests vary these envelopes in place for the zero, empty, expired, multiple-window, auth, timeout and error cases.
+
+`scoped_quota_pin.json` is generated, not hand-written: `compat/parity/generate-scoped-quota.mjs` evaluates the pin `1c3b9f47` Codex, Claude and GitHub Copilot readers (`open-sse/services/usage/{codex,claude,github}.js`) over synthetic upstream answers and records each answer, the pin's result and the requests it sent, with the token redacted (PARITY 6.28).
+
+`regional_quota_pin.json` is generated the same way: `compat/parity/generate-regional-quota.mjs` evaluates the pin `1c3b9f47` GLM, Kimi, MiniMax and CodeBuddy readers (`open-sse/services/usage/{glm,kimi,minimax,codebuddy-cn}.js`) for every region over synthetic upstream answers and records each answer, the pin's result and the requests it sent, with the token redacted (PARITY 6.29).

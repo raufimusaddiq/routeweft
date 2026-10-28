@@ -199,3 +199,120 @@ func TestQuotaReadKeepsDeepSeekCurrenciesApart(t *testing.T) {
 	}
 	t.Fatalf("connection missing from %s", got.Body)
 }
+
+// TestQuotaReadKeepsProviderMetadata is the #222 read-model check: Copilot
+// absolute amounts, a zero allowance that is neither unlimited nor exhausted, a
+// Claude scoped window with its extra usage, a Codex limit flag, and a reader's
+// unsupported-quota notice all reach the API; the error text still does not.
+func TestQuotaReadKeepsProviderMetadata(t *testing.T) {
+	h, mux, store, creds, cookie := newProvidersAPI(t, false, nil)
+	defer store.Close()
+	ctx := context.Background()
+	ids := map[string]string{}
+	for _, provider := range []string{"github", "claude", "codex"} {
+		node, err := creds.PutNode(ctx, credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: provider, Name: provider, Transports: []string{"openai-chat"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := creds.PutConnection(ctx, credentials.Connection{NodeID: node.ID, Name: provider, Identity: provider, AuthKind: credentials.AuthOAuth, Enabled: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[c.ID] = provider
+	}
+	used, total, left, zero, fraction := 179.5, 300.0, 120.5, 0.0, 0.4
+	h.opts.QuotaState = func(id string) (quota.State, bool) {
+		switch ids[id] {
+		case "github":
+			return quota.State{Plan: "individual", Metadata: map[string]string{"resetDate": "2026-11-01"}, Err: "secret must not be serialized", Windows: []quota.Window{
+				{Name: "premium_interactions", Remaining: &fraction, Count: &quota.Count{Used: &used, Total: &total, Remaining: &left}},
+				{Name: "chat", Count: &quota.Count{Used: &zero, Total: &zero, Remaining: &zero}},
+			}}, true
+		case "claude":
+			return quota.State{Plan: "Claude Code", ExtraUsage: json.RawMessage(`{"is_enabled":true,"monthly_limit":5000}`), Windows: []quota.Window{
+				{Name: "weekly fable (7d)", Remaining: &fraction, Scope: &quota.Scope{Kind: "weekly_scoped", Model: "Fable"}},
+			}}, true
+		case "codex":
+			return quota.State{Windows: []quota.Window{{Name: "spark_session", DisplayName: "Spark (5h)", Remaining: &zero, LimitReached: true}}}, true
+		}
+		return quota.State{Message: "GitHub Copilot connected. Unable to parse quota data."}, false
+	}
+	got := doJSON(t, mux, cookie, "GET", "/admin/v1/quota", "")
+	body := got.Body.String()
+	if got.Code != 200 || strings.Contains(body, "secret must") || !containsAll(body,
+		`"count":{"used":179.5,"total":300,"remaining":120.5}`, `"count":{"used":0,"total":0,"remaining":0}`, `"metadata":{"resetDate":"2026-11-01"}`,
+		`"scope":{"kind":"weekly_scoped","model":"Fable"}`, `"extraUsage":{"is_enabled":true,"monthly_limit":5000}`,
+		`"displayName":"Spark (5h)"`, `"limitReached":true`) {
+		t.Fatalf("quota: %d %s", got.Code, body)
+	}
+	var page struct {
+		Items []struct {
+			ProviderID string         `json:"providerId"`
+			Status     string         `json:"status"`
+			Windows    []quota.Window `json:"windows"`
+		} `json:"items"`
+	}
+	if json.Unmarshal(got.Body.Bytes(), &page) != nil {
+		t.Fatal(body)
+	}
+	for _, item := range page.Items {
+		if item.ProviderID != "github" {
+			continue
+		}
+		chat := item.Windows[1]
+		if chat.Unlimited || chat.Remaining != nil || chat.Count == nil || *chat.Count.Total != 0 {
+			t.Fatalf("zero allowance=%+v", chat)
+		}
+	}
+
+	h.opts.QuotaState = func(id string) (quota.State, bool) {
+		return quota.State{Message: "GitHub Copilot connected. Unable to parse quota data."}, ids[id] == "github"
+	}
+	got = doJSON(t, mux, cookie, "GET", "/admin/v1/quota?provider=github", "")
+	if !containsAll(got.Body.String(), `"message":"GitHub Copilot connected. Unable to parse quota data."`, `"status":"unknown"`) {
+		t.Fatalf("unsupported quota: %s", got.Body)
+	}
+}
+
+// TestQuotaReadKeepsRegionalPackageMetadata is the #223 read-model check: a
+// CodeBuddy pack's amounts and recurring flag, a GLM window's raw limit, and a
+// reader's no-quota notice reach the API.
+func TestQuotaReadKeepsRegionalPackageMetadata(t *testing.T) {
+	h, mux, store, creds, cookie := newProvidersAPI(t, false, nil)
+	defer store.Close()
+	ctx := context.Background()
+	ids := map[string]string{}
+	for _, provider := range []string{"codebuddy-cn", "glm", "minimax"} {
+		node, err := creds.PutNode(ctx, credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: provider, Name: provider, Transports: []string{"openai-chat"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := creds.PutConnection(ctx, credentials.Connection{NodeID: node.ID, Name: provider, Identity: provider, AuthKind: credentials.AuthAPIKey, Enabled: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[c.ID] = provider
+	}
+	used, total, fraction, refill, oneShot := 6.54, 500.0, 0.98692, true, false
+	h.opts.QuotaState = func(id string) (quota.State, bool) {
+		switch ids[id] {
+		case "codebuddy-cn":
+			return quota.State{Plan: "Pro", Windows: []quota.Window{
+				{Name: "Monthly", Remaining: &fraction, Count: &quota.Count{Used: &used, Total: &total}, Recurring: &refill},
+				{Name: "Bonus Pack 1", Remaining: &fraction, Recurring: &oneShot},
+			}}, true
+		case "glm":
+			return quota.State{Plan: "Pro", Windows: []quota.Window{{Name: "Session (5h)", Remaining: &fraction,
+				Limit: &quota.Limit{Type: "TOKENS_LIMIT", Unit: json.RawMessage(`3`), Number: json.RawMessage(`"5"`)}}}}, true
+		case "minimax":
+			return quota.State{Message: "MiniMax connected. No quota data was returned."}, true
+		}
+		return quota.State{}, false
+	}
+	got := doJSON(t, mux, cookie, "GET", "/admin/v1/quota", "")
+	if body := got.Body.String(); got.Code != 200 || !containsAll(body,
+		`"count":{"used":6.54,"total":500},"recurring":true`, `"recurring":false`,
+		`"limit":{"type":"TOKENS_LIMIT","unit":3,"number":"5"}`, `"message":"MiniMax connected. No quota data was returned."`) {
+		t.Fatalf("quota: %d %s", got.Code, body)
+	}
+}

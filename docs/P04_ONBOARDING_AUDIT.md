@@ -78,7 +78,7 @@ Routeweft stores the same fields in the sealed secret payload.
 | Kiro Google/GitHub sign-in | **done in #219** | See §6. |
 | Kiro `resolveKiroProfileArnPatch` network fallback | **done in #219** | A refresh, device approval or social sign-in without an ARN calls `ListAvailableProfiles` (`providerHelpers.js:53-71`); see §6. |
 | Cursor token refresh | none exists | The pin has no public refresh endpoint (`R/cursor/import/route.js:47`); a Cursor token is re-imported at expiry. |
-| Pin `testStatus` (`untested`) | not modeled | Routeweft connections carry no per-connection test status; Xiaomi's soft validation stores the key without recording `untested`. |
+| Pin `testStatus` (`untested`) | implemented (#220) | v13 persists `test_status` per connection (SPEC §33.2). Xiaomi's soft validation (`Result.Unvalidated`) stores a new key `untested` and leaves a stored duplicate's status as it was (`xiaomi-mimo/api-key/route.js:79,115`); every other onboarding save records `active`. |
 | Dispatcher loopback listeners, `ide-status`, `register-session` | deliberately absent | Host listeners and host reads; paste-back completion replaces them. |
 
 ## 4. Host-secret access

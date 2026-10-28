@@ -656,6 +656,15 @@ the same account: a new connection is added beside it. If the operator knows it
 was a bulk re-import, not a token import, they can delete it after the new
 connection works.
 
+Schema v13 (#220) only adds columns to `provider_connections` (validation
+status, last test, last error, model count, auth origin, credential expiry and
+credential revision and a keyed credential digest;
+SPEC §33.2). Existing connections start `untested`. No column holds credential
+material. It is forward-only like every migration: a release built before v13
+refuses to start on a v13 database (schema newer than supported), so rolling
+back past v13 means restoring the pre-upgrade backup (step 6); connections
+added since are lost, and the recorded statuses with them.
+
 ## 15. SQLite maintenance
 
 Monitor:

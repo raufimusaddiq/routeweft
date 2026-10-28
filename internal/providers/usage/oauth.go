@@ -1,26 +1,37 @@
 package usage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/quota"
 )
 
-// kimi mirrors open-sse/services/usage/kimi.js. Kimi is dual-auth: an API key
-// uses x-api-key, an OAuth device connection uses Bearer plus the X-Msh device
-// headers. A 403 is an entitlement gap, not an expired session.
+// kimi mirrors open-sse/services/usage/kimi.js:103-211. Kimi is dual-auth, and
+// an API key wins (kimi.js:109-121): a key goes in x-api-key alone, an OAuth
+// device connection uses Bearer plus the X-Msh device headers. The key is the
+// stored provider-data copy or, on an API-key connection, the access token.
+//
+// Values are read as the pin reads them: lower- and capitalized field names
+// (`??`), the provider's remaining count ahead of its used count, the reset
+// aliases (`||`), and one "Ratelimit" window that a later limit replaces.
+// Windows keep the absolute amounts. A 403 for a missing usage entitlement and
+// an answer without quota are notices with the plan, not failures.
 func (r apiKeyReader) kimi(ctx context.Context, credential quota.Credential) (quota.State, error) {
 	headers := map[string]string{
 		"Accept":       "application/json",
 		"Content-Type": "application/json",
 	}
-	apiKey := ""
-	if credential.ProviderData != nil {
-		apiKey = credential.ProviderData["apiKey"]
+	apiKey := credential.ProviderData["apiKey"]
+	if apiKey == "" && credential.APIKey {
+		apiKey = credential.AccessToken
 	}
 	switch {
 	case apiKey != "":
@@ -40,63 +51,123 @@ func (r apiKeyReader) kimi(ctx context.Context, credential quota.Credential) (qu
 	if reply.status == http.StatusUnauthorized {
 		return failure("kimi authentication expired")
 	}
-	if reply.status == http.StatusForbidden {
-		return failure("kimi account has no usage permission")
+	if reply.status == http.StatusForbidden && kimiNoUsagePermission(reply.body) {
+		// The pin shows the provider's localized text when there is one; the
+		// notice here is fixed, so no upstream text reaches the read model.
+		return quota.State{Plan: "Kimi Coding", Message: "Kimi connected, but this account has no permission to view usage. Subscribe to Kimi Code to access quota.", ObservedAt: r.now()}, nil
 	}
 	if reply.status < 200 || reply.status >= 300 {
 		return failure("kimi usage returned HTTP %d", reply.status)
 	}
-	var body struct {
-		Usage struct {
-			Limit     json.RawMessage `json:"limit"`
-			Used      json.RawMessage `json:"used"`
-			Remaining json.RawMessage `json:"remaining"`
-			ResetTime any             `json:"resetTime"`
-		} `json:"usage"`
-		Limits []struct {
-			Detail struct {
-				Limit     json.RawMessage `json:"limit"`
-				Remaining json.RawMessage `json:"remaining"`
-				ResetTime any             `json:"resetTime"`
-			} `json:"detail"`
-		} `json:"limits"`
-		User struct {
-			Membership struct {
-				Level string `json:"level"`
-			} `json:"membership"`
-		} `json:"user"`
+	data := json.RawMessage(reply.body)
+	if len(bytes.TrimSpace(data)) == 0 {
+		data = json.RawMessage("{}")
 	}
-	if err := decode(reply.body, &body); err != nil {
-		return failure("kimi usage response: %v", err)
+	if !json.Valid(data) {
+		return failure("kimi usage response was not JSON")
 	}
 	var windows []quota.Window
-	if limit, ok := number(body.Usage.Limit); ok && limit > 0 {
-		used, _ := number(body.Usage.Used)
-		windows = append(windows, window("Weekly", used, limit, resetAt(body.Usage.ResetTime)))
+	usage, _ := shared.Object(shared.Field(data, "usage"))
+	if limit := kimiNumber(shared.FirstNonNullish(usage["limit"], usage["Limit"]), 0); limit > 0 {
+		used := kimiNumber(shared.FirstNonNullish(usage["used"], usage["Used"]), 0)
+		remainingRaw := shared.FirstNonNullish(usage["remaining"], usage["Remaining"])
+		remaining := math.NaN()
+		if !shared.Nullish(remainingRaw) && string(bytes.TrimSpace(remainingRaw)) != `""` {
+			remaining = kimiNumber(remainingRaw, math.NaN())
+		}
+		reset := shared.ResetTime(shared.FirstTruthy(usage["resetTime"], usage["ResetTime"], usage["reset_at"], usage["resetAt"]))
+		windows = append(windows, kimiWindow("Weekly", used, limit, remaining, reset))
 	}
-	for _, item := range body.Limits {
-		limit, ok := number(item.Detail.Limit)
-		if !ok || limit <= 0 {
+	items, _ := shared.Array(shared.Field(data, "limits"))
+	for _, item := range items {
+		detail, _ := shared.Object(shared.Field(item, "detail"))
+		limit := kimiNumber(shared.FirstNonNullish(detail["limit"], detail["Limit"]), 0)
+		if limit <= 0 {
 			continue
 		}
-		remaining, hasRemaining := number(item.Detail.Remaining)
-		used := 0.0
-		if hasRemaining {
-			used = limit - remaining
+		remaining := kimiNumber(shared.FirstNonNullish(detail["remaining"], detail["Remaining"]), math.NaN())
+		reported := remaining
+		if math.IsNaN(remaining) {
+			remaining = limit
 		}
-		windows = append(windows, window("Ratelimit", used, limit, resetAt(item.Detail.ResetTime)))
+		reset := shared.ResetTime(shared.FirstTruthy(detail["resetTime"], detail["reset_at"], detail["resetAt"]))
+		next := kimiWindow("Ratelimit", math.Max(0, limit-remaining), limit, remaining, reset)
+		if math.IsNaN(reported) {
+			next.Count.Remaining = nil
+		}
+		windows = putWindow(windows, next)
 	}
-	plan := kimiPlanName(body.User.Membership.Level)
+	plan := kimiPlanName(shared.Field(shared.Field(shared.Field(data, "user"), "membership"), "level"))
 	if len(windows) == 0 {
-		return failure("%s returned no quota windows", r.Name)
+		return quota.State{Plan: plan, Message: "Kimi Coding connected. Usage tracked per request.", ObservedAt: r.now()}, nil
 	}
 	return quota.State{Plan: plan, Windows: windows, ObservedAt: r.now()}, nil
 }
 
+// kimiNumber is toFiniteNumber (shared.js:45-52) with its fallback.
+func kimiNumber(raw json.RawMessage, fallback float64) float64 {
+	if value, ok := shared.FiniteNumber(raw); ok {
+		return value
+	}
+	return fallback
+}
+
+// kimiWindow is makeQuota (kimi.js:75-95): the remaining percentage comes
+// from the provider's remaining count when there is one, else from used. The
+// count keeps the amounts; remaining is set only when the provider sent it.
+func kimiWindow(name string, used, total, remaining float64, reset *time.Time) quota.Window {
+	total, used = math.Max(0, total), math.Max(0, used)
+	percent := 0.0
+	switch {
+	case total > 0 && !math.IsNaN(remaining):
+		percent = math.Max(0, remaining) / total * 100
+	case total > 0:
+		percent = math.Max(0, total-used) / total * 100
+	}
+	count := &quota.Count{Used: &used, Total: &total}
+	if !math.IsNaN(remaining) {
+		count.Remaining = &remaining
+	}
+	return quota.Window{Name: name, Remaining: fraction(percent), ResetAt: reset, Count: count}
+}
+
+// kimiNoUsagePermission is the pin's entitlement test for a 403
+// (kimi.js:32-67): the REASON_FEATURE_NO_PERMISSION reason, or permission or
+// subscription wording in the code, the localized message or the body.
+func kimiNoUsagePermission(body []byte) bool {
+	parsed := json.RawMessage(body)
+	if !json.Valid(parsed) {
+		parsed = nil
+	}
+	details, _ := shared.Array(shared.Field(parsed, "details"))
+	var detail json.RawMessage
+	if len(details) > 0 {
+		detail = details[0]
+	}
+	debug := shared.FirstTruthy(shared.Field(detail, "debug"), shared.Field(parsed, "debug"))
+	if shared.String(shared.FirstTruthy(shared.Field(debug, "reason"), shared.Field(parsed, "reason"))) == "REASON_FEATURE_NO_PERMISSION" {
+		return true
+	}
+	localized := shared.FirstTruthy(shared.Field(shared.Field(debug, "localizedMessage"), "message"),
+		shared.Field(shared.Field(detail, "localizedMessage"), "message"), shared.Field(parsed, "message"))
+	text := string(body)
+	if code := shared.FirstTruthy(shared.Field(parsed, "code")); code != nil {
+		text = shared.Template(code) + " " + text
+	}
+	if localized != nil {
+		text = shared.Template(localized) + " " + text
+	}
+	return kimiPermissionWords.MatchString(text)
+}
+
+var kimiPermissionWords = regexp.MustCompile(`(?i)permission_denied|do not have permission|subscribe`)
+
 // kimiDeviceHeaders mirrors buildKimiHeaders: the device id must stay stable for
-// the whole OAuth session or the quota call is rejected.
+// the whole OAuth session or the quota call is rejected. Like the pin it sends
+// the stored id trimmed.
 func kimiDeviceHeaders(deviceID string) map[string]string {
-	if strings.TrimSpace(deviceID) == "" {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
 		deviceID = "routeweft"
 	}
 	return map[string]string{
@@ -106,18 +177,25 @@ func kimiDeviceHeaders(deviceID string) map[string]string {
 	}
 }
 
-func kimiPlanName(level string) string {
+// kimiPlanName is getKimiPlanName with the "Kimi Coding" default
+// (kimi.js:18-30,195-196): a falsy level, or one that is only "LEVEL_", has no
+// name; any other value is spelled as String() spells it.
+func kimiPlanName(raw json.RawMessage) string {
 	levels := map[string]string{
 		"LEVEL_BASIC":        "Moderato",
 		"LEVEL_INTERMEDIATE": "Allegretto",
 		"LEVEL_ADVANCED":     "Allegro",
 		"LEVEL_STANDARD":     "Vivace",
 	}
+	if !shared.Truthy(raw) {
+		return "Kimi Coding"
+	}
+	level := shared.Template(raw)
 	if name, ok := levels[level]; ok {
 		return name
 	}
-	if level != "" {
-		return strings.ToLower(strings.TrimPrefix(level, "LEVEL_"))
+	if name := strings.ToLower(strings.TrimPrefix(level, "LEVEL_")); name != "" {
+		return name
 	}
 	return "Kimi Coding"
 }

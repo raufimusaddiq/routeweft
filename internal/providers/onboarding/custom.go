@@ -269,8 +269,10 @@ func cursorFlow() Flow {
 				providerData["userId"] = userID
 			}
 			return Result{
-				AuthKind: credentials.AuthOAuth,
-				Identity: identity,
+				// Parsed, never sent to the provider: nothing confirmed it (Unvalidated).
+				Unvalidated: true,
+				AuthKind:    credentials.AuthOAuth,
+				Identity:    identity,
 				Secret: credentials.Secret{
 					AccessToken: token,
 					// Cursor tokens last about a day and have no public refresh

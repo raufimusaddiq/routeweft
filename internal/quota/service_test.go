@@ -306,3 +306,54 @@ func TestForgetAndPruneDropCachedDetail(t *testing.T) {
 		t.Fatal("live connection not refreshed")
 	}
 }
+
+// credentialRecorder keeps the credential each read was given.
+type credentialRecorder struct {
+	mu   sync.Mutex
+	seen map[string]Credential
+}
+
+func (c *credentialRecorder) Usage(_ context.Context, credential Credential) (State, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.seen[credential.ConnectionID] = credential
+	return State{Windows: []Window{{Name: "weekly", Remaining: ptr(0.5)}}}, nil
+}
+
+// TestServiceMarksAPIKeyCredentials proves a reader can tell an API-key
+// connection from a sign-in one, which Kimi authenticates differently
+// (kimi.js:109-121, #223).
+func TestServiceMarksAPIKeyCredentials(t *testing.T) {
+	connections := fakeConnections{byProvider: map[string][]credentials.Connection{"kimi": {
+		{ID: "key", ProviderID: "kimi", Enabled: true, AuthKind: credentials.AuthAPIKey},
+		{ID: "oauth", ProviderID: "kimi", Enabled: true, AuthKind: credentials.AuthOAuth},
+	}}}
+	client := &credentialRecorder{seen: map[string]Credential{}}
+	service := NewService(connections, fakeCredentials{values: map[string]string{"key": "k", "oauth": "t"}}, Observer{Clients: map[string]UsageClient{"kimi": client}})
+	if err := service.RefreshProvider(context.Background(), "kimi"); err != nil {
+		t.Fatal(err)
+	}
+	if !client.seen["key"].APIKey || client.seen["oauth"].APIKey {
+		t.Fatalf("credentials=%+v", client.seen)
+	}
+}
+
+// TestLastStateCopiesPackAndLimitMetadata extends the isolation check to the
+// #223 window fields: a reader of the cached state cannot change them.
+func TestLastStateCopiesPackAndLimitMetadata(t *testing.T) {
+	recurring := true
+	client := &fakeClient{state: State{Windows: []Window{{Name: "Monthly", Remaining: ptr(0.5), Recurring: &recurring,
+		Limit: &Limit{Type: "TOKENS_LIMIT", Unit: []byte("3"), Number: []byte("5")}}}}}
+	s := NewService(fakeConnections{}, fakeCredentials{}, Observer{Clients: map[string]UsageClient{"codebuddy-cn": client}})
+	if _, err := s.observe(context.Background(), "codebuddy-cn", "a", Credential{}); err != nil {
+		t.Fatal(err)
+	}
+	state, _ := s.LastState("a")
+	*state.Windows[0].Recurring = false
+	state.Windows[0].Limit.Type = "x"
+	state.Windows[0].Limit.Unit[0] = '9'
+	state, _ = s.LastState("a")
+	if !*state.Windows[0].Recurring || state.Windows[0].Limit.Type != "TOKENS_LIMIT" || string(state.Windows[0].Limit.Unit) != "3" {
+		t.Fatalf("readers mutated cached state: %+v %+v", state.Windows[0].Recurring, state.Windows[0].Limit)
+	}
+}

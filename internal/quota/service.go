@@ -2,6 +2,7 @@ package quota
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"strings"
@@ -164,6 +165,7 @@ func (s *Service) refreshConnection(ctx context.Context, connection credentials.
 		AccessToken:  secret.AccessToken,
 		Cookie:       secret.Cookie,
 		ProviderData: secret.ProviderData,
+		APIKey:       connection.AuthKind == credentials.AuthAPIKey,
 	}
 	// Every usage reader authenticates with an access token or API key; none reads
 	// a session cookie. A cookie-only connection therefore has no readable
@@ -233,6 +235,13 @@ func (s *Service) LastState(connectionID string) (State, bool) {
 			state.Windows[i].ResetAt = &copy
 		}
 		state.Windows[i].Credit = state.Windows[i].Credit.clone()
+		state.Windows[i].Count = state.Windows[i].Count.clone()
+		state.Windows[i].Scope = state.Windows[i].Scope.clone()
+		state.Windows[i].Limit = state.Windows[i].Limit.clone()
+		if value := state.Windows[i].Recurring; value != nil {
+			copy := *value
+			state.Windows[i].Recurring = &copy
+		}
 		if value := state.Windows[i].ObservedAt; value != nil {
 			copy := *value
 			state.Windows[i].ObservedAt = &copy
@@ -246,6 +255,14 @@ func (s *Service) LastState(connectionID string) (State, bool) {
 		copy := *state.CreditAvailable
 		state.CreditAvailable = &copy
 	}
+	if state.Metadata != nil {
+		metadata := make(map[string]string, len(state.Metadata))
+		for key, value := range state.Metadata {
+			metadata[key] = value
+		}
+		state.Metadata = metadata
+	}
+	state.ExtraUsage = append(json.RawMessage(nil), state.ExtraUsage...)
 	return state, ok
 }
 

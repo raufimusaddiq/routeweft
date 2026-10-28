@@ -100,6 +100,9 @@ type oauthFlow struct {
 	// device marks a device-authorization attempt, whose sign-in follows the
 	// reference's oauth duplicate rule (deviceMatch).
 	device bool
+	// imported marks a pasted or file-chosen credential (/import), recorded as
+	// the connection's auth origin (#220).
+	imported bool
 	// renew is a browser attempt whose flow follows the same rule
 	// (Flow.RenewsSameAccount, Kiro's social sign-in).
 	renew     bool
@@ -895,6 +898,9 @@ func (h *Handler) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request) 
 // last in routing order, and answers the request. Shared by both flows.
 func (h *Handler) saveOnboardedConnection(w http.ResponseWriter, r *http.Request, providerID string, flow oauthFlow, result onboarding.Result) (saved map[string]any, persisted, ok bool) {
 	saved, persisted, ok = h.saveOnboardedResult(w, r, providerID, flow, result)
+	if ok {
+		h.reportLifecycle(r.Context(), saved)
+	}
 	// Work the provider starts once the account is connected (Antigravity's Code
 	// Assist onboarding) runs after the answer, as the reference's does not hold
 	// up its save; the request ending does not cancel it.
@@ -949,7 +955,7 @@ func (h *Handler) saveOnboardedResult(w http.ResponseWriter, r *http.Request, pr
 		defer h.connectionMu.Unlock()
 	}
 	if flow.target != "" {
-		return h.saveReauthenticated(w, r, providerID, flow.target, identity, result)
+		return h.saveReauthenticated(w, r, providerID, flow, identity, result)
 	}
 	if providerID == codexProviderID && result.Secret.AuthType != credentials.AuthTypeAccessToken {
 		match, found, err := h.codexMatch(r.Context(), identity, result.Secret.ProviderData)
@@ -962,7 +968,7 @@ func (h *Handler) saveOnboardedResult(w http.ResponseWriter, r *http.Request, pr
 			// identity: a sign-in sends none of them (codex.js:48-66,
 			// [provider]/[action]/route.js:471-479). It takes the new credential whole:
 			// a reply without a refresh token or expires_in clears the stored ones.
-			match.Secret = result.Secret
+			match.Secret, match.Lifecycle = result.Secret, onboardedLifecycle(flow, result, true)
 			connection, persisted, err := h.publishMergedConnection(r.Context(), match, func(existing, update credentials.Secret) credentials.Secret {
 				return codexMergedSecret(existing, update, onboarding.CarriesAll)
 			})
@@ -989,7 +995,7 @@ func (h *Handler) saveOnboardedResult(w http.ResponseWriter, r *http.Request, pr
 			// oauth duplicate rule does (connectionsRepo.js:228-283): the row keeps
 			// its id, name, priority, enabled flag, proxy and identity and takes the
 			// new credential whole. Another account's row is never touched.
-			match.Secret = result.Secret
+			match.Secret, match.Lifecycle = result.Secret, onboardedLifecycle(flow, result, true)
 			connection, persisted, err := h.publishMergedConnection(r.Context(), match, func(existing, update credentials.Secret) credentials.Secret {
 				return codexMergedSecret(existing, update, onboarding.CarriesAll)
 			})
@@ -1016,7 +1022,7 @@ func (h *Handler) saveOnboardedResult(w http.ResponseWriter, r *http.Request, pr
 	flow.name, flow.identity = name, identity
 	connection, persisted, err := h.publishConnection(r.Context(), credentials.Connection{
 		ProviderID: providerID, Name: flow.name, AuthKind: authKind, Identity: flow.identity,
-		Secret: result.Secret, Enabled: true,
+		Secret: result.Secret, Enabled: true, Lifecycle: onboardedLifecycle(flow, result, false),
 	})
 	if err != nil {
 		if persisted {
@@ -1105,7 +1111,8 @@ func (h *Handler) providerConnection(ctx context.Context, providerID, id string)
 // Another account is refused and nothing is saved, so a Reauthenticate never
 // adds a row or overwrites a different one. Name, priority, enabled state, proxy
 // and identity are kept, as for a duplicate update.
-func (h *Handler) saveReauthenticated(w http.ResponseWriter, r *http.Request, providerID, targetID, identity string, result onboarding.Result) (map[string]any, bool, bool) {
+func (h *Handler) saveReauthenticated(w http.ResponseWriter, r *http.Request, providerID string, flow oauthFlow, identity string, result onboarding.Result) (map[string]any, bool, bool) {
+	targetID := flow.target
 	target, found, err := h.providerConnection(r.Context(), providerID, targetID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
@@ -1125,7 +1132,7 @@ func (h *Handler) saveReauthenticated(w http.ResponseWriter, r *http.Request, pr
 		writeError(w, http.StatusConflict, "oauth_account_mismatch", "a different account signed in; nothing was saved. Sign in as the account this connection belongs to, or use Add connection for a new one")
 		return nil, false, false
 	}
-	target.Secret = result.Secret
+	target.Secret, target.Lifecycle = result.Secret, onboardedLifecycle(flow, result, true)
 	connection, persisted, err := h.publishMergedConnection(r.Context(), target, merge)
 	if err != nil {
 		if persisted {
@@ -1325,7 +1332,7 @@ func (h *Handler) handleOAuthImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	flowState := oauthFlow{name: name, identity: identity, identityOptional: flow.IdentityOptional}
+	flowState := oauthFlow{name: name, identity: identity, identityOptional: flow.IdentityOptional, imported: true}
 	if saved, _, ok := h.saveOnboardedConnection(w, r, providerID, flowState, result); ok {
 		writeJSON(w, http.StatusOK, saved)
 	}
@@ -1702,7 +1709,7 @@ func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name 
 		}
 		if found {
 			stored, err := h.updateConnection(ctx, match.ID, func(existing credentials.Connection) (credentials.Connection, error) {
-				existing.Secret = importedSecret(providerID, existing.Secret, account.Secret)
+				existing.Secret, existing.Lifecycle = importedSecret(providerID, existing.Secret, account.Secret), bulkLifecycle(true)
 				return existing, nil
 			})
 			if err != nil {
@@ -1735,7 +1742,7 @@ func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name 
 				}
 			}
 			stored, err := h.updateConnection(ctx, match.ID, func(existing credentials.Connection) (credentials.Connection, error) {
-				existing.Secret = codexMergedSecret(existing.Secret, account.Secret, account.Carries)
+				existing.Secret, existing.Lifecycle = codexMergedSecret(existing.Secret, account.Secret, account.Carries), bulkLifecycle(true)
 				if account.ItemName != "" {
 					existing.Name = account.ItemName
 				}
@@ -1765,7 +1772,7 @@ func (h *Handler) storeImportedConnection(ctx context.Context, providerID, name 
 	stored, err := h.opts.Credentials.PutConnection(ctx, credentials.Connection{
 		NodeID: node.ID, Name: name, Identity: account.Identity,
 		AuthKind: account.AuthKind, Secret: account.Secret, Enabled: !account.Disabled,
-		Priority: priority,
+		Priority: priority, Lifecycle: bulkLifecycle(false),
 	})
 	if err != nil {
 		return credentials.Connection{}, false, err

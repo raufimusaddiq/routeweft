@@ -58,6 +58,10 @@ type validationResult struct {
 	Status          int    `json:"status,omitempty"`
 	UpstreamStatus  int    `json:"upstreamStatus,omitempty"`
 	Error           string `json:"error,omitempty"`
+	// unlisted is a check that listed no models (the provider has no listing,
+	// the listing was empty, or it failed and the check ran on a supplied
+	// model): its count is not a count of the models the credential can use.
+	unlisted bool
 }
 
 func (h *Handler) activeRevision() uint64 {
@@ -105,7 +109,7 @@ func (h *Handler) validateConnection(ctx context.Context, c credentials.Connecti
 	discoveryCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	models, err := h.fetchConnectionModels(discoveryCtx, c, node)
 	cancel()
-	result.ModelsAvailable = len(models)
+	result.ModelsAvailable, result.unlisted = len(models), err != nil || len(models) == 0
 	var status *discovery.StatusError
 	if errors.As(err, &status) && (status.Status == 401 || status.Status == 403) {
 		result.Status, result.Error = status.Status, "provider rejected credentials"
@@ -184,7 +188,10 @@ func (h *Handler) handleValidateNode(w http.ResponseWriter, r *http.Request) {
 	}
 	node := credentials.Node{Kind: credentials.NodeGeneric, ProviderID: "validation", BaseURL: body.BaseURL, Transports: body.Transports}
 	c := credentials.Connection{Enabled: true, AuthKind: body.AuthKind, Secret: body.Secret}
-	writeJSON(w, 200, h.validateConnection(r.Context(), c, node, body.Transports[0], body.ModelID))
+	result := h.validateConnection(r.Context(), c, node, body.Transports[0], body.ModelID)
+	// Nothing is stored for an unsaved node; the key is still kept out of the answer.
+	h.recordValidation(r.Context(), c, &result)
+	writeJSON(w, 200, result)
 }
 
 func (h *Handler) workflowConnections(ctx context.Context) ([]credentials.Connection, error) {
@@ -299,6 +306,7 @@ func (h *Handler) handleTestBatch(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		result := h.validateConnection(ctx, c, node, "", body.ModelID)
+		h.recordValidation(ctx, c, &result)
 		results = append(results, result)
 		if ctx.Err() != nil {
 			writeProbeInterrupted(w, ctx, "batch", results)

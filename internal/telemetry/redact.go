@@ -20,6 +20,10 @@ var sensitiveKeys = []string{
 	"password", "passwd", "credential", "privatekey", "sessionkey",
 }
 
+// SensitiveKey reports whether a field name holds a credential, by the same
+// rule the log and event redaction uses.
+func SensitiveKey(key string) bool { return sensitiveKey(key) }
+
 // sensitiveKey reports whether a JSON/log field name holds a credential.
 func sensitiveKey(key string) bool {
 	normalised := normaliseKey(key)

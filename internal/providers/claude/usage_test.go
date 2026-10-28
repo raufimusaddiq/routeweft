@@ -109,3 +109,37 @@ func TestUsageRejectsMissingTokenAndOversizedBody(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+// TestLegacyReadDoesNotHideALaterNotice keeps a windowless legacy org-usage read
+// from counting as the last good read: once it expires, a soft failure reports
+// the pin's own notice (claude.js:195) rather than ErrUsageUnavailable.
+func TestLegacyReadDoesNotHideALaterNotice(t *testing.T) {
+	now := time.Unix(0, 0)
+	settings := 200
+	client := fakeClient{do: func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/api/oauth/usage":
+			return response(500, `{}`), nil
+		case "/v1/settings":
+			if settings != 200 {
+				return response(settings, `{}`), nil
+			}
+			return response(200, `{"organization_id":"org_1","organization_name":"Acme","plan":"team"}`), nil
+		case "/v1/organizations/org_1/usage":
+			return response(200, `{"usage":42}`), nil
+		}
+		t.Errorf("unexpected path %s", r.URL.Path)
+		return response(404, `{}`), nil
+	}}
+	c := &UsageClient{Client: client, Now: func() time.Time { return now }}
+	first, err := c.Usage(context.Background(), "token", false)
+	if err != nil || len(first.Quotas) != 0 || len(first.Legacy) == 0 {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+	now = now.Add(usageCacheTTL + time.Second)
+	settings = http.StatusForbidden
+	second, err := c.Usage(context.Background(), "token", false)
+	if err != nil || second.Message != "Claude connected. Usage API requires admin permissions." {
+		t.Fatalf("second=%+v err=%v", second, err)
+	}
+}

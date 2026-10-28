@@ -505,8 +505,10 @@ func kiroCLIProxyImport(p Params, document map[string]json.RawMessage) (Result, 
 		}
 	}
 	return Result{
-		AuthKind: credentials.AuthOAuth,
-		Identity: identity,
+		// Parsed, never sent to the provider: nothing confirmed it (Unvalidated).
+		Unvalidated: true,
+		AuthKind:    credentials.AuthOAuth,
+		Identity:    identity,
 		Secret: credentials.Secret{
 			AccessToken:  access,
 			RefreshToken: refresh,

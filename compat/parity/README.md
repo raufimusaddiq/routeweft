@@ -43,6 +43,17 @@ Chat, Responses and Messages clients, with the clock and session fixed, and writ
 to Chat, Responses and Messages clients, with the clock fixed, and writes
 `internal/ingress/testdata/gemini_image_answers_pin.json` (PARITY 6.27). It needs `ORACLE_DIR`.
 
+`compat/parity/generate-scoped-quota.mjs` evaluates the pinned `open-sse/services/usage/{shared,codex,claude,github}.js`
+with a scripted network and clock (endpoint URLs and the GitHub identity headers from the pinned registry entries) over
+zero, empty, expired, multiple-window, alias, auth, error, timeout and invalid-JSON answers and two Claude multi-read
+sequences, and writes `internal/providers/usage/testdata/scoped_quota_pin.json` (PARITY 6.28). It needs `ORACLE_DIR`.
+
+`compat/parity/generate-regional-quota.mjs` evaluates the pinned `open-sse/services/usage/{shared,glm,kimi,minimax,codebuddy-cn}.js`
+and `buildKimiHeaders` with a scripted network and clock, in UTC (endpoint URLs and the CodeBuddy identity headers from
+the pinned registry entries), over zero, empty, expired, multiple-window, alias, fallback, auth, error, timeout and
+invalid-JSON answers for every region, and writes `internal/providers/usage/testdata/regional_quota_pin.json`
+(PARITY 6.29). It needs `ORACLE_DIR`.
+
 CI runs this as the `parity` PR job, alongside existing Go/UI/container jobs.
 No test may update golden files from its actual output or turn a missing oracle
 into a passing dedicated gate. Ordinary unit tests remain usable without v1.

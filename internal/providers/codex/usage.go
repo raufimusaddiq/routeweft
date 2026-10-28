@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
@@ -77,23 +79,7 @@ func (c UsageClient) Usage(ctx context.Context, accessToken string) (Usage, erro
 		}
 		return Usage{}, fmt.Errorf("codex usage endpoint returned HTTP %d", status)
 	}
-	var payload usagePayload
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return Usage{}, errors.New("codex usage endpoint returned invalid JSON")
-	}
-	quotas := map[string]QuotaWindow{}
-	primary := firstWindow(payload.RateLimit, payload.RateLimits)
-	appendQuotaWindows(quotas, "", primary)
-	appendQuotaWindows(quotas, "review", reviewWindow(payload))
-	appendQuotaWindows(quotas, "spark", sparkWindow(payload))
-	return Usage{
-		Plan:               choose(payload.PlanType, payload.Summary.Plan, "unknown"),
-		LimitReached:       limitReached(primary),
-		ReviewLimitReached: limitReached(reviewWindow(payload)),
-		SparkLimitReached:  limitReached(sparkWindow(payload)),
-		AvailableReset:     availableReset(payload.RateLimitResetCredits.AvailableCount),
-		Quotas:             quotas,
-	}, nil
+	return parseUsage(body)
 }
 
 // ResetCredits lists available reset credits.
@@ -108,25 +94,25 @@ func (c UsageClient) ResetCredits(ctx context.Context, accessToken string) (Rese
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
 		return ResetCredits{}, ErrReauthRequired
 	}
-	var payload struct {
-		AvailableCount float64 `json:"available_count"`
-		Credits        []struct {
-			Status    string `json:"status"`
-			GrantedAt any    `json:"granted_at"`
-			ExpiresAt any    `json:"expires_at"`
-		}
-	}
-	if err := json.Unmarshal(body, &payload); err != nil && status >= 200 && status < 300 {
+	data, decoded := shared.Object(body)
+	if !decoded && status >= 200 && status < 300 {
 		return ResetCredits{}, errors.New("codex reset credits response is invalid JSON")
 	}
 	if status < 200 || status >= 300 {
 		return ResetCredits{}, errors.New(errorMessage(body, fmt.Sprintf("Codex reset credits API unavailable (%d).", status)))
 	}
-	credits := make([]ResetCredit, 0, len(payload.Credits))
-	for _, credit := range payload.Credits {
-		credits = append(credits, ResetCredit{Status: choose(credit.Status, "", "unknown"), GrantedAt: isoTime(credit.GrantedAt), ExpiresAt: isoTime(credit.ExpiresAt)})
+	// codex.js:176-184: snake_case first, then the camelCase alias.
+	entries, _ := shared.Array(data["credits"])
+	credits := make([]ResetCredit, 0, len(entries))
+	for _, credit := range entries {
+		credits = append(credits, ResetCredit{
+			Status:    choose(shared.String(shared.FirstTruthy(shared.Field(credit, "status"))), "unknown"),
+			GrantedAt: shared.DateTime(shared.FirstNonNullish(shared.Field(credit, "granted_at"), shared.Field(credit, "grantedAt"))),
+			ExpiresAt: shared.DateTime(shared.FirstNonNullish(shared.Field(credit, "expires_at"), shared.Field(credit, "expiresAt"))),
+		})
 	}
-	return ResetCredits{AvailableCount: nonNegative(payload.AvailableCount), Credits: credits}, nil
+	count, _ := shared.FiniteNumber(shared.FirstNonNullish(data["available_count"], data["availableCount"]))
+	return ResetCredits{AvailableCount: nonNegative(count), Credits: credits}, nil
 }
 
 // ConsumeResetCredit spends one reset credit. This is irreversible, so the
@@ -163,19 +149,18 @@ func (c UsageClient) ConsumeResetCredit(ctx context.Context, accessToken, redeem
 	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
 		return ResetResult{}, ErrReauthRequired
 	}
-	var decoded struct {
-		Code         string  `json:"code"`
-		WindowsReset float64 `json:"windows_reset"`
-		Message      string  `json:"message"`
-	}
-	_ = json.Unmarshal(body, &decoded)
+	// codex.js:215-226: code is any truthy value, windows_reset toFiniteNumber.
+	decoded, _ := shared.Object(body)
+	code := shared.String(shared.FirstTruthy(decoded["code"]))
+	windowsReset, _ := shared.FiniteNumber(decoded["windows_reset"])
+	ok := response.StatusCode >= 200 && response.StatusCode < 300
 	return ResetResult{
-		OK:           response.StatusCode >= 200 && response.StatusCode < 300 && (decoded.Code == "reset" || decoded.WindowsReset > 0),
-		NoCredit:     response.StatusCode >= 200 && response.StatusCode < 300 && decoded.Code == "no_credit",
+		OK:           ok && (code == "reset" || windowsReset > 0),
+		NoCredit:     ok && code == "no_credit",
 		Status:       response.StatusCode,
-		Code:         decoded.Code,
-		WindowsReset: decoded.WindowsReset,
-		Message:      decoded.Message,
+		Code:         code,
+		WindowsReset: windowsReset,
+		Message:      shared.String(shared.FirstTruthy(decoded["message"])),
 	}, nil
 }
 
@@ -223,103 +208,105 @@ func (c UsageClient) do(request *http.Request) (*http.Response, error) {
 	return client.Do(request)
 }
 
-type usagePayload struct {
-	PlanType              string            `json:"plan_type"`
-	RateLimit             json.RawMessage   `json:"rate_limit"`
-	RateLimits            json.RawMessage   `json:"rate_limits"`
-	CodeReviewRateLimit   json.RawMessage   `json:"code_review_rate_limit"`
-	ReviewRateLimit       json.RawMessage   `json:"review_rate_limit"`
-	SparkRateLimit        json.RawMessage   `json:"spark_rate_limit"`
-	AdditionalRateLimits  []json.RawMessage `json:"additional_rate_limits"`
-	RateLimitResetCredits struct {
-		AvailableCount *float64 `json:"available_count"`
-	} `json:"rate_limit_reset_credits"`
-	Summary struct {
-		Plan string `json:"plan"`
-	} `json:"summary"`
+// parseUsage reads the wham/usage body as the reference does (codex.js:121-139).
+// Every lookup keeps the reference's precedence: `||` skips any falsy value and
+// `??` only a missing or null one.
+func parseUsage(body []byte) (Usage, error) {
+	data, ok := shared.Object(body)
+	if !ok {
+		return Usage{}, errors.New("codex usage endpoint returned invalid JSON")
+	}
+	normal := shared.FirstTruthy(data["rate_limit"], data["rate_limits"], shared.Field(data["rate_limits_by_limit_id"], "codex"))
+	if normal == nil {
+		normal = json.RawMessage(`{}`)
+	}
+	review, spark := reviewRateLimit(data), sparkRateLimit(data)
+	quotas := map[string]QuotaWindow{}
+	appendQuotaWindows(quotas, "", normal)
+	appendQuotaWindows(quotas, "review", review)
+	appendQuotaWindows(quotas, "spark", spark)
+	return Usage{
+		Plan:               choose(shared.String(shared.FirstTruthy(data["plan_type"], shared.Field(data["summary"], "plan"))), "unknown"),
+		LimitReached:       limitReached(normal),
+		ReviewLimitReached: limitReached(review),
+		SparkLimitReached:  limitReached(spark),
+		AvailableReset:     availableReset(shared.Field(data["rate_limit_reset_credits"], "available_count")),
+		Quotas:             quotas,
+	}, nil
 }
 
-type quotaWindow struct {
-	UsedPercent float64 `json:"used_percent"`
-	PercentUsed float64 `json:"percent_used"`
-	ResetAt     any     `json:"reset_at"`
-	ResetsAt    any     `json:"resets_at"`
-	LimitReach  bool    `json:"limit_reached"`
+// reviewRateLimit is getCodexReviewRateLimit (codex.js:73-88). A
+// rate_limits_by_limit_id object is authoritative: when it has no review entry,
+// additional_rate_limits is not consulted.
+func reviewRateLimit(data map[string]json.RawMessage) json.RawMessage {
+	if window := shared.FirstTruthy(data["code_review_rate_limit"], data["review_rate_limit"]); window != nil {
+		return window
+	}
+	if byID, ok := shared.Object(data["rate_limits_by_limit_id"]); ok {
+		return shared.FirstTruthy(byID["code_review"], byID["codex_review"], byID["review"])
+	}
+	return additionalRateLimit(data, "review")
 }
 
-type windowPair struct {
-	Primary   json.RawMessage `json:"primary_window"`
-	Secondary json.RawMessage `json:"secondary_window"`
-	Primary2  json.RawMessage `json:"primary"`
-	Second2   json.RawMessage `json:"secondary"`
+// sparkRateLimit is getCodexSparkRateLimit (codex.js:90-105).
+func sparkRateLimit(data map[string]json.RawMessage) json.RawMessage {
+	if window := shared.FirstTruthy(data["spark_rate_limit"], data["gpt_5_3_codex_spark_rate_limit"]); window != nil {
+		return window
+	}
+	if byID, ok := shared.Object(data["rate_limits_by_limit_id"]); ok {
+		return shared.FirstTruthy(byID["gpt-5.3-codex-spark"], byID["gpt_5_3_codex_spark"], byID["spark"])
+	}
+	return additionalRateLimit(data, "spark")
 }
 
-func firstWindow(raw ...json.RawMessage) json.RawMessage {
-	for _, candidate := range raw {
-		if len(candidate) > 0 && string(candidate) != "null" {
-			return candidate
+// additionalRateLimit finds the first additional_rate_limits entry whose id
+// (limit_name, else metered_feature, else id, lowercased) contains match. Each
+// exact id the reference also lists contains match, so containment is the
+// whole test.
+func additionalRateLimit(data map[string]json.RawMessage, match string) json.RawMessage {
+	entries, _ := shared.Array(data["additional_rate_limits"])
+	for _, entry := range entries {
+		id := strings.ToLower(shared.String(shared.FirstTruthy(shared.Field(entry, "limit_name"), shared.Field(entry, "metered_feature"), shared.Field(entry, "id"))))
+		if strings.Contains(id, match) {
+			return entry
 		}
 	}
 	return nil
 }
 
-func reviewWindow(payload usagePayload) json.RawMessage {
-	if window := firstWindow(payload.CodeReviewRateLimit, payload.ReviewRateLimit); window != nil {
-		return window
+// rateLimitBody is getCodexRateLimitBody (codex.js:35-40): an object's nested
+// rate_limit when that is an object, else the object itself.
+func rateLimitBody(snapshot json.RawMessage) (json.RawMessage, bool) {
+	if _, ok := shared.Object(snapshot); !ok {
+		return nil, false
 	}
-	return additionalWindow(payload, func(id string) bool { return strings.Contains(id, "review") })
+	if nested := shared.Field(snapshot, "rate_limit"); shared.Truthy(nested) && isObjectLike(nested) {
+		return nested, true
+	}
+	return snapshot, true
 }
 
-func sparkWindow(payload usagePayload) json.RawMessage {
-	if window := firstWindow(payload.SparkRateLimit); window != nil {
-		return window
-	}
-	return additionalWindow(payload, func(id string) bool { return strings.Contains(id, "spark") })
+// isObjectLike is `typeof value === "object"` for a non-null value.
+func isObjectLike(raw json.RawMessage) bool {
+	text := strings.TrimSpace(string(raw))
+	return strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[")
 }
 
-func additionalWindow(payload usagePayload, match func(string) bool) json.RawMessage {
-	for _, entry := range payload.AdditionalRateLimits {
-		var metadata struct {
-			LimitName       string          `json:"limit_name"`
-			MeteredFeature  string          `json:"metered_feature"`
-			ID              string          `json:"id"`
-			RateLimit       json.RawMessage `json:"rate_limit"`
-			PrimaryWindow   json.RawMessage `json:"primary_window"`
-			SecondaryWindow json.RawMessage `json:"secondary_window"`
-			Primary         json.RawMessage `json:"primary"`
-			Secondary       json.RawMessage `json:"secondary"`
-			Limit           json.RawMessage `json:"limit"`
-		}
-		if json.Unmarshal(entry, &metadata) != nil {
-			continue
-		}
-		id := strings.ToLower(metadata.LimitName + metadata.MeteredFeature + metadata.ID)
-		if match(id) {
-			if window := firstWindow(metadata.RateLimit, metadata.Limit); window != nil {
-				return window
-			}
-			window, _ := json.Marshal(map[string]json.RawMessage{"primary_window": firstWindow(metadata.PrimaryWindow, metadata.Primary), "secondary_window": firstWindow(metadata.SecondaryWindow, metadata.Secondary)})
-			return window
-		}
-	}
-	return nil
-}
-
-func appendQuotaWindows(quotas map[string]QuotaWindow, prefix string, raw json.RawMessage) bool {
-	if len(raw) == 0 || string(raw) == "null" {
+// appendQuotaWindows is appendCodexQuotaWindows (codex.js:53-71).
+func appendQuotaWindows(quotas map[string]QuotaWindow, prefix string, snapshot json.RawMessage) bool {
+	body, ok := rateLimitBody(snapshot)
+	if !ok {
 		return false
 	}
-	var pair windowPair
-	if err := json.Unmarshal(raw, &pair); err != nil {
-		return false
-	}
+	primary := shared.FirstTruthy(shared.Field(body, "primary_window"), shared.Field(body, "primary"), shared.Field(snapshot, "primary_window"), shared.Field(snapshot, "primary"))
+	secondary := shared.FirstTruthy(shared.Field(body, "secondary_window"), shared.Field(body, "secondary"), shared.Field(snapshot, "secondary_window"), shared.Field(snapshot, "secondary"))
 	added := false
-	if window, ok := decodeWindow(pair.Primary, pair.Primary2); ok {
-		quotas[quotaKey(prefix, "session")] = window
+	if primary != nil {
+		quotas[quotaKey(prefix, "session")] = formatWindow(primary)
 		added = true
 	}
-	if window, ok := decodeWindow(pair.Secondary, pair.Second2); ok {
-		quotas[quotaKey(prefix, "weekly")] = window
+	if secondary != nil {
+		quotas[quotaKey(prefix, "weekly")] = formatWindow(secondary)
 		added = true
 	}
 	return added
@@ -332,66 +319,18 @@ func quotaKey(prefix, name string) string {
 	return prefix + "_" + name
 }
 
-func decodeWindow(raw ...json.RawMessage) (QuotaWindow, bool) {
-	for _, candidate := range raw {
-		if len(candidate) == 0 || string(candidate) == "null" {
-			continue
-		}
-		var window quotaWindow
-		if err := json.Unmarshal(candidate, &window); err != nil {
-			continue
-		}
-		used := window.UsedPercent
-		if used == 0 {
-			used = window.PercentUsed
-		}
-		used = clamp(used)
-		return QuotaWindow{Used: used, Total: 100, Remaining: 100 - used, ResetAt: isoTime(firstNonNil(window.ResetAt, window.ResetsAt))}, true
-	}
-	return QuotaWindow{}, false
+// formatWindow is formatCodexWindow (codex.js:42-51). A used value that is not
+// a finite number is 0, as in the reference.
+func formatWindow(window json.RawMessage) QuotaWindow {
+	used, _ := shared.FiniteNumber(shared.FirstNonNullish(shared.Field(window, "used_percent"), shared.Field(window, "percent_used")))
+	used = clamp(used)
+	reset := shared.ResetTime(shared.FirstNonNullish(shared.Field(window, "reset_at"), shared.Field(window, "resets_at"), shared.Field(window, "resetAt")))
+	return QuotaWindow{Used: used, Total: 100, Remaining: 100 - used, ResetAt: reset}
 }
 
-func limitReached(raw json.RawMessage) bool {
-	if len(raw) == 0 {
-		return false
-	}
-	var window quotaWindow
-	if err := json.Unmarshal(raw, &window); err != nil {
-		return false
-	}
-	return window.LimitReach
-}
-
-func firstNonNil(values ...any) any {
-	for _, value := range values {
-		if value != nil {
-			return value
-		}
-	}
-	return nil
-}
-
-func isoTime(value any) *time.Time {
-	switch typed := value.(type) {
-	case nil:
-		return nil
-	case float64:
-		seconds := typed
-		if seconds > 1e12 {
-			seconds /= 1000
-		}
-		stamp := time.Unix(int64(seconds), 0).UTC()
-		return &stamp
-	case string:
-		if typed == "" {
-			return nil
-		}
-		if parsed, err := time.Parse(time.RFC3339, typed); err == nil {
-			stamp := parsed.UTC()
-			return &stamp
-		}
-	}
-	return nil
+func limitReached(snapshot json.RawMessage) bool {
+	body, ok := rateLimitBody(snapshot)
+	return ok && shared.Truthy(shared.Field(body, "limit_reached"))
 }
 
 func clamp(value float64) float64 {
@@ -404,12 +343,14 @@ func clamp(value float64) float64 {
 	return value
 }
 
-// availableReset keeps an omitted count unknown (nil) instead of a reported 0.
-func availableReset(value *float64) *float64 {
-	if value == nil {
+// availableReset keeps an omitted count unknown (nil) instead of the
+// reference's 0; a reported count is toFiniteNumber floored at 0 (codex.js:125).
+func availableReset(raw json.RawMessage) *float64 {
+	if shared.Nullish(raw) {
 		return nil
 	}
-	n := nonNegative(*value)
+	value, _ := shared.FiniteNumber(raw)
+	n := nonNegative(value)
 	return &n
 }
 
@@ -429,30 +370,29 @@ func choose(values ...string) string {
 	return ""
 }
 
+// errorMessage is the reference's errorMessage over
+// `message || error || detail` (codex.js:24-29,172): a string as is, an
+// object's string message, else the value's JSON.
 func errorMessage(body []byte, fallback string) string {
-	var payload struct {
-		Message string `json:"message"`
-		Error   any    `json:"error"`
-		Detail  string `json:"detail"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
+	data, ok := shared.Object(body)
+	if !ok {
 		return fallback
 	}
-	if payload.Message != "" {
-		return payload.Message
+	value := shared.FirstTruthy(data["message"], data["error"], data["detail"])
+	if value == nil {
+		return fallback
 	}
-	if payload.Detail != "" {
-		return payload.Detail
+	var text string
+	if json.Unmarshal(value, &text) == nil {
+		return text
 	}
-	switch typed := payload.Error.(type) {
-	case string:
-		if typed != "" {
-			return typed
-		}
-	case map[string]any:
-		if message, ok := typed["message"].(string); ok && message != "" {
-			return message
-		}
+	var message string
+	if json.Unmarshal(shared.Field(value, "message"), &message) == nil {
+		return message
 	}
-	return fallback
+	var compact bytes.Buffer
+	if json.Compact(&compact, value) != nil {
+		return fallback
+	}
+	return compact.String()
 }
