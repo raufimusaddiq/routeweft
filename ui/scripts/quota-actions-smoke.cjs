@@ -28,6 +28,8 @@ const inDays = days => new Date(Date.now() + days * 86400000).toISOString();
   // What Codex holds. Each POST takes one, as a spend whose answer was lost may have.
   let balance = 2;
   let creditReadFails = false;
+  // Set so the credit reads start failing right after the next spend request.
+  let failReadsAfterSpend = false;
   const items = () => [
     { connectionId: 'codex-1', providerId: 'codex', name: 'Codex work', enabled: true, status: 'available', remaining: 0.4, observedAt: refreshStarted ? new Date(Date.parse(refreshStarted) + 2000).toISOString() : minutesAgo(30), availableResetCredits: 2 },
     { connectionId: 'claude-1', providerId: 'claude', name: 'Claude home', enabled: true, status: 'available', remaining: 0.8, observedAt: minutesAgo(30) },
@@ -37,6 +39,8 @@ const inDays = days => new Date(Date.now() + days * 86400000).toISOString();
     const method = route.request().method();
     const path = url.pathname.replace('/admin/v1', '');
     if (path === '/auth/session') return json(route, 200, { username: 'operator', expiresAt: '2026-12-01T00:00:00Z' });
+    if (path === '/overview') return json(route, 200, { runtime: { health: 'ready', version: '0.1.0', commit: 'deadbeef', configRevision: 1, snapshotVersion: 1 }, providers: { catalog: 2, nodes: 2, enabledConnections: 2 }, apiKeys: { active: 0 }, traffic: { active: 0, requests: 0, errors: 0 }, telemetry: { enabled: true, written: 0, lost: 0, lostDiagnostics: 0, degraded: false } });
+    if (path === '/usage/summary') return json(route, 200, { period: url.searchParams.get('period'), since: '', totals: { requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, errors: 0 }, series: [], providers: [], models: [], statuses: [] });
     if (path === '/quota' && method === 'GET') { quotaReads++; const list = items(); return json(route, 200, { items: list, page: 1, pageSize: 50, total: list.length, providers: ['claude', 'codex'], sort: 'default' }) }
     if (path === '/quota/refresh' && method === 'POST') return json(route, 202, { accepted: true, joined: false, job: { id: 'job-' + (++refreshPosts), status: 'queued', requestedAt: new Date().toISOString() } });
     if (path === '/quota/refresh' && method === 'GET') {
@@ -55,6 +59,7 @@ const inDays = days => new Date(Date.now() + days * 86400000).toISOString();
     if (path === '/quota/codex-1/codex-reset-credits' && method === 'POST') {
       spends.push(route.request().postDataJSON());
       balance = Math.max(0, balance - 1);
+      if (failReadsAfterSpend) { creditReadFails = true; failReadsAfterSpend = false }
       if (spendStatus === 'abort') return route.abort('connectionreset');
       if (spendStatus >= 500) return json(route, spendStatus, { error: { code: 'reset_failed', message: 'Codex reset credit outcome is unavailable' } });
       return json(route, 200, { ok: true, noCredit: false, status: 200, code: 'reset', windowsReset: 1 });
@@ -143,33 +148,66 @@ const inDays = days => new Date(Date.now() + days * 86400000).toISOString();
   }
   assert.equal(dialogs.length, 1);
 
-  // If that re-read fails, no spend is offered until a fresh list is read.
+  // An unknown outcome whose automatic re-read fails: nothing the page holds
+  // in memory may stand in for a fresh read. Leaving and returning, or
+  // reloading, brings back the row's cached count (2) and so an enabled
+  // button, but every spend first reads the credits from Codex: while that
+  // read fails there is no confirmation and nothing is sent.
+  assert.equal(balance, 1);
   spendStatus = 503;
-  creditReadFails = true;
+  failReadsAfterSpend = true;
   page.once('dialog', dialog => dialog.accept());
   await spendButton.click();
   await codexRow.locator('.quota-credits.auth-error').waitFor();
-  assert.equal(await spendButton.isDisabled(), true, 'a spend was offered with no fresh credit list');
-  assert.match(await spendButton.getAttribute('title'), /unknown outcome; read the credit list/);
-  creditReadFails = false;
-  await codexRow.getByRole('button', { name: 'Credit expiry' }).click(); // closes the failed read
-  await codexRow.getByRole('button', { name: 'Credit expiry' }).click(); // reads it fresh
-  await codexRow.locator('.quota-credits li').first().waitFor();
-  assert.equal(await spendButton.isDisabled(), true, 'the fresh list shows no credit left, so nothing can be spent');
-  assert.match(await spendButton.getAttribute('title'), /No reset credit reported/);
   assert.equal(spends.length, 4);
+  const dialogsSeen = [];
+  page.on('dialog', dialog => { dialogsSeen.push(dialog.message()); dialog.dismiss() });
+  const tryAfterReturning = async how => {
+    const row = page.locator('.quota-row', { hasText: 'Codex work' });
+    const button = row.getByRole('button', { name: 'Use 1 reset credit' });
+    await button.waitFor();
+    assert.equal(await button.isDisabled(), false, `${how}: the cached row count enables the button`);
+    assert.equal(await row.locator('.quota-credits').count(), 0, `${how}: no credit list survives the remount`);
+    const readsBefore = creditReads;
+    await button.click();
+    await page.waitForFunction(() => document.querySelector('.auth-error[role="alert"]')?.textContent.includes('could not be read from Codex'));
+    assert.ok(creditReads > readsBefore, `${how}: the spend did not read the credits first`);
+    assert.match(await page.locator('.auth-error[role="alert"]').first().textContent(), /so nothing was spent\. Every spend reads the credits first/);
+    await page.waitForTimeout(500);
+    assert.deepEqual(dialogsSeen, [], `${how}: a confirmation was offered without a fresh read`);
+    assert.equal(spends.length, 4, `${how}: a credit was spent without a fresh read`);
+  };
+  await page.evaluate(() => { location.hash = '#overview' });
+  await page.waitForSelector('.overview-content');
+  await page.evaluate(() => { location.hash = '#quota-tracker' });
+  await tryAfterReturning('after navigating away and back');
+  await page.reload();
+  await tryAfterReturning('after a reload');
+  // Once the credits can be read again, that read decides: Codex now holds
+  // none, so nothing is offered even though the row still says 2.
+  creditReadFails = false;
+  const row = page.locator('.quota-row', { hasText: 'Codex work' });
+  await row.getByRole('button', { name: 'Use 1 reset credit' }).click();
+  await page.waitForFunction(() => document.querySelector('.auth-error[role="alert"]')?.textContent.includes('no reset credit to use'));
+  assert.deepEqual(dialogsSeen, []);
+  assert.equal(spends.length, 4);
+  assert.match((await row.locator('.quota-credits li').allInnerTexts())[0], /, 0 available/);
+  assert.equal(await row.getByRole('button', { name: 'Use 1 reset credit' }).isDisabled(), true, 'the fresh count of 0 disables the button');
+  page.removeAllListeners('dialog');
 
   // A confirmed spend that succeeds says one credit was used and reloads.
   spendStatus = 200;
-  balance = 2; // Codex grants credits again: the next read shows two
-  await codexRow.getByRole('button', { name: 'Credit expiry' }).click();
-  await codexRow.getByRole('button', { name: 'Credit expiry' }).click();
+  balance = 2; // Codex grants credits again: the spend's own read shows two
+  await row.getByRole('button', { name: 'Credit expiry' }).click(); // closes the list
+  await row.getByRole('button', { name: 'Credit expiry' }).click(); // reads it again
   await page.waitForFunction(() => document.querySelector('.quota-credits li')?.textContent.includes('2 available'));
   const readsBeforeSpend = quotaReads;
-  page.once('dialog', dialog => { assert.match(dialog.message(), /Remaining credits: 2\./); dialog.accept() });
-  await spendButton.click();
+  let confirmed = '';
+  page.once('dialog', dialog => { confirmed = dialog.message(); dialog.accept() });
+  await row.getByRole('button', { name: 'Use 1 reset credit' }).click();
   await page.waitForSelector('.inline-notice[role="status"]:has-text("One Codex reset credit used")');
   assert.equal(spends.length, 5);
+  assert.match(confirmed, /Remaining credits: 2\./);
   await page.waitForTimeout(300);
   assert.ok(quotaReads > readsBeforeSpend, 'a spend reloads the rows');
 

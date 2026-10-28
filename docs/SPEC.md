@@ -2426,9 +2426,12 @@ an ambiguous spend. A Codex refusal is definite and keeps its 4xx status
 network work and refresh credentials through the shared registry. The UI lists
 credits soonest expiry first, spends one credit per confirmed click only when a
 positive count was reported (a freshly read list's count wins over the row's
-cached one). Any 5xx, or a request that did not complete, is an unknown outcome:
-it is never sent again, the credit list is read again from Codex at once, and
-no further spend is offered for that account until a fresh list has been read.
+cached one). Every spend first reads the credit list live from Codex; the
+confirmation shows that read's count, and a read that fails or reports no credit
+spends nothing and offers no confirmation. Nothing held in the page stands in
+for that read, so the guard holds after leaving the page, a reload or in another
+tab. Any 5xx, or a request that did not complete, is an unknown outcome: it is
+never sent again, and the credit list is read again from Codex at once.
 
 `claudeAutoPing` and `codexAutoPing` are string-valued settings containing JSON
 `{"connections":{"id":true}}`, defaulting to `{"connections":{}}`. The minute

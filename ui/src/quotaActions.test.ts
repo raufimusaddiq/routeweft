@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { canSpendResetCredit, creditsByExpiry, notUpdatedBy, refreshTerminal, refreshText, spendConfirmation, spendOutcome, spendOutcomeUnknown, type QuotaItem, type RefreshJob } from './quotaView.ts'
+import { canSpendResetCredit, creditsByExpiry, notUpdatedBy, freshCreditCheck, refreshTerminal, refreshText, spendConfirmation, spendOutcome, spendOutcomeUnknown, type QuotaItem, type RefreshJob } from './quotaView.ts'
 
 const job = (status: RefreshJob['status'], extra: Partial<RefreshJob> = {}): RefreshJob => ({ id: 'j1', status, requestedAt: '2026-10-28T12:00:00Z', ...extra })
 const item: QuotaItem = { connectionId: 'c', providerId: 'codex', name: 'Work', enabled: true, status: 'available' }
@@ -89,4 +89,12 @@ test('only a 200 is a spend, and a refusal is definite', () => {
     assert.equal(outcome.unknown, undefined, String(status))
     assert.equal(spendOutcomeUnknown(status), false)
   }
+})
+
+test('a spend goes ahead only on a fresh, readable credit list with a credit in it (#226)', () => {
+  assert.match(freshCreditCheck(null), /could not be read from Codex, so nothing was spent\. Every spend reads the credits first/)
+  assert.match(freshCreditCheck({ availableCount: 0, credits: [] }), /no reset credit to use; nothing was spent/)
+  assert.match(freshCreditCheck({ availableCount: Number.NaN, credits: [] }), /no reset credit/)
+  assert.equal(freshCreditCheck({ availableCount: 1, credits: [{ status: 'available' }] }), '')
+  assert.match(spendOutcome(503, null).text, /The next spend reads it again first\./)
 })

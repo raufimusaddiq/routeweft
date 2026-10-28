@@ -172,6 +172,13 @@ export function canSpendResetCredit(item: QuotaItem): boolean {
   return item.providerId === 'codex' && typeof item.availableResetCredits === 'number' && item.availableResetCredits > 0
 }
 
+/** Why a spend cannot go ahead on this live read of the credit list, or '' when it can. No read is never a go-ahead. */
+export function freshCreditCheck(fresh: ResetCredits | null): string {
+  if (!fresh) return 'The credit list could not be read from Codex, so nothing was spent. Every spend reads the credits first; try again once they can be read.'
+  if (!(fresh.availableCount > 0)) return 'Codex reports no reset credit to use; nothing was spent.'
+  return ''
+}
+
 /** The confirmation text: one credit, irreversible, and the count before spending (pin :1469). */
 export function spendConfirmation(item: QuotaItem): string {
   return `Use 1 Codex reset credit for ${item.name || 'this account'}? This cannot be undone. Remaining credits: ${item.availableResetCredits ?? 0}.`
@@ -193,7 +200,7 @@ export function spendOutcome(status: number, body: { windowsReset?: number; erro
   if (status === 409) return { tone: 'error', text: 'Codex reports no reset credit to use; nothing was spent.', reload: true }
   if (spendOutcomeUnknown(status)) {
     const how = status === 0 ? 'the request did not complete' : `HTTP ${status}`
-    return { tone: 'error', text: `The outcome is unknown (${how}): Codex may or may not have used the credit, and the request was not sent again. The credit list below was read again; check it before trying again.`, reload: false, unknown: true }
+    return { tone: 'error', text: `The outcome is unknown (${how}): Codex may or may not have used the credit, and the request was not sent again. The credit list below was read again; check it before trying again. The next spend reads it again first.`, reload: false, unknown: true }
   }
   if (body?.error?.code === 'reauth_required') return { tone: 'error', text: 'Codex rejected the account credential; no reset credit was spent. Reconnect the account.', reload: false }
   if (status === 400 && body?.error?.code === 'confirmation_required') return { tone: 'error', text: 'The reset was not confirmed; nothing was spent.', reload: false }
