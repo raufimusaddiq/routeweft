@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/raufimusaddiq/routeweft/internal/routing"
@@ -82,13 +83,18 @@ func TestTargetRefusalMessageReachesTheClient(t *testing.T) {
 	}
 }
 
+// vertexPartnerKeys numbers the keys the probe test uses. The probed project is
+// cached for the life of the process by key alone (wire/vertex.go
+// vertexProbeProject), so a key used again, as -count does, is never probed.
+var vertexPartnerKeys atomic.Int64
+
 // executors/vertex.js:158-164 end to end: a vertex-partner raw key with no
 // projectId is probed for its project at the connection's base, then served there
 // with the key in X-Goog-Api-Key and never in a URL, buffered and streamed.
 func TestVertexPartnerRawKeyIsProbedAndServed(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		var probes, served int
-		token := fmt.Sprintf("AIza-ingress-fixture-%v", stream)
+		token := fmt.Sprintf("AIza-ingress-fixture-%d", vertexPartnerKeys.Add(1))
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.RawQuery != "" || r.Header.Get("X-Goog-Api-Key") != token || r.Header.Get("Authorization") != "" {
 				http.Error(w, "credential misplaced", http.StatusTeapot)

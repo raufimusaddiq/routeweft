@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -58,12 +59,24 @@ func zedUpstream(t *testing.T, completions string, record *[]p192Call, mu *sync.
 	}
 }
 
+// zedAccounts numbers the Zed accounts the rigs connect, one per rig.
+var zedAccounts atomic.Int64
+
+// zedAccountSettings is a Zed account no earlier rig in this process connected.
+// The LLM-token and catalog caches are process-wide and keyed by the upstream URL
+// and the account (wire/zed.go cacheKey), and a closed httptest server's port is
+// handed to a later one, so two rigs with the same account could share a cached
+// token and the later one would send no exchange (#268).
+func zedAccountSettings() routing.ProviderSettings {
+	return routing.ProviderSettings{UserID: fmt.Sprintf("user-%d", zedAccounts.Add(1)), OrganizationID: "org-1"}
+}
+
 func newZedIngressRig(t *testing.T, completions string) (*codebuddyRig, func(path string) []p192Call) {
 	t.Helper()
 	var calls []p192Call
 	var mu sync.Mutex
 	rig := newCodeBuddyRig(t, "zed", zedUpstream(t, completions, &calls, &mu))
-	rig.settings = routing.ProviderSettings{UserID: "user-1", OrganizationID: "org-1"}
+	rig.settings = zedAccountSettings()
 	rig.endpoint = "chat/completions" // the catalog's Chat endpoint; the Zed hook replaces it
 	return rig, func(suffix string) []p192Call {
 		mu.Lock()
@@ -336,7 +349,7 @@ func zedTwoAccountRig(t *testing.T, failing string, failedBody, goodBody string)
 			fmt.Fprint(w, goodBody)
 		}
 	})
-	rig.settings = routing.ProviderSettings{UserID: "user-1", OrganizationID: "org-1"}
+	rig.settings = zedAccountSettings()
 	rig.endpoint = "chat/completions"
 	rig.accounts = []string{"quota", "good"}
 	return rig, func(account string) int { mu.Lock(); defer mu.Unlock(); return completions[account] }
@@ -435,7 +448,7 @@ func TestZedBrokenUpstreamIsAnErrorToTheClient(t *testing.T) {
 						fmt.Fprint(w, strings.Repeat("a", 5<<20)+"\n")
 					}
 				})
-				rig.settings = routing.ProviderSettings{UserID: "user-1", OrganizationID: "org-1"}
+				rig.settings = zedAccountSettings()
 				rig.endpoint = "chat/completions"
 				out := rig.post("/v1/chat/completions", fmt.Sprintf(`{"model":"x","stream":%v,"messages":[{"role":"user","content":"ping"}]}`, stream))
 				if stream {
@@ -476,7 +489,7 @@ func TestFailedAttemptKeptForFallbackIsReleasedWhenTheNextCandidateServes(t *tes
 			fmt.Fprint(w, zedNDJSON)
 		}
 	})
-	rig.settings = routing.ProviderSettings{UserID: "user-1", OrganizationID: "org-1"}
+	rig.settings = zedAccountSettings()
 	rig.endpoint = "chat/completions"
 	rig.accounts = []string{"quota", "good"}
 
