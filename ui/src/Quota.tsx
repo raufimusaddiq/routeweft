@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { QUOTA_PAGE_SIZE, QUOTA_SORTS, REFRESH_POLL_LIMIT, REFRESH_POLL_MS, cachedAt, canSpendResetCredit, creditsByExpiry, notUpdatedBy, quotaQuery, refreshTerminal, refreshText, remainingText, spendConfirmation, spendOutcome, statusLabel, statusTone, until, windowLabel, windowValue, zoned, type QuotaItem, type RefreshJob, type ResetCredits } from './quotaView'
+import { QUOTA_PAGE_SIZE, QUOTA_SORTS, REFRESH_POLL_LIMIT, REFRESH_POLL_MS, cachedAt, canSpendResetCredit, creditsByExpiry, notUpdatedBy, quotaQuery, refreshTerminal, refreshText, remainingText, spendConfirmation, spendOutcome, statusLabel, statusTone, until, windowLabel, windowValue, zoned, type QuotaItem, type RefreshJob, type ResetCredits, type SpendOutcome } from './quotaView'
 
 type Props = { onUnauthorized: () => void }
 type QuotaPage = { items: QuotaItem[]; page: number; total: number; providers?: string[] }
@@ -49,6 +49,9 @@ export function Quota({ onUnauthorized }: Props) {
   const following = useRef<AbortController | null>(null)
   const [credits, setCredits] = useState<Record<string, CreditView>>({})
   const [spending, setSpending] = useState('')
+  // Accounts whose last spend had an unknown outcome: no spend until a fresh
+  // credit list has been read for them.
+  const [recheck, setRecheck] = useState<Set<string>>(new Set())
 
   useEffect(() => () => following.current?.abort(), [])
 
@@ -113,6 +116,11 @@ export function Quota({ onUnauthorized }: Props) {
       setCredits(({ [item.connectionId]: _, ...rest }) => rest)
       return
     }
+    await loadCredits(item)
+  }
+
+  // A live read of Codex's credit list; it replaces whatever list was shown.
+  async function loadCredits(item: QuotaItem) {
     setCredits(current => ({ ...current, [item.connectionId]: { loading: true } }))
     let view: CreditView
     try {
@@ -121,6 +129,7 @@ export function Quota({ onUnauthorized }: Props) {
       if (!response.ok) throw new Error(await responseError(response, 'Could not load Codex reset credits.'))
       const data = await response.json() as ResetCredits
       view = { loading: false, data: { availableCount: data.availableCount, credits: creditsByExpiry(data.credits ?? []) } }
+      setRecheck(current => { const next = new Set(current); next.delete(item.connectionId); return next })
     } catch (cause) {
       view = { loading: false, error: cause instanceof Error ? cause.message : 'Could not load Codex reset credits.' }
     }
@@ -129,22 +138,43 @@ export function Quota({ onUnauthorized }: Props) {
 
   // One credit per confirmed click. The request is never repeated: an unknown
   // outcome is reported as unknown and the operator checks the list first.
-  async function spendCredit(item: QuotaItem) {
-    if (spending || !canSpendResetCredit(item) || !window.confirm(spendConfirmation(item))) return
+  // A freshly read credit list is newer than the row's cached count.
+  function withFreshCount(item: QuotaItem): QuotaItem {
+    const fresh = credits[item.connectionId]?.data
+    return fresh ? { ...item, availableResetCredits: fresh.availableCount } : item
+  }
+
+  function spendBlocked(item: QuotaItem): string {
+    if (recheck.has(item.connectionId)) return 'The last spend had an unknown outcome; read the credit list before trying again'
+    if (!canSpendResetCredit(withFreshCount(item))) return 'No reset credit reported for this account'
+    return ''
+  }
+
+  async function spendCredit(original: QuotaItem) {
+    const item = withFreshCount(original)
+    if (spending || credits[item.connectionId]?.loading || spendBlocked(original) || !window.confirm(spendConfirmation(item))) return
     setSpending(item.connectionId); setError(''); setNotice('')
+    let outcome: SpendOutcome
     try {
       const response = await fetch(`/admin/v1/quota/${encodeURIComponent(item.connectionId)}/codex-reset-credits`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }) })
-      if (response.status === 401) { onUnauthorized(); return }
-      const outcome = spendOutcome(response.status, await response.json().catch(() => null))
-      if (outcome.tone === 'notice') setNotice(outcome.text)
-      else setError(outcome.text)
-      if (outcome.reload) {
-        setCredits(({ [item.connectionId]: _, ...rest }) => rest)
-        setReload(value => value + 1)
-      }
+      if (response.status === 401) { onUnauthorized(); setSpending(''); return }
+      outcome = spendOutcome(response.status, await response.json().catch(() => null))
     } catch {
-      setError('The reset request did not complete, so its outcome is unknown, and it was not sent again. Check the credit list before trying again.')
-    } finally { setSpending('') }
+      outcome = spendOutcome(0, null)
+    }
+    if (outcome.tone === 'notice') setNotice(outcome.text)
+    else setError(outcome.text)
+    if (outcome.reload) {
+      setCredits(({ [item.connectionId]: _, ...rest }) => rest)
+      setReload(value => value + 1)
+    }
+    // An unknown outcome may have spent the credit: the list shown before the
+    // spend is stale, so it is read again, and the next spend waits for it.
+    if (outcome.unknown) {
+      setRecheck(current => new Set(current).add(item.connectionId))
+      await loadCredits(item)
+    }
+    setSpending('')
   }
 
   function applySearch(event: FormEvent) {
@@ -184,7 +214,7 @@ export function Quota({ onUnauthorized }: Props) {
         {typeof item.availableResetCredits === 'number' && <span className="count-label">{item.availableResetCredits} reset credit{item.availableResetCredits === 1 ? '' : 's'}</span>}
         {item.providerId === 'codex' && <span className="quota-actions">
           <button className="button-secondary" type="button" aria-expanded={Boolean(credits[item.connectionId])} disabled={credits[item.connectionId]?.loading} onClick={() => void showCredits(item)}>Credit expiry</button>
-          <button className="button-danger" type="button" disabled={spending !== '' || !canSpendResetCredit(item)} title={canSpendResetCredit(item) ? `Spends one of ${item.availableResetCredits} reset credits. Asks first.` : 'No reset credit reported for this account'} onClick={() => void spendCredit(item)}>{spending === item.connectionId ? 'Using 1 credit…' : 'Use 1 reset credit'}</button>
+          <button className="button-danger" type="button" disabled={spending !== '' || Boolean(credits[item.connectionId]?.loading) || spendBlocked(item) !== ''} title={spendBlocked(item) || `Spends one of ${withFreshCount(item).availableResetCredits} reset credits. Asks first.`} onClick={() => void spendCredit(item)}>{spending === item.connectionId ? 'Using 1 credit…' : 'Use 1 reset credit'}</button>
         </span>}
         {item.windows && item.windows.length > 0 && <ul className="quota-windows" aria-label={`${item.name} limit windows`}>{item.windows.map(window => <li key={window.name}>
           <span className="quota-window-name">{windowLabel(window)}</span>

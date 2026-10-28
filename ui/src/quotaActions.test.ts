@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { canSpendResetCredit, creditsByExpiry, notUpdatedBy, refreshTerminal, refreshText, spendConfirmation, spendOutcome, type QuotaItem, type RefreshJob } from './quotaView.ts'
+import { canSpendResetCredit, creditsByExpiry, notUpdatedBy, refreshTerminal, refreshText, spendConfirmation, spendOutcome, spendOutcomeUnknown, type QuotaItem, type RefreshJob } from './quotaView.ts'
 
 const job = (status: RefreshJob['status'], extra: Partial<RefreshJob> = {}): RefreshJob => ({ id: 'j1', status, requestedAt: '2026-10-28T12:00:00Z', ...extra })
 const item: QuotaItem = { connectionId: 'c', providerId: 'codex', name: 'Work', enabled: true, status: 'available' }
@@ -62,16 +62,31 @@ test('the confirmation names one credit, the account and the count', () => {
   assert.equal(spendConfirmation({ ...item, availableResetCredits: 3 }), 'Use 1 Codex reset credit for Work? This cannot be undone. Remaining credits: 3.')
 })
 
-test('an unknown spend outcome is never presented as spent or as safe to repeat', () => {
-  const unknown = spendOutcome(502, { error: { code: 'reset_failed', message: 'outcome unavailable' } })
-  assert.equal(unknown.tone, 'error')
-  assert.equal(unknown.reload, false)
-  assert.match(unknown.text, /may or may not have used the credit, and the request was not sent again/)
+test('every server error and a failed request are unknown outcomes, never spent or safe to repeat (#226)', () => {
+  for (const status of [0, 500, 502, 503, 504]) {
+    const outcome = spendOutcome(status, { error: { code: 'reset_failed', message: 'outcome unavailable' } })
+    assert.equal(spendOutcomeUnknown(status), true, String(status))
+    assert.deepEqual([outcome.tone, outcome.reload, outcome.unknown], ['error', false, true], String(status))
+    assert.match(outcome.text, /may or may not have used the credit, and the request was not sent again\. The credit list below was read again; check it before trying again\./)
+    assert.doesNotMatch(outcome.text, /nothing was spent|used\./)
+  }
+  assert.match(spendOutcome(0, null).text, /\(the request did not complete\)/)
+  assert.match(spendOutcome(504, null).text, /\(HTTP 504\)/)
+})
+
+test('only a 200 is a spend, and a refusal is definite', () => {
   const spent = spendOutcome(200, { windowsReset: 2 })
-  assert.deepEqual([spent.tone, spent.reload], ['notice', true])
+  assert.deepEqual([spent.tone, spent.reload, spent.unknown], ['notice', true, undefined])
   assert.match(spent.text, /One Codex reset credit used\. 2 windows reset\./)
-  assert.match(spendOutcome(409, null).text, /nothing was spent/)
-  assert.match(spendOutcome(403, { error: { code: 'reauth_required' } }).text, /no reset credit was spent\. Reconnect/)
-  assert.match(spendOutcome(429, null).text, /refused the reset \(HTTP 429\); nothing was spent/)
-  assert.match(spendOutcome(400, { error: { code: 'confirmation_required' } }).text, /not confirmed/)
+  for (const [status, body, text] of [
+    [409, null, /nothing was spent/],
+    [403, { error: { code: 'reauth_required' } }, /no reset credit was spent\. Reconnect/],
+    [429, null, /refused the reset \(HTTP 429\); nothing was spent/],
+    [400, { error: { code: 'confirmation_required' } }, /not confirmed/],
+  ] as const) {
+    const outcome = spendOutcome(status, body)
+    assert.match(outcome.text, text)
+    assert.equal(outcome.unknown, undefined, String(status))
+    assert.equal(spendOutcomeUnknown(status), false)
+  }
 })

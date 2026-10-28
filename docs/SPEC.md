@@ -2412,8 +2412,10 @@ an ambiguous spend. A Codex refusal is definite and keeps its 4xx status
 `reauth_required`, because 401 is the admin session's status. Both actions reject non-Codex token connections before any
 network work and refresh credentials through the shared registry. The UI lists
 credits soonest expiry first, spends one credit per confirmed click only when a
-positive count was reported, and reports a 502 as an unknown outcome without
-sending it again.
+positive count was reported (a freshly read list's count wins over the row's
+cached one). Any 5xx, or a request that did not complete, is an unknown outcome:
+it is never sent again, the credit list is read again from Codex at once, and
+no further spend is offered for that account until a fresh list has been read.
 
 `claudeAutoPing` and `codexAutoPing` are string-valued settings containing JSON
 `{"connections":{"id":true}}`, defaulting to `{"connections":{}}`. The minute

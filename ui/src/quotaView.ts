@@ -177,16 +177,24 @@ export function spendConfirmation(item: QuotaItem): string {
   return `Use 1 Codex reset credit for ${item.name || 'this account'}? This cannot be undone. Remaining credits: ${item.availableResetCredits ?? 0}.`
 }
 
-export type SpendOutcome = { tone: 'notice' | 'error'; text: string; reload: boolean }
+// unknown marks an outcome that may have spent a credit: the page reads the
+// credit list again before anything else is offered.
+export type SpendOutcome = { tone: 'notice' | 'error'; text: string; reload: boolean; unknown?: boolean }
 
-/** What a spend response means. Only a 200 spent a credit; a 502 is unknown and is not retried. */
+/** A spend whose request failed in the browser (status 0) or on a server (any 5xx): it may have been spent. */
+export function spendOutcomeUnknown(status: number): boolean { return status === 0 || status >= 500 }
+
+/** What a spend response means. Only a 200 is known to have spent a credit; a 5xx or a failed request is unknown and is never retried. */
 export function spendOutcome(status: number, body: { windowsReset?: number; error?: { code?: string; message?: string } } | null): SpendOutcome {
   if (status === 200) {
     const windows = typeof body?.windowsReset === 'number' && body.windowsReset > 0 ? ` ${body.windowsReset} window${body.windowsReset === 1 ? '' : 's'} reset.` : ''
     return { tone: 'notice', text: `One Codex reset credit used.${windows} Quota reloaded.`, reload: true }
   }
   if (status === 409) return { tone: 'error', text: 'Codex reports no reset credit to use; nothing was spent.', reload: true }
-  if (status === 502) return { tone: 'error', text: 'The outcome is unknown: Codex may or may not have used the credit, and the request was not sent again. Check the credit list before trying again.', reload: false }
+  if (spendOutcomeUnknown(status)) {
+    const how = status === 0 ? 'the request did not complete' : `HTTP ${status}`
+    return { tone: 'error', text: `The outcome is unknown (${how}): Codex may or may not have used the credit, and the request was not sent again. The credit list below was read again; check it before trying again.`, reload: false, unknown: true }
+  }
   if (body?.error?.code === 'reauth_required') return { tone: 'error', text: 'Codex rejected the account credential; no reset credit was spent. Reconnect the account.', reload: false }
   if (status === 400 && body?.error?.code === 'confirmation_required') return { tone: 'error', text: 'The reset was not confirmed; nothing was spent.', reload: false }
   if (status >= 400 && status < 500) return { tone: 'error', text: `Codex refused the reset (HTTP ${status}); nothing was spent.`, reload: false }

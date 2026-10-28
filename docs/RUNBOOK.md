@@ -1083,8 +1083,10 @@ for a follow-up.
 
 Use session-gated GET `/admin/v1/quota/{connection-id}/codex-reset-credits` to
 inspect credits. POST at the same path with `{"confirm":true}` spends one credit.
-A 409 means no credit. After a 502, read the balance before issuing another
-POST: an ambiguous action is not retried automatically. Another 4xx means Codex
+A 409 means no credit. After any 5xx, or a request that did not complete, the
+outcome is unknown: read the credit list again before issuing another POST. An
+ambiguous action is not retried automatically; the Quota page re-reads the list
+itself and offers no further spend until that read succeeds. Another 4xx means Codex
 refused and nothing was spent; 403 `reauth_required` means reconnect the account.
 On the Quota page, Credit expiry lists the credits and Use 1 reset credit asks
 before spending one.

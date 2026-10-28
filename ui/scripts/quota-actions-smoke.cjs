@@ -24,6 +24,10 @@ const inDays = days => new Date(Date.now() + days * 86400000).toISOString();
   let quotaReads = 0;
   let spends = [];
   let spendStatus = 502;
+  let creditReads = 0;
+  // What Codex holds. Each POST takes one, as a spend whose answer was lost may have.
+  let balance = 2;
+  let creditReadFails = false;
   const items = () => [
     { connectionId: 'codex-1', providerId: 'codex', name: 'Codex work', enabled: true, status: 'available', remaining: 0.4, observedAt: refreshStarted ? new Date(Date.parse(refreshStarted) + 2000).toISOString() : minutesAgo(30), availableResetCredits: 2 },
     { connectionId: 'claude-1', providerId: 'claude', name: 'Claude home', enabled: true, status: 'available', remaining: 0.8, observedAt: minutesAgo(30) },
@@ -39,14 +43,20 @@ const inDays = days => new Date(Date.now() + days * 86400000).toISOString();
       const next = refreshPolls.shift();
       return json(route, 200, { status: next.status, job: next });
     }
-    if (path === '/quota/codex-1/codex-reset-credits' && method === 'GET') return json(route, 200, { availableCount: 2, credits: [
-      { status: 'available', grantedAt: minutesAgo(60 * 24 * 20), expiresAt: inDays(20) },
-      { status: 'available', grantedAt: minutesAgo(60 * 24 * 5), expiresAt: inDays(3) },
-      { status: 'used' },
-    ] });
+    if (path === '/quota/codex-1/codex-reset-credits' && method === 'GET') {
+      creditReads++;
+      if (creditReadFails) return json(route, 502, { error: { code: 'quota_unavailable', message: 'Codex reset credits could not be read' } });
+      return json(route, 200, { availableCount: balance, credits: [
+        { status: 'available', grantedAt: minutesAgo(60 * 24 * 20), expiresAt: inDays(20) },
+        { status: 'available', grantedAt: minutesAgo(60 * 24 * 5), expiresAt: inDays(3) },
+        { status: 'used' },
+      ] });
+    }
     if (path === '/quota/codex-1/codex-reset-credits' && method === 'POST') {
       spends.push(route.request().postDataJSON());
-      if (spendStatus === 502) return json(route, 502, { error: { code: 'reset_failed', message: 'Codex reset credit outcome is unavailable' } });
+      balance = Math.max(0, balance - 1);
+      if (spendStatus === 'abort') return route.abort('connectionreset');
+      if (spendStatus >= 500) return json(route, spendStatus, { error: { code: 'reset_failed', message: 'Codex reset credit outcome is unavailable' } });
       return json(route, 200, { ok: true, noCredit: false, status: 200, code: 'reset', windowsReset: 1 });
     }
     if (method === 'GET') return json(route, 200, { items: [], page: 1, pageSize: 100, total: 0 });
@@ -72,7 +82,7 @@ const inDays = days => new Date(Date.now() + days * 86400000).toISOString();
   assert.equal(quotaReads, readsBefore, 'rows reloaded before the job ended');
   refreshStarted = start;
   await page.waitForSelector('[data-refresh-status="succeeded"]', { timeout: 10000 });
-  await page.waitForFunction(n => document.querySelectorAll('.quota-row').length === 2 && n, quotaReads);
+  await page.waitForFunction(() => document.querySelectorAll('.quota-row').length === 2);
   assert.ok(quotaReads > readsBefore, 'a finished job reloads the rows');
   assert.match(await page.locator('.quota-refresh-state').textContent(), /^Quota refresh finished at .*Rows were reloaded/);
   const claude = await page.locator('.quota-row', { hasText: 'Claude home' }).innerText();
@@ -108,22 +118,58 @@ const inDays = days => new Date(Date.now() + days * 86400000).toISOString();
   assert.equal(dialogs[0], 'Use 1 Codex reset credit for Codex work? This cannot be undone. Remaining credits: 2.');
   assert.equal(spends.length, 0, 'a declined confirmation spent a credit');
 
-  // Accepted, the outcome is unknown (502): reported as unknown, sent once, never again.
+  // Accepted, every unknown outcome (502, 503, a dropped request) is reported
+  // as unknown, sent once and never again, and the open credit list is read
+  // again so it never shows the balance from before the spend.
+  const spendButton = codexRow.getByRole('button', { name: 'Use 1 reset credit' });
+  const unknownCases = [[502, /\(HTTP 502\)/], [503, /\(HTTP 503\)/], ['abort', /\(the request did not complete\)/]];
+  balance = 4; // granted more, so every case below has a credit to spend
+  for (const [status, how] of unknownCases) {
+    spendStatus = status;
+    const sentBefore = spends.length;
+    const readsBefore = creditReads;
+    page.once('dialog', dialog => dialog.accept());
+    await spendButton.click();
+    await page.waitForFunction(() => document.querySelector('.auth-error[role="alert"]')?.textContent.includes('may or may not'));
+    const alert = await page.locator('.auth-error[role="alert"]').first().textContent();
+    assert.match(alert, how, String(status));
+    assert.match(alert, /request was not sent again\. The credit list below was read again; check it before trying again\./);
+    await page.waitForFunction(() => !document.querySelector('.quota-credits[role="status"]'));
+    assert.ok(creditReads > readsBefore, `${status}: the credit list was not read again`);
+    assert.match((await codexRow.locator('.quota-credits li').allInnerTexts())[0], new RegExp(`, ${balance} available`), `${status}: the list still shows the balance from before the spend`);
+    await page.waitForTimeout(1200);
+    assert.equal(spends.length, sentBefore + 1, `${status}: an unknown outcome was sent again`);
+    assert.deepEqual(spends[spends.length - 1], { confirm: true });
+  }
+  assert.equal(dialogs.length, 1);
+
+  // If that re-read fails, no spend is offered until a fresh list is read.
+  spendStatus = 503;
+  creditReadFails = true;
   page.once('dialog', dialog => dialog.accept());
-  await codexRow.getByRole('button', { name: 'Use 1 reset credit' }).click();
-  await page.waitForSelector('.auth-error[role="alert"]');
-  assert.match(await page.locator('.auth-error[role="alert"]').textContent(), /may or may not have used the credit, and the request was not sent again/);
-  await page.waitForTimeout(1500);
-  assert.equal(spends.length, 1, 'an unknown outcome was sent again');
-  assert.deepEqual(spends[0], { confirm: true });
+  await spendButton.click();
+  await codexRow.locator('.quota-credits.auth-error').waitFor();
+  assert.equal(await spendButton.isDisabled(), true, 'a spend was offered with no fresh credit list');
+  assert.match(await spendButton.getAttribute('title'), /unknown outcome; read the credit list/);
+  creditReadFails = false;
+  await codexRow.getByRole('button', { name: 'Credit expiry' }).click(); // closes the failed read
+  await codexRow.getByRole('button', { name: 'Credit expiry' }).click(); // reads it fresh
+  await codexRow.locator('.quota-credits li').first().waitFor();
+  assert.equal(await spendButton.isDisabled(), true, 'the fresh list shows no credit left, so nothing can be spent');
+  assert.match(await spendButton.getAttribute('title'), /No reset credit reported/);
+  assert.equal(spends.length, 4);
 
   // A confirmed spend that succeeds says one credit was used and reloads.
   spendStatus = 200;
+  balance = 2; // Codex grants credits again: the next read shows two
+  await codexRow.getByRole('button', { name: 'Credit expiry' }).click();
+  await codexRow.getByRole('button', { name: 'Credit expiry' }).click();
+  await page.waitForFunction(() => document.querySelector('.quota-credits li')?.textContent.includes('2 available'));
   const readsBeforeSpend = quotaReads;
-  page.once('dialog', dialog => dialog.accept());
-  await codexRow.getByRole('button', { name: 'Use 1 reset credit' }).click();
+  page.once('dialog', dialog => { assert.match(dialog.message(), /Remaining credits: 2\./); dialog.accept() });
+  await spendButton.click();
   await page.waitForSelector('.inline-notice[role="status"]:has-text("One Codex reset credit used")');
-  assert.equal(spends.length, 2);
+  assert.equal(spends.length, 5);
   await page.waitForTimeout(300);
   assert.ok(quotaReads > readsBeforeSpend, 'a spend reloads the rows');
 
