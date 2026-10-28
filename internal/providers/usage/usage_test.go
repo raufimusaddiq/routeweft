@@ -153,7 +153,9 @@ func TestGitHubPaidAndFreeShapes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(state.Windows) != 2 {
+	// The absent completions snapshot is unlimited, as the reference reports
+	// it (github.js:92).
+	if len(state.Windows) != 3 || state.Windows[1].Name != "completions" || !state.Windows[1].Unlimited {
 		t.Fatalf("paid windows=%+v", state.Windows)
 	}
 	if *state.Windows[0].Remaining != 0.4 {
@@ -336,7 +338,8 @@ var oracleHandledProviders = []string{
 }
 
 // TestEveryReaderMakesARequestOrFails proves no reader fabricates a healthy state:
-// each registered reader must either call upstream or return an error. A stub that
+// each registered reader must either call upstream or return an error, and an
+// answer without windows must be an error or a notice that derives unknown. A stub that
 // answers with a plan and no windows would make routing trust a number nobody
 // measured, which is why iflow is absent rather than stubbed.
 func TestEveryReaderMakesARequestOrFails(t *testing.T) {
@@ -360,8 +363,11 @@ func TestEveryReaderMakesARequestOrFails(t *testing.T) {
 		if err == nil && stub.request == nil {
 			t.Errorf("%s returned state %+v without making a request", id, state)
 		}
-		if err == nil && len(state.Windows) == 0 {
-			t.Errorf("%s reported plan %q with no windows and no error", id, state.Plan)
+		// An answer with no readable quota is allowed only as an explicit
+		// notice (GitHub's unparseable answer, github.js:85, #222), which
+		// derives unknown, never available.
+		if err == nil && len(state.Windows) == 0 && (state.Message == "" || state.DeriveStatus(time.Now()) != quota.StatusUnknown) {
+			t.Errorf("%s reported plan %q with no windows, no notice and no error", id, state.Plan)
 		}
 	}
 }

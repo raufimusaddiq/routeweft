@@ -1,6 +1,7 @@
 package quota
 
 import (
+	"encoding/json"
 	"errors"
 	"math"
 	"strings"
@@ -41,6 +42,52 @@ type Window struct {
 	// it is when that window was read upstream, earlier than the State's
 	// ObservedAt, so a cached value is never presented as fresh.
 	ObservedAt *time.Time `json:"observedAt,omitempty"`
+	// Count is the absolute allowance where the provider reports one in its own
+	// unit (GitHub Copilot entitlement/remaining). Each amount is nil when not
+	// reported; a zero total is a reported zero, never unlimited.
+	Count *Count `json:"count,omitempty"`
+	// Scope is the provider's own scoping of the window (Claude weekly_scoped
+	// limits name a model), kept so the label is not the only record of it.
+	Scope *Scope `json:"scope,omitempty"`
+	// LimitReached is the provider's own limit-reached flag for the window's
+	// group (Codex). It is metadata: routing reads Remaining, as the
+	// reference does.
+	LimitReached bool `json:"limitReached,omitempty"`
+}
+
+// Count is an absolute allowance. Amounts are in the provider's unit.
+type Count struct {
+	Used      *float64 `json:"used,omitempty"`
+	Total     *float64 `json:"total,omitempty"`
+	Remaining *float64 `json:"remaining,omitempty"`
+}
+
+// Scope is a provider-reported window scope.
+type Scope struct {
+	Kind  string `json:"kind,omitempty"`
+	Model string `json:"model,omitempty"`
+}
+
+func (c *Count) clone() *Count {
+	if c == nil {
+		return nil
+	}
+	copied := *c
+	for _, field := range []**float64{&copied.Used, &copied.Total, &copied.Remaining} {
+		if *field != nil {
+			value := **field
+			*field = &value
+		}
+	}
+	return &copied
+}
+
+func (s *Scope) clone() *Scope {
+	if s == nil {
+		return nil
+	}
+	copied := *s
+	return &copied
 }
 
 // CreditState classifies one reported credit balance. Missing and malformed are
@@ -84,6 +131,13 @@ func (c *Credit) clone() *Credit {
 // State is one account's normalized quota snapshot. CreditAvailable is the
 // provider's own account-level availability flag where it reports one (DeepSeek
 // is_available); nil means not reported, which is neither available nor not.
+//
+// Message is a reader's fixed notice for an account the provider answered
+// without quota (unsupported or permission-gated quota); it is never upstream
+// text and never an error. Metadata holds provider-specific scalars the
+// reference returns beside the windows (GitHub resetDate, Claude legacy
+// organization). ExtraUsage is Claude's extra_usage object as the provider
+// reported it (claude.js:131).
 type State struct {
 	Status          Status
 	Plan            string
@@ -92,6 +146,9 @@ type State struct {
 	Err             string
 	AvailableReset  *float64
 	CreditAvailable *bool
+	Message         string
+	Metadata        map[string]string
+	ExtraUsage      json.RawMessage
 }
 
 // PercentFromUsed converts a 0-100 used percentage into a nil-safe remaining
