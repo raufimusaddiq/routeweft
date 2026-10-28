@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -160,5 +161,63 @@ func TestQuotaRefreshStatusRequiresSession(t *testing.T) {
 	_, mux, _, _ := newRefreshRig(t, func(context.Context) error { return nil })
 	if recorder := doJSON(t, mux, nil, http.MethodGet, "/admin/v1/quota/refresh", ""); recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status=%d want 401", recorder.Code)
+	}
+}
+
+// A refresher that ignores cancellation cannot hold the job open: the deadline
+// fails it, a request while that refresher is still running is refused rather
+// than run alongside it, and its late answer does not change the failed job.
+func TestQuotaRefreshDeadlineHoldsAgainstARefresherThatIgnoresCancellation(t *testing.T) {
+	var calls atomic.Int32
+	release, returned := make(chan struct{}), make(chan struct{})
+	handler, mux, cookie, events := newRefreshRig(t, func(context.Context) error {
+		if calls.Add(1) == 1 {
+			defer close(returned)
+			<-release // ignores ctx entirely
+		}
+		return nil
+	})
+	handler.quotaJobs.timeout = 20 * time.Millisecond
+	first := decodeRefresh(t, doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/quota/refresh", "").Body.String())
+	failed := awaitRefresh(t, events, first.Job.ID, quotaRefreshFailed)
+	if failed.Error != "the refresh did not finish in time" || failed.FinishedAt == nil {
+		t.Fatalf("failed %+v", failed)
+	}
+	for i := 0; i < 3; i++ {
+		busy := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/quota/refresh", "")
+		if busy.Code != http.StatusConflict || !strings.Contains(busy.Body.String(), "refresh_busy") {
+			t.Fatalf("while the stuck refresher runs: %d %s", busy.Code, busy.Body)
+		}
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("refreshers started %d, want 1: they must never overlap", n)
+	}
+	close(release)
+	<-returned
+	// settle runs after the refresher returns; wait for it rather than sleep.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		handler.quotaJobs.mu.Lock()
+		active := handler.quotaJobs.active
+		handler.quotaJobs.mu.Unlock()
+		if !active {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the refresher returned but the refresh stayed busy")
+		}
+		runtime.Gosched()
+	}
+	if read := decodeRefresh(t, doJSON(t, mux, cookie, http.MethodGet, "/admin/v1/quota/refresh", "").Body.String()); read.Status != quotaRefreshFailed || read.Job.ID != first.Job.ID || read.Job.Error != failed.Error {
+		t.Fatalf("the late answer changed the failed job: %+v", read)
+	}
+	next := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/quota/refresh", "")
+	accepted := decodeRefresh(t, next.Body.String())
+	if next.Code != http.StatusAccepted || accepted.Joined || accepted.Job.ID == first.Job.ID {
+		t.Fatalf("after it returned: %d %s", next.Code, next.Body)
+	}
+	awaitRefresh(t, events, accepted.Job.ID, quotaRefreshSucceeded)
+	if n := calls.Load(); n != 2 {
+		t.Fatalf("refreshers started %d, want 2", n)
 	}
 }

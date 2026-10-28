@@ -1092,6 +1092,8 @@ before spending one.
 POST `/admin/v1/quota/refresh` returns 202 with a job, not an observation. Follow
 it with GET `/admin/v1/quota/refresh` until `status` is `succeeded` or `failed`,
 then read `/admin/v1/quota`; a second POST while it runs joins the same job.
+A job that passes its 60-second deadline is `failed`; if its provider reads are
+still unwinding, a POST is 409 `refresh_busy` until they stop. Retry later.
 
 Quota warming is off by default. Set `claudeAutoPing` or `codexAutoPing` through
 PATCH `/admin/v1/settings` with a JSON string value, for example:

@@ -37,12 +37,17 @@ func (j quotaRefreshJob) terminal() bool {
 	return j.Status == quotaRefreshSucceeded || j.Status == quotaRefreshFailed
 }
 
-// quotaRefreshJobs holds the latest job. At most one refresh runs at a time; a
-// request while one is queued or running joins it instead of starting another.
+// quotaRefreshJobs holds the latest job. At most one refresh runs at a time: a
+// request while the job is queued or running joins it, and a request after a job
+// ended at its deadline while its refresher has still not returned is refused,
+// so a refresher that ignores cancellation never runs alongside another.
 type quotaRefreshJobs struct {
 	mu      sync.Mutex
 	latest  *quotaRefreshJob
 	timeout time.Duration
+	// active is true from the start of a refresher call until it returns, which
+	// can be after its job has already failed at the deadline.
+	active bool
 }
 
 func (q *quotaRefreshJobs) snapshot() (quotaRefreshJob, bool) {
@@ -54,19 +59,26 @@ func (q *quotaRefreshJobs) snapshot() (quotaRefreshJob, bool) {
 	return *q.latest, true
 }
 
+// update changes the job while it is not terminal; a terminal job is final.
 func (q *quotaRefreshJobs) update(id string, change func(*quotaRefreshJob)) (quotaRefreshJob, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if q.latest == nil || q.latest.ID != id {
+	if q.latest == nil || q.latest.ID != id || q.latest.terminal() {
 		return quotaRefreshJob{}, false
 	}
 	change(q.latest)
 	return *q.latest, true
 }
 
+func (q *quotaRefreshJobs) settle() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.active = false
+}
+
 // handleQuotaRefresh accepts a background provider quota refresh. The refresh
-// runs detached from the request so it can never block normal inference, and a
-// bounded timeout keeps a stuck provider from leaking the goroutine (PRD-QUOTA-001).
+// runs detached from the request so it can never block normal inference, and
+// its deadline ends the job whether or not the refresher returns (PRD-QUOTA-001).
 func (h *Handler) handleQuotaRefresh(w http.ResponseWriter, _ *http.Request) {
 	if h.opts.QuotaRefresher == nil {
 		writeError(w, http.StatusServiceUnavailable, "quota_unavailable", "provider quota refresh is not configured")
@@ -80,8 +92,13 @@ func (h *Handler) handleQuotaRefresh(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "job": job, "joined": true})
 		return
 	}
+	if jobs.active {
+		jobs.mu.Unlock()
+		writeError(w, http.StatusConflict, "refresh_busy", "the previous quota refresh passed its deadline and has not stopped yet; try again later")
+		return
+	}
 	job := &quotaRefreshJob{ID: uuid.NewString(), Status: quotaRefreshQueued, RequestedAt: time.Now().UTC()}
-	jobs.latest = job
+	jobs.latest, jobs.active = job, true
 	accepted := *job
 	timeout := jobs.timeout
 	jobs.mu.Unlock()
@@ -113,7 +130,26 @@ func (h *Handler) runQuotaRefresh(id string, timeout time.Duration) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	err := h.opts.QuotaRefresher(ctx)
+	done := make(chan error, 1)
+	go func() {
+		// The refresher is held until it returns, however late: no other
+		// refresh starts before then.
+		defer h.quotaJobs.settle()
+		done <- h.opts.QuotaRefresher(ctx)
+	}()
+	var err error
+	select {
+	case err = <-done:
+	case <-ctx.Done():
+		// The deadline ends the job even when the refresher ignores
+		// cancellation; whatever it returns later cannot change the job. A
+		// result that arrived with the deadline still counts.
+		select {
+		case err = <-done:
+		default:
+			err = ctx.Err()
+		}
+	}
 	finished := time.Now().UTC()
 	job, ok := h.quotaJobs.update(id, func(job *quotaRefreshJob) {
 		job.FinishedAt = &finished

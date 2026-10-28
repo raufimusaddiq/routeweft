@@ -2394,8 +2394,11 @@ startedAt?, finishedAt?, error?}` and `status` is `queued`, `running`,
 `succeeded` or `failed`. A 202 is acceptance, never an observation; rows change
 only through GET `/admin/v1/quota`, each with its own `observedAt`. At most one
 refresh runs: a POST while one is queued or running returns that job with
-`joined:true`. The job is bounded at 60 seconds; an overrun or a read failure is
-`failed` with a fixed `error` phrase (a reader's own text is never echoed).
+`joined:true`. The job is bounded at 60 seconds, and the deadline ends it
+whether or not the refresher returns; an overrun or a read failure is `failed`
+with a fixed `error` phrase (a reader's own text is never echoed). A refresher
+that overran is still held: until it returns, a POST is 409 `refresh_busy`, so
+two refreshers never run at once, and its late answer cannot change the job.
 Session-gated GET at the same path returns `{status, job}` for the latest job,
 or `{status:"idle"}` before any. Each transition publishes `quota.refresh` with
 the job. The UI follows the job, keeps saying the rows are the previous
