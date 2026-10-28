@@ -56,6 +56,10 @@ type Config struct {
 	// AllowPrivateUpstreams mirrors the trusted-local operator policy so outbound
 	// proxy validation and inference may reach LAN/self-hosted destinations.
 	AllowPrivateUpstreams bool
+	// AllowHostCredentialDiscovery is the host operator's consent to reading MiMo
+	// Desktop's credentials from the server user's home directory (#296); each
+	// read still needs the admin's consent in its request.
+	AllowHostCredentialDiscovery bool
 	// AdminBootstrapUsername/Password provision the first dashboard admin when the
 	// database has none (RUNBOOK §bootstrap). Both are ignored once an admin
 	// exists, so a stale environment value cannot re-provision or overwrite one.
@@ -295,25 +299,26 @@ func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager 
 	}
 	sessions := adminauth.NewSessionManager(a.cfg.AdminSessionTTL)
 	a.control = controlapi.New(controlapi.Options{
-		Accounts:              a.admin,
-		Sessions:              sessions,
-		Settings:              manager,
-		Keys:                  manager,
-		DB:                    store.DB(),
-		Runtime:               manager,
-		Providers:             specs,
-		Credentials:           a.creds,
-		CredentialRegistry:    a.credReg,
-		ProviderCatalog:       manager,
-		PoolBindings:          manager,
-		Combos:                manager,
-		QuotaRefresher:        a.RefreshQuota,
-		QuotaState:            a.quotaState,
-		QuotaForget:           a.quotaForget,
-		QuotaStaleAfter:       3 * a.cfg.QuotaRefreshInterval,
-		AllowPrivateUpstreams: a.cfg.AllowPrivateUpstreams,
-		PublicOrigin:          a.cfg.PublicOrigin,
-		PXPIPE:                a.pxpipe,
+		Accounts:                a.admin,
+		Sessions:                sessions,
+		Settings:                manager,
+		Keys:                    manager,
+		DB:                      store.DB(),
+		Runtime:                 manager,
+		Providers:               specs,
+		Credentials:             a.creds,
+		CredentialRegistry:      a.credReg,
+		ProviderCatalog:         manager,
+		PoolBindings:            manager,
+		Combos:                  manager,
+		QuotaRefresher:          a.RefreshQuota,
+		QuotaState:              a.quotaState,
+		QuotaForget:             a.quotaForget,
+		QuotaStaleAfter:         3 * a.cfg.QuotaRefreshInterval,
+		AllowPrivateUpstreams:   a.cfg.AllowPrivateUpstreams,
+		HostCredentialDiscovery: a.cfg.AllowHostCredentialDiscovery,
+		PublicOrigin:            a.cfg.PublicOrigin,
+		PXPIPE:                  a.pxpipe,
 		// Model discovery, connection tests, sign-in and reset credits share one
 		// client; work made for a connection leaves through its proxy.
 		DiscoveryClient: &discovery.Client{HTTP: a.connectionClient(binder)},

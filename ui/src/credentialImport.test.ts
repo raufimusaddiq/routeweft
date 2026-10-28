@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { BULK_MAX_BYTES, IMPORT_MAX_BYTES, expiredNote, importShapes, missingMeta, parseObject, readBulkFiles, readCredentialFile, savedReadinessNote, type ChosenFile } from './credentialImport.ts'
+import { BULK_MAX_BYTES, IMPORT_MAX_BYTES, expiredNote, hostDiscoveryNote, importShapes, missingMeta, parseObject, readBulkFiles, readCredentialFile, savedReadinessNote, type ChosenFile } from './credentialImport.ts'
 import { bulkSummary } from './onboarding.ts'
 import { connectMethods } from './signIn.ts'
 
@@ -162,4 +162,13 @@ test('an expired import and an unserved provider are said after the save', () =>
 test('kimchi offers its API key and its browser token sign-in', () => {
   const methods = connectMethods({ id: 'kimchi', auth: 'api-key', authModes: ['api-key', 'oauth'], signInMethods: [{ mode: 'browser', authKind: 'oauth', resolvesIdentity: false, infersIdentity: true, completion: 'token' }] }, 'Kimchi')
   assert.deepEqual(methods.map(item => item.id), ['manual-api-key', 'browser', 'manual-oauth'])
+})
+
+// #296: discovery names where the key came from and whether the account session
+// came with it, and has no credential to show.
+test('a host discovery says what it found', () => {
+  assert.equal(hostDiscoveryNote({ source: '/home/op/.local/share/mimocode/auth.json', accountSession: true }),
+    'The key was read from /home/op/.local/share/mimocode/auth.json on the server. MiMo Desktop’s account session was attached, so the weekly quota can be read.')
+  assert.match(hostDiscoveryNote({ source: '/x/auth.json', accountSession: false }), /^The key was read from \/x\/auth\.json on the server\. No MiMo Desktop account session could be read/)
+  assert.match(hostDiscoveryNote(undefined), /^No MiMo Desktop account session could be read/)
 })

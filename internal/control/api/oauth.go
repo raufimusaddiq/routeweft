@@ -105,8 +105,11 @@ type oauthFlow struct {
 	imported bool
 	// renew is a browser attempt whose flow follows the same rule
 	// (Flow.RenewsSameAccount, Kiro's social sign-in).
-	renew     bool
-	expiresAt time.Time
+	renew bool
+	// desktopSession is the operator's consent, given at start, to attach MiMo
+	// Desktop's account session from this host to the Xiaomi sign-in (#296).
+	desktopSession bool
+	expiresAt      time.Time
 }
 
 // oauthFlows holds pending attempts in process memory, like admin sessions: a
@@ -458,6 +461,10 @@ func (h *Handler) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		// ConnectionID starts a Reauthenticate of that connection (#215). Its name
 		// and identity are the connection's own, so none are read from the body.
 		ConnectionID string `json:"connectionId"`
+		// DesktopSession asks a Xiaomi MiMo sign-in to attach MiMo Desktop's
+		// account session from this host, and is the operator's consent to read it
+		// (#296).
+		DesktopSession bool `json:"desktopSession"`
 	}
 	if !decodeJSON(w, r, 8<<10, &body) {
 		return
@@ -466,6 +473,15 @@ func (h *Handler) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthenticated", "admin session is required")
 		return
+	}
+	if body.DesktopSession {
+		if providerID != mimoProviderID {
+			writeError(w, http.StatusBadRequest, "desktop_session_unsupported", "only a Xiaomi MiMo sign-in can attach MiMo Desktop's account session")
+			return
+		}
+		if h.hostDiscoveryRefused(w, true) {
+			return
+		}
 	}
 	target := strings.TrimSpace(body.ConnectionID)
 	if target != "" {
@@ -555,6 +571,7 @@ func (h *Handler) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		sessionID: session.ID, provider: providerID, verifier: verifier,
 		name: name, identity: identity, identityOptional: provider.flow.IdentityOptional,
 		extra: request.Extra, meta: body.Meta, target: target, renew: provider.flow.RenewsSameAccount,
+		desktopSession: body.DesktopSession,
 	})
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "oauth_busy", "too many sign-ins in progress; try again shortly")
@@ -658,6 +675,7 @@ func (h *Handler) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "oauth_exchange_failed", "the provider did not accept the authorization code; start again")
 		return
 	}
+	h.attachDesktopSession(r.Context(), flow, &result)
 	if saved, _, ok := h.saveOnboardedConnection(w, r, providerID, flow, result); ok {
 		writeJSON(w, http.StatusOK, saved)
 	}
@@ -1300,16 +1318,26 @@ func (h *Handler) handleOAuthImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthenticated", "admin session is required")
 		return
 	}
+	if saved, ok := h.importCredential(w, r, providerID, flow, name, identity, body.Input, body.Meta); ok {
+		writeJSON(w, http.StatusOK, saved)
+	}
+}
+
+// importCredential runs an import flow on a checked input and saves its result.
+// A failure is answered here; a save returns the body for the caller to send.
+// /import and MiMo Desktop discovery (/discover) share it, so a discovered file
+// is held to the same validation, duplicate rule and save as the file pasted.
+func (h *Handler) importCredential(w http.ResponseWriter, r *http.Request, providerID string, flow onboarding.Flow, name, identity, input string, meta map[string]string) (map[string]any, bool) {
 	result, err := flow.Import(r.Context(), onboarding.Params{
-		Input:  body.Input,
-		Meta:   body.Meta,
+		Input:  input,
+		Meta:   meta,
 		Client: h.opts.OAuthClient,
 	})
 	// A missing field the operator must supply is a request problem with its own
 	// code, not an upstream rejection.
 	if errors.Is(err, onboarding.ErrCursorMachineIDRequired) {
 		writeError(w, http.StatusBadRequest, "oauth_meta_required", err.Error())
-		return
+		return nil, false
 	}
 	// A malformed paste or file is the operator's to correct, and its message is
 	// fixed text; anything else is the provider's answer, reported without detail
@@ -1317,25 +1345,24 @@ func (h *Handler) handleOAuthImport(w http.ResponseWriter, r *http.Request) {
 	var inputErr *onboarding.InputError
 	if errors.As(err, &inputErr) {
 		writeError(w, http.StatusBadRequest, "import_invalid", inputErr.Error())
-		return
+		return nil, false
 	}
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "oauth_exchange_failed", "the provider did not accept the credential; it may be invalid, expired or revoked")
-		return
+		return nil, false
 	}
 	// The same account imported again updates its connection, as the reference's
 	// insert does (importMatch). Codex keeps its own rule in saveOnboardedResult.
 	if providerID != codexProviderID {
 		h.connectionMu.Lock()
 		defer h.connectionMu.Unlock()
-		if h.saveImportedDuplicate(w, r, providerID, firstNonEmptyTrimmed(result.Identity, identity), result) {
-			return
+		if saved, handled, ok := h.saveImportedDuplicate(w, r, providerID, firstNonEmptyTrimmed(result.Identity, identity), result); handled {
+			return saved, ok
 		}
 	}
 	flowState := oauthFlow{name: name, identity: identity, identityOptional: flow.IdentityOptional, imported: true}
-	if saved, _, ok := h.saveOnboardedConnection(w, r, providerID, flowState, result); ok {
-		writeJSON(w, http.StatusOK, saved)
-	}
+	saved, _, ok := h.saveOnboardedConnection(w, r, providerID, flowState, result)
+	return saved, ok
 }
 
 // importInputClean reports whether an import payload is free of control

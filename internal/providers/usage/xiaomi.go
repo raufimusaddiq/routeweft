@@ -29,8 +29,9 @@ const mimoSessionRequired = "Weekly quota requires Xiaomi account session. API k
 // With an account credential the weekly quota is read through the account
 // session (mimoAccount.js:246-264); if that yields no finite percent, or there
 // is no account credential, the key path reads the aistudio endpoint. MiMo
-// Desktop's cookie store is never read (host discovery stays open, PARITY
-// "MiMo account quota").
+// Desktop's cookie store is never read here: #296 seals its session into the
+// connection only on a consented discovery, and the pin's read-time fallback
+// (mimoAccount.js:181-185) is the open parity gap #299.
 func (r apiKeyReader) xiaomi(ctx context.Context, credential quota.Credential) (quota.State, error) {
 	// Bound the SSO exchange and key fallback together, beyond Client.call’s per-hop deadline.
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)

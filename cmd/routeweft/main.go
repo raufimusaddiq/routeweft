@@ -153,6 +153,7 @@ func serve(args []string) error {
 	corsOrigins := flags.String("cors-origins", envOr("ROUTEWEFT_CORS_ORIGINS", ""), "comma-separated allowed browser origins")
 	credentialKey := flags.String("credential-key", envOr("ROUTEWEFT_CREDENTIAL_KEY", ""), "base64 credential master key sealing provider secrets at rest")
 	allowPrivate := flags.Bool("allow-private-upstreams", envBool("ROUTEWEFT_ALLOW_PRIVATE_UPSTREAMS", false), "allow trusted-local/private upstream and proxy destinations")
+	allowHostDiscovery := flags.Bool("allow-host-credential-discovery", envBool("ROUTEWEFT_ALLOW_HOST_CREDENTIAL_DISCOVERY", false), "let an admin, with consent per request, import MiMo Desktop credentials from this server user's home directory")
 	uiDir := flags.String("ui-dir", envOr("ROUTEWEFT_UI_DIR", ""), "directory of the built UI served at / (empty serves API only)")
 	publicOrigin := flags.String("public-origin", envOr("ROUTEWEFT_PUBLIC_ORIGIN", ""), "operator-facing origin used as the provider sign-in callback (required for providers without a pinned loopback port)")
 	if err := flags.Parse(args); err != nil {
@@ -181,7 +182,7 @@ func serve(args []string) error {
 	if adminPassword != "" && adminUsername == "" {
 		adminUsername = "admin"
 	}
-	return app.New(app.Config{Listen: *listen, DataDir: *dataDir, MaxBodyBytes: *maxBody, CORSOrigins: splitList(*corsOrigins), CredentialKey: key, AllowPrivateUpstreams: *allowPrivate, AdminBootstrapUsername: adminUsername, AdminBootstrapPassword: adminPassword, UIDir: *uiDir, PublicOrigin: *publicOrigin}, log).Serve(ctx)
+	return app.New(app.Config{Listen: *listen, DataDir: *dataDir, MaxBodyBytes: *maxBody, CORSOrigins: splitList(*corsOrigins), CredentialKey: key, AllowPrivateUpstreams: *allowPrivate, AllowHostCredentialDiscovery: *allowHostDiscovery, AdminBootstrapUsername: adminUsername, AdminBootstrapPassword: adminPassword, UIDir: *uiDir, PublicOrigin: *publicOrigin}, log).Serve(ctx)
 }
 
 func envBool(key string, fallback bool) bool {

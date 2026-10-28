@@ -63,7 +63,21 @@ ROUTEWEFT_UI_DIR=/ui
 # docs/SPEC.md 19.1 "Deliberate divergence: Google OAuth client".
 ROUTEWEFT_GOOGLE_OAUTH_CLIENT_ID='use-a-secret-source'
 ROUTEWEFT_GOOGLE_OAUTH_CLIENT_SECRET='use-a-secret-source'
+# MiMo Desktop discovery (#296, BDR-028). Leave false unless MiMo Desktop runs
+# as the same OS user on this machine and the operator wants it imported.
+ROUTEWEFT_ALLOW_HOST_CREDENTIAL_DISCOVERY=false
 ```
+
+`ROUTEWEFT_ALLOW_HOST_CREDENTIAL_DISCOVERY` (`--allow-host-credential-discovery`)
+is the host's consent to one read of host secrets: MiMoCode's `auth.json` and the
+Xiaomi account cookies in MiMo Desktop's cookie store, under the home directory of
+the user Routeweft runs as. Even when it is true, nothing is read until an admin
+ticks the consent box on the Xiaomi MiMo connection panel ("Find on this server",
+or "Also attach MiMo Desktop's account session" on the sign-in). What is read is
+sealed into the connection and never shown in the dashboard. In the production
+container there is no Desktop profile, so leave it false there; a discovery then
+answers `host_discovery_disabled`. To renew a session, quit Desktop (it locks its
+cookie store while it runs) and find it again.
 
 `ROUTEWEFT_UI_DIR` (`--ui-dir`) points at the built Vite output; the Go binary
 then serves the dashboard at `/`. The image sets it to `/ui`. UI routes are
@@ -858,7 +872,9 @@ An enabled provider or a successful model listing is not inference validation.
 
 Standalone media, hidden providers, cloud/tunnel lifecycle, Redis and
 multi-replica operation stay excluded by PRD 4.2 / BDR-005/016. Remote helper
-install/start/stop/restart and host auto-import stay unavailable. Manage any
+install/start/stop/restart and host auto-import stay unavailable, except MiMo
+Desktop discovery, which needs `ROUTEWEFT_ALLOW_HOST_CREDENTIAL_DISCOVERY=true`
+and per-request consent (§3, BDR-028); keep it false for the evaluation. Manage any
 external helper locally under a separate host policy. Never substitute an
 arbitrary remote command endpoint.
 

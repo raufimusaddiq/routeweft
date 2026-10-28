@@ -248,6 +248,18 @@ export function expiredNote(saved: { expired?: boolean; refreshable?: boolean })
     : 'This credential had already expired and came without a refresh token, so it cannot serve requests. Import a current one, or sign in instead.'
 }
 
+// What MiMo Desktop discovery found on the server (#296); never a credential.
+export type HostDiscovery = { source?: string; accountSession?: boolean }
+
+// Said after a discovery saved a connection: where the key came from, and
+// whether Desktop's account session (which reads the weekly quota) came with it.
+export function hostDiscoveryNote(discovery: HostDiscovery | undefined): string {
+  const from = discovery?.source ? `The key was read from ${discovery.source} on the server. ` : ''
+  return discovery?.accountSession
+    ? `${from}MiMo Desktop’s account session was attached, so the weekly quota can be read.`
+    : `${from}No MiMo Desktop account session could be read; Desktop locks it while it runs. Quit Desktop and find it again to attach it; the key works without it.`
+}
+
 // Said after a save for a provider this build does not serve, so a stored
 // credential is not mistaken for a working route (Cursor, #229).
 export function savedReadinessNote(status: string, providerLabel: string): string | null {

@@ -88,11 +88,12 @@ func importedSecret(providerID string, existing, update credentials.Secret) cred
 
 // saveImportedDuplicate stores an import that matches a connection already on
 // the provider (importMatch) onto that connection, keeping its id, name,
-// priority, enabled flag and proxy pool, and answers the request. handled is
-// false when the import names no stored account, and the caller adds it. The
-// caller holds connectionMu, so a concurrent import of the same account cannot
-// insert between the lookup and the write.
-func (h *Handler) saveImportedDuplicate(w http.ResponseWriter, r *http.Request, providerID, identity string, result onboarding.Result) (handled bool) {
+// priority, enabled flag and proxy pool. handled is false when the import names
+// no stored account, and the caller adds it; a failure is answered here, and a
+// save (ok) returns the body for the caller to send. The caller holds
+// connectionMu, so a concurrent import of the same account cannot insert between
+// the lookup and the write.
+func (h *Handler) saveImportedDuplicate(w http.ResponseWriter, r *http.Request, providerID, identity string, result onboarding.Result) (saved map[string]any, handled, ok bool) {
 	authKind := result.AuthKind
 	if authKind == "" {
 		authKind = credentials.AuthOAuth
@@ -100,22 +101,22 @@ func (h *Handler) saveImportedDuplicate(w http.ResponseWriter, r *http.Request, 
 	match, found, err := h.importMatch(r.Context(), providerID, identity, authKind, result.Secret.ProviderData)
 	if errors.Is(err, errImportConflict) {
 		writeError(w, http.StatusConflict, "identity_conflict", importConflictMessage)
-		return true
+		return nil, true, false
 	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
-		return true
+		return nil, true, false
 	}
 	if !found {
-		return false
+		return nil, false, false
 	}
 	if result.Secret.Empty() {
 		writeError(w, http.StatusBadGateway, "oauth_exchange_failed", "the provider returned no usable credential; start again")
-		return true
+		return nil, true, false
 	}
 	if spec, _ := h.providerSpec(providerID); !authKindPermitted(spec, authKind) {
 		writeError(w, http.StatusBadRequest, "invalid_auth_kind", "this provider does not accept the credential mode this sign-in produced")
-		return true
+		return nil, true, false
 	}
 	match.Secret, match.Lifecycle = result.Secret, onboardedLifecycle(oauthFlow{imported: true}, result, true)
 	connection, persisted, err := h.publishMergedConnection(r.Context(), match, func(existing, update credentials.Secret) credentials.Secret {
@@ -127,13 +128,12 @@ func (h *Handler) saveImportedDuplicate(w http.ResponseWriter, r *http.Request, 
 		} else {
 			writeError(w, http.StatusBadRequest, "connection_save_failed", "provider connection could not be saved; check its identity")
 		}
-		return true
+		return nil, true, false
 	}
 	h.clearConnectionHealth(connection.ID)
-	saved := onboardedJSON(connection, onboardedUpdated)
+	saved = onboardedJSON(connection, onboardedUpdated)
 	h.reportLifecycle(r.Context(), saved)
-	writeJSON(w, http.StatusOK, saved)
-	return true
+	return saved, true, true
 }
 
 // importExpiry describes a stored credential that had already expired when it
