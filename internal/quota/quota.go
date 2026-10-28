@@ -53,6 +53,13 @@ type Window struct {
 	// group (Codex). It is metadata: routing reads Remaining, as the
 	// reference does.
 	LimitReached bool `json:"limitReached,omitempty"`
+	// Recurring is the provider's own refill flag where it reports one
+	// (CodeBuddy): true resets at ResetAt, false expires there for good. nil is
+	// not reported.
+	Recurring *bool `json:"recurring,omitempty"`
+	// Limit is the provider's own description of the window's limit (GLM type,
+	// unit and number), kept as sent so the label is not the only record of it.
+	Limit *Limit `json:"limit,omitempty"`
 }
 
 // Count is an absolute allowance. Amounts are in the provider's unit.
@@ -79,6 +86,24 @@ func (c *Count) clone() *Count {
 			*field = &value
 		}
 	}
+	return &copied
+}
+
+// Limit is a provider-reported limit description. Unit and Number are the JSON
+// values the provider sent, which are not always numbers.
+type Limit struct {
+	Type   string          `json:"type,omitempty"`
+	Unit   json.RawMessage `json:"unit,omitempty"`
+	Number json.RawMessage `json:"number,omitempty"`
+}
+
+func (l *Limit) clone() *Limit {
+	if l == nil {
+		return nil
+	}
+	copied := *l
+	copied.Unit = append(json.RawMessage(nil), l.Unit...)
+	copied.Number = append(json.RawMessage(nil), l.Number...)
 	return &copied
 }
 

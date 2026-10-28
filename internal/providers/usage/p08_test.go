@@ -234,26 +234,31 @@ func TestCommandCodeUsageAuthAndBillingFailuresAreErrors(t *testing.T) {
 	}
 }
 
-// MiniMax (usage/minimax.js:95-226): the token-plan endpoint is read first,
-// the coding-plan one when it is missing, and the regional host follows the
-// provider. A coding-plan count is the REMAINING count; a non-zero base_resp
-// status is an error rather than an empty quota.
+// MiniMax (usage/minimax.js:133-234; registry/minimax.js:35-40,
+// minimax-cn.js:35-40): each region reads its own pair of endpoints in order.
+// International starts with the token plan, whose count is the USED count; the
+// coding-plan endpoints (both China ones) count what REMAINS. A 404 moves on; a
+// base_resp auth status is an error rather than an empty quota.
 func TestMiniMaxUsageEndpointsRegionsAndCountSemantics(t *testing.T) {
 	token := `{"base_resp":{"status_code":0},"model_remains":[{"model_name":"MiniMax-M*",
 		"current_interval_total_count":100,"current_interval_usage_count":40,"remains_time":3600000,
 		"current_weekly_total_count":1000,"current_weekly_usage_count":250}]}`
 	for _, tc := range []struct {
-		id, host string
-	}{{"minimax", "www.minimax.io"}, {"minimax-cn", "api.minimaxi.com"}} {
-		t.Run(tc.id+" token plan", func(t *testing.T) {
-			client := &routedClient{routes: map[string]routedReply{tc.host + "/v1/token_plan/remains": {200, token}}}
+		id, route       string
+		session, weekly float64
+	}{
+		{"minimax", "www.minimax.io/v1/token_plan/remains", 0.6, 0.75},
+		{"minimax-cn", "www.minimaxi.com/v1/api/openplatform/coding_plan/remains", 0.4, 0.25},
+	} {
+		t.Run(tc.id+" first endpoint", func(t *testing.T) {
+			client := &routedClient{routes: map[string]routedReply{tc.route: {200, token}}}
 			state, err := routedReader(t, tc.id, client).Usage(context.Background(), quota.Credential{AccessToken: "fixture-key"})
 			if err != nil {
 				t.Fatal(err)
 			}
 			windows := byName(state)
-			wantRemaining(t, windows, "M-series (5h)", 0.6)
-			wantRemaining(t, windows, "M-series (7d)", 0.75)
+			wantRemaining(t, windows, "M-series (5h)", tc.session)
+			wantRemaining(t, windows, "M-series (7d)", tc.weekly)
 			if got := windows["M-series (5h)"].ResetAt; got == nil || !got.Equal(time.Date(2026, 10, 20, 13, 0, 0, 0, time.UTC)) {
 				t.Fatalf("reset %v, want now + remains_time", got)
 			}
@@ -264,14 +269,14 @@ func TestMiniMaxUsageEndpointsRegionsAndCountSemantics(t *testing.T) {
 	}
 	t.Run("coding plan fallback counts remaining", func(t *testing.T) {
 		client := &routedClient{routes: map[string]routedReply{
-			"www.minimax.io/v1/token_plan/remains":  {404, `{}`},
-			"www.minimax.io/v1/coding_plan/remains": {200, `{"base_resp":{"status_code":0},"model_remains":[{"model_name":"MiniMax-M2","current_interval_total_count":100,"current_interval_usage_count":40}]}`},
+			"www.minimax.io/v1/token_plan/remains":                   {404, `{}`},
+			"api.minimax.io/v1/api/openplatform/coding_plan/remains": {200, `{"base_resp":{"status_code":0},"model_remains":[{"model_name":"MiniMax-M2","current_interval_total_count":100,"current_interval_usage_count":40}]}`},
 		}}
 		state, err := routedReader(t, "minimax", client).Usage(context.Background(), quota.Credential{AccessToken: "k"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		wantRemaining(t, byName(state), "MiniMax-M2 (5h)", 0.4)
+		wantRemaining(t, byName(state), "MiniMax M2 (5h)", 0.4)
 	})
 	t.Run("upstream error status is an error", func(t *testing.T) {
 		client := &routedClient{routes: map[string]routedReply{"www.minimax.io/v1/token_plan/remains": {200, `{"base_resp":{"status_code":1004,"status_msg":"inactive"},"model_remains":[]}`}}}
