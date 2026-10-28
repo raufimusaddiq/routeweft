@@ -467,10 +467,16 @@ Routeweft keeps that capability as an explicit per-connection opt-in:
   only when the connection has no sealed session, or its sealed session just
   failed the account handshake (a renewal the pin cannot do), and at most once
   per 30 minutes per connection.
+- **Consent as stored at the read, ordered against revocation.** The flag and
+  the session are checked on the connection as stored when the store is about
+  to be opened, not on the copy the quota read captured, in the same exclusive
+  registry step (`ReviseSecret`) as the read and the seal. Revoking goes
+  through the same exclusion, so it either lands first and the store is never
+  opened, or waits until the read is sealed. A connection deleted during a read
+  is not saved again, and nothing read is used.
 - **Sealed before used.** A session read is written into the connection first,
-  so later reads use it without opening the host. If renewal was turned off, or
-  the session replaced, while the store was being read, nothing is sealed and
-  nothing read is used.
+  so later reads use it without opening the host. The write is a rotation, as
+  a token refresh is: the credential revision and validation status stay.
 - **Visible, never shown.** The connection read model reports
   `desktopSessionRenewal` and `desktopSessionReadAt` (a time); account-path
   quota reads carry `metadata.desktopSessionReadAt`. No value is answered or

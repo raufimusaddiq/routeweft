@@ -32,30 +32,33 @@ func (c *countingSessions) ReadSession(ctx context.Context) map[string]string {
 	return c.MimoDesktop.ReadSession(ctx)
 }
 
-// memoryConnections is one stored connection, updated as the registry does.
+// memoryConnections is one stored connection, revised as the registry does:
+// change runs on the row as stored now, excluded against every other change of
+// it (setData stands for an operator's Update, such as a revocation).
 type memoryConnections struct {
 	mu         sync.Mutex
 	connection credentials.Connection
 	writes     int
 	fail       error
+	deleted    bool
 }
 
-func (m *memoryConnections) Update(_ context.Context, id string, change func(credentials.Connection) (credentials.Connection, error)) (credentials.Connection, error) {
+func (m *memoryConnections) ReviseSecret(_ context.Context, id string, change func(credentials.Connection) (credentials.Secret, error)) (credentials.Secret, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.fail != nil {
-		return credentials.Connection{}, m.fail
+	if id != m.connection.ID || m.deleted {
+		return credentials.Secret{}, credentials.ErrNotFound
 	}
-	if id != m.connection.ID {
-		return credentials.Connection{}, credentials.ErrNotFound
-	}
-	updated, err := change(m.connection)
+	secret, err := change(m.connection)
 	if err != nil {
-		return credentials.Connection{}, err
+		return credentials.Secret{}, err
 	}
-	m.connection = updated
+	if m.fail != nil {
+		return credentials.Secret{}, m.fail
+	}
+	m.connection.Secret = secret
 	m.writes++
-	return updated, nil
+	return secret, nil
 }
 
 func (m *memoryConnections) data() map[string]string {
@@ -110,9 +113,9 @@ func renewalOn(extra map[string]string) map[string]string {
 	return data
 }
 
-// The session read is sealed into the connection with the time it was read;
-// the identity cookies of the old session do not ride with the new passToken,
-// and a renewal leaves the credential's lifecycle alone.
+// The session read is sealed into the connection with the time it was read,
+// and the identity cookies of the old session do not ride with the new
+// passToken.
 func TestMimoRenewalSealsTheDesktopSession(t *testing.T) {
 	stored := renewalOn(map[string]string{"mimoPassToken": "expired-pass", "mimoUserId": "old-user", "mimoCUserId": "old-cuser"})
 	env := newRenewalEnv(t, stored)
@@ -129,9 +132,6 @@ func TestMimoRenewalSealsTheDesktopSession(t *testing.T) {
 	}
 	if sealed := env.connections.data(); sealed["mimoPassToken"] != "desktop-pass" || env.connections.writes != 1 {
 		t.Fatalf("sealed = %v writes = %d", sealed, env.connections.writes)
-	}
-	if env.connections.connection.Lifecycle != (credentials.Lifecycle{}) {
-		t.Fatalf("lifecycle = %+v", env.connections.connection.Lifecycle)
 	}
 	// No private copy of the store is left behind.
 	if left, _ := filepath.Glob(filepath.Join(env.desktop.TempDir, "*")); len(left) != 0 {
@@ -179,10 +179,13 @@ func TestMimoRenewalAbsentStoreAndTheInterval(t *testing.T) {
 	if got := env.renewal.Renew(context.Background(), "c1", stored); got != nil || env.desktop.reads.Load() != 1 {
 		t.Fatalf("within the interval: got = %v reads = %d", got, env.desktop.reads.Load())
 	}
-	// Another connection has its own interval.
-	if env.renewal.Renew(context.Background(), "c2", stored); env.desktop.reads.Load() != 2 {
-		t.Fatalf("other connection reads = %d", env.desktop.reads.Load())
+	// Another stored connection has its own interval.
+	other := &memoryConnections{connection: credentials.Connection{ID: "c2", ProviderID: "xiaomi-mimo", Secret: credentials.Secret{AccessToken: "sk-k", ProviderData: stored}}}
+	env.renewal.Connections = other
+	if got := env.renewal.Renew(context.Background(), "c2", stored); got["mimoPassToken"] != "desktop-pass" || env.desktop.reads.Load() != 2 {
+		t.Fatalf("other connection: got = %v reads = %d", got, env.desktop.reads.Load())
 	}
+	env.renewal.Connections = env.connections
 	env.now = env.now.Add(time.Second)
 	if got := env.renewal.Renew(context.Background(), "c1", stored); got["mimoPassToken"] != "desktop-pass" {
 		t.Fatalf("after the interval: %v", got)
@@ -202,30 +205,86 @@ func TestMimoRenewalAbsentStoreAndTheInterval(t *testing.T) {
 	}
 }
 
-// Consent revoked, or the session replaced, while the store is being read:
-// nothing is sealed and nothing read is returned. A failed write is the same.
-func TestMimoRenewalRevokedDuringTheRead(t *testing.T) {
+// Hermes #301 finding: the quota read captured its credential while renewal was
+// on, and the operator revoked it (or replaced the session, or deleted the
+// connection) before the store was opened. The store is not opened: consent is
+// checked on the connection as stored at the read, not on the captured copy.
+func TestMimoRenewalUsesTheConsentStoredAtTheRead(t *testing.T) {
 	for name, change := range map[string]func(*memoryConnections){
 		"revoked":  func(m *memoryConnections) { m.setData(MimoDesktopRenewalKey, "") },
 		"replaced": func(m *memoryConnections) { m.setData("mimoPassToken", "operator-pass") },
-		"write failed": func(m *memoryConnections) {
+		"deleted": func(m *memoryConnections) {
 			m.mu.Lock()
-			m.fail = errors.New("disk full")
+			m.deleted = true
 			m.mu.Unlock()
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			stored := renewalOn(nil)
-			env := newRenewalEnv(t, stored)
+			captured := renewalOn(nil)
+			env := newRenewalEnv(t, captured)
 			env.writeStore(t, "desktop-pass")
-			env.desktop.during = func() { change(env.connections) }
-			if got := env.renewal.Renew(context.Background(), "c1", stored); got != nil {
+			change(env.connections)
+			if got := env.renewal.Renew(context.Background(), "c1", captured); got != nil {
 				t.Fatalf("got = %v", got)
 			}
-			if env.connections.writes != 0 || env.connections.data()["mimoPassToken"] == "desktop-pass" {
+			if reads := env.desktop.reads.Load(); reads != 0 {
+				t.Fatalf("the store was opened %d times after %s", reads, name)
+			}
+			if env.connections.writes != 0 {
 				t.Fatalf("sealed after %s: %v", name, env.connections.data())
 			}
+			// A refused read does not use the interval up: once the operator turns
+			// renewal on again, the next read may open the store.
+			if name == "revoked" {
+				env.connections.setData(MimoDesktopRenewalKey, MimoDesktopRenewalOn)
+				if got := env.renewal.Renew(context.Background(), "c1", captured); got["mimoPassToken"] != "desktop-pass" {
+					t.Fatalf("after turning it on again: %v", got)
+				}
+			}
 		})
+	}
+}
+
+// A revocation that arrives while the store is open waits for the read to be
+// sealed, then takes effect: no later read opens the store.
+func TestMimoRenewalRevocationWaitsForTheRead(t *testing.T) {
+	captured := renewalOn(nil)
+	env := newRenewalEnv(t, captured)
+	env.writeStore(t, "desktop-pass")
+	revoked := make(chan struct{})
+	env.desktop.during = func() {
+		go func() {
+			env.connections.setData(MimoDesktopRenewalKey, "")
+			close(revoked)
+		}()
+		select {
+		case <-revoked:
+			t.Error("the revocation landed while the store was open")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	if got := env.renewal.Renew(context.Background(), "c1", captured); got["mimoPassToken"] != "desktop-pass" {
+		t.Fatalf("got = %v", got)
+	}
+	<-revoked
+	env.desktop.during = nil
+	if MimoDesktopRenewalEnabled(env.connections.data()) {
+		t.Fatal("the revocation was lost")
+	}
+	env.now = env.now.Add(MimoDesktopRenewalInterval)
+	if got := env.renewal.Renew(context.Background(), "c1", map[string]string{MimoDesktopRenewalKey: MimoDesktopRenewalOn, "mimoPassToken": "desktop-pass"}); got != nil || env.desktop.reads.Load() != 1 {
+		t.Fatalf("after revoke: got = %v reads = %d", got, env.desktop.reads.Load())
+	}
+}
+
+// A write that fails returns nothing read.
+func TestMimoRenewalFailedWriteUsesNothing(t *testing.T) {
+	captured := renewalOn(nil)
+	env := newRenewalEnv(t, captured)
+	env.writeStore(t, "desktop-pass")
+	env.connections.fail = errors.New("disk full")
+	if got := env.renewal.Renew(context.Background(), "c1", captured); got != nil || env.connections.writes != 0 {
+		t.Fatalf("got = %v writes = %d", got, env.connections.writes)
 	}
 }
 

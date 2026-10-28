@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
 	"github.com/raufimusaddiq/routeweft/internal/providers/usage"
@@ -257,4 +258,140 @@ func TestMimoQuotaReadRenewsAndSealsEndToEnd(t *testing.T) {
 		t.Fatalf("after revoke: %+v reads = %d", state, env.desktop.sessionReads.Load())
 	}
 	assertNoSecret(t, "log output", logs.String(), discoveredKey, discoveredPass, discoveredUser, discoveredCUID)
+}
+
+// hookedDesktop runs during while Desktop's store is being read.
+type hookedDesktop struct {
+	*countingDesktop
+	during func()
+}
+
+func (d *hookedDesktop) ReadSession(ctx context.Context) map[string]string {
+	if d.during != nil {
+		d.during()
+	}
+	return d.countingDesktop.ReadSession(ctx)
+}
+
+// renewalReader is the MiMo quota reader with renewal over env's registry.
+func renewalReader(t *testing.T, env *discoveryEnv, desktop onboarding.MimoSessionSource) quota.UsageClient {
+	t.Helper()
+	readers, err := usage.Readers(&renewalAccount{valid: map[string]bool{discoveredPass: true}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage.WithMimoDesktopRenewal(readers, &onboarding.MimoDesktopRenewal{Desktop: desktop, Connections: env.handler.opts.CredentialRegistry, Allowed: true})
+	return readers["xiaomi-mimo"]
+}
+
+// renewalEnabledConnection is a key-only MiMo connection with renewal on and
+// Desktop's store present, and the credential a quota read captures from it.
+func renewalEnabledConnection(t *testing.T) (*discoveryEnv, string, quota.Credential) {
+	t.Helper()
+	env := newDiscoveryEnv(t, true)
+	id := env.discoverKeyOnly(t)
+	if status, _, raw := env.renewal(t, id, `{"enabled":true,"consent":true}`); status != http.StatusOK {
+		t.Fatalf("enable: %d %s", status, raw)
+	}
+	writeDesktopCookieStore(t, env.desktop.MimoDesktop)
+	secret, err := env.handler.opts.CredentialRegistry.Secret(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !onboarding.MimoDesktopRenewalEnabled(secret.ProviderData) {
+		t.Fatalf("captured = %v", secret.ProviderData)
+	}
+	return env, id, quota.Credential{ConnectionID: id, AccessToken: secret.AccessToken, ProviderData: secret.ProviderData}
+}
+
+// Hermes #301 finding, end to end: a quota read captured the credential while
+// renewal was on; the operator revoked it before the read reached Desktop's
+// store. The store is not opened and the key path answers.
+func TestMimoRenewalRevokedAfterCaptureNeverOpensTheStore(t *testing.T) {
+	env, id, captured := renewalEnabledConnection(t)
+	if status, _, raw := env.renewal(t, id, `{"enabled":false}`); status != http.StatusOK {
+		t.Fatalf("revoke: %d %s", status, raw)
+	}
+	reads := env.desktop.sessionReads.Load()
+	state, err := renewalReader(t, env, env.desktop).Usage(context.Background(), captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.desktop.sessionReads.Load() != reads {
+		t.Fatal("Desktop's store was opened after the operator revoked renewal")
+	}
+	if state.Message != "Weekly quota requires Xiaomi account session. API key alone is insufficient." || len(state.Windows) != 0 {
+		t.Fatalf("state = %+v", state)
+	}
+	if data := env.storedRenewal(t); data["mimoPassToken"] != "" || onboarding.MimoDesktopRenewalEnabled(data) {
+		t.Fatalf("stored = %v", data)
+	}
+}
+
+// A revocation that arrives while the store is open waits until the read is
+// sealed, then holds for every later read. The renewal is a rotation, not a
+// replacement: the credential revision stays.
+func TestMimoRenewalRevocationIsOrderedAfterAnOpenRead(t *testing.T) {
+	env, id, captured := renewalEnabledConnection(t)
+	before, err := env.creds.GetConnection(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revoked := make(chan int, 1)
+	desktop := &hookedDesktop{countingDesktop: env.desktop}
+	desktop.during = func() {
+		desktop.during = nil
+		go func() {
+			revoked <- doJSON(t, env.mux, env.cookie, http.MethodPut, "/admin/v1/connections/"+id+"/desktop-session-renewal", `{"enabled":false}`).Code
+		}()
+		select {
+		case code := <-revoked:
+			t.Errorf("the revocation (%d) completed while the store was open", code)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	state, err := renewalReader(t, env, desktop).Usage(context.Background(), captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Windows) != 1 {
+		t.Fatalf("the read that began with consent: %+v", state)
+	}
+	if code := <-revoked; code != http.StatusOK {
+		t.Fatalf("revoke: %d", code)
+	}
+	after, err := env.creds.GetConnection(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := after.Secret.ProviderData
+	if data["mimoPassToken"] != discoveredPass || onboarding.MimoDesktopRenewalEnabled(data) {
+		t.Fatalf("stored after revoke = %v", data)
+	}
+	if after.CredentialRevision != before.CredentialRevision {
+		t.Fatalf("revision %d -> %d", before.CredentialRevision, after.CredentialRevision)
+	}
+}
+
+// A connection deleted while the store is open is not saved again, and nothing
+// read is used.
+func TestMimoRenewalDoesNotRecreateADeletedConnection(t *testing.T) {
+	env, id, captured := renewalEnabledConnection(t)
+	desktop := &hookedDesktop{countingDesktop: env.desktop}
+	desktop.during = func() {
+		desktop.during = nil
+		if code := doJSON(t, env.mux, env.cookie, http.MethodDelete, "/admin/v1/connections/"+id, "").Code; code != http.StatusOK {
+			t.Errorf("delete: %d", code)
+		}
+	}
+	state, err := renewalReader(t, env, desktop).Usage(context.Background(), captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Windows) != 0 {
+		t.Fatalf("a session read for a deleted connection was used: %+v", state)
+	}
+	if rows := env.connections(t, "xiaomi-mimo"); len(rows) != 0 {
+		t.Fatalf("the deleted connection was saved again: %+v", rows)
+	}
 }

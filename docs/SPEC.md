@@ -1193,10 +1193,16 @@ reads nothing itself, and answers the connection view. The flag
 set or drop. While it is on and the host allows discovery, a quota read whose
 connection has no sealed session, or whose sealed session fails the account
 handshake, reads Desktop's session at most once per 30 minutes per connection,
-seals it into the connection (with `mimoDesktopReadAt`) in one registry update
-that re-checks the flag and the session it replaces, and reads the quota with
-it; an absent, locked or unchanged store, a revoked flag or a failed write uses
-the key path as before. The connection read model reports
+seals it into the connection (with `mimoDesktopReadAt`), and reads the quota
+with it. The flag and the session being replaced are checked on the connection
+as stored at that moment, inside the same registry exclusion as the read and
+the write (`Registry.ReviseSecret`) that every connection update, revocation
+included, takes; so a revocation is ordered entirely before the store is opened
+or entirely after the read is sealed. The write is a rotation (`RotateSecret`):
+it never recreates a connection deleted during the read, and the credential
+revision and validation status stay. An absent, locked or unchanged store, a
+revoked flag, a deleted connection or a failed write uses the key path as
+before. The connection read model reports
 `desktopSessionRenewal` and `desktopSessionReadAt` for MiMo rows, and an
 account-path quota read carries `metadata.desktopSessionReadAt`. A
 refresh dispatches on the

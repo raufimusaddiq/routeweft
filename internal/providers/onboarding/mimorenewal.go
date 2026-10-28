@@ -43,11 +43,14 @@ type MimoSessionSource interface {
 	ReadSession(context.Context) map[string]string
 }
 
-// MimoConnectionUpdater writes one connection in a single read-modify-write;
-// credentials.Registry in production, so the renewed session is durable and
-// served by the next read in the same step.
+// MimoConnectionUpdater revises one connection's credential in a single
+// read-modify-write, excluded against every other change of that connection
+// and never recreating a deleted one; credentials.Registry in production
+// (ReviseSecret), so the renewed session is durable and served by the next read
+// in the same step, and an operator's revocation (an Update) is ordered
+// against the read.
 type MimoConnectionUpdater interface {
-	Update(ctx context.Context, connectionID string, change func(credentials.Connection) (credentials.Connection, error)) (credentials.Connection, error)
+	ReviseSecret(ctx context.Context, connectionID string, change func(credentials.Connection) (credentials.Secret, error)) (credentials.Secret, error)
 }
 
 // MimoDesktopRenewal is the consented equivalent of the pin's quota-read
@@ -64,10 +67,15 @@ type MimoConnectionUpdater interface {
 //   - this connection's store was not opened in the last
 //     MimoDesktopRenewalInterval.
 //
-// A session read is sealed into the connection before it is used, so later
-// reads use it without touching the host; if the operator turned renewal off,
-// or the session was replaced, while the store was being read, nothing is
-// sealed and the read session is dropped.
+// The consent and session checks are made on the connection as stored at the
+// moment of the read, not on the copy the quota read captured, and in the same
+// exclusive step (Connections.ReviseSecret) as the read and the seal. Revoking
+// is a change of the same connection through the same exclusion, so it either
+// commits first, and the store is never opened, or waits until the read is
+// sealed and then takes effect for every later read. A session read is sealed
+// before it is used, so later reads use it without touching the host; a
+// connection deleted while the store was read is not saved again, and nothing
+// it read is used.
 type MimoDesktopRenewal struct {
 	Desktop     MimoSessionSource
 	Connections MimoConnectionUpdater
@@ -80,9 +88,14 @@ type MimoDesktopRenewal struct {
 	attempts map[string]time.Time
 }
 
-// errMimoRenewalStale means the connection changed while the store was read:
-// renewal was turned off, or its session was replaced.
-var errMimoRenewalStale = errors.New("xiaomi-mimo connection changed while its desktop session was read")
+// errMimoRenewalStale means the connection as stored now no longer allows the
+// read: renewal is off, or its session is not the one the quota read failed
+// with. errMimoRenewalNothing means nothing usable was read, or the interval
+// has not passed.
+var (
+	errMimoRenewalStale   = errors.New("xiaomi-mimo connection no longer allows a desktop session read")
+	errMimoRenewalNothing = errors.New("xiaomi-mimo desktop session not renewed")
+)
 
 // MimoDesktopRenewalEnabled reports whether the operator turned renewal on in these provider data.
 func MimoDesktopRenewalEnabled(data map[string]string) bool {
@@ -91,39 +104,29 @@ func MimoDesktopRenewalEnabled(data map[string]string) bool {
 
 // Renew reads Desktop's account session for one connection and seals it, and
 // returns the connection's provider data with it, or nil when nothing was read
-// or sealed. stored is the provider data the quota read holds; its passToken
-// (empty when there is none) is the session the read could not use. Like the
-// pin's store read, it never fails the caller.
+// or sealed. stored is the provider data the quota read captured; its passToken
+// (empty when there is none) is the session the read could not use. The
+// captured consent is only a reason not to try: the store is opened on the
+// consent stored at that moment. Like the pin's store read, it never fails the
+// caller.
 func (m *MimoDesktopRenewal) Renew(ctx context.Context, connectionID string, stored map[string]string) map[string]string {
-	if m == nil || !m.Allowed || m.Desktop == nil || m.Connections == nil || !MimoDesktopRenewalEnabled(stored) {
+	if m == nil || !m.Allowed || m.Desktop == nil || m.Connections == nil || !MimoDesktopRenewalEnabled(stored) || !m.due(connectionID, false) {
 		return nil
 	}
-	now := m.now()
-	m.mu.Lock()
-	if last, ok := m.attempts[connectionID]; ok && now.Sub(last) < MimoDesktopRenewalInterval {
-		m.mu.Unlock()
-		return nil
-	}
-	// Counted before the read, so a burst of reads opens the store once.
-	if m.attempts == nil {
-		m.attempts = map[string]time.Time{}
-	}
-	m.attempts[connectionID] = now
-	for id, at := range m.attempts {
-		if now.Sub(at) >= MimoDesktopRenewalInterval {
-			delete(m.attempts, id)
-		}
-	}
-	m.mu.Unlock()
-	session := m.Desktop.ReadSession(ctx)
-	// Absent, locked or unusable; or Desktop holds the session that just failed.
-	if session == nil || session["mimoPassToken"] == stored["mimoPassToken"] {
-		return nil
-	}
-	updated, err := m.Connections.Update(ctx, connectionID, func(current credentials.Connection) (credentials.Connection, error) {
+	secret, err := m.Connections.ReviseSecret(ctx, connectionID, func(current credentials.Connection) (credentials.Secret, error) {
 		data := current.Secret.ProviderData
 		if !MimoDesktopRenewalEnabled(data) || data["mimoPassToken"] != stored["mimoPassToken"] {
-			return credentials.Connection{}, errMimoRenewalStale
+			return credentials.Secret{}, errMimoRenewalStale
+		}
+		// Claimed here, where reads of one connection are serialized, so a burst
+		// opens the store once and a refused read does not use the interval up.
+		if !m.due(connectionID, true) {
+			return credentials.Secret{}, errMimoRenewalNothing
+		}
+		session := m.Desktop.ReadSession(ctx)
+		// Absent, locked or unusable; or Desktop holds the session that just failed.
+		if session == nil || session["mimoPassToken"] == data["mimoPassToken"] {
+			return credentials.Secret{}, errMimoRenewalNothing
 		}
 		merged := make(map[string]string, len(data)+len(session)+1)
 		for key, value := range data {
@@ -136,16 +139,39 @@ func (m *MimoDesktopRenewal) Renew(ctx context.Context, connectionID string, sto
 		for key, value := range session {
 			merged[key] = value
 		}
-		merged[MimoDesktopReadAtKey] = now.UTC().Format(time.RFC3339)
-		current.Secret.ProviderData = merged
-		// A renewal neither tests nor resets the credential's status.
-		current.Lifecycle = credentials.Lifecycle{}
-		return current, nil
+		merged[MimoDesktopReadAtKey] = m.now().UTC().Format(time.RFC3339)
+		renewed := current.Secret
+		renewed.ProviderData = merged
+		return renewed, nil
 	})
 	if err != nil {
 		return nil
 	}
-	return updated.Secret.ProviderData
+	return secret.ProviderData
+}
+
+// due reports whether this connection's store may be opened now, at most once
+// per MimoDesktopRenewalInterval; claim records the attempt.
+func (m *MimoDesktopRenewal) due(connectionID string, claim bool) bool {
+	now := m.now()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if last, ok := m.attempts[connectionID]; ok && now.Sub(last) < MimoDesktopRenewalInterval {
+		return false
+	}
+	if !claim {
+		return true
+	}
+	if m.attempts == nil {
+		m.attempts = map[string]time.Time{}
+	}
+	for id, at := range m.attempts {
+		if now.Sub(at) >= MimoDesktopRenewalInterval {
+			delete(m.attempts, id)
+		}
+	}
+	m.attempts[connectionID] = now
+	return true
 }
 
 func (m *MimoDesktopRenewal) now() time.Time {

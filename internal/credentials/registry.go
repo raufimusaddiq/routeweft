@@ -218,6 +218,44 @@ func install(current *entry, connection Connection, exchanger Exchanger, name, e
 // first. A connection the registry does not hold is seeded from the store
 // (Seed); one the store does not hold answers ErrNotFound.
 func (r *Registry) Update(ctx context.Context, connectionID string, change func(Connection) (Connection, error)) (Connection, error) {
+	return r.exclusive(ctx, connectionID, func(stored Connection) (Connection, error) {
+		updated, err := change(stored)
+		if err != nil {
+			return Connection{}, err
+		}
+		updated.ID = connectionID
+		return r.store.PutConnection(ctx, updated)
+	})
+}
+
+// ReviseSecret replaces one connection's credential with what change makes of
+// the connection as stored now, as one step with Update and refresh: an Update
+// (an edit, or a consent the operator withdraws) commits either before change
+// reads the row or after the revision is written and published. Unlike Update
+// it never writes anything but the credential, through RotateSecret, so a
+// connection deleted meanwhile answers ErrNotFound rather than being saved
+// again. Like a refresh rotation it is not a replacement: the revision and the
+// validation status stay. Callers serving a valid credential are not held up
+// while change runs (Secret).
+func (r *Registry) ReviseSecret(ctx context.Context, connectionID string, change func(Connection) (Secret, error)) (Secret, error) {
+	revised, err := r.exclusive(ctx, connectionID, func(stored Connection) (Connection, error) {
+		secret, err := change(stored)
+		if err != nil {
+			return Connection{}, err
+		}
+		if err := r.store.RotateSecret(ctx, connectionID, secret); err != nil {
+			return Connection{}, err
+		}
+		stored.Secret = secret
+		return stored, nil
+	})
+	return revised.Secret, err
+}
+
+// exclusive runs write over the connection as stored now while holding its
+// refresh slot and install lock, and publishes what write stored. It is the
+// critical section Update and ReviseSecret share.
+func (r *Registry) exclusive(ctx context.Context, connectionID string, write func(Connection) (Connection, error)) (Connection, error) {
 	if r.store == nil {
 		return Connection{}, ErrKeyRequired
 	}
@@ -264,12 +302,7 @@ func (r *Registry) Update(ctx context.Context, connectionID string, change func(
 		if err != nil {
 			return Connection{}, err
 		}
-		updated, err := change(stored)
-		if err != nil {
-			return Connection{}, err
-		}
-		updated.ID = connectionID
-		return r.store.PutConnection(ctx, updated)
+		return write(stored)
 	}()
 	current.mu.Lock()
 	if err == nil {
