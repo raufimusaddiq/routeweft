@@ -331,9 +331,15 @@ func miniMaxAmounts(t *testing.T, name string, window quota.Window, pin regional
 	}
 }
 
+// miniMaxNoData is the pin's no-quota notice (minimax.js:185-186). It is also
+// the answer to a 200 whose body is empty or not JSON, which the pin reads as
+// {} (minimax.js:155-159).
+const miniMaxNoData = "MiniMax connected. No quota data was returned."
+
 var miniMaxExpect = regionalExpect{
-	notices: map[string]string{"empty": "MiniMax connected. No quota data was returned.", "no-quota-models": "MiniMax connected. No quota data was returned.",
-		"no-fallback-empty": "MiniMax connected. No quota data was returned."},
+	notices: map[string]string{"empty": miniMaxNoData, "no-quota-models": miniMaxNoData, "no-fallback-empty": miniMaxNoData,
+		"no-fallback-invalid-json": miniMaxNoData, "status-ok-msg-no-data": miniMaxNoData, "status-ok-no-models-key": miniMaxNoData,
+		"body-empty": miniMaxNoData, "body-null": miniMaxNoData, "body-array": miniMaxNoData, "body-html": miniMaxNoData},
 	statuses: map[string]quota.Status{"zero": quota.StatusExhausted, "expired": quota.StatusAvailable, "camel-envelope": quota.StatusAvailable},
 	window:   miniMaxAmounts,
 }
@@ -518,5 +524,55 @@ func TestRegionalSharedValueSemantics(t *testing.T) {
 	}
 	if got := shared.ResetTime(json.RawMessage(`"2026-10-31 23:59:59"`)); got == nil || !got.Equal(time.Date(2026, 10, 31, 23, 59, 59, 0, time.UTC)) {
 		t.Fatalf("Tencent date=%v", got)
+	}
+}
+
+// TestMiniMaxStatusMessageIsThePins: a non-zero base_resp status is a failed
+// read whose text is the pin's message, `MiniMax connected. ${status_msg ||
+// "Upstream quota API error"}` with status_msg read `snake ?? camel ?? ""`,
+// spelled by String() and trimmed by String.prototype.trim (minimax.js:161-163,
+// 177-179). It is never a notice and never quota.
+func TestMiniMaxStatusMessageIsThePins(t *testing.T) {
+	record := loadRegionalPin(t)
+	checked := 0
+	for _, provider := range []string{"minimax", "minimax-cn"} {
+		for _, name := range names(record.MiniMax[provider]) {
+			test := record.MiniMax[provider][name]
+			var pin pinResult
+			if err := json.Unmarshal(test.Result, &pin); err != nil {
+				t.Fatal(err)
+			}
+			// The status branch is the only "MiniMax connected." message that
+			// is not an HTTP error, a fetch failure or the no-quota notice.
+			if !strings.HasPrefix(pin.Message, "MiniMax connected. ") || pin.Message == miniMaxNoData ||
+				strings.Contains(pin.Message, "usage endpoint error") || strings.Contains(pin.Message, "Unable to fetch usage") {
+				continue
+			}
+			readers, err := Readers(&replay{steps: test.Upstream}, func() time.Time { return record.Now })
+			if err != nil {
+				t.Fatal(err)
+			}
+			state, err := readers[provider].Usage(context.Background(), quota.Credential{AccessToken: scopedToken})
+			if err == nil || err.Error() != pin.Message || len(state.Windows) != 0 || state.Message != "" {
+				t.Fatalf("%s/%s: err=%v state=%+v, pin %q", provider, name, err, state, pin.Message)
+			}
+			checked++
+		}
+	}
+	// Per region: no-fallback-status, the ten status-code-* answers that end in
+	// the status branch, and status-snake-null-camel-error.
+	if checked != 24 {
+		t.Fatalf("checked %d status answers, want 24", checked)
+	}
+}
+
+// TestJavaScriptTrim pins String.prototype.trim: U+FEFF and the Unicode
+// space separators go, U+0085 (which strings.TrimSpace removes) stays.
+func TestJavaScriptTrim(t *testing.T) {
+	for in, want := range map[string]string{"\u3000\ufeffbad\u00a0\u2028": "bad", " \t\v\f\r\n x \u2000\u200a\u202f\u205f\u1680\u2029": "x",
+		"\u0085x\u0085": "\u0085x\u0085", "": "", "\u200b x": "\u200b x"} {
+		if got := shared.Trim(in); got != want {
+			t.Fatalf("Trim(%q)=%q, want %q", in, got, want)
+		}
 	}
 }

@@ -245,6 +245,19 @@ func decimalLiteral(text string) bool {
 	return i == len(text)
 }
 
+// Trim is String.prototype.trim: it removes ECMAScript white space and line
+// terminators (ECMA-262 12.2, 12.3), which include U+FEFF and exclude U+0085,
+// unlike strings.TrimSpace.
+func Trim(text string) string {
+	return strings.TrimFunc(text, func(r rune) bool {
+		switch r {
+		case '\t', '\n', '\v', '\f', '\r', ' ', '\u00a0', '\u1680', '\u2028', '\u2029', '\u202f', '\u205f', '\u3000', '\ufeff':
+			return true
+		}
+		return r >= '\u2000' && r <= '\u200a'
+	})
+}
+
 // OrZero is `value || 0` on a number: NaN and zero become 0.
 func OrZero(value float64) float64 {
 	if math.IsNaN(value) {

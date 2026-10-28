@@ -184,6 +184,8 @@ const mm = {
     current_weekly_total_count: 1000, current_weekly_usage_count: 900, weekly_remains_time: '7200000' },
   video: { model_name: 'image_to_video', current_interval_total_count: 10, current_interval_usage_count: 10, remains_time: 0, end_time: FUTURE_S },
 };
+const sp = (code, msg, extra = {}) => ({ status: 200, body: { base_resp: { status_code: code, ...(msg === undefined ? {} : { status_msg: msg }) }, ...extra } });
+const mmQuota = { model_remains: [mm.speech] };
 const minimaxCases = {
   'multiple-window': [ok({ model_remains: [mm.mseries, mm.speech, mm.video] })],
   'camel-envelope': [{ status: 200, body: { baseResp: { statusCode: 0, statusMsg: 'success' }, modelRemains: [
@@ -219,6 +221,34 @@ const minimaxCases = {
   'auth-1004': [ok({ base_resp: { status_code: 1004, status_msg: 'login fail' } })],
   'auth-1004-camel': [{ status: 200, body: { baseResp: { statusCode: '1004' } } }],
   'auth-1004-on-500': [{ status: 500, body: { base_resp: { status_code: 1004 } } }],
+  // status_msg and body handling (U/minimax.js:155-187), #223 follow-up.
+  'status-code-empty-msg': [sp(2013, '')],
+  'status-code-no-msg': [sp(2013)],
+  'status-code-padded-msg': [sp(2013, '  invalid params  ')],
+  'status-code-js-trim': [sp(2013, '\u3000\ufeffbad\u00a0\u2028')],
+  'status-code-camel-msg': [{ status: 200, body: { baseResp: { statusCode: 2013, statusMsg: 'camel msg' } } }],
+  'status-code-null-snake-msg': [{ status: 200, body: { base_resp: { status_code: 2013, status_msg: null, statusMsg: 'camel fallback' } } }],
+  'status-code-numeric-msg': [{ status: 200, body: { base_resp: { status_code: '2013', status_msg: 42 } } }],
+  'status-code-object-msg': [{ status: 200, body: { base_resp: { status_code: 2013, status_msg: { a: 1 } } } }],
+  'status-code-with-quota': [sp(2013, 'partial', mmQuota)],
+  'status-code-true': [{ status: 200, body: { base_resp: { status_code: true }, model_remains: [mm.speech] } }],
+  'status-code-nan': [{ status: 200, body: { base_resp: { status_code: 'abc', status_msg: 'weird' }, model_remains: [mm.speech] } }],
+  'status-code-hex-1004': [{ status: 200, body: { base_resp: { status_code: '0x3EC' } } }],
+  'status-code-on-500-fallback': [{ status: 500, body: { base_resp: { status_code: 2013, status_msg: 'busy' } } }, sp(0, 'success', mmQuota)],
+  'status-code-on-429': [{ status: 429, body: { base_resp: { status_code: 1002, status_msg: 'rate limit' } } }],
+  'status-ok-msg-no-data': [sp(0, 'insufficient balance', { model_remains: [] })],
+  'status-ok-no-models-key': [sp(0, 'success')],
+  'status-ok-msg-with-quota': [sp(0, 'quota low', mmQuota)],
+  'status-ok-msg-auth-word': [sp(0, 'Token Plan not active', mmQuota)],
+  'status-snake-empty-shadows-camel': [{ status: 200, body: { base_resp: {}, baseResp: { statusCode: 2013, statusMsg: 'hidden' }, model_remains: [mm.speech] } }],
+  'status-snake-null-camel-error': [{ status: 200, body: { base_resp: null, baseResp: { statusCode: 2013, statusMsg: 'camel err' } } }],
+  'status-base-resp-falsy': [{ status: 200, body: { base_resp: false, baseResp: { statusCode: 2013 }, model_remains: [mm.speech] } }],
+  'body-empty': [{ status: 200, body: '' }],
+  'body-null': [{ status: 200, body: 'null' }],
+  'body-array': [{ status: 200, body: '[]' }],
+  'body-html': [{ status: 200, body: '<html>maintenance</html>' }],
+  'body-html-auth-word': [{ status: 200, body: '<html>Unauthorized</html>' }],
+  'body-byte-order-mark': [{ status: 200, body: '\ufeff' + JSON.stringify({ base_resp: { status_code: 0 }, model_remains: [mm.speech] }) }],
   'auth-text': [ok({ base_resp: { status_code: 0, status_msg: 'Invalid API key' }, model_remains: [mm.speech] })],
   'auth-text-in-body': [ok({ model_remains: [{ ...mm.speech, model_name: 'coding plan pool' }] })],
   'auth-text-after-fallback': [{ status: 500, body: '' }, { status: 200, body: { base_resp: { status_code: 0 }, note: 'Token Plan inactive' } }],
