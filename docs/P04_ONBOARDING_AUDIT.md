@@ -85,9 +85,10 @@ Routeweft stores the same fields in the sealed secret payload.
 
 ## 4. Host-secret access
 
-No route returns a stored credential, and the host's home directory is read for
-one import only: MiMo Desktop discovery, when the host allows it and the operator
-consents in the request (#296, BDR-028; SPEC 19). Otherwise the three pin
+No route returns a stored credential, and the host's home directory is read only
+for MiMo Desktop: its discovery, when the host allows it and the operator
+consents in the request (#296, BDR-028; SPEC 19), and the quota-read renewal an
+operator turns on per connection under the same consents (#299). Otherwise the three pin
 `auto-import` routes are replaced by a paste of the *same file contents*: Kiro's `kiro-auth-token.json` as written (its
 `accessToken` is ignored; the refresh token is proven by refreshing) plus the client
 registration's `clientId`/`clientSecret` (or `client_id`/`client_secret`) go in the
@@ -124,8 +125,10 @@ executor work (`open-sse/executors/xiaomi-mimo.js:30-94`). Host auto-import was
 left open by #181 and is implemented by #296 behind two consents (BDR-028):
 discovery reads `auth.json` and Desktop's account cookies on the server, and a
 Xiaomi sign-in started with consent attaches the session. Neither file exists on
-this development host, so the evidence is fixture homes (PARITY §6.33). #181 and
-#296 change neither provider readiness nor inference dispatch.
+this development host, so the evidence is fixture homes (PARITY §6.33). #299
+adds the pin's quota-read fallback as a per-connection opt-in under the same
+consents (BDR-028 amendment). #181, #296 and #299 change neither provider
+readiness nor inference dispatch.
 
 ## 6. Durable rotation
 

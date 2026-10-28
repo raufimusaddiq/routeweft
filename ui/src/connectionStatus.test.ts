@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { canRelink, lifecycleLine, relative, relinkPatch, testStatusOf, testStatusTone } from './connectionStatus.ts'
+import { canRelink, desktopRenewalConsent, desktopRenewalLine, lifecycleLine, relative, relinkPatch, testStatusOf, testStatusTone } from './connectionStatus.ts'
 
 const now = Date.parse('2026-10-27T12:00:00Z')
 
@@ -39,4 +39,14 @@ test('only typed credentials are relinked by hand', () => {
   assert.equal(canRelink({ authKind: 'cookie' }), true)
   assert.equal(canRelink({ authKind: 'oauth' }), false)
   assert.equal(canRelink({ authKind: 'none' }), false)
+})
+
+test('desktop renewal line names the state and the last host read, never a value (#299)', () => {
+  const now = Date.parse('2026-10-29T12:00:00Z')
+  assert.equal(desktopRenewalLine({}, now), '')
+  assert.equal(desktopRenewalLine({ desktopSessionRenewal: false }, now), '')
+  assert.equal(desktopRenewalLine({ desktopSessionRenewal: true }, now), 'Quota reads may renew the account session from MiMo Desktop on this server')
+  assert.equal(desktopRenewalLine({ desktopSessionRenewal: true, desktopSessionReadAt: '2026-10-29T11:50:00Z' }, now), 'Quota reads may renew the account session from MiMo Desktop on this server · last read 10 min ago')
+  assert.equal(desktopRenewalLine({ desktopSessionRenewal: false, desktopSessionReadAt: '2026-10-29T10:00:00Z' }, now), 'Session last read from MiMo Desktop 2 h ago; renewal is off')
+  assert.match(desktopRenewalConsent('7@xiaomi'), /“7@xiaomi”.*at most every 30 minutes.*turn it off/)
 })

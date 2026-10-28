@@ -1159,7 +1159,8 @@ prefer the derived account session; if the session or account usage read fails,
 the stored API key is tried. If neither path yields quota, return an error
 observation with no fabricated window; failed reads retain the last good view.
 Routeweft never returns a stored credential, and reads the host's home directory
-for one import only: MiMo Desktop discovery (BDR-028, #296). Every other
+only for MiMo Desktop: its discovery (BDR-028, #296) and the quota-read renewal
+an operator turns on per connection (#299, below). Every other
 reference `auto-import` route is replaced by pasting the same file contents
 (docs/P04_ONBOARDING_AUDIT.md). Discovery needs two consents: the server started
 with `ROUTEWEFT_ALLOW_HOST_CREDENTIAL_DISCOVERY=true` (default false), and
@@ -1181,7 +1182,36 @@ included, and the answer is the saved connection plus
 `discovery: {source, accountSession}`, never a key or session. A Xiaomi `/start`
 with `desktopSession: true` (403 without the host's consent, 400 for another
 provider) attaches the same session when its callback completes. The provider
-read model reports `hostDiscovery: true` only where this endpoint would read. A
+read model reports `hostDiscovery: true` only where this endpoint would read.
+Quota-read renewal (#299, BDR-028 amendment) is the reference's per-read
+fallback to Desktop's store, as a per-connection opt-in:
+`PUT /admin/v1/connections/{id}/desktop-session-renewal` (`{enabled, consent}`;
+Xiaomi MiMo connections only, 400 `desktop_session_unsupported` otherwise)
+turns it on only with both consents above (same 403/400) and off with neither,
+reads nothing itself, and answers the connection view. The flag
+(`mimoDesktopRenewal`) is sealed provider data that connection edits cannot
+set or drop. While it is on and the host allows discovery, a quota read whose
+connection has no sealed session, or whose sealed session fails the account
+handshake, reads Desktop's session at most once per 30 minutes per connection,
+seals it into the connection (with `mimoDesktopReadAt`), and reads the quota
+with it. The interval is durable: each attempt first records
+`mimoDesktopAttemptAt` in the connection (its own `ReviseSecret` step, after
+the consent check), and only then does a second step, which re-checks consent,
+the session and that this claim is still the latest, open the store. Failed,
+unusable and interrupted reads therefore count, a restart does not reset the
+interval, a refused claim records nothing, and a recorded time in the future
+delays the next read. Connection edits cannot set any of the three fields. The flag and the session being replaced are checked on the connection
+as stored at that moment, inside the same registry exclusion as the read and
+the write (`Registry.ReviseSecret`) that every connection update, revocation
+included, takes; so a revocation is ordered entirely before the store is opened
+or entirely after the read is sealed. The write is a rotation (`RotateSecret`):
+it never recreates a connection deleted during the read, and the credential
+revision and validation status stay. An absent, locked or unchanged store, a
+revoked flag, a deleted connection or a failed write uses the key path as
+before. The connection read model reports
+`desktopSessionRenewal`, `desktopSessionReadAt` and `desktopSessionAttemptAt`
+for MiMo rows, and an
+account-path quota read carries `metadata.desktopSessionReadAt`. A
 refresh dispatches on the
 stored credential shape, and a rotation is committed before it is published
 (SPEC 19); an export that carries no lifetime has an unknown expiry, never `now`.
@@ -2401,8 +2431,9 @@ or unfunded) and a Xiaomi MiMo key that cannot read the weekly quota. A MiMo
 account session is kept for 30 minutes per account credential, in memory.
 A Kenari amount the provider omits is read as 0, as in the reference, so a
 window with neither amount is 0% remaining. Quota readers never read a host
-browser or desktop cookie store or other host secret; MiMo's account path uses
-only the account fields imported into the sealed connection.
+browser or desktop cookie store or other host secret themselves; MiMo's account
+path uses the account fields sealed into the connection, which only a consented
+renewal (#299, above) may refresh from MiMo Desktop.
 A window a reader served from its own cache carries `observedAt`, the time it
 was read upstream, and the UI labels it "cached, read <time>"; a window without
 `observedAt` is as fresh as `windowsObservedAt`. Only the Antigravity weekly

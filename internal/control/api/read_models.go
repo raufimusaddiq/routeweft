@@ -352,6 +352,17 @@ func (h *Handler) connections(w http.ResponseWriter, r *http.Request) error {
 	if h.opts.Runtime != nil {
 		snapshot, _ = h.opts.Runtime.Load()
 	}
+	// The MiMo renewal consent (#299) is sealed with the credential and is no
+	// snapshot setting, so the MiMo connections are opened once, before the list
+	// query holds the database, and only those two fields leave them.
+	renewals := map[string]map[string]any{}
+	if h.opts.Credentials != nil {
+		if mimo, err := h.opts.Credentials.ListConnections(r.Context(), mimoProviderID); err == nil {
+			for _, connection := range mimo {
+				renewals[connection.ID] = connectionJSON(connection)
+			}
+		}
+	}
 	return h.sqlList(w, r, `SELECT c.id,c.node_id,n.provider_id,c.name,c.auth_kind,COALESCE(c.identity,''),c.enabled,c.priority,COALESCE(c.proxy_pool_id,''),c.secret_blob IS NOT NULL AND c.secret_blob!='',c.created_at,c.updated_at,c.account_id,
 c.test_status,COALESCE(c.last_tested_at,''),COALESCE(c.last_error,''),COALESCE(c.last_error_at,''),c.models_available,c.auth_origin,COALESCE(c.credential_expires_at,'')
 FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where+` ORDER BY n.provider_id,c.priority,c.name,c.id`, `SELECT COUNT(*) FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where, func(rows *sql.Rows) (any, error) {
@@ -386,6 +397,11 @@ FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where+` ORD
 			ExpiresAt       string `json:"expiresAt,omitempty"`
 			Plan            string `json:"plan,omitempty"`
 			QuotaObservedAt string `json:"quotaObservedAt,omitempty"`
+			// Xiaomi MiMo only (#299): whether quota reads may renew the account
+			// session from MiMo Desktop on this host, and when one last did.
+			DesktopSessionRenewal   *bool  `json:"desktopSessionRenewal,omitempty"`
+			DesktopSessionReadAt    string `json:"desktopSessionReadAt,omitempty"`
+			DesktopSessionAttemptAt string `json:"desktopSessionAttemptAt,omitempty"`
 		}
 		var enabled, credential int
 		if err := rows.Scan(&item.ID, &item.NodeID, &item.ProviderID, &item.Name, &item.AuthKind, &item.Identity, &enabled, &item.Priority, &item.ProxyPoolID, &credential, &item.CreatedAt, &item.UpdatedAt, &item.AccountID,
@@ -404,6 +420,12 @@ FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where+` ORD
 		item.CredentialConfigured = credential != 0
 		if legacy, ok := snapshot.LegacyConnectionProxy(item.ID); ok {
 			item.ConnectionProxy = &connectionProxyView{URL: safeURL(legacy.URL), NoProxy: strings.Join(legacy.NoProxy, ",")}
+		}
+		if view, ok := renewals[item.ID]; ok {
+			enabled, _ := view["desktopSessionRenewal"].(bool)
+			item.DesktopSessionRenewal = &enabled
+			item.DesktopSessionReadAt, _ = view["desktopSessionReadAt"].(string)
+			item.DesktopSessionAttemptAt, _ = view["desktopSessionAttemptAt"].(string)
 		}
 		return item, nil
 	}, args...)

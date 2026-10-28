@@ -40,6 +40,21 @@ export function relative(iso: string, now: number) {
   return seconds < 0 ? `${amount} ago` : `in ${amount}`
 }
 
+// MiMo Desktop session renewal (#299): whether quota reads may read the account
+// session from MiMo Desktop on the server, and when one last did. A time only.
+export type DesktopRenewal = { desktopSessionRenewal?: boolean; desktopSessionReadAt?: string }
+
+export function desktopRenewalLine(connection: DesktopRenewal, now = Date.now()) {
+  const read = connection.desktopSessionReadAt ? relative(connection.desktopSessionReadAt, now) : ''
+  if (connection.desktopSessionRenewal) return `Quota reads may renew the account session from MiMo Desktop on this server${read ? ` · last read ${read}` : ''}`
+  return read ? `Session last read from MiMo Desktop ${read}; renewal is off` : ''
+}
+
+// The confirmation that is the operator's consent to turn renewal on.
+export function desktopRenewalConsent(name: string) {
+  return `Allow quota reads of “${name}” to read MiMo Desktop’s account session on this server when the connection has none or its session stops working? It is read at most every 30 minutes, sealed into this connection and never shown. You can turn it off at any time.`
+}
+
 // lifecycleLine is the one-line summary under a connection row.
 export function lifecycleLine(connection: ConnectionLifecycle, now = Date.now()) {
   const parts: string[] = []
