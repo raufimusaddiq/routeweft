@@ -208,12 +208,12 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `codebuddy-intl` — U/codebuddy-cn.js:46-145; International host Tests: `providers/usage:TestRegionalReadersUseTheirOwnHost`, `providers/wire:TestCodeBuddyIntlMessages`.
 - **P** `antigravity` — U/google.js:120-249; the retrieveUserQuotaSummary shape is not qualified (P05) Tests: `providers/usage:TestAntigravityFreeTierSkipsPerModelQuota`.
 - **P** `gemini-cli` — U/google.js:22-104; missing-project discovery open (P05) Tests: `providers/usage:TestGeminiUsesStoredProjectID`.
-- **P** `qoder` — misc.js:226-290; an absent pool total reads as unlimited, isQuotaExceeded is not read Tests: `providers/usage:TestQoderUsageUserAndOrganizationPools`.
-- **P** `kiro` — U/kiro.js:9-181; fallback hosts open (P05) Tests: `providers/usage:TestKiroAPIKeySendsTokenType`, `providers/usage:TestKiroFreeTrialIsSeparateWindow`.
+- **P** `qoder` — misc.js:230-290 with the PAT exchange, every recorded pin answer (PARITY §6.30) Tests: `providers/usage:TestQoderUsageUserAndOrganizationPools`, `providers/usage:TestQoderQuotaIsThePins`.
+- **P** `kiro` — U/kiro.js:12-188, all three hosts and auth modes, every recorded pin answer (PARITY §6.30) Tests: `providers/usage:TestKiroAPIKeySendsTokenType`, `providers/usage:TestKiroFreeTrialIsSeparateWindow`, `providers/usage:TestKiroQuotaIsThePins`.
 - **P** `commandcode` — U/commandcode.js:60-135; the pin omits an empty window, Routeweft reports it unlimited Tests: `providers/usage:TestCommandCodeUsageCarriesOrgAndPlanCap`, `providers/usage:TestCommandCodeUsageAuthAndBillingFailuresAreErrors`.
-- **P** `grok-cli` — U/grok-cli.js:141-239; gRPC fallback open (P05) Tests: `providers/usage:TestGrokPinnedRESTCredits`, `providers/usage:TestGrokRESTPaidFreeAndMonthlyShapes`.
+- **P** `grok-cli` — U/grok-cli.js:141-424 with the gRPC weekly fallback, every recorded pin answer (PARITY §6.30) Tests: `providers/usage:TestGrokPinnedRESTCredits`, `providers/usage:TestGrokRESTPaidFreeAndMonthlyShapes`, `providers/usage:TestGrokCLIQuotaIsThePins`.
 - **P** `kenari` — U/kenari.js:9-51 Tests: `providers/usage:TestKenariPinnedZeroCapacity`, `providers/usage:TestKenariAbsentAmountsAreUnknownNotExhausted`.
-- **P** `zed` — U/zed.js:54-120; the pin's {limited:N} limit form is not read, so such a window is omitted Tests: `providers/usage:TestZedUsageLimitedUnlimitedAndExhausted`.
+- **P** `zed` — U/zed.js:39-222, every recorded pin answer (PARITY §6.30) Tests: `providers/usage:TestZedUsageLimitedUnlimitedAndExhausted`, `providers/usage:TestZedQuotaIsThePins`.
 - **N** `alicode-intl` — open-sse/providers/registry/alicode-intl.js:1-30 has no quota endpoint or header contract; open-sse/services/usage.js:38-69 has no handler for it and :78-79 returns "not implemented" (P05 audit row)
 - **N** `alitp-intl` — open-sse/providers/registry/alitp-intl.js:1-35 has no quota endpoint or header contract; open-sse/services/usage.js:38-69 has no handler for it and :78-79 returns "not implemented" (P05 audit row)
 - **N** `alicode` — open-sse/providers/registry/alicode.js:1-31 has no quota endpoint or header contract; open-sse/services/usage.js:38-69 has no handler for it and :78-79 returns "not implemented" (P05 audit row)
@@ -288,7 +288,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `codebuddy-cn` — the gateway's frequency-limit body cools the account until its reset (codebuddy-error.js) Tests: `ingress:TestCodeBuddyFrequencyLimitCoolsTheAccountAndRelaysTheGatewayError`, `providers/wire:TestCodeBuddyFrequencyLimit`, `ingress:TestCodeBuddyOtherUpstreamErrorsAreNotReadAsALimit`.
 - **P** `codebuddy-intl` — same hook as codebuddy-cn Tests: `ingress:TestCodeBuddyFrequencyLimitCoolsTheAccountAndRelaysTheGatewayError`, `providers/wire:TestCodeBuddyFrequencyLimit`, `ingress:TestCodeBuddyOtherUpstreamErrorsAreNotReadAsALimit`.
 - **P** `antigravity` — free tier has no per-model quota Tests: `providers/usage:TestAntigravityFreeTierSkipsPerModelQuota`.
-- **P** `qoder` — a spent organization pool reads as nothing left; provider unavailable for serving Tests: `providers/usage:TestQoderUsageUserAndOrganizationPools`.
+- **P** `qoder` — a spent organization pool reads as nothing left, an empty one is dropped; provider unavailable for serving Tests: `providers/usage:TestQoderUsageUserAndOrganizationPools`, `providers/usage:TestQoderQuotaIsThePins`.
 - **P** `kiro` — free trial is its own window Tests: `providers/usage:TestKiroFreeTrialIsSeparateWindow`.
 - **P** `commandcode` — cap reached reads as nothing left Tests: `providers/usage:TestCommandCodeUsageCarriesOrgAndPlanCap`, `providers/wire:TestParseCommandCodeError`.
 - **P** `grok-cli` — 402 spending-limit cools the account for two minutes and falls back (executors/grok-cli.js:400-416, errorConfig.js:77), landed in #184 Tests: `ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin`, `providers/wire:TestGrokCLISpendingLimitFallsBackAndCoolsTheAccountForTwoMinutes`.
@@ -540,7 +540,7 @@ These are findings, not new work in this PR. Each is recorded in PARITY and stay
 3. **Groq had no quota reader in effect when this audit began.** #211 closed it: the reader now parses the `x-ratelimit-*` headers the pin reads (`usage/groq.js:44-129`) and the Groq quota and unavailability cells are now P.
 4. **A zero DeepSeek balance read as unlimited when this audit began.** #212 closed the read side: each currency is its own credit window, a zero stays zero and `is_available` is explicit (`TestDeepSeekPinnedBalanceKeepsCurrenciesApart`). Balances still do not take an out-of-credit account out of rotation; that is gap 1.
 5. **Providers declared ready whose pin executor is not replicated.** The shared-path table proves their URL and credential only: Codex (`executors/codex.js:415-515`: forced stream, `store:false`, default instructions, allowlist) and Grok CLI (`executors/grok-cli.js:362-470`: grok-shell identity, forced stream). Their streaming and non-streaming cells are `G`. Whether their readiness should change is a product decision for #76 P02 and the readiness table (#176). Zed and MiMo Free with its alias mmf were in this list until #192, which built their executors (token exchange, thread envelope, NDJSON frames, bootstrap JWT); their cells are now evidence and their readiness stays `ready`.
-6. Smaller, in the cell notes: Zed's `{limited:N}` quota form, Qoder's absent pool read as unlimited, Command Code's empty window, MiniMax's camelCase envelope, Zed's `trial_blocked` message rewrite, Gemini CLI's `retryDelay` hint, Claude's and Zed's authenticated listing.
+6. Smaller, in the cell notes: Command Code's empty window, MiniMax's camelCase envelope, Zed's `trial_blocked` message rewrite, Gemini CLI's `retryDelay` hint, Claude's and Zed's authenticated listing.
 
 ## What stays open
 

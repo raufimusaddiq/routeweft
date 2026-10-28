@@ -73,8 +73,6 @@ func (r apiKeyReader) Usage(ctx context.Context, credential quota.Credential) (q
 		return r.vercel(ctx, key)
 	case "ollama":
 		return r.ollama(ctx, key, credential)
-	case "qoder":
-		return r.qoder(ctx, credential)
 	case "zed":
 		return r.zed(ctx, credential)
 	}

@@ -218,10 +218,10 @@ func quotaCell(spec registry.Spec) cell {
 		"codex":             {kindP, ref("providers/codex:TestUsageNormalizesWindowsAndResetCredits", "providers/codex:TestUsageOmittedResetCreditsAreUnknown"), "U/codex.js:107-217; rate_limits_by_limit_id aliases open (P05)"},
 		"github":            {kindP, ref("providers/usage:TestGitHubPaidAndFreeShapes"), "U/github.js:11-99"},
 		"kimi":              {kindP, ref("providers/usage:TestKimiUsesAPIKeyHeader", "providers/usage:TestKimiOAuthSendsDeviceHeaders", "providers/usage:TestKimiEntitlementIsNotExpiry"), "U/kimi.js:109-208"},
-		"kiro":              {kindP, ref("providers/usage:TestKiroAPIKeySendsTokenType", "providers/usage:TestKiroFreeTrialIsSeparateWindow"), "U/kiro.js:9-181; fallback hosts open (P05)"},
+		"kiro":              {kindP, ref("providers/usage:TestKiroAPIKeySendsTokenType", "providers/usage:TestKiroFreeTrialIsSeparateWindow", "providers/usage:TestKiroQuotaIsThePins"), "U/kiro.js:12-188, all three hosts and auth modes, every recorded pin answer (PARITY §6.30)"},
 		"gemini-cli":        {kindP, ref("providers/usage:TestGeminiUsesStoredProjectID"), "U/google.js:22-104; missing-project discovery open (P05)"},
 		"antigravity":       {kindP, ref("providers/usage:TestAntigravityFreeTierSkipsPerModelQuota"), "U/google.js:120-249; the retrieveUserQuotaSummary shape is not qualified (P05)"},
-		"grok-cli":          {kindP, ref("providers/usage:TestGrokPinnedRESTCredits", "providers/usage:TestGrokRESTPaidFreeAndMonthlyShapes"), "U/grok-cli.js:141-239; gRPC fallback open (P05)"},
+		"grok-cli":          {kindP, ref("providers/usage:TestGrokPinnedRESTCredits", "providers/usage:TestGrokRESTPaidFreeAndMonthlyShapes", "providers/usage:TestGrokCLIQuotaIsThePins"), "U/grok-cli.js:141-424 with the gRPC weekly fallback, every recorded pin answer (PARITY §6.30)"},
 		"glm":               {kindP, ref("providers/usage:TestGLMReportsBothLimitTypes", "providers/usage:TestGLMRejectsExpiredKey", "providers/usage:TestRegionalReadersUseTheirOwnHost"), "U/glm.js:18-84"},
 		"glm-cn":            {kindP, ref("providers/usage:TestRegionalReadersUseTheirOwnHost"), "U/glm.js:18-84; China host"},
 		"minimax":           {kindP, ref("providers/usage:TestMiniMaxUsageEndpointsRegionsAndCountSemantics"), "U/minimax.js:95-226; top-level camelCase envelope and 1004 auth text differ from the pin (P05)"},
@@ -235,9 +235,9 @@ func quotaCell(spec registry.Spec) cell {
 		"commandcode":       {kindP, ref("providers/usage:TestCommandCodeUsageCarriesOrgAndPlanCap", "providers/usage:TestCommandCodeUsageAuthAndBillingFailuresAreErrors"), "U/commandcode.js:60-135; the pin omits an empty window, Routeweft reports it unlimited"},
 		"vercel-ai-gateway": {kindP, ref("providers/usage:TestVercelBalanceIsNotAUsagePercentage"), "misc.js:150-200"},
 		"ollama":            {kindP, ref("providers/usage:TestOllamaUsageRatioIsUsedFractionAndNullWindowsAreSkipped"), "misc.js:55-140; plan label from /api/me and the free-plan reset are not read"},
-		"qoder":             {kindP, ref("providers/usage:TestQoderUsageUserAndOrganizationPools"), "misc.js:226-290; an absent pool total reads as unlimited, isQuotaExceeded is not read"},
+		"qoder":             {kindP, ref("providers/usage:TestQoderUsageUserAndOrganizationPools", "providers/usage:TestQoderQuotaIsThePins"), "misc.js:230-290 with the PAT exchange, every recorded pin answer (PARITY §6.30)"},
 		"xiaomi-mimo":       {kindP, ref("providers/usage:TestXiaomiMimoUsagePercentIsRemaining"), "U/xiaomi-mimo.js:62-120; only the API-key path, the account-session path is not read"},
-		"zed":               {kindP, ref("providers/usage:TestZedUsageLimitedUnlimitedAndExhausted"), "U/zed.js:54-120; the pin's {limited:N} limit form is not read, so such a window is omitted"},
+		"zed":               {kindP, ref("providers/usage:TestZedUsageLimitedUnlimitedAndExhausted", "providers/usage:TestZedQuotaIsThePins"), "U/zed.js:39-222, every recorded pin answer (PARITY §6.30)"},
 	}
 	if c, ok := readers[id]; ok {
 		return c
@@ -256,7 +256,7 @@ func unavailableCell(spec registry.Spec) cell {
 		"ollama":            {kindP, ref("providers/usage:TestOllamaUsageRatioIsUsedFractionAndNullWindowsAreSkipped"), "usage 1.0 reads as nothing left; a null window is skipped"},
 		"commandcode":       {kindP, ref("providers/usage:TestCommandCodeUsageCarriesOrgAndPlanCap", "providers/wire:TestParseCommandCodeError"), "cap reached reads as nothing left"},
 		"zed":               {kindP, ref("providers/usage:TestZedUsageLimitedUnlimitedAndExhausted", "ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin"), "500/500 reads as nothing left; trial_blocked 403 cools the account (the pin's message rewrite, zed.js:284-310, is not done)"},
-		"qoder":             {kindP, ref("providers/usage:TestQoderUsageUserAndOrganizationPools"), "a spent organization pool reads as nothing left; provider unavailable for serving"},
+		"qoder":             {kindP, ref("providers/usage:TestQoderUsageUserAndOrganizationPools", "providers/usage:TestQoderQuotaIsThePins"), "a spent organization pool reads as nothing left, an empty one is dropped; provider unavailable for serving"},
 		"xiaomi-mimo":       {kindP, ref("providers/usage:TestXiaomiMimoUsagePercentIsRemaining"), "a 401 (key cannot read the account quota) is an error, not an empty or full window"},
 		"github":            {kindP, ref("providers/usage:TestGitHubPaidAndFreeShapes"), "free-plan limited quotas versus paid entitlements"},
 		"kimi":              {kindP, ref("providers/usage:TestKimiEntitlementIsNotExpiry"), "an entitlement date is not a credential expiry"},
@@ -941,7 +941,7 @@ These are findings, not new work in this PR. Each is recorded in PARITY and stay
 3. **Groq had no quota reader in effect when this audit began.** #211 closed it: the reader now parses the ` + "`x-ratelimit-*`" + ` headers the pin reads (` + "`usage/groq.js:44-129`" + `) and the Groq quota and unavailability cells are now P.
 4. **A zero DeepSeek balance read as unlimited when this audit began.** #212 closed the read side: each currency is its own credit window, a zero stays zero and ` + "`is_available`" + ` is explicit (` + "`TestDeepSeekPinnedBalanceKeepsCurrenciesApart`" + `). Balances still do not take an out-of-credit account out of rotation; that is gap 1.
 5. **Providers declared ready whose pin executor is not replicated.** The shared-path table proves their URL and credential only: Codex (` + "`executors/codex.js:415-515`" + `: forced stream, ` + "`store:false`" + `, default instructions, allowlist) and Grok CLI (` + "`executors/grok-cli.js:362-470`" + `: grok-shell identity, forced stream). Their streaming and non-streaming cells are ` + "`G`" + `. Whether their readiness should change is a product decision for #76 P02 and the readiness table (#176). Zed and MiMo Free with its alias mmf were in this list until #192, which built their executors (token exchange, thread envelope, NDJSON frames, bootstrap JWT); their cells are now evidence and their readiness stays ` + "`ready`" + `.
-6. Smaller, in the cell notes: Zed's ` + "`{limited:N}`" + ` quota form, Qoder's absent pool read as unlimited, Command Code's empty window, MiniMax's camelCase envelope, Zed's ` + "`trial_blocked`" + ` message rewrite, Gemini CLI's ` + "`retryDelay`" + ` hint, Claude's and Zed's authenticated listing.
+6. Smaller, in the cell notes: Command Code's empty window, MiniMax's camelCase envelope, Zed's ` + "`trial_blocked`" + ` message rewrite, Gemini CLI's ` + "`retryDelay`" + ` hint, Claude's and Zed's authenticated listing.
 
 ## What stays open
 
