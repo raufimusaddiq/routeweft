@@ -78,14 +78,26 @@ func (h *Handler) handleCodexResetCredits(w http.ResponseWriter, r *http.Request
 	}
 	// Never retry an ambiguous spend; the upstream may already have consumed it.
 	result, err := client.ConsumeResetCredit(ctx, secret.AccessToken, uuid.NewString())
+	if errors.Is(err, codex.ErrReauthRequired) {
+		// Codex refused the credential, so nothing was spent. 401 is the admin
+		// session's status here, so the refusal is a 403.
+		writeError(w, http.StatusForbidden, "reauth_required", "Codex rejected the credential; no reset credit was spent. Reconnect the account")
+		return
+	}
 	if err != nil {
 		writeError(w, 502, "reset_failed", "Codex reset credit outcome is unavailable; refresh credits before trying again")
 		return
 	}
+	// A 4xx answer is Codex refusing the spend and keeps its status; any other
+	// failure is ambiguous and is a 502 (codex-reset-credits/route.js:42-47).
 	status := http.StatusOK
-	if result.NoCredit {
+	switch {
+	case result.NoCredit:
 		status = http.StatusConflict
-	} else if !result.OK {
+	case result.OK:
+	case result.Status >= 400 && result.Status < 500:
+		status = result.Status
+	default:
 		status = http.StatusBadGateway
 	}
 	if result.OK && h.opts.QuotaForget != nil {

@@ -2401,16 +2401,45 @@ observed); a missing observation is never zero, unlimited or available. Items
 add `nextResetAt` (earliest reset across the routing observation and windows),
 `windowsObservedAt` (the read the windows came from, which an outage keeps) and
 `stale` (observation older than three refresh intervals, default 15 minutes).
+Session-gated POST `/admin/v1/quota/refresh` accepts a refresh job (#226): 202
+`{accepted:true, joined, job}` where `job` is `{id, status, requestedAt,
+startedAt?, finishedAt?, error?}` and `status` is `queued`, `running`,
+`succeeded` or `failed`. A 202 is acceptance, never an observation; rows change
+only through GET `/admin/v1/quota`, each with its own `observedAt`. At most one
+refresh runs: a POST while one is queued or running returns that job with
+`joined:true`. The job is bounded at 60 seconds, and the deadline ends it
+whether or not the refresher returns; an overrun or a read failure is `failed`
+with a fixed `error` phrase (a reader's own text is never echoed). A refresher
+that overran is still held: until it returns, a POST is 409 `refresh_busy`, so
+two refreshers never run at once, and its late answer cannot change the job.
+Session-gated GET at the same path returns `{status, job}` for the latest job,
+or `{status:"idle"}` before any. Each transition publishes `quota.refresh` with
+the job. The UI follows the job, keeps saying the rows are the previous
+observations until it is terminal, reloads them then, and marks an enabled row
+whose observation predates the job's start as not updated by it.
 GET `/admin/v1/quota/{id}/codex-reset-credits` returns the existing normalized credit listing. Session-gated POST at the same
 path requires `{"confirm":true}`, spends one credit with a server UUID, returns
 409 for no credit and 502 for an unavailable/ambiguous result. It never retries
-an ambiguous spend. Both actions reject non-Codex token connections before any
-network work and refresh credentials through the shared registry.
+an ambiguous spend. A Codex refusal is definite and keeps its 4xx status
+(codex-reset-credits/route.js:42-47); a refused credential is 403
+`reauth_required`, because 401 is the admin session's status. Both actions reject non-Codex token connections before any
+network work and refresh credentials through the shared registry. The UI lists
+credits soonest expiry first, spends one credit per confirmed click only when a
+positive count was reported (a freshly read list's count wins over the row's
+cached one). Every spend first reads the credit list live from Codex; the
+confirmation shows that read's count, and a read that fails or reports no credit
+spends nothing and offers no confirmation. Nothing held in the page stands in
+for that read, so the guard holds after leaving the page, a reload or in another
+tab. Any 5xx, or a request that did not complete, is an unknown outcome: it is
+never sent again, and the credit list is read again from Codex at once.
 
 `claudeAutoPing` and `codexAutoPing` are string-valued settings containing JSON
 `{"connections":{"id":true}}`, defaulting to `{"connections":{}}`. The minute
 worker reads current settings and targets enabled matching OAuth connections.
-Claude warms at reset with a 5-second lead tolerance. Codex requires a reset
+Claude warms at reset with a 5-second lead tolerance, and between resets does
+not read usage until five minutes before the cached reset
+(quotaAutoPing.js:191-193); Codex reads every tick. Opted-in accounts are
+visited one at a time, and a quota read or refresh never sends a warming request. Codex requires a reset
 slide of at least 30 seconds, a 10-minute minimum interval and no exhausted
 non-session windows. Failed reads/sends cool down for 15 minutes. A successful
 send is suppressed for that reset minute; history persists through the existing

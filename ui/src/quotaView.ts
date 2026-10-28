@@ -111,3 +111,99 @@ export function quotaQuery(page: number, sort: string, provider: string, search:
   if (search.trim()) params.set('q', search.trim())
   return params.toString()
 }
+
+// Operator actions on the Quota page (#226): the refresh job, and Codex reset
+// credits. Pure, so every state the page can show is tested without a browser.
+
+// A refresh request is a job. 202 means accepted; only a terminal job means the
+// rows were read again, and even then each row keeps its own observedAt.
+export type RefreshStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+export type RefreshJob = { id: string; status: RefreshStatus; requestedAt: string; startedAt?: string; finishedAt?: string; error?: string }
+
+/** How often the page asks for the job, and how long before it stops asking. */
+export const REFRESH_POLL_MS = 1000
+export const REFRESH_POLL_LIMIT = 90
+
+export function refreshTerminal(job: RefreshJob | null | undefined): boolean {
+  return job?.status === 'succeeded' || job?.status === 'failed'
+}
+
+/** What the page says about the latest refresh; never that rows were updated before the job ends. */
+export function refreshText(job: RefreshJob, gaveUp = false): string {
+  const at = (value?: string) => zoned(value) ?? 'an unknown time'
+  switch (job.status) {
+    case 'queued':
+      return gaveUp ? 'Quota refresh is still queued. The rows show the previous observations; use Reload later.' : 'Quota refresh queued. It runs in the background and never blocks inference; the rows still show the previous observations.'
+    case 'running':
+      return gaveUp ? `Quota refresh has been running since ${at(job.startedAt)} and has not finished. The rows show the previous observations; use Reload later.` : `Quota refresh running since ${at(job.startedAt)}. The rows still show the previous observations.`
+    case 'succeeded':
+      return `Quota refresh finished at ${at(job.finishedAt)}. Rows were reloaded; each shows when it was observed.`
+    case 'failed':
+      return `Quota refresh finished at ${at(job.finishedAt)} without reading every account: ${job.error || 'a read failed'}. Rows were reloaded; accounts that could not be read show read failed or an older observation.`
+  }
+}
+
+/** A row the finished refresh did not observe: no observation, or one older than the job's start. */
+export function notUpdatedBy(item: QuotaItem, job: RefreshJob | null | undefined): boolean {
+  if (!job || !refreshTerminal(job) || !job.startedAt || !item.enabled) return false
+  const started = Date.parse(job.startedAt)
+  if (Number.isNaN(started)) return false
+  if (!item.observedAt) return true
+  const observed = Date.parse(item.observedAt)
+  return Number.isNaN(observed) || observed < started
+}
+
+// Codex reset credits. Spending one is irreversible, so the action is one
+// credit, confirmed, and an unknown outcome is never sent again.
+export type ResetCredit = { status: string; grantedAt?: string; expiresAt?: string }
+export type ResetCredits = { availableCount: number; credits: ResetCredit[] }
+
+/** Soonest expiry first; a credit without one sorts last (pin ProviderLimits/index.js:342-347). */
+export function creditsByExpiry(credits: ResetCredit[]): ResetCredit[] {
+  const time = (value?: string) => {
+    const parsed = value ? Date.parse(value) : Number.NaN
+    return Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed
+  }
+  return [...credits].sort((a, b) => time(a.expiresAt) - time(b.expiresAt))
+}
+
+/** A Codex account with a reported credit to spend; an unknown count is not one (pin :1162). */
+export function canSpendResetCredit(item: QuotaItem): boolean {
+  return item.providerId === 'codex' && typeof item.availableResetCredits === 'number' && item.availableResetCredits > 0
+}
+
+/** Why a spend cannot go ahead on this live read of the credit list, or '' when it can. No read is never a go-ahead. */
+export function freshCreditCheck(fresh: ResetCredits | null): string {
+  if (!fresh) return 'The credit list could not be read from Codex, so nothing was spent. Every spend reads the credits first; try again once they can be read.'
+  if (!(fresh.availableCount > 0)) return 'Codex reports no reset credit to use; nothing was spent.'
+  return ''
+}
+
+/** The confirmation text: one credit, irreversible, and the count before spending (pin :1469). */
+export function spendConfirmation(item: QuotaItem): string {
+  return `Use 1 Codex reset credit for ${item.name || 'this account'}? This cannot be undone. Remaining credits: ${item.availableResetCredits ?? 0}.`
+}
+
+// unknown marks an outcome that may have spent a credit: the page reads the
+// credit list again before anything else is offered.
+export type SpendOutcome = { tone: 'notice' | 'error'; text: string; reload: boolean; unknown?: boolean }
+
+/** A spend whose request failed in the browser (status 0) or on a server (any 5xx): it may have been spent. */
+export function spendOutcomeUnknown(status: number): boolean { return status === 0 || status >= 500 }
+
+/** What a spend response means. Only a 200 is known to have spent a credit; a 5xx or a failed request is unknown and is never retried. */
+export function spendOutcome(status: number, body: { windowsReset?: number; error?: { code?: string; message?: string } } | null): SpendOutcome {
+  if (status === 200) {
+    const windows = typeof body?.windowsReset === 'number' && body.windowsReset > 0 ? ` ${body.windowsReset} window${body.windowsReset === 1 ? '' : 's'} reset.` : ''
+    return { tone: 'notice', text: `One Codex reset credit used.${windows} Quota reloaded.`, reload: true }
+  }
+  if (status === 409) return { tone: 'error', text: 'Codex reports no reset credit to use; nothing was spent.', reload: true }
+  if (spendOutcomeUnknown(status)) {
+    const how = status === 0 ? 'the request did not complete' : `HTTP ${status}`
+    return { tone: 'error', text: `The outcome is unknown (${how}): Codex may or may not have used the credit, and the request was not sent again. The credit list below was read again; check it before trying again. The next spend reads it again first.`, reload: false, unknown: true }
+  }
+  if (body?.error?.code === 'reauth_required') return { tone: 'error', text: 'Codex rejected the account credential; no reset credit was spent. Reconnect the account.', reload: false }
+  if (status === 400 && body?.error?.code === 'confirmation_required') return { tone: 'error', text: 'The reset was not confirmed; nothing was spent.', reload: false }
+  if (status >= 400 && status < 500) return { tone: 'error', text: `Codex refused the reset (HTTP ${status}); nothing was spent.`, reload: false }
+  return { tone: 'error', text: body?.error?.message || `The reset could not be requested (HTTP ${status}).`, reload: false }
+}

@@ -149,6 +149,8 @@ type Handler struct {
 	proxyStore      *proxy.Store
 	proxyClients    *transport.PooledClients
 	proxyTestTarget string
+	// quotaJobs tracks the operator's quota refresh (#226).
+	quotaJobs quotaRefreshJobs
 	// saverClient is the guarded client for Headroom/PXPIPE health probes.
 	saverClient *http.Client
 	// oauth holds pending sign-in attempts bound to admin sessions.
@@ -283,6 +285,7 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/v1/usage/hourly", h.requireSession(h.handleUsageHourly))
 	mux.HandleFunc("GET /admin/v1/usage/requests/{requestId}", h.requireSession(h.handleUsageRequest))
 	mux.HandleFunc("POST /admin/v1/quota/refresh", h.requireSession(h.handleQuotaRefresh))
+	mux.HandleFunc("GET /admin/v1/quota/refresh", h.requireSession(h.handleQuotaRefreshStatus))
 	mux.HandleFunc("GET /admin/v1/quota/{id}/codex-reset-credits", h.requireSession(h.handleCodexResetCredits))
 	mux.HandleFunc("POST /admin/v1/quota/{id}/codex-reset-credits", h.requireSession(h.handleCodexResetCredits))
 	mux.Handle("GET /admin/v1/events", h.requireSessionHandler(http.HandlerFunc(h.handleEvents)))
