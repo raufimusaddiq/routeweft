@@ -3550,6 +3550,944 @@
           }
         ]
       },
+      "status-code-empty-msg": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 2013,
+                "status_msg": ""
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. Upstream quota API error"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-no-msg": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 2013
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. Upstream quota API error"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-padded-msg": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 2013,
+                "status_msg": "  invalid params  "
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. invalid params"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-js-trim": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 2013,
+                "status_msg": "　﻿bad  "
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. bad"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-camel-msg": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "baseResp": {
+                "statusCode": 2013,
+                "statusMsg": "camel msg"
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. camel msg"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-null-snake-msg": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 2013,
+                "status_msg": null,
+                "statusMsg": "camel fallback"
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. camel fallback"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-numeric-msg": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": "2013",
+                "status_msg": 42
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. 42"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-object-msg": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 2013,
+                "status_msg": {
+                  "a": 1
+                }
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. [object Object]"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-with-quota": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 2013,
+                "status_msg": "partial"
+              },
+              "model_remains": [
+                {
+                  "model_name": "speech-02-hd",
+                  "current_interval_total_count": 100,
+                  "current_interval_usage_count": 30,
+                  "end_time": "2026-10-21T00:00:00Z",
+                  "current_weekly_total_count": 1000,
+                  "current_weekly_usage_count": 900,
+                  "weekly_remains_time": "7200000"
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. partial"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-true": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": true
+              },
+              "model_remains": [
+                {
+                  "model_name": "speech-02-hd",
+                  "current_interval_total_count": 100,
+                  "current_interval_usage_count": 30,
+                  "end_time": "2026-10-21T00:00:00Z",
+                  "current_weekly_total_count": 1000,
+                  "current_weekly_usage_count": 900,
+                  "weekly_remains_time": "7200000"
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. Upstream quota API error"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-nan": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": "abc",
+                "status_msg": "weird"
+              },
+              "model_remains": [
+                {
+                  "model_name": "speech-02-hd",
+                  "current_interval_total_count": 100,
+                  "current_interval_usage_count": 30,
+                  "end_time": "2026-10-21T00:00:00Z",
+                  "current_weekly_total_count": 1000,
+                  "current_weekly_usage_count": 900,
+                  "weekly_remains_time": "7200000"
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "quotas": {
+            "Speech 02 HD (5h)": {
+              "used": 30,
+              "total": 100,
+              "remaining": 70,
+              "remainingPercentage": 70,
+              "resetAt": "2026-10-21T00:00:00.000Z",
+              "unlimited": false
+            },
+            "Speech 02 HD (7d)": {
+              "used": 900,
+              "total": 1000,
+              "remaining": 100,
+              "remainingPercentage": 10,
+              "resetAt": "2026-10-20T14:00:00.000Z",
+              "unlimited": false
+            }
+          }
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-hex-1004": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": "0x3EC"
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax API key invalid or inactive. Use an active Token/Coding Plan key."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-on-500-fallback": {
+        "upstream": [
+          {
+            "status": 500,
+            "body": {
+              "base_resp": {
+                "status_code": 2013,
+                "status_msg": "busy"
+              }
+            }
+          },
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 0,
+                "status_msg": "success"
+              },
+              "model_remains": [
+                {
+                  "model_name": "speech-02-hd",
+                  "current_interval_total_count": 100,
+                  "current_interval_usage_count": 30,
+                  "end_time": "2026-10-21T00:00:00Z",
+                  "current_weekly_total_count": 1000,
+                  "current_weekly_usage_count": 900,
+                  "weekly_remains_time": "7200000"
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "quotas": {
+            "Speech 02 HD (5h)": {
+              "used": 70,
+              "total": 100,
+              "remaining": 30,
+              "remainingPercentage": 30,
+              "resetAt": "2026-10-21T00:00:00.000Z",
+              "unlimited": false
+            },
+            "Speech 02 HD (7d)": {
+              "used": 100,
+              "total": 1000,
+              "remaining": 900,
+              "remainingPercentage": 90,
+              "resetAt": "2026-10-20T14:00:00.000Z",
+              "unlimited": false
+            }
+          }
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          },
+          {
+            "url": "https://api.minimax.io/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-on-429": {
+        "upstream": [
+          {
+            "status": 429,
+            "body": {
+              "base_resp": {
+                "status_code": 1002,
+                "status_msg": "rate limit"
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. MiniMax usage endpoint error (429)"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-ok-msg-no-data": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 0,
+                "status_msg": "insufficient balance"
+              },
+              "model_remains": []
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. No quota data was returned."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-ok-no-models-key": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 0,
+                "status_msg": "success"
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. No quota data was returned."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-ok-msg-with-quota": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 0,
+                "status_msg": "quota low"
+              },
+              "model_remains": [
+                {
+                  "model_name": "speech-02-hd",
+                  "current_interval_total_count": 100,
+                  "current_interval_usage_count": 30,
+                  "end_time": "2026-10-21T00:00:00Z",
+                  "current_weekly_total_count": 1000,
+                  "current_weekly_usage_count": 900,
+                  "weekly_remains_time": "7200000"
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "quotas": {
+            "Speech 02 HD (5h)": {
+              "used": 30,
+              "total": 100,
+              "remaining": 70,
+              "remainingPercentage": 70,
+              "resetAt": "2026-10-21T00:00:00.000Z",
+              "unlimited": false
+            },
+            "Speech 02 HD (7d)": {
+              "used": 900,
+              "total": 1000,
+              "remaining": 100,
+              "remainingPercentage": 10,
+              "resetAt": "2026-10-20T14:00:00.000Z",
+              "unlimited": false
+            }
+          }
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-ok-msg-auth-word": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 0,
+                "status_msg": "Token Plan not active"
+              },
+              "model_remains": [
+                {
+                  "model_name": "speech-02-hd",
+                  "current_interval_total_count": 100,
+                  "current_interval_usage_count": 30,
+                  "end_time": "2026-10-21T00:00:00Z",
+                  "current_weekly_total_count": 1000,
+                  "current_weekly_usage_count": 900,
+                  "weekly_remains_time": "7200000"
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax API key invalid or inactive. Use an active Token/Coding Plan key."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-snake-empty-shadows-camel": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {},
+              "baseResp": {
+                "statusCode": 2013,
+                "statusMsg": "hidden"
+              },
+              "model_remains": [
+                {
+                  "model_name": "speech-02-hd",
+                  "current_interval_total_count": 100,
+                  "current_interval_usage_count": 30,
+                  "end_time": "2026-10-21T00:00:00Z",
+                  "current_weekly_total_count": 1000,
+                  "current_weekly_usage_count": 900,
+                  "weekly_remains_time": "7200000"
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "quotas": {
+            "Speech 02 HD (5h)": {
+              "used": 30,
+              "total": 100,
+              "remaining": 70,
+              "remainingPercentage": 70,
+              "resetAt": "2026-10-21T00:00:00.000Z",
+              "unlimited": false
+            },
+            "Speech 02 HD (7d)": {
+              "used": 900,
+              "total": 1000,
+              "remaining": 100,
+              "remainingPercentage": 10,
+              "resetAt": "2026-10-20T14:00:00.000Z",
+              "unlimited": false
+            }
+          }
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-snake-null-camel-error": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": null,
+              "baseResp": {
+                "statusCode": 2013,
+                "statusMsg": "camel err"
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. camel err"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-base-resp-falsy": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": false,
+              "baseResp": {
+                "statusCode": 2013
+              },
+              "model_remains": [
+                {
+                  "model_name": "speech-02-hd",
+                  "current_interval_total_count": 100,
+                  "current_interval_usage_count": 30,
+                  "end_time": "2026-10-21T00:00:00Z",
+                  "current_weekly_total_count": 1000,
+                  "current_weekly_usage_count": 900,
+                  "weekly_remains_time": "7200000"
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "quotas": {
+            "Speech 02 HD (5h)": {
+              "used": 30,
+              "total": 100,
+              "remaining": 70,
+              "remainingPercentage": 70,
+              "resetAt": "2026-10-21T00:00:00.000Z",
+              "unlimited": false
+            },
+            "Speech 02 HD (7d)": {
+              "used": 900,
+              "total": 1000,
+              "remaining": 100,
+              "remainingPercentage": 10,
+              "resetAt": "2026-10-20T14:00:00.000Z",
+              "unlimited": false
+            }
+          }
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "body-empty": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": ""
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. No quota data was returned."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "body-null": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": "null"
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. No quota data was returned."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "body-array": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": "[]"
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. No quota data was returned."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "body-html": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": "<html>maintenance</html>"
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. No quota data was returned."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "body-html-auth-word": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": "<html>Unauthorized</html>"
+          }
+        ],
+        "result": {
+          "message": "MiniMax API key invalid or inactive. Use an active Token/Coding Plan key."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "body-byte-order-mark": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": "﻿{\"base_resp\":{\"status_code\":0},\"model_remains\":[{\"model_name\":\"speech-02-hd\",\"current_interval_total_count\":100,\"current_interval_usage_count\":30,\"end_time\":\"2026-10-21T00:00:00Z\",\"current_weekly_total_count\":1000,\"current_weekly_usage_count\":900,\"weekly_remains_time\":\"7200000\"}]}"
+          }
+        ],
+        "result": {
+          "quotas": {
+            "Speech 02 HD (5h)": {
+              "used": 30,
+              "total": 100,
+              "remaining": 70,
+              "remainingPercentage": 70,
+              "resetAt": "2026-10-21T00:00:00.000Z",
+              "unlimited": false
+            },
+            "Speech 02 HD (7d)": {
+              "used": 900,
+              "total": 1000,
+              "remaining": 100,
+              "remainingPercentage": 10,
+              "resetAt": "2026-10-20T14:00:00.000Z",
+              "unlimited": false
+            }
+          }
+        },
+        "requests": [
+          {
+            "url": "https://www.minimax.io/v1/token_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
       "auth-text": {
         "upstream": [
           {
@@ -4831,6 +5769,944 @@
         ],
         "result": {
           "message": "MiniMax API key invalid or inactive. Use an active Token/Coding Plan key."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-empty-msg": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 2013,
+                "status_msg": ""
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. Upstream quota API error"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-no-msg": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 2013
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. Upstream quota API error"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-padded-msg": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 2013,
+                "status_msg": "  invalid params  "
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. invalid params"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-js-trim": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 2013,
+                "status_msg": "　﻿bad  "
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. bad"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-camel-msg": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "baseResp": {
+                "statusCode": 2013,
+                "statusMsg": "camel msg"
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. camel msg"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-null-snake-msg": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 2013,
+                "status_msg": null,
+                "statusMsg": "camel fallback"
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. camel fallback"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-numeric-msg": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": "2013",
+                "status_msg": 42
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. 42"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-object-msg": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 2013,
+                "status_msg": {
+                  "a": 1
+                }
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. [object Object]"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-with-quota": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 2013,
+                "status_msg": "partial"
+              },
+              "model_remains": [
+                {
+                  "model_name": "speech-02-hd",
+                  "current_interval_total_count": 100,
+                  "current_interval_usage_count": 30,
+                  "end_time": "2026-10-21T00:00:00Z",
+                  "current_weekly_total_count": 1000,
+                  "current_weekly_usage_count": 900,
+                  "weekly_remains_time": "7200000"
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. partial"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-true": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": true
+              },
+              "model_remains": [
+                {
+                  "model_name": "speech-02-hd",
+                  "current_interval_total_count": 100,
+                  "current_interval_usage_count": 30,
+                  "end_time": "2026-10-21T00:00:00Z",
+                  "current_weekly_total_count": 1000,
+                  "current_weekly_usage_count": 900,
+                  "weekly_remains_time": "7200000"
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. Upstream quota API error"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-nan": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": "abc",
+                "status_msg": "weird"
+              },
+              "model_remains": [
+                {
+                  "model_name": "speech-02-hd",
+                  "current_interval_total_count": 100,
+                  "current_interval_usage_count": 30,
+                  "end_time": "2026-10-21T00:00:00Z",
+                  "current_weekly_total_count": 1000,
+                  "current_weekly_usage_count": 900,
+                  "weekly_remains_time": "7200000"
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "quotas": {
+            "Speech 02 HD (5h)": {
+              "used": 70,
+              "total": 100,
+              "remaining": 30,
+              "remainingPercentage": 30,
+              "resetAt": "2026-10-21T00:00:00.000Z",
+              "unlimited": false
+            },
+            "Speech 02 HD (7d)": {
+              "used": 100,
+              "total": 1000,
+              "remaining": 900,
+              "remainingPercentage": 90,
+              "resetAt": "2026-10-20T14:00:00.000Z",
+              "unlimited": false
+            }
+          }
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-hex-1004": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": "0x3EC"
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax API key invalid or inactive. Use an active Token/Coding Plan key."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-on-500-fallback": {
+        "upstream": [
+          {
+            "status": 500,
+            "body": {
+              "base_resp": {
+                "status_code": 2013,
+                "status_msg": "busy"
+              }
+            }
+          },
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 0,
+                "status_msg": "success"
+              },
+              "model_remains": [
+                {
+                  "model_name": "speech-02-hd",
+                  "current_interval_total_count": 100,
+                  "current_interval_usage_count": 30,
+                  "end_time": "2026-10-21T00:00:00Z",
+                  "current_weekly_total_count": 1000,
+                  "current_weekly_usage_count": 900,
+                  "weekly_remains_time": "7200000"
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "quotas": {
+            "Speech 02 HD (5h)": {
+              "used": 70,
+              "total": 100,
+              "remaining": 30,
+              "remainingPercentage": 30,
+              "resetAt": "2026-10-21T00:00:00.000Z",
+              "unlimited": false
+            },
+            "Speech 02 HD (7d)": {
+              "used": 100,
+              "total": 1000,
+              "remaining": 900,
+              "remainingPercentage": 90,
+              "resetAt": "2026-10-20T14:00:00.000Z",
+              "unlimited": false
+            }
+          }
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          },
+          {
+            "url": "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-code-on-429": {
+        "upstream": [
+          {
+            "status": 429,
+            "body": {
+              "base_resp": {
+                "status_code": 1002,
+                "status_msg": "rate limit"
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. MiniMax usage endpoint error (429)"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-ok-msg-no-data": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 0,
+                "status_msg": "insufficient balance"
+              },
+              "model_remains": []
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. No quota data was returned."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-ok-no-models-key": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 0,
+                "status_msg": "success"
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. No quota data was returned."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-ok-msg-with-quota": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 0,
+                "status_msg": "quota low"
+              },
+              "model_remains": [
+                {
+                  "model_name": "speech-02-hd",
+                  "current_interval_total_count": 100,
+                  "current_interval_usage_count": 30,
+                  "end_time": "2026-10-21T00:00:00Z",
+                  "current_weekly_total_count": 1000,
+                  "current_weekly_usage_count": 900,
+                  "weekly_remains_time": "7200000"
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "quotas": {
+            "Speech 02 HD (5h)": {
+              "used": 70,
+              "total": 100,
+              "remaining": 30,
+              "remainingPercentage": 30,
+              "resetAt": "2026-10-21T00:00:00.000Z",
+              "unlimited": false
+            },
+            "Speech 02 HD (7d)": {
+              "used": 100,
+              "total": 1000,
+              "remaining": 900,
+              "remainingPercentage": 90,
+              "resetAt": "2026-10-20T14:00:00.000Z",
+              "unlimited": false
+            }
+          }
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-ok-msg-auth-word": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {
+                "status_code": 0,
+                "status_msg": "Token Plan not active"
+              },
+              "model_remains": [
+                {
+                  "model_name": "speech-02-hd",
+                  "current_interval_total_count": 100,
+                  "current_interval_usage_count": 30,
+                  "end_time": "2026-10-21T00:00:00Z",
+                  "current_weekly_total_count": 1000,
+                  "current_weekly_usage_count": 900,
+                  "weekly_remains_time": "7200000"
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax API key invalid or inactive. Use an active Token/Coding Plan key."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-snake-empty-shadows-camel": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": {},
+              "baseResp": {
+                "statusCode": 2013,
+                "statusMsg": "hidden"
+              },
+              "model_remains": [
+                {
+                  "model_name": "speech-02-hd",
+                  "current_interval_total_count": 100,
+                  "current_interval_usage_count": 30,
+                  "end_time": "2026-10-21T00:00:00Z",
+                  "current_weekly_total_count": 1000,
+                  "current_weekly_usage_count": 900,
+                  "weekly_remains_time": "7200000"
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "quotas": {
+            "Speech 02 HD (5h)": {
+              "used": 70,
+              "total": 100,
+              "remaining": 30,
+              "remainingPercentage": 30,
+              "resetAt": "2026-10-21T00:00:00.000Z",
+              "unlimited": false
+            },
+            "Speech 02 HD (7d)": {
+              "used": 100,
+              "total": 1000,
+              "remaining": 900,
+              "remainingPercentage": 90,
+              "resetAt": "2026-10-20T14:00:00.000Z",
+              "unlimited": false
+            }
+          }
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-snake-null-camel-error": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": null,
+              "baseResp": {
+                "statusCode": 2013,
+                "statusMsg": "camel err"
+              }
+            }
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. camel err"
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "status-base-resp-falsy": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": {
+              "base_resp": false,
+              "baseResp": {
+                "statusCode": 2013
+              },
+              "model_remains": [
+                {
+                  "model_name": "speech-02-hd",
+                  "current_interval_total_count": 100,
+                  "current_interval_usage_count": 30,
+                  "end_time": "2026-10-21T00:00:00Z",
+                  "current_weekly_total_count": 1000,
+                  "current_weekly_usage_count": 900,
+                  "weekly_remains_time": "7200000"
+                }
+              ]
+            }
+          }
+        ],
+        "result": {
+          "quotas": {
+            "Speech 02 HD (5h)": {
+              "used": 70,
+              "total": 100,
+              "remaining": 30,
+              "remainingPercentage": 30,
+              "resetAt": "2026-10-21T00:00:00.000Z",
+              "unlimited": false
+            },
+            "Speech 02 HD (7d)": {
+              "used": 100,
+              "total": 1000,
+              "remaining": 900,
+              "remainingPercentage": 90,
+              "resetAt": "2026-10-20T14:00:00.000Z",
+              "unlimited": false
+            }
+          }
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "body-empty": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": ""
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. No quota data was returned."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "body-null": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": "null"
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. No quota data was returned."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "body-array": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": "[]"
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. No quota data was returned."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "body-html": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": "<html>maintenance</html>"
+          }
+        ],
+        "result": {
+          "message": "MiniMax connected. No quota data was returned."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "body-html-auth-word": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": "<html>Unauthorized</html>"
+          }
+        ],
+        "result": {
+          "message": "MiniMax API key invalid or inactive. Use an active Token/Coding Plan key."
+        },
+        "requests": [
+          {
+            "url": "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer <token>",
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            "body": null
+          }
+        ]
+      },
+      "body-byte-order-mark": {
+        "upstream": [
+          {
+            "status": 200,
+            "body": "﻿{\"base_resp\":{\"status_code\":0},\"model_remains\":[{\"model_name\":\"speech-02-hd\",\"current_interval_total_count\":100,\"current_interval_usage_count\":30,\"end_time\":\"2026-10-21T00:00:00Z\",\"current_weekly_total_count\":1000,\"current_weekly_usage_count\":900,\"weekly_remains_time\":\"7200000\"}]}"
+          }
+        ],
+        "result": {
+          "quotas": {
+            "Speech 02 HD (5h)": {
+              "used": 70,
+              "total": 100,
+              "remaining": 30,
+              "remainingPercentage": 30,
+              "resetAt": "2026-10-21T00:00:00.000Z",
+              "unlimited": false
+            },
+            "Speech 02 HD (7d)": {
+              "used": 100,
+              "total": 1000,
+              "remaining": 900,
+              "remainingPercentage": 90,
+              "resetAt": "2026-10-20T14:00:00.000Z",
+              "unlimited": false
+            }
+          }
         },
         "requests": [
           {

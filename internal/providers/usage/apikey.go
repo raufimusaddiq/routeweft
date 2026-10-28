@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -197,9 +198,10 @@ var miniMaxAuthLike = regexp.MustCompile(`(?i)token plan|coding plan|invalid api
 // minimax mirrors open-sse/services/usage/minimax.js:133-234. The next endpoint
 // is tried only after a 404, a 405, a 5xx or a failed request (minimax.js:173,
 // 227-229); an auth answer (401, 403, status 1004 or auth wording anywhere in
-// the answer), any other HTTP error, an upstream status, a body that is not
-// JSON and an answer without quota all end the read. Both the snake_case and
-// the camelCase envelopes are read, snake first (`??`).
+// the answer), any other HTTP error, an upstream status and an answer without
+// quota all end the read. A body that is empty or not JSON is read as {}
+// (minimax.js:155-159), so a 200 carrying one is the pin's no-quota notice.
+// Both the snake_case and the camelCase envelopes are read, snake first (`??`).
 func (r apiKeyReader) minimax(ctx context.Context, key string) (quota.State, error) {
 	endpoints := miniMaxEndpoints[r.Name]
 	headers := map[string]string{
@@ -218,16 +220,16 @@ func (r apiKeyReader) minimax(ctx context.Context, key string) (quota.State, err
 			}
 			continue
 		}
-		payload := json.RawMessage(reply.body)
-		valid := json.Valid(payload)
-		if !valid {
+		// response.text() drops a leading byte-order mark before JSON.parse.
+		payload := json.RawMessage(bytes.TrimPrefix(reply.body, []byte("\ufeff")))
+		if !json.Valid(payload) {
 			payload = nil
 		}
 		baseResp := shared.FirstNonNullish(shared.Field(payload, "base_resp"), shared.Field(payload, "baseResp"))
 		statusCode := shared.OrZero(shared.Number(shared.FirstNonNullish(shared.Field(baseResp, "status_code"), shared.Field(baseResp, "statusCode"))))
 		statusMsg := ""
 		if raw := shared.FirstNonNullish(shared.Field(baseResp, "status_msg"), shared.Field(baseResp, "statusMsg")); raw != nil {
-			statusMsg = strings.TrimSpace(shared.Template(raw))
+			statusMsg = shared.Trim(shared.Template(raw))
 		}
 		if reply.status == http.StatusUnauthorized || reply.status == http.StatusForbidden || statusCode == 1004 ||
 			miniMaxAuthLike.MatchString(statusMsg+" "+string(reply.body)) {
@@ -241,12 +243,11 @@ func (r apiKeyReader) minimax(ctx context.Context, key string) (quota.State, err
 			return failure("%v", lastErr)
 		}
 		if statusCode != 0 {
-			return failure("minimax quota error: %s", statusMsg)
-		}
-		if !valid {
-			// The pin reads such a body as {} and reports no quota; it is a
-			// failed read here, and like the pin it ends the read.
-			return failure("minimax usage response was not JSON")
+			// A failed read, worded as the pin's message (minimax.js:177-179).
+			if statusMsg == "" {
+				statusMsg = "Upstream quota API error"
+			}
+			return failure("MiniMax connected. %s", statusMsg)
 		}
 		state, err := parseMiniMax(payload, strings.Contains(endpoint, "/coding_plan/remains"), r.now())
 		if err != nil {
