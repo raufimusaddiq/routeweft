@@ -36,7 +36,8 @@ type pinStep struct {
 	Body    json.RawMessage `json:"body"`
 	Network string          `json:"network"`
 	// Base64 is a binary body (gRPC-web frames, #224).
-	Base64 *string `json:"base64"`
+	Base64  *string             `json:"base64"`
+	Headers map[string][]string `json:"headers"`
 }
 
 type pinRequest struct {
@@ -129,7 +130,13 @@ func (r *replay) Do(request *http.Request) (*http.Response, error) {
 			return nil, err
 		}
 	}
-	return &http.Response{StatusCode: step.Status, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(body))}, nil
+	header := http.Header{}
+	for name, values := range step.Headers {
+		for _, value := range values {
+			header.Add(name, value)
+		}
+	}
+	return &http.Response{StatusCode: step.Status, Header: header, Body: io.NopCloser(bytes.NewReader(body))}, nil
 }
 
 // wantRequests compares the requests with the pin's: the same URLs and methods
@@ -255,10 +262,14 @@ func sameFraction(got *float64, want float64) bool {
 	return got != nil && math.Abs(*got-want) < 1e-9
 }
 
-// noSecret proves neither the read model nor an error carries the token.
+// noSecret proves the read model encodes as JSON and that neither it nor an
+// error carries the token.
 func noSecret(t *testing.T, state quota.State, err error) {
 	t.Helper()
-	encoded, _ := json.Marshal(state)
+	encoded, encodeErr := json.Marshal(state)
+	if encodeErr != nil {
+		t.Fatalf("read model does not encode: %v", encodeErr)
+	}
 	if bytes.Contains(encoded, []byte(scopedToken)) || (err != nil && strings.Contains(err.Error(), scopedToken)) {
 		t.Fatalf("token exposed: state=%s err=%v", encoded, err)
 	}

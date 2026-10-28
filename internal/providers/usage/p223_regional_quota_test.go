@@ -69,6 +69,20 @@ func loadRegionalPin(t *testing.T) regionalRecord {
 type regionalQuota struct {
 	pinQuota
 	Recurring *bool `json:"recurring"`
+	// ResetAt is the reset as the pin returned it: an ISO string from
+	// parseResetTime, or a value a reader passes through raw (Kenari).
+	ResetAt json.RawMessage `json:"resetAt"`
+}
+
+// reset is the pin's reset as its page reads it, `new Date(resetAt)`.
+func (q regionalQuota) reset(t *testing.T) *time.Time {
+	t.Helper()
+	if text, ok := stringValue(q.ResetAt); ok {
+		if _, err := time.Parse(time.RFC3339Nano, text); err == nil {
+			return pinTime(t, &text)
+		}
+	}
+	return shared.Date(q.ResetAt)
 }
 
 // orderedQuotas returns the pin's quota keys in the order the pin's object
@@ -124,8 +138,18 @@ func runRegional(t *testing.T, record regionalRecord, provider string, test regi
 	state, err := readers[provider].Usage(context.Background(), credential)
 	noSecret(t, state, err)
 	wantRegionalRequests(t, stub.requests, test.Requests, expect.identity)
+	wantRegionalState(t, record.Now, state, err, test, expect, name)
+}
+
+// wantRegionalState compares one read with the pin's answer to it.
+func wantRegionalState(t *testing.T, now time.Time, state quota.State, err error, test regionalCase, expect regionalExpect, name string) {
+	t.Helper()
 	if test.Error != "" {
-		t.Fatalf("the pin threw %q; its readers catch every failure", test.Error)
+		// The pin threw past its own catch; the read fails.
+		if err == nil {
+			t.Fatalf("the pin threw %q; Routeweft read %+v", test.Error, state)
+		}
+		return
 	}
 	var pin pinResult
 	if err := json.Unmarshal(test.Result, &pin); err != nil {
@@ -148,8 +172,8 @@ func runRegional(t *testing.T, record regionalRecord, provider string, test regi
 		if err != nil || state.Message != notice || len(state.Windows) != 0 || state.Plan != wantPlan {
 			t.Fatalf("notice=%q plan=%q windows=%v err=%v; pin %q plan %q", state.Message, state.Plan, state.Windows, err, pin.Message, wantPlan)
 		}
-		if state.DeriveStatus(record.Now) != quota.StatusUnknown {
-			t.Fatalf("a notice derived %s", state.DeriveStatus(record.Now))
+		if state.DeriveStatus(now) != quota.StatusUnknown {
+			t.Fatalf("a notice derived %s", state.DeriveStatus(now))
 		}
 		return
 	}
@@ -176,20 +200,19 @@ func runRegional(t *testing.T, record regionalRecord, provider string, test regi
 	}
 	for _, window := range state.Windows {
 		want := quotas[window.Name]
-		if window.Unlimited || shared.Truthy(want.Unlimited) || !sameTime(window.ResetAt, pinTime(t, want.ResetAt)) {
+		if window.Unlimited != shared.Truthy(want.Unlimited) || !sameTime(window.ResetAt, want.reset(t)) {
 			t.Fatalf("%s=%+v, pin %+v", window.Name, window, want)
 		}
-		if percent, ok := shared.FiniteNumber(want.RemainingPercentage); ok {
-			if !sameFraction(window.Remaining, math.Max(0, math.Min(100, percent))/100) {
-				t.Fatalf("%s remaining=%v, pin %v%%", window.Name, window.Remaining, percent)
-			}
+		percent, ok := shared.FiniteNumber(want.RemainingPercentage)
+		if ok && !window.Unlimited && !sameFraction(window.Remaining, math.Max(0, math.Min(100, percent))/100) {
+			t.Fatalf("%s remaining=%v, pin %v%%", window.Name, window.Remaining, percent)
 		}
 		if expect.window != nil {
 			expect.window(t, window.Name, window, want)
 		}
 	}
 	if want, ok := expect.statuses[name]; ok {
-		if status := state.DeriveStatus(record.Now); status != want {
+		if status := state.DeriveStatus(now); status != want {
 			t.Fatalf("status=%s, want %s", status, want)
 		}
 	}

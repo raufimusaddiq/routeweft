@@ -63,12 +63,14 @@ type Window struct {
 }
 
 // Count is an absolute allowance. Amounts are in the provider's unit, named in
-// Unit where the provider names it (Qoder "credits").
+// Unit where the provider names it (Qoder "credits"); when the amounts are
+// money, Currency names it instead (Kenari IDR, Vercel AI Gateway USD).
 type Count struct {
 	Used      *float64 `json:"used,omitempty"`
 	Total     *float64 `json:"total,omitempty"`
 	Remaining *float64 `json:"remaining,omitempty"`
 	Unit      string   `json:"unit,omitempty"`
+	Currency  string   `json:"currency,omitempty"`
 }
 
 // Scope is a provider-reported window scope.

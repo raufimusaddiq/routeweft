@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -106,14 +107,71 @@ func FiniteNumber(raw json.RawMessage) (float64, bool) {
 		return value, true
 	}
 	var text string
-	if json.Unmarshal(bytes.TrimSpace(raw), &text) != nil || strings.TrimSpace(text) == "" {
+	if json.Unmarshal(bytes.TrimSpace(raw), &text) != nil || Trim(text) == "" {
 		return 0, false
 	}
-	value, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
-	if err != nil || math.IsInf(value, 0) || math.IsNaN(value) {
+	// Number(value) on the string, so "0x10" is 16 and "1_000" is not a number.
+	value := stringNumber(text)
+	if math.IsInf(value, 0) || math.IsNaN(value) {
 		return 0, false
 	}
 	return value, true
+}
+
+// Entry is one [key, value] pair of Object.entries.
+type Entry struct {
+	Key   string
+	Value json.RawMessage
+}
+
+// Entries is Object.entries on a JSON object, in JavaScript's property order:
+// keys that are array indices first, ascending, then the other keys in the
+// order they were sent. A repeated key keeps its first place and its last
+// value, as JSON.parse leaves it. Anything but an object has no entries.
+func Entries(raw json.RawMessage) []Entry {
+	text := bytes.TrimSpace(raw)
+	if len(text) == 0 || text[0] != '{' {
+		return nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(text))
+	if _, err := decoder.Token(); err != nil {
+		return nil
+	}
+	var entries []Entry
+	place := map[string]int{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil
+		}
+		key, _ := token.(string)
+		var value json.RawMessage
+		if decoder.Decode(&value) != nil {
+			return nil
+		}
+		if at, ok := place[key]; ok {
+			entries[at].Value = value
+			continue
+		}
+		place[key] = len(entries)
+		entries = append(entries, Entry{Key: key, Value: value})
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		a, aIndex := arrayIndex(entries[i].Key)
+		b, bIndex := arrayIndex(entries[j].Key)
+		return aIndex && (!bIndex || a < b)
+	})
+	return entries
+}
+
+// arrayIndex reports a key that is an array index (ECMA-262 6.1.7): the
+// canonical decimal spelling of an integer below 2^32 − 1.
+func arrayIndex(key string) (uint64, bool) {
+	if key == "" || len(key) > 1 && key[0] == '0' || !isDigits(key) {
+		return 0, false
+	}
+	value, err := strconv.ParseUint(key, 10, 64)
+	return value, err == nil && value < 1<<32-1
 }
 
 // String is `String(value)` for the scalar values a provider label carries: a
@@ -179,7 +237,7 @@ func Number(raw json.RawMessage) float64 {
 
 // stringNumber is ECMA-262 StringToNumber for the literals providers send.
 func stringNumber(text string) float64 {
-	text = strings.TrimSpace(text)
+	text = Trim(text)
 	switch text {
 	case "":
 		return 0
@@ -323,6 +381,29 @@ func resetTime(raw json.RawMessage, digitStrings bool) *time.Time {
 			return nil
 		}
 		return unixStamp(value)
+	}
+	return parseDate(text)
+}
+
+// Date is `new Date(value)` on a truthy value (`value || null`), as a page
+// reads a reset the reference passes through raw (Kenari): a number is
+// milliseconds, a string is a date. Anything else, or a date JavaScript cannot
+// hold, is no reset.
+func Date(raw json.RawMessage) *time.Time {
+	if !Truthy(raw) {
+		return nil
+	}
+	if value, ok := IsNumber(raw); ok {
+		value = math.Trunc(value)
+		if math.Abs(value) > jsMaxTime {
+			return nil
+		}
+		stamp := time.UnixMilli(int64(value)).UTC()
+		return &stamp
+	}
+	var text string
+	if json.Unmarshal(bytes.TrimSpace(raw), &text) != nil {
+		return nil
 	}
 	return parseDate(text)
 }

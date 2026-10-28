@@ -123,9 +123,10 @@ func TestGrokRESTPaidFreeAndMonthlyShapes(t *testing.T) {
 	}
 }
 
-// A window whose amounts are absent or null is unknown, not exhausted: an
-// exhausted status skips the account in routing.
-func TestKenariAbsentAmountsAreUnknownNotExhausted(t *testing.T) {
+// A window whose amounts are absent or null reads them as 0, as the pin's
+// toFiniteNumber does (kenari.js:39-44): 0% remaining, so the account is
+// exhausted until the reset. The owner chose the pin's reading for #225.
+func TestKenariAbsentAmountsAreZeroLikeThePin(t *testing.T) {
 	for name, body := range map[string]string{
 		"absent": `{"plan":{"name":"P","windows":{"week":{"resets_at":"2026-10-25T00:00:00Z"}}}}`,
 		"null":   `{"plan":{"name":"P","windows":{"week":{"used_rp":null,"remaining_rp":null,"resets_at":"2026-10-25T00:00:00Z"}}}}`,
@@ -139,11 +140,11 @@ func TestKenariAbsentAmountsAreUnknownNotExhausted(t *testing.T) {
 			if len(state.Windows) != 1 {
 				t.Fatalf("windows=%+v", state.Windows)
 			}
-			if w := state.Windows[0]; w.Remaining != nil {
-				t.Fatalf("absent amount read as bound %v", *w.Remaining)
+			if w := state.Windows[0]; w.Remaining == nil || *w.Remaining != 0 || w.Count == nil || w.Count.Remaining == nil || *w.Count.Remaining != 0 {
+				t.Fatalf("absent amount window=%+v", w)
 			}
-			if got := state.DeriveStatus(time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)); got == quota.StatusExhausted {
-				t.Fatalf("status=%s would skip the account", got)
+			if got := state.DeriveStatus(time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)); got != quota.StatusExhausted {
+				t.Fatalf("status=%s, the pin shows 0%%", got)
 			}
 		})
 	}
