@@ -2368,6 +2368,19 @@ description with `unit` and `number` as the JSON values sent (GLM). Kimi windows
 counted MiniMax buckets and CodeBuddy packs carry `count`; a percent-only
 MiniMax bucket does not, and a zero CodeBuddy capacity has no `remaining`
 fraction and is neither unlimited nor exhausted.
+Billing amounts (#225): a `count` may also carry `currency`, the ISO code when
+its amounts are money: Kenari windows in `IDR`, and Vercel AI Gateway's
+`Used (USD)` (unlimited, the amount spent) and `Remaining (USD)` (the balance
+against the reference's $5 allocation). Command Code windows carry `count`;
+its credits without a known plan cap are unlimited, as in the reference.
+Answers without quota are notices for Kenari (no plan or no windows), OpenCode
+Go (no quota, or no subscription), Ollama (no limits), Vercel AI Gateway (BYOK
+or unfunded) and a Xiaomi MiMo key that cannot read the weekly quota. A MiMo
+account session is kept for 30 minutes per account credential, in memory.
+A Kenari amount the provider omits is read as 0, as in the reference, so a
+window with neither amount is 0% remaining. Quota readers never read a host
+browser or desktop cookie store or other host secret; MiMo's account path uses
+only the account fields imported into the sealed connection.
 A window a reader served from its own cache carries `observedAt`, the time it
 was read upstream, and the UI labels it "cached, read <time>"; a window without
 `observedAt` is as fresh as `windowsObservedAt`. Only the Antigravity weekly

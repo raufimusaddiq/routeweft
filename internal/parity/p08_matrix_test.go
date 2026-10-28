@@ -230,7 +230,7 @@ func quotaCell(spec registry.Spec) cell {
 		"codebuddy-intl":    {kindP, ref("providers/usage:TestRegionalReadersUseTheirOwnHost", "providers/wire:TestCodeBuddyIntlMessages"), "U/codebuddy-cn.js:46-145; International host"},
 		"deepseek":          {kindP, ref("providers/usage:TestDeepSeekPinnedBalanceKeepsCurrenciesApart", "providers/usage:TestDeepSeekBothZeroIsZeroNotUnlimited", "providers/usage:TestDeepSeekUnobservedAmountsStayDistinct", "providers/usage:TestDeepSeekUpstreamFailuresAreErrors"), "U/deepseek.js:11-108. One credit window per currency (#212): zero is zero, never unlimited; missing, malformed and negative amounts and an unreported is_available stay distinct; balances carry no remaining fraction, so they do not change routing"},
 		"groq":              {kindP, ref("providers/usage:TestGroqPinnedHeadersBuildRequestAndTokenWindows", "providers/usage:TestGroqAbsentHeadersAreNotReported", "providers/usage:TestGroqMalformedHeadersNeverInventQuota", "providers/usage:TestGroqUpstreamErrorsAreExplicit"), "U/groq.js:44-129; x-ratelimit-* headers on GET /models become Requests and Tokens windows (#211). Absent buckets are an error, not an empty plan; a malformed bucket is unbounded beside a valid one"},
-		"kenari":            {kindP, ref("providers/usage:TestKenariPinnedZeroCapacity", "providers/usage:TestKenariAbsentAmountsAreUnknownNotExhausted"), "U/kenari.js:9-51"},
+		"kenari":            {kindP, ref("providers/usage:TestKenariPinnedZeroCapacity", "providers/usage:TestKenariAbsentAmountsAreZeroLikeThePin"), "U/kenari.js:9-51"},
 		"opencode-go":       {kindP, ref("providers/usage:TestOpenCodeGoUsageUsedPercentAndAbsentPeriods", "providers/usage:TestOpenCodeGoUsageFailuresAreErrorsNotHealthyAccounts"), "U/opencode-go.js:11-100"},
 		"commandcode":       {kindP, ref("providers/usage:TestCommandCodeUsageCarriesOrgAndPlanCap", "providers/usage:TestCommandCodeUsageAuthAndBillingFailuresAreErrors"), "U/commandcode.js:60-135; the pin omits an empty window, Routeweft reports it unlimited"},
 		"vercel-ai-gateway": {kindP, ref("providers/usage:TestVercelBalanceIsNotAUsagePercentage"), "misc.js:150-200"},
@@ -251,7 +251,7 @@ func quotaCell(spec registry.Spec) cell {
 func unavailableCell(spec registry.Spec) cell {
 	id := spec.ID
 	quotaP := map[string]cell{
-		"kenari":            {kindP, ref("providers/usage:TestKenariPinnedZeroCapacity"), "zero capacity is exhausted; absent amounts are unknown (U/kenari.js)"},
+		"kenari":            {kindP, ref("providers/usage:TestKenariPinnedZeroCapacity", "providers/usage:TestKenariAbsentAmountsAreZeroLikeThePin"), "zero capacity and absent amounts are 0%, exhausted, as in the pin (U/kenari.js:39-44)"},
 		"opencode-go":       {kindP, ref("providers/usage:TestOpenCodeGoUsageUsedPercentAndAbsentPeriods", "providers/usage:TestOpenCodeGoUsageFailuresAreErrorsNotHealthyAccounts"), "100% used reads as nothing left; a 403 EntitlementError is a subscription hint (opencode-go.js:54-76)"},
 		"ollama":            {kindP, ref("providers/usage:TestOllamaUsageRatioIsUsedFractionAndNullWindowsAreSkipped"), "usage 1.0 reads as nothing left; a null window is skipped"},
 		"commandcode":       {kindP, ref("providers/usage:TestCommandCodeUsageCarriesOrgAndPlanCap", "providers/wire:TestParseCommandCodeError"), "cap reached reads as nothing left"},

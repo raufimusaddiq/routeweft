@@ -60,6 +60,13 @@ usage page's `parseQuotaData`, with a scripted network and clock, over zero, emp
 fallback, gRPC-frame, PAT-exchange, auth, error, timeout and invalid-JSON answers, and writes
 `internal/providers/usage/testdata/account_quota_pin.json` (PARITY 6.30). It needs `ORACLE_DIR`.
 
+`compat/parity/generate-billing-quota.mjs` evaluates the pinned `open-sse/services/usage/{shared,commandcode,kenari,
+opencode-go,misc,xiaomi-mimo}.js` and `open-sse/shared/mimoAccount.js` with a scripted network, clock and file system
+(endpoint URLs from the pinned registry entries; MiMo Desktop's cookie store is never read), over zero, empty, expired,
+multiple-window, alias, order, auth, error, timeout and invalid-JSON answers, MiMo's account and key paths and its
+session reads in sequence, and writes `internal/providers/usage/testdata/billing_quota_pin.json` (PARITY 6.31). It
+needs `ORACLE_DIR`.
+
 CI runs this as the `parity` PR job, alongside existing Go/UI/container jobs.
 No test may update golden files from its actual output or turn a missing oracle
 into a passing dedicated gate. Ordinary unit tests remain usable without v1.
