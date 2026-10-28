@@ -2178,8 +2178,8 @@ the last test, error and model count:
   with the time and the listed model count, or `failed` with the error and the
   time, keeping the last confirmed model count: a failed probe's listing is not
   a count of usable models. A pass that listed no models (a provider with no
-  listing, or a failed listing after which the check ran on the supplied
-  model) also keeps the last confirmed count rather than recording 0. A canceled
+  listing, an empty listing, or a failed listing after which the check ran on
+  the supplied model) also keeps the last confirmed count rather than recording 0. A canceled
   test and a disabled connection record nothing. A result is recorded only
   against the `credential_revision` read with the credential it tested. Only a
   replacement increments it: a manual relink, or a save whose credential

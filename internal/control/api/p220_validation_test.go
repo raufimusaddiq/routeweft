@@ -17,6 +17,7 @@ import (
 	controlevents "github.com/raufimusaddiq/routeweft/internal/control/events"
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/quota"
+	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
 // #220: a connection's validation lifecycle is persisted apart from its sealed
@@ -799,15 +800,20 @@ func TestSameKeyRelinkResetsTheResult(t *testing.T) {
 	}
 }
 
-// A passing check that listed no models (the listing failed, so it ran on the
-// model the operator supplied) keeps the confirmed count instead of recording 0.
+// A passing check that listed no models keeps the confirmed count instead of
+// recording 0: the listing failed, so it ran on the model the operator
+// supplied, or the provider answered an empty listing.
 func TestUnlistedPassKeepsTheConfirmedModelCount(t *testing.T) {
-	var unlisted atomic.Bool
+	var listing atomic.Int32 // 0 lists three models, 1 fails, 2 lists none
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		if r.URL.Path == "/models" {
-			if unlisted.Load() {
+			switch listing.Load() {
+			case 1:
 				w.WriteHeader(http.StatusNotFound)
+				return
+			case 2:
+				_, _ = io.WriteString(w, `{"data":[]}`)
 				return
 			}
 			_, _ = io.WriteString(w, `{"data":[{"id":"relink-a"},{"id":"relink-b"},{"id":"relink-c"}]}`)
@@ -822,13 +828,36 @@ func TestUnlistedPassKeepsTheConfirmedModelCount(t *testing.T) {
 	if code := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"relink-a"}`).Code; code != http.StatusOK {
 		t.Fatalf("listed pass: %d", code)
 	}
-	unlisted.Store(true)
-	if code := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"relink-a"}`).Code; code != http.StatusOK {
-		t.Fatalf("unlisted pass: %d", code)
+	for _, mode := range []int32{1, 2} {
+		listing.Store(mode)
+		if code := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+c.ID+"/test", `{"modelId":"relink-a"}`).Code; code != http.StatusOK {
+			t.Fatalf("unlisted pass %d: %d", mode, code)
+		}
+		view := listedConnection(t, mux, cookie, c.ID)
+		if view.TestStatus != credentials.StatusActive || view.LastTestedAt == "" || view.ModelsAvailable == nil || *view.ModelsAvailable != 3 {
+			t.Fatalf("unlisted pass %d reported a count it did not list: %+v", mode, view)
+		}
 	}
-	view := listedConnection(t, mux, cookie, c.ID)
-	if view.TestStatus != credentials.StatusActive || view.LastTestedAt == "" || view.ModelsAvailable == nil || *view.ModelsAvailable != 3 {
-		t.Fatalf("unlisted pass reported a count it did not list: %+v", view)
+}
+
+// A provider with no model listing (Azure) is checked without one, and its
+// check is unlisted, so a pass keeps the confirmed count; a listing provider's
+// check is not.
+func TestUnlistableProviderCheckIsUnlisted(t *testing.T) {
+	h, calls := recordingHandler(t)
+	node, connection := builtinConnection("azure", routing.ProviderSettings{AzureEndpoint: "https://acme.openai.azure.com", Deployment: "d1", APIVersion: "2025-01-01"}, credentials.AuthAPIKey)
+	result := h.validateConnection(context.Background(), connection, node, "openai-chat", "model-x")
+	for _, call := range calls() {
+		if strings.Contains(call.URL, "/models") {
+			t.Fatalf("azure listed models: %s", call.URL)
+		}
+	}
+	if !result.unlisted || result.ModelsAvailable != 0 {
+		t.Fatalf("azure check: %+v unlisted=%v", result, result.unlisted)
+	}
+	node, connection = builtinConnection("kimi", routing.ProviderSettings{}, credentials.AuthAPIKey)
+	if result = h.validateConnection(context.Background(), connection, node, "openai-chat", "model-x"); result.unlisted || result.ModelsAvailable != 1 {
+		t.Fatalf("kimi check: %+v unlisted=%v", result, result.unlisted)
 	}
 }
 

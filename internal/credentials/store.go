@@ -351,7 +351,11 @@ models_available=CASE WHEN excluded.secret_blob IS NOT NULL AND (provider_connec
 updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
 	change := func(c *Configuration) error {
 		metadata := connection
-		metadata.Secret, metadata.Lifecycle = Secret{}, Lifecycle{}
+		// The runtime configuration carries metadata only: the credential, its
+		// lifecycle and its revision counter are store state, and a counter
+		// read with the row would differ from the configuration's (which never
+		// selects it) and republish the snapshot on a credential-only save.
+		metadata.Secret, metadata.Lifecycle, metadata.CredentialRevision = Secret{}, Lifecycle{}, 0
 		for i := range c.Connections {
 			if c.Connections[i].ID == connection.ID {
 				if blob == nil {
