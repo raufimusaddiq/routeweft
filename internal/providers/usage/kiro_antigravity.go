@@ -3,21 +3,36 @@ package usage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/quota"
 )
 
-// kiroReader mirrors open-sse/services/usage/kiro.js.
+// kiroReader mirrors getKiroUsage (open-sse/services/usage/kiro.js:51-188).
 //
-// Kiro exposes GetUsageLimits on three surfaces; the reference tries all three in
-// order because CodeWhisperer, the Q host and the AWS SSO session accept
-// different token kinds. API-key and external-idp connections need an extra
-// header or the quota call is rejected.
+// GetUsageLimits is tried on CodeWhisperer by GET, then by the AWS JSON POST,
+// then on the Q host; the first 2xx JSON answer wins. All three are us-east-1,
+// whatever the connection's region, as in the pin's registry entry
+// (providers/registry/kiro.js:37-41).
 type kiroReader struct{ Client }
+
+const (
+	kiroCodeWhisperer = "https://codewhisperer.us-east-1.amazonaws.com"
+	kiroQ             = "https://q.us-east-1.amazonaws.com"
+)
+
+// kiroDefaultProfileARNs are the public shared profiles the pin sends when an
+// account has none of its own, keyed by social sign-in (config/kiroConstants.js:30-42).
+var kiroDefaultProfileARNs = map[bool]string{
+	false: "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX",
+	true:  "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK",
+}
 
 func (r kiroReader) Usage(ctx context.Context, credential quota.Credential) (quota.State, error) {
 	if strings.TrimSpace(credential.AccessToken) == "" {
@@ -27,83 +42,68 @@ func (r kiroReader) Usage(ctx context.Context, credential quota.Credential) (quo
 	if authMethod == "" {
 		authMethod = "builder-id"
 	}
-	headers := map[string]string{
-		"Authorization": "Bearer " + credential.AccessToken,
-		"Accept":        "application/json",
-	}
+	social := authMethod == "google" || authMethod == "github"
+	auth := map[string]string{"Authorization": "Bearer " + credential.AccessToken}
 	switch authMethod {
 	case "api_key":
-		headers["tokentype"] = "API_KEY"
+		auth["tokentype"] = "API_KEY"
 	case "external_idp":
-		headers["TokenType"] = "EXTERNAL_IDP"
+		auth["TokenType"] = "EXTERNAL_IDP"
 	}
-	// An API-key connection must not receive the shared placeholder profileArn:
-	// CodeWhisperer rejects a profile the key does not own.
+	// An API key gets no shared placeholder: CodeWhisperer rejects a profile
+	// the key's account does not own.
 	profileARN := credential.ProviderData["profileArn"]
-	if profileARN != "" && !strings.Contains(profileARN, "?") {
-		headers["x-amz-user-agent"] = "aws-sdk-js/1.0.0 KiroIDE"
+	if profileARN == "" && authMethod != "api_key" {
+		profileARN = kiroDefaultProfileARNs[social]
 	}
-	region := credential.ProviderData["region"]
-	if region == "" {
-		region = "us-east-1"
+	body := `{"origin":"AI_EDITOR","resourceType":"AGENTIC_REQUEST"}`
+	qQuery := url.Values{"origin": {"AI_EDITOR"}, "resourceType": {"AGENTIC_REQUEST"}}
+	if profileARN != "" {
+		encoded, _ := json.Marshal(profileARN)
+		body = fmt.Sprintf(`{"origin":"AI_EDITOR","profileArn":%s,"resourceType":"AGENTIC_REQUEST"}`, encoded)
+		qQuery.Set("profileArn", profileARN)
 	}
-
-	query := "?isEmailRequired=true&origin=AI_EDITOR&resourceType=AGENTIC_REQUEST"
 	attempts := []struct {
-		method   string
-		endpoint string
-		headers  map[string]string
-		body     []byte
+		name, method, endpoint string
+		headers                map[string]string
+		body                   []byte
 	}{
-		{http.MethodGet, "https://codewhisperer.us-east-1.amazonaws.com/getUsageLimits" + query, headers, nil},
-		{http.MethodPost, "https://codewhisperer.us-east-1.amazonaws.com/", mergeHeaders(headers, map[string]string{
-			"Content-Type": "application/x-amz-json-1.0",
-			"x-amz-target": "AmazonCodeWhispererService.GetUsageLimits",
-		}), kiroBody(profileARN)},
-		{http.MethodGet, fmt.Sprintf("https://q.%s.amazonaws.com/getUsageLimits", region) + query, headers, nil},
+		{"codewhisperer-get", http.MethodGet, kiroCodeWhisperer + "/getUsageLimits?isEmailRequired=true&origin=AI_EDITOR&resourceType=AGENTIC_REQUEST",
+			mergeHeaders(auth, map[string]string{"Accept": "application/json", "x-amz-user-agent": "aws-sdk-js/1.0.0 KiroIDE",
+				"User-Agent": "aws-sdk-js/1.0.0 KiroIDE"}), nil},
+		{"codewhisperer-post", http.MethodPost, kiroCodeWhisperer, mergeHeaders(auth, map[string]string{"Accept": "application/json",
+			"Content-Type": "application/x-amz-json-1.0", "x-amz-target": "AmazonCodeWhispererService.GetUsageLimits"}), []byte(body)},
+		{"q-get", http.MethodGet, kiroQ + "/getUsageLimits?" + qQuery.Encode(), mergeHeaders(auth, map[string]string{"Accept": "application/json"}), nil},
 	}
 	sawAuthError := false
 	var lastErr error
 	for _, attempt := range attempts {
 		reply, err := r.call(ctx, attempt.method, attempt.endpoint, attempt.headers, attempt.body)
 		if err != nil {
-			lastErr = err
-			continue
-		}
-		if reply.status == http.StatusUnauthorized || reply.status == http.StatusForbidden {
-			sawAuthError = true
-			lastErr = fmt.Errorf("kiro quota returned HTTP %d", reply.status)
+			lastErr = fmt.Errorf("%s: %w", attempt.name, err)
 			continue
 		}
 		if reply.status < 200 || reply.status >= 300 {
-			lastErr = fmt.Errorf("kiro quota returned HTTP %d", reply.status)
+			sawAuthError = sawAuthError || reply.status == http.StatusUnauthorized || reply.status == http.StatusForbidden
+			lastErr = fmt.Errorf("%s: HTTP %d", attempt.name, reply.status)
 			continue
 		}
 		state, err := parseKiroQuota(reply.body, r.now())
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s: %w", attempt.name, err)
 			continue
 		}
 		return state, nil
 	}
-	if sawAuthError {
-		return failure("kiro quota API rejected the current %s credential", authMethod)
-	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("kiro quota API unavailable")
+	switch {
+	case sawAuthError && authMethod == "idc":
+		return failure("kiro quota API is unavailable for the current AWS IAM Identity Center session")
+	case sawAuthError && social:
+		return failure("kiro quota API authentication expired")
+	case sawAuthError:
+		return failure("kiro quota API rejected the current token")
 	}
 	return failure("kiro usage unavailable: %v", lastErr)
-}
-
-func kiroBody(profileARN string) []byte {
-	body := `{"origin":"AI_EDITOR","resourceType":"AGENTIC_REQUEST"}`
-	if profileARN != "" {
-		encoded, err := json.Marshal(profileARN)
-		if err == nil {
-			body = fmt.Sprintf(`{"origin":"AI_EDITOR","resourceType":"AGENTIC_REQUEST","profileArn":%s}`, encoded)
-		}
-	}
-	return []byte(body)
 }
 
 func mergeHeaders(base, extra map[string]string) map[string]string {
@@ -117,58 +117,72 @@ func mergeHeaders(base, extra map[string]string) map[string]string {
 	return merged
 }
 
-// parseKiroQuota normalizes usageBreakdownList. Free-trial credits are a
-// separate window because they expire on their own schedule.
+// parseKiroQuota is parseKiroQuotaData (kiro.js:12-49). A body the pin cannot
+// read (null, a non-array list, a null entry) fails this attempt, and the next
+// one is tried. A repeated resource type replaces the earlier window in place.
 func parseKiroQuota(payload []byte, now time.Time) (quota.State, error) {
-	var body struct {
-		NextDateReset any `json:"nextDateReset"`
-		ResetDate     any `json:"resetDate"`
-		Subscription  struct {
-			Title string `json:"subscriptionTitle"`
-		} `json:"subscriptionInfo"`
-		UsageBreakdown []struct {
-			ResourceType string          `json:"resourceType"`
-			Current      json.RawMessage `json:"currentUsageWithPrecision"`
-			Limit        json.RawMessage `json:"usageLimitWithPrecision"`
-			FreeTrial    *struct {
-				Current   json.RawMessage `json:"currentUsageWithPrecision"`
-				Limit     json.RawMessage `json:"usageLimitWithPrecision"`
-				ExpiresAt any             `json:"freeTrialExpiry"`
-			} `json:"freeTrialInfo"`
-		} `json:"usageBreakdownList"`
+	if !json.Valid(payload) || shared.Nullish(payload) {
+		return quota.State{}, errors.New("kiro usage response was not JSON")
 	}
-	if err := decode(payload, &body); err != nil {
-		return quota.State{}, err
+	list := shared.FirstTruthy(shared.Field(payload, "usageBreakdownList"))
+	entries, isArray := shared.Array(list)
+	if list != nil && !isArray {
+		return quota.State{}, errors.New("kiro usageBreakdownList is not a list")
 	}
-	if len(body.UsageBreakdown) == 0 {
-		return quota.State{}, fmt.Errorf("kiro usage response had no breakdown")
-	}
-	reset := resetAt(body.NextDateReset)
-	if reset == nil {
-		reset = resetAt(body.ResetDate)
-	}
+	reset := shared.ResetTime(shared.FirstTruthy(shared.Field(payload, "nextDateReset"), shared.Field(payload, "resetDate")))
 	var windows []quota.Window
-	for _, item := range body.UsageBreakdown {
-		resource := strings.ToLower(item.ResourceType)
-		if resource == "" {
-			resource = "unknown"
-		}
-		used, _ := number(item.Current)
-		total, _ := number(item.Limit)
-		windows = append(windows, window(resource, used, total, reset))
-		if item.FreeTrial != nil {
-			freeUsed, _ := number(item.FreeTrial.Current)
-			freeTotal, _ := number(item.FreeTrial.Limit)
-			freeReset := resetAt(item.FreeTrial.ExpiresAt)
-			if freeReset == nil {
-				freeReset = reset
+	put := func(window quota.Window) {
+		for i := range windows {
+			if windows[i].Name == window.Name {
+				windows[i] = window
+				return
 			}
-			windows = append(windows, window(resource+"_freetrial", freeUsed, freeTotal, freeReset))
+		}
+		windows = append(windows, window)
+	}
+	for _, entry := range entries {
+		if shared.Nullish(entry) {
+			return quota.State{}, errors.New("kiro usage entry is null")
+		}
+		resource := "unknown"
+		if raw := shared.Field(entry, "resourceType"); !shared.Nullish(raw) {
+			var text string
+			if json.Unmarshal(raw, &text) != nil {
+				return quota.State{}, errors.New("kiro resourceType is not a string")
+			}
+			if text != "" {
+				resource = strings.ToLower(text)
+			}
+		}
+		put(kiroWindow(resource, entry, reset))
+		// Free-trial credits expire on their own schedule.
+		if trial := shared.Field(entry, "freeTrialInfo"); shared.Truthy(trial) {
+			trialReset := reset
+			if expiry := shared.Field(trial, "freeTrialExpiry"); shared.Truthy(expiry) {
+				trialReset = shared.ResetTime(expiry)
+			}
+			put(kiroWindow(resource+"_freetrial", trial, trialReset))
 		}
 	}
-	plan := body.Subscription.Title
-	if plan == "" {
-		plan = "Kiro"
+	plan := "Kiro"
+	if title := shared.Field(shared.Field(payload, "subscriptionInfo"), "subscriptionTitle"); shared.Truthy(title) {
+		plan = shared.Template(title)
+	}
+	if len(windows) == 0 {
+		// The pin answers with the plan and an empty quota map.
+		return quota.State{Plan: plan, Message: "Kiro connected. No usage limits were returned.", ObservedAt: now}, nil
 	}
 	return quota.State{Plan: plan, Windows: windows, ObservedAt: now}, nil
+}
+
+// kiroWindow reads `currentUsageWithPrecision || 0` and
+// `usageLimitWithPrecision || 0` as numbers; the remaining amount is the pin's
+// total − used.
+func kiroWindow(name string, entry json.RawMessage, reset *time.Time) quota.Window {
+	amount := func(field string) float64 {
+		return finite(shared.Number(shared.Field(entry, field)))
+	}
+	used, total := amount("currentUsageWithPrecision"), amount("usageLimitWithPrecision")
+	remaining := total - used
+	return countWindow(name, used, total, &remaining, reset)
 }

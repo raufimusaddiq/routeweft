@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/quota"
 )
 
@@ -30,7 +31,7 @@ func Readers(client HTTPClient, now func() time.Time) (map[string]quota.UsageCli
 	for _, id := range []string{
 		"glm", "glm-cn", "minimax", "minimax-cn", "codebuddy-cn", "codebuddy-intl",
 		"deepseek", "groq", "kenari", "opencode-go", "commandcode", "kimi",
-		"vercel-ai-gateway", "ollama", "qoder", "xiaomi-mimo", "zed",
+		"vercel-ai-gateway", "ollama", "xiaomi-mimo", "zed",
 	} {
 		readers[id] = apiKeyReader{Client: shared, Name: id}
 	}
@@ -39,6 +40,7 @@ func Readers(client HTTPClient, now func() time.Time) (map[string]quota.UsageCli
 	readers["kiro"] = kiroReader{Client: shared}
 	readers["antigravity"] = antigravityReader{Client: shared, cache: newWeeklyCache()}
 	readers["grok-cli"] = grokCLIReader{Client: shared}
+	readers["qoder"] = qoderReader{Client: shared, tokens: &wire.QoderClient{HTTP: client, Now: now}}
 	return readers, nil
 }
 

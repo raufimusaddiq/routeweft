@@ -54,6 +54,12 @@ the pinned registry entries), over zero, empty, expired, multiple-window, alias,
 invalid-JSON answers for every region, and writes `internal/providers/usage/testdata/regional_quota_pin.json`
 (PARITY 6.29). It needs `ORACLE_DIR`.
 
+`compat/parity/generate-account-quota.mjs` evaluates the pinned `open-sse/services/usage/{shared,grok-cli,grokCliQuotaFrame,kiro,misc,zed}.js`,
+`shared/zedAuth.js`, the Qoder PAT exchange in `services/qoderModels.js` behind the dispatcher's qoder handler, and the
+usage page's `parseQuotaData`, with a scripted network and clock, over zero, empty, expired, multiple-window, alias,
+fallback, gRPC-frame, PAT-exchange, auth, error, timeout and invalid-JSON answers, and writes
+`internal/providers/usage/testdata/account_quota_pin.json` (PARITY 6.30). It needs `ORACLE_DIR`.
+
 CI runs this as the `parity` PR job, alongside existing Go/UI/container jobs.
 No test may update golden files from its actual output or turn a missing oracle
 into a passing dedicated gate. Ordinary unit tests remain usable without v1.

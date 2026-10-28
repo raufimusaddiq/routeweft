@@ -68,7 +68,9 @@ func TestGrokPinnedRESTCredits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(state.Windows) != 1 || state.Windows[0].Name != "On-demand" || *state.Windows[0].Remaining != .65 || state.Windows[0].ResetAt == nil {
+	// The prepaid balance is shown full with no reset, as the pin shows it (grok-cli.js:214-225).
+	if len(state.Windows) != 2 || state.Windows[0].Name != "On-demand" || *state.Windows[0].Remaining != .65 || state.Windows[0].ResetAt == nil ||
+		state.Windows[1].Name != "Prepaid" || *state.Windows[1].Remaining != 1 || state.Windows[1].ResetAt != nil || state.Plan != "Grok Code" {
 		t.Fatalf("state=%+v", state)
 	}
 	if strings.Join(requests, ",") != "https://cli-chat-proxy.grok.com/v1/billing?format=credits,https://cli-chat-proxy.grok.com/v1/user?include=subscription" {
@@ -85,13 +87,15 @@ func TestGrokRESTPaidFreeAndMonthlyShapes(t *testing.T) {
 		name, billing, profile string
 		wantName               string
 		remaining              float64
-		wantError              bool
+		// notice is the pin's answer when neither REST nor the gRPC weekly pool
+		// (here not a frame) reports a window; it is never a fabricated bound.
+		notice string
 	}{
-		{"monthly", `{"monthlyLimit":{"val":1000},"includedUsed":{"val":275},"totalUsed":{"val":300},"resetAt":"2026-08-01T00:00:00Z"}`, `{"subscription_tier":"premium_plus"}`, "Monthly included", .725, false},
-		{"weekly shared", `{"config":{"creditUsagePercent":99,"onDemandCap":{"val":0},"onDemandUsed":{"val":0},"productUsage":[{"usagePercent":97},{"usagePercent":2}]}}`, `{"subscriptionTier":"XPremiumPlus"}`, "Weekly SuperGrok", .01, false},
-		{"free zero", `{"config":{"onDemandCap":{"val":0},"onDemandUsed":{"val":0}}}`, `{"subscriptionTier":null}`, "On-demand", 0, false},
-		{"paid zero", `{"config":{"onDemandCap":{"val":0},"onDemandUsed":{"val":0}}}`, `{"subscriptionTier":"XPremiumPlus"}`, "", 0, true},
-		{"unknown", `{}`, `{}`, "", 0, true},
+		{"monthly", `{"monthlyLimit":{"val":1000},"includedUsed":{"val":275},"totalUsed":{"val":300},"resetAt":"2026-08-01T00:00:00Z"}`, `{"subscription_tier":"premium_plus"}`, "Monthly included", .725, ""},
+		{"weekly shared", `{"config":{"creditUsagePercent":99,"onDemandCap":{"val":0},"onDemandUsed":{"val":0},"productUsage":[{"usagePercent":97},{"usagePercent":2}]}}`, `{"subscriptionTier":"XPremiumPlus"}`, "Weekly SuperGrok", .01, ""},
+		{"free zero", `{"config":{"onDemandCap":{"val":0},"onDemandUsed":{"val":0}}}`, `{"subscriptionTier":null}`, "On-demand", 0, ""},
+		{"paid zero", `{"config":{"onDemandCap":{"val":0},"onDemandUsed":{"val":0}}}`, `{"subscriptionTier":"XPremiumPlus"}`, "", 0, "Subscription access is active; Grok does not expose a numeric included quota."},
+		{"unknown", `{}`, `{}`, "", 0, "Grok Build connected, but no credit allotment was returned. Free promo may be exhausted."},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			client := pingUsageClient(func(r *http.Request) (*http.Response, error) {
@@ -103,14 +107,14 @@ func TestGrokRESTPaidFreeAndMonthlyShapes(t *testing.T) {
 			})
 			readers, _ := Readers(client, nil)
 			state, err := readers["grok-cli"].Usage(context.Background(), quota.Credential{AccessToken: "fixture"})
-			if test.wantError {
-				if err == nil {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.notice != "" {
+				if len(state.Windows) != 0 || state.Message != test.notice || state.DeriveStatus(time.Now()) != quota.StatusUnknown {
 					t.Fatalf("fabricated bound: %+v", state)
 				}
 				return
-			}
-			if err != nil {
-				t.Fatal(err)
 			}
 			if len(state.Windows) != 1 || state.Windows[0].Name != test.wantName || *state.Windows[0].Remaining != test.remaining || state.Windows[0].Unlimited {
 				t.Fatalf("windows=%+v", state.Windows)

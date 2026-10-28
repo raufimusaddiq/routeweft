@@ -62,11 +62,13 @@ type Window struct {
 	Limit *Limit `json:"limit,omitempty"`
 }
 
-// Count is an absolute allowance. Amounts are in the provider's unit.
+// Count is an absolute allowance. Amounts are in the provider's unit, named in
+// Unit where the provider names it (Qoder "credits").
 type Count struct {
 	Used      *float64 `json:"used,omitempty"`
 	Total     *float64 `json:"total,omitempty"`
 	Remaining *float64 `json:"remaining,omitempty"`
+	Unit      string   `json:"unit,omitempty"`
 }
 
 // Scope is a provider-reported window scope.
@@ -158,8 +160,9 @@ func (c *Credit) clone() *Credit {
 // is_available); nil means not reported, which is neither available nor not.
 //
 // Message is a reader's fixed notice for an account the provider answered
-// without quota (unsupported or permission-gated quota); it is never upstream
-// text and never an error. Metadata holds provider-specific scalars the
+// without quota (unsupported or permission-gated quota), or a fixed note the
+// provider's answer implies beside its windows (Zed token billing, overdue
+// invoices); it is never upstream text and never an error. Metadata holds provider-specific scalars the
 // reference returns beside the windows (GitHub resetDate, Claude legacy
 // organization). ExtraUsage is Claude's extra_usage object as the provider
 // reported it (claude.js:131).

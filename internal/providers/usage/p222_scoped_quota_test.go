@@ -10,6 +10,7 @@ package usage
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,6 +35,8 @@ type pinStep struct {
 	Status  int             `json:"status"`
 	Body    json.RawMessage `json:"body"`
 	Network string          `json:"network"`
+	// Base64 is a binary body (gRPC-web frames, #224).
+	Base64 *string `json:"base64"`
 }
 
 type pinRequest struct {
@@ -119,6 +122,12 @@ func (r *replay) Do(request *http.Request) (*http.Response, error) {
 	var text string
 	if json.Unmarshal(step.Body, &text) == nil {
 		body = []byte(text)
+	}
+	if step.Base64 != nil {
+		var err error
+		if body, err = base64.StdEncoding.DecodeString(*step.Base64); err != nil {
+			return nil, err
+		}
 	}
 	return &http.Response{StatusCode: step.Status, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(body))}, nil
 }

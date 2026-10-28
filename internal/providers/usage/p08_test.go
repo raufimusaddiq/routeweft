@@ -160,28 +160,31 @@ func TestXiaomiMimoUsagePercentIsRemaining(t *testing.T) {
 	}
 }
 
-// open-sse/services/usage/zed.js:54-90: a limit is "unlimited" or a number;
-// the pin also reads {limited:N}, which this reader does not (see
-// docs/P08_TEST_MATRIX.md). The authorization header is "<user id> <token>".
+// open-sse/services/usage/zed.js:39-183: a limit is "unlimited", a number or
+// {limited:N}; the reset is the plan's subscription period. The authorization
+// header is "<user id> <token>". The full pin record is p224_account_quota_test.go.
 func TestZedUsageLimitedUnlimitedAndExhausted(t *testing.T) {
 	stub := &stubClient{status: http.StatusOK, body: `{"plan":{"plan_v3":"zed_pro","usage":{
 		"edit_predictions":{"limit":"unlimited","used":12},
-		"model_requests":{"limit":500,"used":500}}},
-		"subscription_period":{"ended_at":"2026-11-01T00:00:00Z"}}`}
+		"model_requests":{"limit":{"limited":500},"used":500}},
+		"subscription_period":{"ended_at":"2026-11-01T00:00:00Z"}}}`}
 	state, err := reader(t, "zed", stub).Usage(context.Background(), quota.Credential{AccessToken: "tok", ProviderData: map[string]string{"userId": "42"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	windows := byName(state)
-	if !windows["Edit predictions"].Unlimited {
-		t.Fatalf("unlimited edit predictions = %+v", windows["Edit predictions"])
+	if !windows["Edit Predictions"].Unlimited {
+		t.Fatalf("unlimited edit predictions = %+v", windows["Edit Predictions"])
 	}
-	wantRemaining(t, windows, "Model requests", 0)
+	wantRemaining(t, windows, "Hosted Model Requests", 0)
+	if reset := windows["Hosted Model Requests"].ResetAt; reset == nil || !reset.Equal(time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("reset %v", reset)
+	}
 	if stub.request.Header.Get("Authorization") != "42 tok" || stub.request.URL.String() != "https://cloud.zed.dev/client/users/me" {
 		t.Fatalf("request %s %v", stub.request.URL, stub.request.Header)
 	}
-	if state.Plan != "zed_pro" {
-		t.Fatalf("plan %q", state.Plan)
+	if state.Plan != "Zed Pro" || state.Metadata["planId"] != "zed_pro" {
+		t.Fatalf("plan %q metadata %v", state.Plan, state.Metadata)
 	}
 }
 
@@ -334,6 +337,9 @@ func TestQoderUsageUserAndOrganizationPools(t *testing.T) {
 	windows := byName(state)
 	wantRemaining(t, windows, "user", 0.6)
 	wantRemaining(t, windows, "organization", 0)
+	if windows["user"].DisplayName != "Personal" || windows["user"].Count.Unit != "credits" || *windows["user"].Count.Remaining != 60 {
+		t.Fatalf("user pool %+v %+v", windows["user"], windows["user"].Count)
+	}
 	reset := time.UnixMilli(1793000000000).UTC()
 	for name, window := range windows {
 		if window.ResetAt == nil || !window.ResetAt.Equal(reset) {

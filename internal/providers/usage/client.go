@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -178,6 +179,27 @@ func window(name string, used, total float64, reset *time.Time) quota.Window {
 		remaining = 1
 	}
 	return quota.Window{Name: name, Remaining: &remaining, ResetAt: reset}
+}
+
+// countWindow builds a window that keeps the provider's absolute amounts. Its
+// remaining fraction is (total − used) / total; a zero total has none, so it is
+// neither unlimited nor exhausted.
+func countWindow(name string, used, total float64, remaining *float64, reset *time.Time) quota.Window {
+	window := quota.Window{Name: name, ResetAt: reset, Count: &quota.Count{Used: &used, Total: &total, Remaining: remaining}}
+	if total > 0 {
+		left := math.Max(0, math.Min(1, (total-used)/total))
+		window.Remaining = &left
+	}
+	return window
+}
+
+// finite is JavaScript's `Number(x) || 0` with ±Infinity also read as 0: the
+// read model is JSON, which cannot carry either.
+func finite(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+	return value
 }
 
 // percentWindow builds one window from a remaining percentage.
