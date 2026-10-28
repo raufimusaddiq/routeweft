@@ -153,7 +153,9 @@ func TestGitHubPaidAndFreeShapes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(state.Windows) != 2 {
+	// The absent completions snapshot is unlimited, as the reference reports
+	// it (github.js:92).
+	if len(state.Windows) != 3 || state.Windows[1].Name != "completions" || !state.Windows[1].Unlimited {
 		t.Fatalf("paid windows=%+v", state.Windows)
 	}
 	if *state.Windows[0].Remaining != 0.4 {

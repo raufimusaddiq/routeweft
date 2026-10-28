@@ -346,7 +346,7 @@ func (c pinCase) stepBody(t *testing.T) json.RawMessage {
 
 func TestGitHubQuotaIsThePins(t *testing.T) {
 	record := loadScopedPin(t)
-	statuses := map[string]quota.Status{"zero": quota.StatusExhausted, "expired": quota.StatusAvailable, "empty-snapshots": quota.StatusUnknown,
+	statuses := map[string]quota.Status{"zero": quota.StatusExhausted, "expired": quota.StatusAvailable, "empty-snapshots": quota.StatusAvailable,
 		"zero-entitlement": quota.StatusAvailable, "multiple-window": quota.StatusAvailable, "unrecognized": quota.StatusUnknown,
 		// Two windows without a bound: not exhausted; the read model labels the
 		// account unknown because no remaining fraction is observed.
@@ -396,28 +396,13 @@ func TestGitHubQuotaIsThePins(t *testing.T) {
 				t.Fatalf("resetDate=%q, pin %q", state.Metadata["resetDate"], want)
 			}
 			quotas, windows := pin.quotas(), windowsByName(state)
-			snapshots := shared.Field(test.stepBody(t), "quota_snapshots")
 			for key, want := range quotas {
 				window, ok := windows[key]
-				// A snapshot the provider did not send is reported unlimited by
-				// the pin (github.js:92) and omitted by Routeweft.
-				if shared.Truthy(snapshots) && !shared.Truthy(shared.Field(snapshots, key)) {
-					if ok {
-						t.Fatalf("%s fabricated: %+v", key, window)
-					}
-					continue
-				}
 				if !ok {
 					t.Fatalf("missing %s; windows=%v", key, names(windows))
 				}
 				if window.Unlimited != shared.Truthy(want.Unlimited) || !sameTime(window.ResetAt, pinTime(t, want.ResetAt)) {
 					t.Fatalf("%s=%+v, pin %+v", key, window, want)
-				}
-				if window.Unlimited {
-					if window.Remaining != nil || window.Count != nil {
-						t.Fatalf("%s unlimited with amounts %+v", key, window)
-					}
-					continue
 				}
 				used, _ := shared.FiniteNumber(want.Used)
 				total, _ := shared.FiniteNumber(want.Total)
@@ -426,6 +411,14 @@ func TestGitHubQuotaIsThePins(t *testing.T) {
 				}
 				if remaining, ok := shared.FiniteNumber(want.Remaining); ok != (window.Count.Remaining != nil) || ok && *window.Count.Remaining != remaining {
 					t.Fatalf("%s remaining=%v, pin %s", key, window.Count.Remaining, want.Remaining)
+				}
+				// An unlimited window keeps its amounts (github.js:94-97) but has
+				// no remaining fraction: the flag, not the amounts, bounds it.
+				if window.Unlimited {
+					if window.Remaining != nil {
+						t.Fatalf("%s unlimited with fraction %v", key, *window.Remaining)
+					}
+					continue
 				}
 				// A zero allowance has no remaining fraction: it is neither
 				// unlimited (as Routeweft read it before #222) nor exhausted.

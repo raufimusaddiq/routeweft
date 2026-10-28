@@ -67,7 +67,6 @@ type UsageClient struct {
 type usageCacheEntry struct {
 	result    Usage
 	expiresAt time.Time
-	ready     chan struct{}
 }
 
 // Usage fetches normalized Claude usage. force bypasses cache but preserves
@@ -77,15 +76,7 @@ func (c *UsageClient) Usage(ctx context.Context, accessToken string, force bool)
 		return Usage{}, errors.New("claude access token is required")
 	}
 	if !force {
-		if cached, wait, ok := c.cached(accessToken); ok {
-			if wait != nil {
-				select {
-				case <-wait:
-					return c.cachedResult(accessToken)
-				case <-ctx.Done():
-					return Usage{}, ctx.Err()
-				}
-			}
+		if cached, ok := c.cached(accessToken); ok {
 			return cached, nil
 		}
 	}
@@ -111,35 +102,23 @@ func (c *UsageClient) Usage(ctx context.Context, accessToken string, force bool)
 // usage read and its legacy fallback returned no quota.
 var ErrUsageUnavailable = errors.New("claude usage unavailable; the last good read is kept")
 
+// hasResult reports a cached read that had windows. A legacy org-usage read is
+// cacheable but carries no windows, so there is nothing to keep on display and
+// a later soft failure reports its own notice instead.
 func (c *UsageClient) hasResult(token string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	entry, ok := c.cache[token]
-	return ok && entry.ready == nil
+	return ok && len(entry.result.Quotas) > 0
 }
 
-func (c *UsageClient) cached(token string) (Usage, <-chan struct{}, bool) {
+func (c *UsageClient) cached(token string) (Usage, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if entry, ok := c.cache[token]; ok {
-		if entry.ready != nil {
-			return Usage{}, entry.ready, true
-		}
-		if c.now().Before(entry.expiresAt) {
-			return entry.result, nil, true
-		}
+	if entry, ok := c.cache[token]; ok && c.now().Before(entry.expiresAt) {
+		return entry.result, true
 	}
-	return Usage{}, nil, false
-}
-
-func (c *UsageClient) cachedResult(token string) (Usage, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	entry, ok := c.cache[token]
-	if !ok || entry.ready != nil {
-		return Usage{}, errors.New("claude usage refresh failed")
-	}
-	return entry.result, nil
+	return Usage{}, false
 }
 
 func (c *UsageClient) store(token string, result Usage) {

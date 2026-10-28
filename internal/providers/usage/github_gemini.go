@@ -49,11 +49,7 @@ func (r githubReader) Usage(ctx context.Context, credential quota.Credential) (q
 		reset := shared.ResetTime(data["quota_reset_date"])
 		var windows []quota.Window
 		for _, name := range []string{"chat", "completions", "premium_interactions"} {
-			// The reference reports an absent snapshot as unlimited
-			// (github.js:92); nothing was reported, so it is omitted instead.
-			if snapshot := shared.Field(snapshots, name); shared.Truthy(snapshot) {
-				windows = append(windows, githubSnapshotWindow(name, snapshot, reset))
-			}
+			windows = append(windows, githubSnapshotWindow(name, shared.Field(snapshots, name), reset))
 		}
 		state := r.state(shared.String(data["copilot_plan"]), windows...)
 		state.Metadata = githubMetadata(data["quota_reset_date"])
@@ -79,11 +75,13 @@ func (r githubReader) Usage(ctx context.Context, credential quota.Credential) (q
 }
 
 // githubSnapshotWindow is formatGitHubQuotaSnapshot (github.js:91-99) with the
-// absolute amounts kept: used is entitlement - remaining. An unlimited snapshot
-// carries no amounts, since the provider reports placeholder zeros for it.
+// absolute amounts kept: used is entitlement - remaining. An absent snapshot is
+// unlimited with zero amounts (github.js:92); an unlimited snapshot keeps the
+// amounts the provider sent beside the flag (github.js:94-97).
 func githubSnapshotWindow(name string, snapshot json.RawMessage, reset *time.Time) quota.Window {
-	if shared.Truthy(shared.Field(snapshot, "unlimited")) {
-		return quota.Window{Name: name, Unlimited: true, ResetAt: reset}
+	if !shared.Truthy(snapshot) {
+		used, total := 0.0, 0.0
+		return quota.Window{Name: name, Unlimited: true, ResetAt: reset, Count: &quota.Count{Used: &used, Total: &total}}
 	}
 	var total, remaining, used *float64
 	if value, ok := shared.FiniteNumber(shared.Field(snapshot, "entitlement")); ok {
@@ -95,6 +93,9 @@ func githubSnapshotWindow(name string, snapshot json.RawMessage, reset *time.Tim
 	if total != nil && remaining != nil {
 		value := *total - *remaining
 		used = &value
+	}
+	if shared.Truthy(shared.Field(snapshot, "unlimited")) {
+		return quota.Window{Name: name, Unlimited: true, ResetAt: reset, Count: &quota.Count{Used: used, Total: total, Remaining: remaining}}
 	}
 	return githubCountWindow(name, used, total, remaining, reset)
 }
