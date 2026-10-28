@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
@@ -34,6 +35,10 @@ type Quota struct {
 	RemainingPercentage float64    `json:"remainingPercentage"`
 	ResetAt             *time.Time `json:"resetAt,omitempty"`
 	Unlimited           bool       `json:"unlimited"`
+	// ScopeKind and ScopeModel are a limits[] entry's kind and the model's
+	// display name as reported; the window name lowercases it (claude.js:120).
+	ScopeKind  string `json:"scopeKind,omitempty"`
+	ScopeModel string `json:"scopeModel,omitempty"`
 }
 
 // Usage is normalized Claude Code quota data. Legacy organization usage may
@@ -90,8 +95,27 @@ func (c *UsageClient) Usage(ctx context.Context, accessToken string, force bool)
 	}
 	if cacheable {
 		c.store(accessToken, result)
+		return result, nil
+	}
+	// The reference prefers the last good read over a soft failure
+	// (claude.js:49-50). Routeweft reports the failure instead, so the quota
+	// service keeps that read's windows on display without presenting them as
+	// a fresh observation to routing (PROVIDER_BASELINE §8).
+	if c.hasResult(accessToken) {
+		return Usage{}, ErrUsageUnavailable
 	}
 	return result, nil
+}
+
+// ErrUsageUnavailable is a soft failure after an earlier good read: the OAuth
+// usage read and its legacy fallback returned no quota.
+var ErrUsageUnavailable = errors.New("claude usage unavailable; the last good read is kept")
+
+func (c *UsageClient) hasResult(token string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.cache[token]
+	return ok && entry.ready == nil
 }
 
 func (c *UsageClient) cached(token string) (Usage, <-chan struct{}, bool) {
@@ -159,7 +183,7 @@ func (c *UsageClient) legacy(ctx context.Context, token string) (Usage, bool, er
 		return Usage{}, false, err
 	}
 	if status < 200 || status >= 300 {
-		return Usage{Plan: "Unknown", Message: "Claude connected. Usage API requires admin permissions."}, false, nil
+		return Usage{Message: "Claude connected. Usage API requires admin permissions."}, false, nil
 	}
 	var settings struct {
 		OrganizationID   string `json:"organization_id"`
@@ -219,59 +243,56 @@ func (c *UsageClient) request(ctx context.Context, endpoint, token string, heade
 	return body, response.StatusCode, nil
 }
 
+// parseOAuthUsage reads the OAuth usage body as the reference does
+// (claude.js:77-133). A window needs a numeric utilization; a limits[] entry
+// needs kind weekly_scoped, a model display name and a numeric percent, and
+// otherwise is skipped on its own. limits[] entries are read last, so one
+// replaces a seven_day_<model> window of the same name.
 func parseOAuthUsage(body []byte) (Usage, error) {
-	var data map[string]json.RawMessage
-	if err := json.Unmarshal(body, &data); err != nil {
+	data, ok := shared.Object(body)
+	if !ok {
 		return Usage{}, errors.New("claude OAuth usage response is invalid JSON")
 	}
 	quotas := make(map[string]Quota)
 	for key, raw := range data {
-		var window struct {
-			Utilization *float64 `json:"utilization"`
-			ResetsAt    any      `json:"resets_at"`
+		name := ""
+		switch {
+		case key == "five_hour":
+			name = "session (5h)"
+		case key == "seven_day":
+			name = "weekly (7d)"
+		case strings.HasPrefix(key, "seven_day_"):
+			name = "weekly " + strings.TrimPrefix(key, "seven_day_") + " (7d)"
 		}
-		if err := json.Unmarshal(raw, &window); err == nil && window.Utilization != nil {
-			name := ""
-			switch {
-			case key == "five_hour":
-				name = "session (5h)"
-			case key == "seven_day":
-				name = "weekly (7d)"
-			case strings.HasPrefix(key, "seven_day_"):
-				name = "weekly " + strings.TrimPrefix(key, "seven_day_") + " (7d)"
-			}
-			if name != "" {
-				quotas[name] = quota(*window.Utilization, window.ResetsAt)
-			}
+		if name == "" {
+			continue
+		}
+		if used, ok := shared.IsNumber(shared.Field(raw, "utilization")); ok {
+			quotas[name] = quota(used, shared.Field(raw, "resets_at"))
 		}
 	}
-	var limits struct {
-		Limits []struct {
-			Kind    string  `json:"kind"`
-			Percent float64 `json:"percent"`
-			Resets  any     `json:"resets_at"`
-			Scope   struct {
-				Model struct {
-					DisplayName string `json:"display_name"`
-				} `json:"model"`
-			} `json:"scope"`
-		} `json:"limits"`
-	}
-	_ = json.Unmarshal(body, &limits)
-	for _, limit := range limits.Limits {
-		name := strings.ToLower(strings.TrimSpace(limit.Scope.Model.DisplayName))
-		if limit.Kind == "weekly_scoped" && name != "" {
-			quotas["weekly "+name+" (7d)"] = quota(limit.Percent, limit.Resets)
+	limits, _ := shared.Array(data["limits"])
+	for _, limit := range limits {
+		if shared.String(shared.Field(limit, "kind")) != "weekly_scoped" {
+			continue
 		}
+		model := strings.TrimSpace(shared.String(shared.Field(shared.Field(shared.Field(limit, "scope"), "model"), "display_name")))
+		percent, ok := shared.IsNumber(shared.Field(limit, "percent"))
+		if model == "" || !ok {
+			continue
+		}
+		window := quota(percent, shared.Field(limit, "resets_at"))
+		window.ScopeKind, window.ScopeModel = "weekly_scoped", model
+		quotas["weekly "+strings.ToLower(model)+" (7d)"] = window
 	}
 	var extra json.RawMessage
-	if raw, ok := data["extra_usage"]; ok && string(raw) != "null" {
+	if raw := data["extra_usage"]; !shared.Nullish(raw) {
 		extra = append(json.RawMessage(nil), raw...)
 	}
 	return Usage{Plan: "Claude Code", ExtraUsage: extra, Quotas: quotas}, nil
 }
 
-func quota(used float64, reset any) Quota {
+func quota(used float64, reset json.RawMessage) Quota {
 	if used < 0 {
 		used = 0
 	}
@@ -279,20 +300,7 @@ func quota(used float64, reset any) Quota {
 		used = 100
 	}
 	remaining := 100 - used
-	return Quota{Used: used, Total: 100, Remaining: remaining, RemainingPercentage: remaining, ResetAt: parseTime(reset)}
-}
-
-func parseTime(value any) *time.Time {
-	text, ok := value.(string)
-	if !ok || text == "" {
-		return nil
-	}
-	parsed, err := time.Parse(time.RFC3339, text)
-	if err != nil {
-		return nil
-	}
-	parsed = parsed.UTC()
-	return &parsed
+	return Quota{Used: used, Total: 100, Remaining: remaining, RemainingPercentage: remaining, ResetAt: shared.ResetTime(reset)}
 }
 
 func (c *UsageClient) now() time.Time {

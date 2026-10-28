@@ -2352,6 +2352,15 @@ toppedUp?}`, where `state` is `positive`, `zero`, `negative`, `missing` or
 `malformed`; such a window is never `unlimited`, has no `remaining`, and is
 never summed with or compared to another currency. The provider's account flag
 appears as `creditAvailable` only when it was reported.
+Provider metadata (#222): a window may carry `count` `{used?, total?, remaining?}`,
+an absolute allowance in the provider's unit (GitHub Copilot; a zero total is a
+reported zero, with no `remaining` fraction, never unlimited); `scope`
+`{kind, model}` (Claude `weekly_scoped`); and `limitReached`, the provider's
+flag for the window's group (Codex), which routing does not read. An item may
+carry `metadata` (string values: GitHub `resetDate`, Claude legacy
+`organization`), `extraUsage` (Claude `extra_usage` as reported) and `message`,
+a reader's fixed notice for an account answered without readable quota (status
+`unknown`, never `error`).
 A window a reader served from its own cache carries `observedAt`, the time it
 was read upstream, and the UI labels it "cached, read <time>"; a window without
 `observedAt` is as fresh as `windowsObservedAt`. Only the Antigravity weekly

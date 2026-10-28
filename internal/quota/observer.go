@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"time"
 
 	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
@@ -129,12 +130,25 @@ func (c CodexClient) Usage(ctx context.Context, credential Credential) (State, e
 	if err != nil {
 		return State{Err: err.Error()}, err
 	}
+	reached := map[string]bool{"": usage.LimitReached, "review": usage.ReviewLimitReached, "spark": usage.SparkLimitReached}
 	windows := make([]Window, 0, len(usage.Quotas))
 	for name, window := range usage.Quotas {
 		reset := window.ResetAt
-		windows = append(windows, Window{Name: normalizeName(name), Remaining: PercentFromUsed(window.Used), ResetAt: reset})
+		group, _, _ := strings.Cut(name, "_")
+		if group == name {
+			group = ""
+		}
+		windows = append(windows, Window{Name: normalizeName(name), DisplayName: codexWindowLabels[name], Remaining: PercentFromUsed(window.Used), ResetAt: reset, LimitReached: reached[group]})
 	}
 	return State{Plan: usage.Plan, Windows: windows, AvailableReset: usage.AvailableReset}, nil
+}
+
+// codexWindowLabels are the reference quota page's labels for the Codex windows
+// (ProviderLimits/utils.js:426-432); any other key is shown as is.
+var codexWindowLabels = map[string]string{
+	"session": "5h", "weekly": "Weekly",
+	"review_session": "Review (5h)", "review_weekly": "Review (Weekly)",
+	"spark_session": "Spark (5h)", "spark_weekly": "Spark (Weekly)",
 }
 
 // ResetCreditConsumer is implemented by providers that expose reset-credit
@@ -176,7 +190,15 @@ func (c ClaudeClient) Usage(ctx context.Context, credential Credential) (State, 
 	windows := make([]Window, 0, len(usage.Quotas))
 	for name, window := range usage.Quotas {
 		reset := window.ResetAt
-		windows = append(windows, Window{Name: normalizeName(name), Remaining: RemainingPercent(window.RemainingPercentage), ResetAt: reset, Unlimited: window.Unlimited})
+		var scope *Scope
+		if window.ScopeKind != "" {
+			scope = &Scope{Kind: window.ScopeKind, Model: window.ScopeModel}
+		}
+		windows = append(windows, Window{Name: normalizeName(name), Remaining: RemainingPercent(window.RemainingPercentage), ResetAt: reset, Unlimited: window.Unlimited, Scope: scope})
 	}
-	return State{Plan: usage.Plan, Windows: windows}, nil
+	state := State{Plan: usage.Plan, Windows: windows, Message: usage.Message, ExtraUsage: usage.ExtraUsage}
+	if usage.Organization != "" {
+		state.Metadata = map[string]string{"organization": usage.Organization}
+	}
+	return state, nil
 }

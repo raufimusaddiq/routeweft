@@ -1,0 +1,3079 @@
+{
+  "pin": "1c3b9f47837d42ea64992063309064af755a14a3",
+  "now": "2026-10-20T12:00:00.000Z",
+  "codex": {
+    "multiple-window": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "plan_type": "plus",
+          "rate_limit": {
+            "limit_reached": false,
+            "primary_window": {
+              "used_percent": 42,
+              "reset_at": "2026-10-21T00:00:00Z"
+            },
+            "secondary_window": {
+              "used_percent": 10,
+              "reset_at": 1792540800
+            }
+          },
+          "code_review_rate_limit": {
+            "primary_window": {
+              "used_percent": 5,
+              "reset_at": "2026-10-21T00:00:00Z"
+            }
+          },
+          "spark_rate_limit": {
+            "limit_reached": true,
+            "primary_window": {
+              "used_percent": 100,
+              "reset_at": "2026-10-21T00:00:00Z"
+            },
+            "secondary_window": {
+              "used_percent": 60,
+              "reset_at": "2026-10-21T00:00:00Z"
+            }
+          },
+          "rate_limit_reset_credits": {
+            "available_count": 2
+          }
+        }
+      },
+      "result": {
+        "plan": "plus",
+        "limitReached": false,
+        "reviewLimitReached": false,
+        "sparkLimitReached": true,
+        "resetCredits": {
+          "availableCount": 2
+        },
+        "quotas": {
+          "session": {
+            "used": 42,
+            "total": 100,
+            "remaining": 58,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "weekly": {
+            "used": 10,
+            "total": 100,
+            "remaining": 90,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "review_session": {
+            "used": 5,
+            "total": 100,
+            "remaining": 95,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "spark_session": {
+            "used": 100,
+            "total": 100,
+            "remaining": 0,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "spark_weekly": {
+            "used": 60,
+            "total": 100,
+            "remaining": 40,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "zero": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "plan_type": "pro",
+          "rate_limit": {
+            "limit_reached": true,
+            "primary_window": {
+              "used_percent": 100,
+              "reset_at": "2026-10-21T00:00:00Z"
+            },
+            "secondary_window": {
+              "used_percent": 100,
+              "reset_at": "2026-10-21T00:00:00Z"
+            }
+          }
+        }
+      },
+      "result": {
+        "plan": "pro",
+        "limitReached": true,
+        "reviewLimitReached": false,
+        "sparkLimitReached": false,
+        "resetCredits": {
+          "availableCount": 0
+        },
+        "quotas": {
+          "session": {
+            "used": 100,
+            "total": 100,
+            "remaining": 0,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "weekly": {
+            "used": 100,
+            "total": 100,
+            "remaining": 0,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "expired": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "plan_type": "pro",
+          "rate_limit": {
+            "limit_reached": true,
+            "primary_window": {
+              "used_percent": 100,
+              "reset_at": "2026-10-19T00:00:00Z"
+            },
+            "secondary_window": {
+              "used_percent": 30,
+              "reset_at": "2026-10-19T00:00:00Z"
+            }
+          }
+        }
+      },
+      "result": {
+        "plan": "pro",
+        "limitReached": true,
+        "reviewLimitReached": false,
+        "sparkLimitReached": false,
+        "resetCredits": {
+          "availableCount": 0
+        },
+        "quotas": {
+          "session": {
+            "used": 100,
+            "total": 100,
+            "remaining": 0,
+            "resetAt": "2026-10-19T00:00:00.000Z",
+            "unlimited": false
+          },
+          "weekly": {
+            "used": 30,
+            "total": 100,
+            "remaining": 70,
+            "resetAt": "2026-10-19T00:00:00.000Z",
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "empty": {
+      "upstream": {
+        "status": 200,
+        "body": {}
+      },
+      "result": {
+        "plan": "unknown",
+        "limitReached": false,
+        "reviewLimitReached": false,
+        "sparkLimitReached": false,
+        "resetCredits": {
+          "availableCount": 0
+        },
+        "quotas": {}
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "by-limit-id": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "plan_type": "team",
+          "rate_limits_by_limit_id": {
+            "codex": {
+              "primary_window": {
+                "used_percent": 20,
+                "reset_at": "2026-10-21T00:00:00Z"
+              },
+              "secondary_window": {
+                "used_percent": 40,
+                "reset_at": "2026-10-21T00:00:00Z"
+              }
+            },
+            "code_review": {
+              "rate_limit": {
+                "limit_reached": true,
+                "primary_window": {
+                  "used_percent": 70,
+                  "reset_at": "2026-10-21T00:00:00Z"
+                }
+              }
+            },
+            "gpt-5.3-codex-spark": {
+              "primary_window": {
+                "used_percent": 1,
+                "reset_at": "2026-10-21T00:00:00Z"
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "plan": "team",
+        "limitReached": false,
+        "reviewLimitReached": true,
+        "sparkLimitReached": false,
+        "resetCredits": {
+          "availableCount": 0
+        },
+        "quotas": {
+          "session": {
+            "used": 20,
+            "total": 100,
+            "remaining": 80,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "weekly": {
+            "used": 40,
+            "total": 100,
+            "remaining": 60,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "review_session": {
+            "used": 70,
+            "total": 100,
+            "remaining": 30,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "spark_session": {
+            "used": 1,
+            "total": 100,
+            "remaining": 99,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "by-limit-id-aliases": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "rate_limits_by_limit_id": {
+            "codex": {
+              "primary": {
+                "used_percent": 11,
+                "reset_at": "2026-10-21T00:00:00Z"
+              }
+            },
+            "codex_review": {
+              "secondary": {
+                "used_percent": 12,
+                "reset_at": "2026-10-21T00:00:00Z"
+              }
+            },
+            "gpt_5_3_codex_spark": {
+              "primary_window": {
+                "used_percent": 13,
+                "reset_at": "2026-10-21T00:00:00Z"
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "plan": "unknown",
+        "limitReached": false,
+        "reviewLimitReached": false,
+        "sparkLimitReached": false,
+        "resetCredits": {
+          "availableCount": 0
+        },
+        "quotas": {
+          "session": {
+            "used": 11,
+            "total": 100,
+            "remaining": 89,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "review_weekly": {
+            "used": 12,
+            "total": 100,
+            "remaining": 88,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "spark_session": {
+            "used": 13,
+            "total": 100,
+            "remaining": 87,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "by-limit-id-short-aliases": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "rate_limits_by_limit_id": {
+            "review": {
+              "primary_window": {
+                "used_percent": 21,
+                "reset_at": "2026-10-21T00:00:00Z"
+              }
+            },
+            "spark": {
+              "primary_window": {
+                "used_percent": 22,
+                "reset_at": "2026-10-21T00:00:00Z"
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "plan": "unknown",
+        "limitReached": false,
+        "reviewLimitReached": false,
+        "sparkLimitReached": false,
+        "resetCredits": {
+          "availableCount": 0
+        },
+        "quotas": {
+          "review_session": {
+            "used": 21,
+            "total": 100,
+            "remaining": 79,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "spark_session": {
+            "used": 22,
+            "total": 100,
+            "remaining": 78,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "by-limit-id-shadows-additional": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "rate_limit": {
+            "primary_window": {
+              "used_percent": 1,
+              "reset_at": "2026-10-21T00:00:00Z"
+            }
+          },
+          "rate_limits_by_limit_id": {
+            "other": {}
+          },
+          "additional_rate_limits": [
+            {
+              "limit_name": "code_review",
+              "primary_window": {
+                "used_percent": 50,
+                "reset_at": "2026-10-21T00:00:00Z"
+              }
+            },
+            {
+              "limit_name": "spark",
+              "primary_window": {
+                "used_percent": 60,
+                "reset_at": "2026-10-21T00:00:00Z"
+              }
+            }
+          ]
+        }
+      },
+      "result": {
+        "plan": "unknown",
+        "limitReached": false,
+        "reviewLimitReached": false,
+        "sparkLimitReached": false,
+        "resetCredits": {
+          "availableCount": 0
+        },
+        "quotas": {
+          "session": {
+            "used": 1,
+            "total": 100,
+            "remaining": 99,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "rate-limit-precedence": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "rate_limit": {
+            "primary_window": {
+              "used_percent": 1,
+              "reset_at": "2026-10-21T00:00:00Z"
+            }
+          },
+          "rate_limits": {
+            "primary_window": {
+              "used_percent": 2,
+              "reset_at": "2026-10-21T00:00:00Z"
+            }
+          },
+          "rate_limits_by_limit_id": {
+            "codex": {
+              "primary_window": {
+                "used_percent": 3,
+                "reset_at": "2026-10-21T00:00:00Z"
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "plan": "unknown",
+        "limitReached": false,
+        "reviewLimitReached": false,
+        "sparkLimitReached": false,
+        "resetCredits": {
+          "availableCount": 0
+        },
+        "quotas": {
+          "session": {
+            "used": 1,
+            "total": 100,
+            "remaining": 99,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "rate-limit-falsy": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "rate_limit": false,
+          "rate_limits": {
+            "primary_window": {
+              "used_percent": 2,
+              "reset_at": "2026-10-21T00:00:00Z"
+            }
+          }
+        }
+      },
+      "result": {
+        "plan": "unknown",
+        "limitReached": false,
+        "reviewLimitReached": false,
+        "sparkLimitReached": false,
+        "resetCredits": {
+          "availableCount": 0
+        },
+        "quotas": {
+          "session": {
+            "used": 2,
+            "total": 100,
+            "remaining": 98,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "rate-limit-nested": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "rate_limit": {
+            "rate_limit": {
+              "limit_reached": 1,
+              "primary_window": {
+                "used_percent": 9,
+                "reset_at": "2026-10-21T00:00:00Z"
+              }
+            },
+            "secondary_window": {
+              "used_percent": 8,
+              "reset_at": "2026-10-21T00:00:00Z"
+            }
+          }
+        }
+      },
+      "result": {
+        "plan": "unknown",
+        "limitReached": 1,
+        "reviewLimitReached": false,
+        "sparkLimitReached": false,
+        "resetCredits": {
+          "availableCount": 0
+        },
+        "quotas": {
+          "session": {
+            "used": 9,
+            "total": 100,
+            "remaining": 91,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "weekly": {
+            "used": 8,
+            "total": 100,
+            "remaining": 92,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "review-spark-precedence": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "code_review_rate_limit": {
+            "primary_window": {
+              "used_percent": 31,
+              "reset_at": "2026-10-21T00:00:00Z"
+            }
+          },
+          "review_rate_limit": {
+            "primary_window": {
+              "used_percent": 32,
+              "reset_at": "2026-10-21T00:00:00Z"
+            }
+          },
+          "spark_rate_limit": null,
+          "gpt_5_3_codex_spark_rate_limit": {
+            "primary_window": {
+              "used_percent": 33,
+              "reset_at": "2026-10-21T00:00:00Z"
+            }
+          }
+        }
+      },
+      "result": {
+        "plan": "unknown",
+        "limitReached": false,
+        "reviewLimitReached": false,
+        "sparkLimitReached": false,
+        "resetCredits": {
+          "availableCount": 0
+        },
+        "quotas": {
+          "review_session": {
+            "used": 31,
+            "total": 100,
+            "remaining": 69,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "spark_session": {
+            "used": 33,
+            "total": 100,
+            "remaining": 67,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "additional-first-field": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "additional_rate_limits": [
+            {
+              "limit_name": "weekly",
+              "id": "review",
+              "primary_window": {
+                "used_percent": 41,
+                "reset_at": "2026-10-21T00:00:00Z"
+              }
+            },
+            {
+              "metered_feature": "Codex_Review",
+              "rate_limit": {
+                "primary_window": {
+                  "used_percent": 42,
+                  "reset_at": "2026-10-21T00:00:00Z"
+                }
+              }
+            },
+            {
+              "id": "gpt-5.3-codex-spark",
+              "secondary": {
+                "used_percent": 43,
+                "reset_at": "2026-10-21T00:00:00Z"
+              }
+            },
+            {
+              "limit_name": "spark",
+              "limit": {
+                "primary_window": {
+                  "used_percent": 44,
+                  "reset_at": "2026-10-21T00:00:00Z"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "result": {
+        "plan": "unknown",
+        "limitReached": false,
+        "reviewLimitReached": false,
+        "sparkLimitReached": false,
+        "resetCredits": {
+          "availableCount": 0
+        },
+        "quotas": {
+          "review_session": {
+            "used": 42,
+            "total": 100,
+            "remaining": 58,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "spark_weekly": {
+            "used": 43,
+            "total": 100,
+            "remaining": 57,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "additional-limit-key": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "additional_rate_limits": [
+            {
+              "limit_name": "spark",
+              "limit": {
+                "primary_window": {
+                  "used_percent": 44,
+                  "reset_at": "2026-10-21T00:00:00Z"
+                }
+              }
+            },
+            {
+              "limit_name": "review",
+              "limit": {
+                "secondary_window": {
+                  "used_percent": 45,
+                  "reset_at": "2026-10-21T00:00:00Z"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "result": {
+        "plan": "unknown",
+        "limitReached": false,
+        "reviewLimitReached": false,
+        "sparkLimitReached": false,
+        "resetCredits": {
+          "availableCount": 0
+        },
+        "quotas": {}
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "window-fields": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "rate_limit": {
+            "primary_window": {
+              "used_percent": 0,
+              "percent_used": 50,
+              "reset_at": null,
+              "resets_at": "2026-10-21T00:00:00Z"
+            },
+            "secondary_window": {
+              "used_percent": null,
+              "percent_used": "25",
+              "reset_at": 0,
+              "resetAt": "2026-10-21T00:00:00Z"
+            }
+          },
+          "code_review_rate_limit": {
+            "primary_window": {
+              "used_percent": "42",
+              "resetAt": "1792540800"
+            },
+            "secondary_window": {
+              "used_percent": -5,
+              "reset_at": 1792540800250
+            }
+          },
+          "spark_rate_limit": {
+            "primary_window": {
+              "used_percent": "abc",
+              "reset_at": "not a date"
+            },
+            "secondary_window": 7
+          }
+        }
+      },
+      "result": {
+        "plan": "unknown",
+        "limitReached": false,
+        "reviewLimitReached": false,
+        "sparkLimitReached": false,
+        "resetCredits": {
+          "availableCount": 0
+        },
+        "quotas": {
+          "session": {
+            "used": 0,
+            "total": 100,
+            "remaining": 100,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "weekly": {
+            "used": 25,
+            "total": 100,
+            "remaining": 75,
+            "resetAt": null,
+            "unlimited": false
+          },
+          "review_session": {
+            "used": 42,
+            "total": 100,
+            "remaining": 58,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "review_weekly": {
+            "used": 0,
+            "total": 100,
+            "remaining": 100,
+            "resetAt": "2026-10-21T00:00:00.250Z",
+            "unlimited": false
+          },
+          "spark_session": {
+            "used": 0,
+            "total": 100,
+            "remaining": 100,
+            "resetAt": null,
+            "unlimited": false
+          },
+          "spark_weekly": {
+            "used": 0,
+            "total": 100,
+            "remaining": 100,
+            "resetAt": null,
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "primary-window-over-primary": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "rate_limit": {
+            "primary_window": {
+              "used_percent": 61,
+              "reset_at": "2026-10-21T00:00:00Z"
+            },
+            "primary": {
+              "used_percent": 62,
+              "reset_at": "2026-10-21T00:00:00Z"
+            },
+            "secondary_window": null,
+            "secondary": {
+              "used_percent": 63,
+              "reset_at": "2026-10-21T00:00:00Z"
+            }
+          }
+        }
+      },
+      "result": {
+        "plan": "unknown",
+        "limitReached": false,
+        "reviewLimitReached": false,
+        "sparkLimitReached": false,
+        "resetCredits": {
+          "availableCount": 0
+        },
+        "quotas": {
+          "session": {
+            "used": 61,
+            "total": 100,
+            "remaining": 39,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "weekly": {
+            "used": 63,
+            "total": 100,
+            "remaining": 37,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "reset-credits-string": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "plan_type": "",
+          "summary": {
+            "plan": "enterprise"
+          },
+          "rate_limit_reset_credits": {
+            "available_count": "3"
+          }
+        }
+      },
+      "result": {
+        "plan": "enterprise",
+        "limitReached": false,
+        "reviewLimitReached": false,
+        "sparkLimitReached": false,
+        "resetCredits": {
+          "availableCount": 3
+        },
+        "quotas": {}
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "reset-credits-negative": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "rate_limit_reset_credits": {
+            "available_count": -2
+          }
+        }
+      },
+      "result": {
+        "plan": "unknown",
+        "limitReached": false,
+        "reviewLimitReached": false,
+        "sparkLimitReached": false,
+        "resetCredits": {
+          "availableCount": 0
+        },
+        "quotas": {}
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "auth401": {
+      "upstream": {
+        "status": 401,
+        "body": "{\"message\":\"Bad credentials\"}"
+      },
+      "result": {
+        "message": "Codex connected. Usage API temporarily unavailable (401)."
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "auth403": {
+      "upstream": {
+        "status": 403,
+        "body": "{\"error\":\"forbidden\"}"
+      },
+      "result": {
+        "message": "Codex connected. Usage API temporarily unavailable (403)."
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "error500": {
+      "upstream": {
+        "status": 500,
+        "body": "upstream exploded"
+      },
+      "result": {
+        "message": "Codex connected. Usage API temporarily unavailable (500)."
+      },
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "timeout": {
+      "upstream": {
+        "network": "The operation was aborted due to timeout"
+      },
+      "error": "Failed to fetch Codex usage: The operation was aborted due to timeout",
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    },
+    "invalid-json": {
+      "upstream": {
+        "status": 200,
+        "body": "not json"
+      },
+      "error": "Failed to fetch Codex usage: Unexpected token 'o', \"not json\" is not valid JSON",
+      "requests": [
+        {
+          "url": "https://chatgpt.com/backend-api/wham/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "Accept": "application/json"
+          },
+          "body": null
+        }
+      ]
+    }
+  },
+  "claude": {
+    "multiple-window": {
+      "upstream": [
+        {
+          "status": 200,
+          "body": {
+            "five_hour": {
+              "utilization": 12.5,
+              "resets_at": "2026-10-21T00:00:00Z"
+            },
+            "seven_day": {
+              "utilization": 40,
+              "resets_at": "2026-10-21T00:00:00Z"
+            },
+            "seven_day_opus": {
+              "utilization": 70,
+              "resets_at": "2026-10-21T00:00:00Z"
+            },
+            "seven_day_sonnet": {
+              "utilization": 5,
+              "resets_at": null
+            },
+            "limits": [
+              {
+                "kind": "weekly_scoped",
+                "percent": 35,
+                "resets_at": "2026-10-21T00:00:00Z",
+                "scope": {
+                  "model": {
+                    "display_name": "Fable"
+                  }
+                }
+              }
+            ],
+            "extra_usage": {
+              "is_enabled": true,
+              "monthly_limit": 5000,
+              "used_credits": 1250.5,
+              "utilization": 25.01
+            }
+          }
+        }
+      ],
+      "result": {
+        "plan": "Claude Code",
+        "extraUsage": {
+          "is_enabled": true,
+          "monthly_limit": 5000,
+          "used_credits": 1250.5,
+          "utilization": 25.01
+        },
+        "quotas": {
+          "session (5h)": {
+            "used": 12.5,
+            "total": 100,
+            "remaining": 87.5,
+            "remainingPercentage": 87.5,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "weekly (7d)": {
+            "used": 40,
+            "total": 100,
+            "remaining": 60,
+            "remainingPercentage": 60,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "weekly opus (7d)": {
+            "used": 70,
+            "total": 100,
+            "remaining": 30,
+            "remainingPercentage": 30,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "weekly sonnet (7d)": {
+            "used": 5,
+            "total": 100,
+            "remaining": 95,
+            "remainingPercentage": 95,
+            "resetAt": null,
+            "unlimited": false
+          },
+          "weekly fable (7d)": {
+            "used": 35,
+            "total": 100,
+            "remaining": 65,
+            "remainingPercentage": 65,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://api.anthropic.com/api/oauth/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-beta": "oauth-2025-04-20",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        }
+      ]
+    },
+    "zero": {
+      "upstream": [
+        {
+          "status": 200,
+          "body": {
+            "five_hour": {
+              "utilization": 100,
+              "resets_at": "2026-10-21T00:00:00Z"
+            },
+            "seven_day": {
+              "utilization": 100,
+              "resets_at": "2026-10-21T00:00:00Z"
+            },
+            "extra_usage": {
+              "is_enabled": false,
+              "monthly_limit": null,
+              "used_credits": null,
+              "utilization": null
+            }
+          }
+        }
+      ],
+      "result": {
+        "plan": "Claude Code",
+        "extraUsage": {
+          "is_enabled": false,
+          "monthly_limit": null,
+          "used_credits": null,
+          "utilization": null
+        },
+        "quotas": {
+          "session (5h)": {
+            "used": 100,
+            "total": 100,
+            "remaining": 0,
+            "remainingPercentage": 0,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "weekly (7d)": {
+            "used": 100,
+            "total": 100,
+            "remaining": 0,
+            "remainingPercentage": 0,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://api.anthropic.com/api/oauth/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-beta": "oauth-2025-04-20",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        }
+      ]
+    },
+    "expired": {
+      "upstream": [
+        {
+          "status": 200,
+          "body": {
+            "five_hour": {
+              "utilization": 100,
+              "resets_at": "2026-10-19T00:00:00Z"
+            },
+            "seven_day": {
+              "utilization": 20,
+              "resets_at": "2026-10-19T00:00:00Z"
+            }
+          }
+        }
+      ],
+      "result": {
+        "plan": "Claude Code",
+        "extraUsage": null,
+        "quotas": {
+          "session (5h)": {
+            "used": 100,
+            "total": 100,
+            "remaining": 0,
+            "remainingPercentage": 0,
+            "resetAt": "2026-10-19T00:00:00.000Z",
+            "unlimited": false
+          },
+          "weekly (7d)": {
+            "used": 20,
+            "total": 100,
+            "remaining": 80,
+            "remainingPercentage": 80,
+            "resetAt": "2026-10-19T00:00:00.000Z",
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://api.anthropic.com/api/oauth/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-beta": "oauth-2025-04-20",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        }
+      ]
+    },
+    "empty": {
+      "upstream": [
+        {
+          "status": 200,
+          "body": {}
+        }
+      ],
+      "result": {
+        "plan": "Claude Code",
+        "extraUsage": null,
+        "quotas": {}
+      },
+      "requests": [
+        {
+          "url": "https://api.anthropic.com/api/oauth/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-beta": "oauth-2025-04-20",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        }
+      ]
+    },
+    "limits-entries": {
+      "upstream": [
+        {
+          "status": 200,
+          "body": {
+            "limits": [
+              {
+                "kind": "weekly_scoped",
+                "percent": 150,
+                "resets_at": 1792540800,
+                "scope": {
+                  "model": {
+                    "display_name": "  Opus Max  "
+                  }
+                }
+              },
+              {
+                "kind": "weekly_scoped",
+                "percent": -5,
+                "scope": {
+                  "model": {
+                    "display_name": "Haiku"
+                  }
+                }
+              },
+              {
+                "kind": "weekly_scoped",
+                "resets_at": "2026-10-21T00:00:00Z",
+                "scope": {
+                  "model": {
+                    "display_name": "NoPercent"
+                  }
+                }
+              },
+              {
+                "kind": "weekly_scoped",
+                "percent": "40",
+                "scope": {
+                  "model": {
+                    "display_name": "StringPercent"
+                  }
+                }
+              },
+              {
+                "kind": "weekly_scoped",
+                "percent": 10,
+                "scope": {
+                  "model": {
+                    "display_name": ""
+                  }
+                }
+              },
+              {
+                "kind": "daily",
+                "percent": 10,
+                "scope": {
+                  "model": {
+                    "display_name": "Daily"
+                  }
+                }
+              },
+              {
+                "kind": "weekly_scoped",
+                "percent": 20,
+                "scope": {
+                  "model": {
+                    "display_name": 7
+                  }
+                }
+              },
+              null
+            ]
+          }
+        }
+      ],
+      "result": {
+        "plan": "Claude Code",
+        "extraUsage": null,
+        "quotas": {
+          "weekly opus max (7d)": {
+            "used": 100,
+            "total": 100,
+            "remaining": 0,
+            "remainingPercentage": 0,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "weekly haiku (7d)": {
+            "used": 0,
+            "total": 100,
+            "remaining": 100,
+            "remainingPercentage": 100,
+            "resetAt": null,
+            "unlimited": false
+          },
+          "weekly 7 (7d)": {
+            "used": 20,
+            "total": 100,
+            "remaining": 80,
+            "remainingPercentage": 80,
+            "resetAt": null,
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://api.anthropic.com/api/oauth/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-beta": "oauth-2025-04-20",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        }
+      ]
+    },
+    "limits-override-keyed": {
+      "upstream": [
+        {
+          "status": 200,
+          "body": {
+            "seven_day_fable": {
+              "utilization": 10,
+              "resets_at": "2026-10-21T00:00:00Z"
+            },
+            "limits": [
+              {
+                "kind": "weekly_scoped",
+                "percent": 90,
+                "scope": {
+                  "model": {
+                    "display_name": "FABLE"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "result": {
+        "plan": "Claude Code",
+        "extraUsage": null,
+        "quotas": {
+          "weekly fable (7d)": {
+            "used": 90,
+            "total": 100,
+            "remaining": 10,
+            "remainingPercentage": 10,
+            "resetAt": null,
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://api.anthropic.com/api/oauth/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-beta": "oauth-2025-04-20",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        }
+      ]
+    },
+    "utilization-shapes": {
+      "upstream": [
+        {
+          "status": 200,
+          "body": {
+            "five_hour": {
+              "utilization": "50"
+            },
+            "seven_day": {
+              "utilization": null
+            },
+            "seven_day_opus": {
+              "utilization": 150,
+              "resets_at": "1792540800"
+            },
+            "seven_day_oauth_apps": {
+              "utilization": -10,
+              "resets_at": "2026-10-21T00:00:00.123Z"
+            },
+            "seven_day_cowork": 5,
+            "extra_usage": null
+          }
+        }
+      ],
+      "result": {
+        "plan": "Claude Code",
+        "extraUsage": null,
+        "quotas": {
+          "weekly opus (7d)": {
+            "used": 150,
+            "total": 100,
+            "remaining": 0,
+            "remainingPercentage": 0,
+            "resetAt": "2026-10-21T00:00:00.000Z",
+            "unlimited": false
+          },
+          "weekly oauth_apps (7d)": {
+            "used": -10,
+            "total": 100,
+            "remaining": 110,
+            "remainingPercentage": 110,
+            "resetAt": "2026-10-21T00:00:00.123Z",
+            "unlimited": false
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://api.anthropic.com/api/oauth/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-beta": "oauth-2025-04-20",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        }
+      ]
+    },
+    "oauth-429-legacy-org": {
+      "upstream": [
+        {
+          "status": 429,
+          "body": {}
+        },
+        {
+          "status": 200,
+          "body": {
+            "organization_id": "org-1",
+            "organization_name": "Acme",
+            "plan": "team"
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "data": [
+              {
+                "usage": 1
+              }
+            ]
+          }
+        }
+      ],
+      "result": {
+        "plan": "team",
+        "organization": "Acme",
+        "quotas": {
+          "data": [
+            {
+              "usage": 1
+            }
+          ]
+        }
+      },
+      "requests": [
+        {
+          "url": "https://api.anthropic.com/api/oauth/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-beta": "oauth-2025-04-20",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        },
+        {
+          "url": "https://api.anthropic.com/v1/settings",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        },
+        {
+          "url": "https://api.anthropic.com/v1/organizations/org-1/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        }
+      ]
+    },
+    "oauth-401-settings-403": {
+      "upstream": [
+        {
+          "status": 401,
+          "body": {}
+        },
+        {
+          "status": 403,
+          "body": {}
+        }
+      ],
+      "result": {
+        "message": "Claude connected. Usage API requires admin permissions."
+      },
+      "requests": [
+        {
+          "url": "https://api.anthropic.com/api/oauth/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-beta": "oauth-2025-04-20",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        },
+        {
+          "url": "https://api.anthropic.com/v1/settings",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        }
+      ]
+    },
+    "oauth-500-settings-no-org": {
+      "upstream": [
+        {
+          "status": 500,
+          "body": {}
+        },
+        {
+          "status": 200,
+          "body": {
+            "organization_name": "Acme"
+          }
+        }
+      ],
+      "result": {
+        "plan": "Unknown",
+        "organization": "Acme",
+        "message": "Claude connected. Usage details require admin access."
+      },
+      "requests": [
+        {
+          "url": "https://api.anthropic.com/api/oauth/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-beta": "oauth-2025-04-20",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        },
+        {
+          "url": "https://api.anthropic.com/v1/settings",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        }
+      ]
+    },
+    "oauth-500-org-usage-403": {
+      "upstream": [
+        {
+          "status": 500,
+          "body": {}
+        },
+        {
+          "status": 200,
+          "body": {
+            "organization_id": "org-1",
+            "plan": "pro"
+          }
+        },
+        {
+          "status": 403,
+          "body": {}
+        }
+      ],
+      "result": {
+        "plan": "pro",
+        "message": "Claude connected. Usage details require admin access."
+      },
+      "requests": [
+        {
+          "url": "https://api.anthropic.com/api/oauth/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-beta": "oauth-2025-04-20",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        },
+        {
+          "url": "https://api.anthropic.com/v1/settings",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        },
+        {
+          "url": "https://api.anthropic.com/v1/organizations/org-1/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        }
+      ]
+    },
+    "timeout": {
+      "upstream": [
+        {
+          "network": "The operation was aborted due to timeout"
+        }
+      ],
+      "result": {
+        "message": "Claude connected. Unable to fetch usage: The operation was aborted due to timeout"
+      },
+      "requests": [
+        {
+          "url": "https://api.anthropic.com/api/oauth/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-beta": "oauth-2025-04-20",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        }
+      ]
+    },
+    "invalid-json": {
+      "upstream": [
+        {
+          "status": 200,
+          "body": "not json"
+        }
+      ],
+      "result": {
+        "message": "Claude connected. Unable to fetch usage: Unexpected token 'o', \"not json\" is not valid JSON"
+      },
+      "requests": [
+        {
+          "url": "https://api.anthropic.com/api/oauth/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-beta": "oauth-2025-04-20",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        }
+      ]
+    },
+    "auth401": {
+      "upstream": [
+        {
+          "status": 401,
+          "body": {}
+        },
+        {
+          "status": 401,
+          "body": {}
+        }
+      ],
+      "result": {
+        "message": "Claude connected. Usage API requires admin permissions."
+      },
+      "requests": [
+        {
+          "url": "https://api.anthropic.com/api/oauth/usage",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-beta": "oauth-2025-04-20",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        },
+        {
+          "url": "https://api.anthropic.com/v1/settings",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer <token>",
+            "anthropic-version": "2023-06-01"
+          },
+          "body": null
+        }
+      ]
+    }
+  },
+  "github": {
+    "multiple-window": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "copilot_plan": "individual",
+          "quota_reset_date": "2026-11-01",
+          "access_type_sku": "plus_monthly_subscriber",
+          "quota_snapshots": {
+            "chat": {
+              "entitlement": 0,
+              "remaining": 0,
+              "unlimited": true
+            },
+            "completions": {
+              "entitlement": 0,
+              "remaining": 0,
+              "unlimited": true
+            },
+            "premium_interactions": {
+              "entitlement": 300,
+              "remaining": 120.5,
+              "unlimited": false
+            }
+          }
+        }
+      },
+      "result": {
+        "plan": "individual",
+        "resetDate": "2026-11-01",
+        "quotas": {
+          "chat": {
+            "used": 0,
+            "total": 0,
+            "remaining": 0,
+            "unlimited": true,
+            "resetAt": "2026-11-01T00:00:00.000Z"
+          },
+          "completions": {
+            "used": 0,
+            "total": 0,
+            "remaining": 0,
+            "unlimited": true,
+            "resetAt": "2026-11-01T00:00:00.000Z"
+          },
+          "premium_interactions": {
+            "used": 179.5,
+            "total": 300,
+            "remaining": 120.5,
+            "unlimited": false,
+            "resetAt": "2026-11-01T00:00:00.000Z"
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://api.github.com/copilot_internal/user",
+          "method": "GET",
+          "headers": {
+            "Authorization": "token <token>",
+            "Accept": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "Editor-Version": "vscode/1.100.0",
+            "Editor-Plugin-Version": "copilot-chat/0.26.7"
+          },
+          "body": null
+        }
+      ]
+    },
+    "zero": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "copilot_plan": "business",
+          "quota_reset_date": "2026-10-21T00:00:00Z",
+          "quota_snapshots": {
+            "chat": {
+              "entitlement": 300,
+              "remaining": 0
+            },
+            "completions": {
+              "entitlement": 300,
+              "remaining": 0
+            },
+            "premium_interactions": {
+              "entitlement": 300,
+              "remaining": 0
+            }
+          }
+        }
+      },
+      "result": {
+        "plan": "business",
+        "resetDate": "2026-10-21T00:00:00Z",
+        "quotas": {
+          "chat": {
+            "used": 300,
+            "total": 300,
+            "remaining": 0,
+            "unlimited": false,
+            "resetAt": "2026-10-21T00:00:00.000Z"
+          },
+          "completions": {
+            "used": 300,
+            "total": 300,
+            "remaining": 0,
+            "unlimited": false,
+            "resetAt": "2026-10-21T00:00:00.000Z"
+          },
+          "premium_interactions": {
+            "used": 300,
+            "total": 300,
+            "remaining": 0,
+            "unlimited": false,
+            "resetAt": "2026-10-21T00:00:00.000Z"
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://api.github.com/copilot_internal/user",
+          "method": "GET",
+          "headers": {
+            "Authorization": "token <token>",
+            "Accept": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "Editor-Version": "vscode/1.100.0",
+            "Editor-Plugin-Version": "copilot-chat/0.26.7"
+          },
+          "body": null
+        }
+      ]
+    },
+    "expired": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "copilot_plan": "business",
+          "quota_reset_date": "2026-10-19T00:00:00Z",
+          "quota_snapshots": {
+            "chat": {
+              "entitlement": 300,
+              "remaining": 0
+            },
+            "completions": {
+              "entitlement": 300,
+              "remaining": 0
+            },
+            "premium_interactions": {
+              "entitlement": 300,
+              "remaining": 0
+            }
+          }
+        }
+      },
+      "result": {
+        "plan": "business",
+        "resetDate": "2026-10-19T00:00:00Z",
+        "quotas": {
+          "chat": {
+            "used": 300,
+            "total": 300,
+            "remaining": 0,
+            "unlimited": false,
+            "resetAt": "2026-10-19T00:00:00.000Z"
+          },
+          "completions": {
+            "used": 300,
+            "total": 300,
+            "remaining": 0,
+            "unlimited": false,
+            "resetAt": "2026-10-19T00:00:00.000Z"
+          },
+          "premium_interactions": {
+            "used": 300,
+            "total": 300,
+            "remaining": 0,
+            "unlimited": false,
+            "resetAt": "2026-10-19T00:00:00.000Z"
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://api.github.com/copilot_internal/user",
+          "method": "GET",
+          "headers": {
+            "Authorization": "token <token>",
+            "Accept": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "Editor-Version": "vscode/1.100.0",
+            "Editor-Plugin-Version": "copilot-chat/0.26.7"
+          },
+          "body": null
+        }
+      ]
+    },
+    "empty-snapshots": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "copilot_plan": "individual",
+          "quota_snapshots": {}
+        }
+      },
+      "result": {
+        "plan": "individual",
+        "quotas": {
+          "chat": {
+            "used": 0,
+            "total": 0,
+            "unlimited": true,
+            "resetAt": null
+          },
+          "completions": {
+            "used": 0,
+            "total": 0,
+            "unlimited": true,
+            "resetAt": null
+          },
+          "premium_interactions": {
+            "used": 0,
+            "total": 0,
+            "unlimited": true,
+            "resetAt": null
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://api.github.com/copilot_internal/user",
+          "method": "GET",
+          "headers": {
+            "Authorization": "token <token>",
+            "Accept": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "Editor-Version": "vscode/1.100.0",
+            "Editor-Plugin-Version": "copilot-chat/0.26.7"
+          },
+          "body": null
+        }
+      ]
+    },
+    "missing-snapshot": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "copilot_plan": "individual",
+          "quota_reset_date": "2026-10-21T00:00:00Z",
+          "quota_snapshots": {
+            "premium_interactions": {
+              "entitlement": 50,
+              "remaining": 10
+            }
+          }
+        }
+      },
+      "result": {
+        "plan": "individual",
+        "resetDate": "2026-10-21T00:00:00Z",
+        "quotas": {
+          "chat": {
+            "used": 0,
+            "total": 0,
+            "unlimited": true,
+            "resetAt": "2026-10-21T00:00:00.000Z"
+          },
+          "completions": {
+            "used": 0,
+            "total": 0,
+            "unlimited": true,
+            "resetAt": "2026-10-21T00:00:00.000Z"
+          },
+          "premium_interactions": {
+            "used": 40,
+            "total": 50,
+            "remaining": 10,
+            "unlimited": false,
+            "resetAt": "2026-10-21T00:00:00.000Z"
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://api.github.com/copilot_internal/user",
+          "method": "GET",
+          "headers": {
+            "Authorization": "token <token>",
+            "Accept": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "Editor-Version": "vscode/1.100.0",
+            "Editor-Plugin-Version": "copilot-chat/0.26.7"
+          },
+          "body": null
+        }
+      ]
+    },
+    "zero-entitlement": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "copilot_plan": "individual",
+          "quota_reset_date": "2026-10-21T00:00:00Z",
+          "quota_snapshots": {
+            "chat": {
+              "entitlement": 0,
+              "remaining": 0,
+              "unlimited": false
+            },
+            "completions": {
+              "entitlement": 0,
+              "remaining": 0
+            },
+            "premium_interactions": {
+              "entitlement": 300,
+              "remaining": 300
+            }
+          }
+        }
+      },
+      "result": {
+        "plan": "individual",
+        "resetDate": "2026-10-21T00:00:00Z",
+        "quotas": {
+          "chat": {
+            "used": 0,
+            "total": 0,
+            "remaining": 0,
+            "unlimited": false,
+            "resetAt": "2026-10-21T00:00:00.000Z"
+          },
+          "completions": {
+            "used": 0,
+            "total": 0,
+            "remaining": 0,
+            "unlimited": false,
+            "resetAt": "2026-10-21T00:00:00.000Z"
+          },
+          "premium_interactions": {
+            "used": 0,
+            "total": 300,
+            "remaining": 300,
+            "unlimited": false,
+            "resetAt": "2026-10-21T00:00:00.000Z"
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://api.github.com/copilot_internal/user",
+          "method": "GET",
+          "headers": {
+            "Authorization": "token <token>",
+            "Accept": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "Editor-Version": "vscode/1.100.0",
+            "Editor-Plugin-Version": "copilot-chat/0.26.7"
+          },
+          "body": null
+        }
+      ]
+    },
+    "string-amounts": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "copilot_plan": "individual",
+          "quota_reset_date": "2026-10-21T00:00:00Z",
+          "quota_snapshots": {
+            "chat": {
+              "entitlement": "300",
+              "remaining": "100"
+            },
+            "completions": {
+              "entitlement": 100,
+              "remaining": 25,
+              "unlimited": 0
+            },
+            "premium_interactions": {
+              "entitlement": 10,
+              "remaining": 4,
+              "unlimited": "yes"
+            }
+          }
+        }
+      },
+      "result": {
+        "plan": "individual",
+        "resetDate": "2026-10-21T00:00:00Z",
+        "quotas": {
+          "chat": {
+            "used": 200,
+            "total": "300",
+            "remaining": "100",
+            "unlimited": false,
+            "resetAt": "2026-10-21T00:00:00.000Z"
+          },
+          "completions": {
+            "used": 75,
+            "total": 100,
+            "remaining": 25,
+            "unlimited": false,
+            "resetAt": "2026-10-21T00:00:00.000Z"
+          },
+          "premium_interactions": {
+            "used": 6,
+            "total": 10,
+            "remaining": 4,
+            "unlimited": "yes",
+            "resetAt": "2026-10-21T00:00:00.000Z"
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://api.github.com/copilot_internal/user",
+          "method": "GET",
+          "headers": {
+            "Authorization": "token <token>",
+            "Accept": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "Editor-Version": "vscode/1.100.0",
+            "Editor-Plugin-Version": "copilot-chat/0.26.7"
+          },
+          "body": null
+        }
+      ]
+    },
+    "free": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "access_type_sku": "free_limited_copilot",
+          "limited_user_reset_date": "2026-11-05",
+          "monthly_quotas": {
+            "chat": 50,
+            "completions": 2000
+          },
+          "limited_user_quotas": {
+            "chat": 10,
+            "completions": 0
+          }
+        }
+      },
+      "result": {
+        "plan": "free_limited_copilot",
+        "resetDate": "2026-11-05",
+        "quotas": {
+          "chat": {
+            "used": 10,
+            "total": 50,
+            "unlimited": false,
+            "resetAt": "2026-11-05T00:00:00.000Z"
+          },
+          "completions": {
+            "used": 0,
+            "total": 2000,
+            "unlimited": false,
+            "resetAt": "2026-11-05T00:00:00.000Z"
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://api.github.com/copilot_internal/user",
+          "method": "GET",
+          "headers": {
+            "Authorization": "token <token>",
+            "Accept": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "Editor-Version": "vscode/1.100.0",
+            "Editor-Plugin-Version": "copilot-chat/0.26.7"
+          },
+          "body": null
+        }
+      ]
+    },
+    "free-plan-precedence": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "copilot_plan": "free",
+          "access_type_sku": "free_limited_copilot",
+          "limited_user_reset_date": "1792540800",
+          "monthly_quotas": {
+            "chat": 50
+          },
+          "limited_user_quotas": {
+            "chat": 50,
+            "completions": 7
+          }
+        }
+      },
+      "result": {
+        "plan": "free",
+        "resetDate": "1792540800",
+        "quotas": {
+          "chat": {
+            "used": 50,
+            "total": 50,
+            "unlimited": false,
+            "resetAt": "2026-10-21T00:00:00.000Z"
+          },
+          "completions": {
+            "used": 7,
+            "total": 0,
+            "unlimited": false,
+            "resetAt": "2026-10-21T00:00:00.000Z"
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://api.github.com/copilot_internal/user",
+          "method": "GET",
+          "headers": {
+            "Authorization": "token <token>",
+            "Accept": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "Editor-Version": "vscode/1.100.0",
+            "Editor-Plugin-Version": "copilot-chat/0.26.7"
+          },
+          "body": null
+        }
+      ]
+    },
+    "free-empty": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "limited_user_quotas": {}
+        }
+      },
+      "result": {
+        "quotas": {
+          "chat": {
+            "used": 0,
+            "total": 0,
+            "unlimited": false,
+            "resetAt": null
+          },
+          "completions": {
+            "used": 0,
+            "total": 0,
+            "unlimited": false,
+            "resetAt": null
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://api.github.com/copilot_internal/user",
+          "method": "GET",
+          "headers": {
+            "Authorization": "token <token>",
+            "Accept": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "Editor-Version": "vscode/1.100.0",
+            "Editor-Plugin-Version": "copilot-chat/0.26.7"
+          },
+          "body": null
+        }
+      ]
+    },
+    "snapshots-over-free": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "copilot_plan": "individual",
+          "quota_snapshots": {
+            "chat": {
+              "entitlement": 10,
+              "remaining": 5
+            }
+          },
+          "monthly_quotas": {
+            "chat": 50
+          }
+        }
+      },
+      "result": {
+        "plan": "individual",
+        "quotas": {
+          "chat": {
+            "used": 5,
+            "total": 10,
+            "remaining": 5,
+            "unlimited": false,
+            "resetAt": null
+          },
+          "completions": {
+            "used": 0,
+            "total": 0,
+            "unlimited": true,
+            "resetAt": null
+          },
+          "premium_interactions": {
+            "used": 0,
+            "total": 0,
+            "unlimited": true,
+            "resetAt": null
+          }
+        }
+      },
+      "requests": [
+        {
+          "url": "https://api.github.com/copilot_internal/user",
+          "method": "GET",
+          "headers": {
+            "Authorization": "token <token>",
+            "Accept": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "Editor-Version": "vscode/1.100.0",
+            "Editor-Plugin-Version": "copilot-chat/0.26.7"
+          },
+          "body": null
+        }
+      ]
+    },
+    "unrecognized": {
+      "upstream": {
+        "status": 200,
+        "body": {
+          "copilot_plan": "individual"
+        }
+      },
+      "result": {
+        "message": "GitHub Copilot connected. Unable to parse quota data."
+      },
+      "requests": [
+        {
+          "url": "https://api.github.com/copilot_internal/user",
+          "method": "GET",
+          "headers": {
+            "Authorization": "token <token>",
+            "Accept": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "Editor-Version": "vscode/1.100.0",
+            "Editor-Plugin-Version": "copilot-chat/0.26.7"
+          },
+          "body": null
+        }
+      ]
+    },
+    "auth401": {
+      "upstream": {
+        "status": 401,
+        "body": "{\"message\":\"Bad credentials\"}"
+      },
+      "error": "Failed to fetch GitHub usage: GitHub API error: {\"message\":\"Bad credentials\"}",
+      "requests": [
+        {
+          "url": "https://api.github.com/copilot_internal/user",
+          "method": "GET",
+          "headers": {
+            "Authorization": "token <token>",
+            "Accept": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "Editor-Version": "vscode/1.100.0",
+            "Editor-Plugin-Version": "copilot-chat/0.26.7"
+          },
+          "body": null
+        }
+      ]
+    },
+    "auth403": {
+      "upstream": {
+        "status": 403,
+        "body": "{\"error\":\"forbidden\"}"
+      },
+      "error": "Failed to fetch GitHub usage: GitHub API error: {\"error\":\"forbidden\"}",
+      "requests": [
+        {
+          "url": "https://api.github.com/copilot_internal/user",
+          "method": "GET",
+          "headers": {
+            "Authorization": "token <token>",
+            "Accept": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "Editor-Version": "vscode/1.100.0",
+            "Editor-Plugin-Version": "copilot-chat/0.26.7"
+          },
+          "body": null
+        }
+      ]
+    },
+    "error500": {
+      "upstream": {
+        "status": 500,
+        "body": "upstream exploded"
+      },
+      "error": "Failed to fetch GitHub usage: GitHub API error: upstream exploded",
+      "requests": [
+        {
+          "url": "https://api.github.com/copilot_internal/user",
+          "method": "GET",
+          "headers": {
+            "Authorization": "token <token>",
+            "Accept": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "Editor-Version": "vscode/1.100.0",
+            "Editor-Plugin-Version": "copilot-chat/0.26.7"
+          },
+          "body": null
+        }
+      ]
+    },
+    "timeout": {
+      "upstream": {
+        "network": "The operation was aborted due to timeout"
+      },
+      "error": "Failed to fetch GitHub usage: The operation was aborted due to timeout",
+      "requests": [
+        {
+          "url": "https://api.github.com/copilot_internal/user",
+          "method": "GET",
+          "headers": {
+            "Authorization": "token <token>",
+            "Accept": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "Editor-Version": "vscode/1.100.0",
+            "Editor-Plugin-Version": "copilot-chat/0.26.7"
+          },
+          "body": null
+        }
+      ]
+    },
+    "invalid-json": {
+      "upstream": {
+        "status": 200,
+        "body": "not json"
+      },
+      "error": "Failed to fetch GitHub usage: Unexpected token 'o', \"not json\" is not valid JSON",
+      "requests": [
+        {
+          "url": "https://api.github.com/copilot_internal/user",
+          "method": "GET",
+          "headers": {
+            "Authorization": "token <token>",
+            "Accept": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "Editor-Version": "vscode/1.100.0",
+            "Editor-Plugin-Version": "copilot-chat/0.26.7"
+          },
+          "body": null
+        }
+      ]
+    }
+  },
+  "claudeSequences": {
+    "stale-after-soft-failure": {
+      "calls": [
+        {
+          "advanceMs": 0,
+          "force": false,
+          "upstream": [
+            {
+              "status": 200,
+              "body": {
+                "five_hour": {
+                  "utilization": 12.5,
+                  "resets_at": "2026-10-21T00:00:00Z"
+                },
+                "seven_day": {
+                  "utilization": 40,
+                  "resets_at": "2026-10-21T00:00:00Z"
+                },
+                "seven_day_opus": {
+                  "utilization": 70,
+                  "resets_at": "2026-10-21T00:00:00Z"
+                },
+                "seven_day_sonnet": {
+                  "utilization": 5,
+                  "resets_at": null
+                },
+                "limits": [
+                  {
+                    "kind": "weekly_scoped",
+                    "percent": 35,
+                    "resets_at": "2026-10-21T00:00:00Z",
+                    "scope": {
+                      "model": {
+                        "display_name": "Fable"
+                      }
+                    }
+                  }
+                ],
+                "extra_usage": {
+                  "is_enabled": true,
+                  "monthly_limit": 5000,
+                  "used_credits": 1250.5,
+                  "utilization": 25.01
+                }
+              }
+            }
+          ],
+          "result": {
+            "plan": "Claude Code",
+            "extraUsage": {
+              "is_enabled": true,
+              "monthly_limit": 5000,
+              "used_credits": 1250.5,
+              "utilization": 25.01
+            },
+            "quotas": {
+              "session (5h)": {
+                "used": 12.5,
+                "total": 100,
+                "remaining": 87.5,
+                "remainingPercentage": 87.5,
+                "resetAt": "2026-10-21T00:00:00.000Z",
+                "unlimited": false
+              },
+              "weekly (7d)": {
+                "used": 40,
+                "total": 100,
+                "remaining": 60,
+                "remainingPercentage": 60,
+                "resetAt": "2026-10-21T00:00:00.000Z",
+                "unlimited": false
+              },
+              "weekly opus (7d)": {
+                "used": 70,
+                "total": 100,
+                "remaining": 30,
+                "remainingPercentage": 30,
+                "resetAt": "2026-10-21T00:00:00.000Z",
+                "unlimited": false
+              },
+              "weekly sonnet (7d)": {
+                "used": 5,
+                "total": 100,
+                "remaining": 95,
+                "remainingPercentage": 95,
+                "resetAt": null,
+                "unlimited": false
+              },
+              "weekly fable (7d)": {
+                "used": 35,
+                "total": 100,
+                "remaining": 65,
+                "remainingPercentage": 65,
+                "resetAt": "2026-10-21T00:00:00.000Z",
+                "unlimited": false
+              }
+            }
+          },
+          "requests": [
+            {
+              "url": "https://api.anthropic.com/api/oauth/usage",
+              "method": "GET",
+              "headers": {
+                "Authorization": "Bearer <token>",
+                "anthropic-beta": "oauth-2025-04-20",
+                "anthropic-version": "2023-06-01"
+              },
+              "body": null
+            }
+          ]
+        },
+        {
+          "advanceMs": 301000,
+          "force": false,
+          "upstream": [
+            {
+              "status": 500,
+              "body": {}
+            },
+            {
+              "status": 403,
+              "body": {}
+            }
+          ],
+          "result": {
+            "plan": "Claude Code",
+            "extraUsage": {
+              "is_enabled": true,
+              "monthly_limit": 5000,
+              "used_credits": 1250.5,
+              "utilization": 25.01
+            },
+            "quotas": {
+              "session (5h)": {
+                "used": 12.5,
+                "total": 100,
+                "remaining": 87.5,
+                "remainingPercentage": 87.5,
+                "resetAt": "2026-10-21T00:00:00.000Z",
+                "unlimited": false
+              },
+              "weekly (7d)": {
+                "used": 40,
+                "total": 100,
+                "remaining": 60,
+                "remainingPercentage": 60,
+                "resetAt": "2026-10-21T00:00:00.000Z",
+                "unlimited": false
+              },
+              "weekly opus (7d)": {
+                "used": 70,
+                "total": 100,
+                "remaining": 30,
+                "remainingPercentage": 30,
+                "resetAt": "2026-10-21T00:00:00.000Z",
+                "unlimited": false
+              },
+              "weekly sonnet (7d)": {
+                "used": 5,
+                "total": 100,
+                "remaining": 95,
+                "remainingPercentage": 95,
+                "resetAt": null,
+                "unlimited": false
+              },
+              "weekly fable (7d)": {
+                "used": 35,
+                "total": 100,
+                "remaining": 65,
+                "remainingPercentage": 65,
+                "resetAt": "2026-10-21T00:00:00.000Z",
+                "unlimited": false
+              }
+            }
+          },
+          "requests": [
+            {
+              "url": "https://api.anthropic.com/api/oauth/usage",
+              "method": "GET",
+              "headers": {
+                "Authorization": "Bearer <token>",
+                "anthropic-beta": "oauth-2025-04-20",
+                "anthropic-version": "2023-06-01"
+              },
+              "body": null
+            },
+            {
+              "url": "https://api.anthropic.com/v1/settings",
+              "method": "GET",
+              "headers": {
+                "Authorization": "Bearer <token>",
+                "anthropic-version": "2023-06-01"
+              },
+              "body": null
+            }
+          ]
+        },
+        {
+          "advanceMs": 301000,
+          "force": false,
+          "upstream": [],
+          "result": {
+            "plan": "Claude Code",
+            "extraUsage": {
+              "is_enabled": true,
+              "monthly_limit": 5000,
+              "used_credits": 1250.5,
+              "utilization": 25.01
+            },
+            "quotas": {
+              "session (5h)": {
+                "used": 12.5,
+                "total": 100,
+                "remaining": 87.5,
+                "remainingPercentage": 87.5,
+                "resetAt": "2026-10-21T00:00:00.000Z",
+                "unlimited": false
+              },
+              "weekly (7d)": {
+                "used": 40,
+                "total": 100,
+                "remaining": 60,
+                "remainingPercentage": 60,
+                "resetAt": "2026-10-21T00:00:00.000Z",
+                "unlimited": false
+              },
+              "weekly opus (7d)": {
+                "used": 70,
+                "total": 100,
+                "remaining": 30,
+                "remainingPercentage": 30,
+                "resetAt": "2026-10-21T00:00:00.000Z",
+                "unlimited": false
+              },
+              "weekly sonnet (7d)": {
+                "used": 5,
+                "total": 100,
+                "remaining": 95,
+                "remainingPercentage": 95,
+                "resetAt": null,
+                "unlimited": false
+              },
+              "weekly fable (7d)": {
+                "used": 35,
+                "total": 100,
+                "remaining": 65,
+                "remainingPercentage": 65,
+                "resetAt": "2026-10-21T00:00:00.000Z",
+                "unlimited": false
+              }
+            }
+          },
+          "requests": []
+        }
+      ]
+    },
+    "cooldown-skips-oauth": {
+      "calls": [
+        {
+          "advanceMs": 0,
+          "force": true,
+          "upstream": [
+            {
+              "status": 429,
+              "body": {}
+            },
+            {
+              "status": 403,
+              "body": {}
+            }
+          ],
+          "result": {
+            "message": "Claude connected. Usage API requires admin permissions."
+          },
+          "requests": [
+            {
+              "url": "https://api.anthropic.com/api/oauth/usage",
+              "method": "GET",
+              "headers": {
+                "Authorization": "Bearer <token>",
+                "anthropic-beta": "oauth-2025-04-20",
+                "anthropic-version": "2023-06-01"
+              },
+              "body": null
+            },
+            {
+              "url": "https://api.anthropic.com/v1/settings",
+              "method": "GET",
+              "headers": {
+                "Authorization": "Bearer <token>",
+                "anthropic-version": "2023-06-01"
+              },
+              "body": null
+            }
+          ]
+        },
+        {
+          "advanceMs": 60000,
+          "force": true,
+          "upstream": [
+            {
+              "status": 403,
+              "body": {}
+            }
+          ],
+          "result": {
+            "message": "Claude connected. Usage API requires admin permissions."
+          },
+          "requests": [
+            {
+              "url": "https://api.anthropic.com/v1/settings",
+              "method": "GET",
+              "headers": {
+                "Authorization": "Bearer <token>",
+                "anthropic-version": "2023-06-01"
+              },
+              "body": null
+            }
+          ]
+        },
+        {
+          "advanceMs": 180000,
+          "force": true,
+          "upstream": [
+            {
+              "status": 200,
+              "body": {
+                "five_hour": {
+                  "utilization": 100,
+                  "resets_at": "2026-10-21T00:00:00Z"
+                },
+                "seven_day": {
+                  "utilization": 100,
+                  "resets_at": "2026-10-21T00:00:00Z"
+                },
+                "extra_usage": {
+                  "is_enabled": false,
+                  "monthly_limit": null,
+                  "used_credits": null,
+                  "utilization": null
+                }
+              }
+            }
+          ],
+          "result": {
+            "plan": "Claude Code",
+            "extraUsage": {
+              "is_enabled": false,
+              "monthly_limit": null,
+              "used_credits": null,
+              "utilization": null
+            },
+            "quotas": {
+              "session (5h)": {
+                "used": 100,
+                "total": 100,
+                "remaining": 0,
+                "remainingPercentage": 0,
+                "resetAt": "2026-10-21T00:00:00.000Z",
+                "unlimited": false
+              },
+              "weekly (7d)": {
+                "used": 100,
+                "total": 100,
+                "remaining": 0,
+                "remainingPercentage": 0,
+                "resetAt": "2026-10-21T00:00:00.000Z",
+                "unlimited": false
+              }
+            }
+          },
+          "requests": [
+            {
+              "url": "https://api.anthropic.com/api/oauth/usage",
+              "method": "GET",
+              "headers": {
+                "Authorization": "Bearer <token>",
+                "anthropic-beta": "oauth-2025-04-20",
+                "anthropic-version": "2023-06-01"
+              },
+              "body": null
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

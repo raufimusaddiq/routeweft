@@ -2910,3 +2910,48 @@ The same branch (`:197`) serves `gemini`, `gemini-cli`, `vertex` and `antigravit
 **Open.**
 - **Gemini CLI image models, Chat client** (6.26 Open), unchanged.
 - **Live behaviour is U.** No request has reached a Gemini-family image model from this repository.
+
+## 6.28 Codex, Claude and GitHub Copilot quota readers (#222)
+
+Oracle: `1c3b9f47`, read with `git show` in `/home/ubuntu/9router`; its working tree is not used. `U/` is `open-sse/services/usage/`. Revalidated against `main` at `32bfa76` before any change: each P05 [D] finding below was still true there.
+
+**Boundary.** The three readers and the `/admin/v1/quota` read model. No provider, endpoint, routing rule or readiness changes. The UI controls (reset-credit spend, warming opt-in) remain #77/U06.
+
+**What the pin reads.**
+
+| Reader | Pin behaviour | Evidence |
+|---|---|---|
+| Codex primary windows | `rate_limit \|\| rate_limits \|\| rate_limits_by_limit_id?.codex`, else `{}`; a nested `rate_limit` object is the body | `U/codex.js:122`, `:35-40` |
+| Codex review | `code_review_rate_limit \|\| review_rate_limit`; else, when `rate_limits_by_limit_id` is an object, its `code_review \|\| codex_review \|\| review` **and nothing else**; else the first `additional_rate_limits` entry whose `limit_name \|\| metered_feature \|\| id` (first truthy, lowercased) contains `review` | `U/codex.js:73-88` |
+| Codex spark | `spark_rate_limit \|\| gpt_5_3_codex_spark_rate_limit`; else by-id `gpt-5.3-codex-spark \|\| gpt_5_3_codex_spark \|\| spark`; else an additional entry containing `spark` | `U/codex.js:90-105` |
+| Codex window | primary `primary_window \|\| primary` of the body, then of the snapshot (secondary likewise); used `toFiniteNumber(used_percent ?? percent_used, 0)` clamped to [0,100]; reset `parseResetTime(reset_at ?? resets_at ?? resetAt)` | `U/codex.js:42-71`, `U/shared.js:15-52` |
+| Codex flags, plan, credits | `limit_reached` truthy per group; `plan_type \|\| summary.plan \|\| "unknown"`; `max(0, toFiniteNumber(rate_limit_reset_credits.available_count, 0))`; non-2xx is a message | `U/codex.js:117-139` |
+| Codex reset credits | `available_count ?? availableCount`, `granted_at ?? grantedAt`, `expires_at ?? expiresAt`, `status \|\| "unknown"`; error text `message \|\| error \|\| detail`; consume success is `code === "reset" \|\| toFiniteNumber(windows_reset) > 0` | `U/codex.js:145-228` |
+| Claude windows | `five_hour`, `seven_day`, `seven_day_<model>` with a numeric `utilization`; then `limits[]` entries of kind `weekly_scoped` with a numeric `percent` (clamped) and a model `display_name` (trimmed, lowercased into the name), which replace a same-named window; `extra_usage ?? null` | `U/claude.js:77-133` |
+| Claude fallback | OAuth non-2xx → legacy `settings` then organization usage; a 429 cools OAuth down for 3 minutes; settings non-2xx is a message without a plan; a soft failure returns the last good read, and its settled promise then stays cached until a forced refresh | `U/claude.js:27-56`, `:136-199` |
+| GitHub | a truthy `quota_snapshots` (even `{}`) is the paid shape: `chat`, `completions`, `premium_interactions`, each `used = entitlement − remaining`, `total = entitlement`, `unlimited` truthy, an absent one `{used:0,total:0,unlimited:true}`; else a truthy `monthly_quotas \|\| limited_user_quotas` is the free shape (`used`/`total` default 0, plan `copilot_plan \|\| access_type_sku`); else a message; non-2xx throws with the body | `U/github.js:19-100` |
+| Endpoints and headers | one endpoint each, no regional variant: `wham/usage`, `oauth/usage` + `v1/settings` + `v1/organizations/{org_id}/usage`, `copilot_internal/user` with API version `2022-11-28` and UA `GitHubCopilotChat/0.26.7` | `R/codex.js:47-50`, `R/claude.js:53-56`, `R/github.js:40-41,79-81` |
+
+**How it is checked.** `compat/parity/generate-scoped-quota.mjs` evaluates the pin's own `shared.js`, `codex.js`, `claude.js` and `github.js` with a scripted network and clock, taking the URLs and GitHub headers from the pinned registry entries, and writes `internal/providers/usage/testdata/scoped_quota_pin.json`: 23 Codex, 17 GitHub and 14 Claude answers, plus two Claude multi-read sequences, each with the requests the pin sent (token redacted). Two runs are byte-identical; no test regenerates it.
+
+| Behaviour | Routeweft | Test |
+|---|---|---|
+| Every recorded answer: zero, empty, expired, multiple-window, by-id and alias precedence, field shapes, auth (401/403), error (500), timeout, invalid JSON | `codex/usage.go` `parseUsage`, `claude/usage.go` `parseOAuthUsage`, `usage/github_gemini.go` read the body with the pin's `\|\|`/`??` rules (`providers/shared/jsvalue.go`); windows, remaining fraction, reset to the millisecond, plan and routing status equal the pin's; the requests match URL, method and every pin header | `TestCodexQuotaIsThePins`, `TestClaudeQuotaIsThePins`, `TestGitHubQuotaIsThePins`, `TestScopedQuotaSharedValueSemantics` |
+| Provider metadata in the read model | window `count {used,total,remaining}` (Copilot), `scope {kind,model}` (Claude `weekly_scoped`), `limitReached` and the pin's labels as `displayName` (Codex, `ProviderLimits/utils.js:426-432`); item `metadata` (`resetDate`, Claude legacy `organization`), `extraUsage` (Claude) and `message` (unsupported quota) | `TestClaudeScopedWeeklyKeepsItsScope`, `TestQuotaReadKeepsProviderMetadata` |
+| Claude cool-down and legacy fallback | unchanged; request for request the pin's | `TestClaudeSequencesFollowThePin` |
+| No secret | no read model, error or recorded file carries the token; GitHub errors never carry the upstream body; error text is still not serialized | all of the above |
+
+Mutation check: undoing any one of the by-id lookup, the by-id shadowing, the `??` order, the zero-allowance rule, the GitHub notice, the numeric-`percent` rule, the scope or the Claude soft-failure report fails at least one case.
+
+**Differences, each on purpose.**
+- **An absent Copilot snapshot is omitted**, not reported unlimited. Nothing was reported, and unknown is kept apart from unlimited.
+- **A zero Copilot allowance** (entitlement or monthly total 0, not unlimited) **has no remaining fraction**: it is neither unlimited (as `main` read it) nor exhausted. Its amounts stay in `count`. The pin's page shows it as 0% (`utils.js:263-269`). An unlimited snapshot carries no `count`, because its amounts are placeholder zeros.
+- **Claude after a soft failure**: the pin serves the last good read as fresh and stops reading. Routeweft reports `ErrUsageUnavailable`, so the service keeps those windows on display (`windowsObservedAt` unchanged) while routing treats the account as not exhausted (PROVIDER_BASELINE §8), and it reads again on the next refresh. With no earlier good read, the pin's message is the state.
+- **Failed reads are errors.** The pin turns a Codex non-2xx, a Claude transport failure or invalid JSON into a message. Routeweft records a failed read, with Codex 401/403 as re-authentication. The GitHub "unable to parse" answer and the Claude permission messages are notices, not errors.
+- **An omitted Codex reset-credit count stays unknown** (`main`, kept); the pin reports 0.
+- **The Claude legacy organization usage object** is provider-owned and is not read as windows; the pin hands it raw to its page.
+- **Request headers.** Codex `wham/usage` also sends `OpenAI-Beta: codex-1` and `originator`, and the account header when known; the pin sends only `Authorization` and `Accept`. Claude also sends `Accept`. These are unchanged from `main`, kept so working reads are not disturbed, and listed for the owner.
+
+**Open.**
+- **Live behaviour is U.** No request has reached these endpoints from this repository. The Copilot token exchange is not qualified here.
+- **The UI** does not yet render `count`, `scope`, `metadata` or `extraUsage`, and has no reset-credit or warming controls (#77/U06).

@@ -137,6 +137,15 @@ func (h *Handler) quotaRow(id, provider, name string, enabled bool, now time.Tim
 			if detail.CreditAvailable != nil {
 				item["creditAvailable"] = *detail.CreditAvailable
 			}
+			if detail.Message != "" {
+				item["message"] = detail.Message
+			}
+			if len(detail.Metadata) > 0 {
+				item["metadata"] = detail.Metadata
+			}
+			if len(detail.ExtraUsage) > 0 {
+				item["extraUsage"] = detail.ExtraUsage
+			}
 		}
 	}
 	state := h.opts.Runtime.State()
