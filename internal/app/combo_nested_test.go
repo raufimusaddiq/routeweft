@@ -163,4 +163,24 @@ func TestNestedComboCompileRules(t *testing.T) {
 	if _, err := a.runtime.SetCombos(ctx, deep); err == nil {
 		t.Fatal("a chain deeper than the limit must be refused")
 	}
+	// The limit must not depend on which Combo is checked first: here the deepest
+	// end of the chain sorts first by name, so every shallower Combo is settled
+	// before the one at the top is reached.
+	reversed := make([]runtime.Combo, 0, runtime.MaxComboDepth+1)
+	for i := 0; i <= runtime.MaxComboDepth; i++ {
+		combo := runtime.Combo{ID: fmt.Sprint("a", i), Name: fmt.Sprint("a", i)}
+		if i == 0 {
+			combo.Members = []runtime.ComboMember{member("pa", "a", 0)}
+		} else {
+			combo.Members = []runtime.ComboMember{member("", fmt.Sprint("a", i-1), 0)}
+		}
+		reversed = append(reversed, combo)
+	}
+	if _, err := a.runtime.SetCombos(ctx, reversed); err == nil {
+		t.Fatal("a chain deeper than the limit must be refused whichever end sorts first")
+	}
+	// A chain exactly at the limit is accepted.
+	if _, err := a.runtime.SetCombos(ctx, reversed[:runtime.MaxComboDepth]); err != nil {
+		t.Fatalf("a chain at the limit must be accepted: %v", err)
+	}
 }
