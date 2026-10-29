@@ -1116,7 +1116,9 @@ outcome is unknown: read the credit list again before issuing another POST. An
 ambiguous action is not retried automatically; the Quota page re-reads the list
 itself. Every spend on the page reads the credit list from Codex first and
 spends nothing while that read fails, including after leaving the page or
-reloading it. Another 4xx means Codex
+reloading it. A refused credential (Codex 401/403) is the one outcome the server
+replays, once: nothing was spent, so it refreshes the token and sends the same
+redeem id again. Another 4xx means Codex
 refused and nothing was spent; 403 `reauth_required` means reconnect the account.
 On the Quota page, Credit expiry lists the credits and Use 1 reset credit asks
 before spending one.

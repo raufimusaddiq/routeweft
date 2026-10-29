@@ -164,3 +164,123 @@ func TestCodexResetCreditRefusalKeepsItsStatus(t *testing.T) {
 		}
 	}
 }
+
+// retryRig is codexCreditsRig with a refreshable credential and a Codex that
+// answers each consume by the bearer it carries.
+func retryRig(t *testing.T, refreshToken string, exchange func() (credentials.Secret, error), answer func(auth string, w http.ResponseWriter)) (*http.ServeMux, *http.Cookie, string, *[]string, *[][2]string, *int) {
+	t.Helper()
+	h, mux, store, creds, cookie := newProvidersAPI(t, false, nil)
+	t.Cleanup(func() { store.Close() })
+	ctx := context.Background()
+	node, err := creds.PutNode(ctx, credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "codex", Name: "Codex", Transports: []string{"openai-responses"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := creds.PutConnection(ctx, credentials.Connection{NodeID: node.ID, Name: "fixture", Identity: "fixture", AuthKind: credentials.AuthOAuth, Enabled: true, Secret: credentials.Secret{AccessToken: "stale-secret", RefreshToken: refreshToken}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exchanges := 0
+	h.opts.CredentialRegistry.SetExchangerResolver(func(credentials.Connection) credentials.Exchanger {
+		return func(context.Context, credentials.Secret) (credentials.Secret, error) {
+			exchanges++
+			return exchange()
+		}
+	})
+	forgotten := &[]string{}
+	h.opts.QuotaForget = func(id string) { *forgotten = append(*forgotten, id) }
+	var mu sync.Mutex
+	seen := &[][2]string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		mu.Lock()
+		*seen = append(*seen, [2]string{payload["redeem_request_id"], r.Header.Get("Authorization")})
+		mu.Unlock()
+		answer(r.Header.Get("Authorization"), w)
+	}))
+	t.Cleanup(server.Close)
+	target, _ := url.Parse(server.URL)
+	h.opts.OAuthClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		r = r.Clone(r.Context())
+		r.URL.Scheme, r.URL.Host = target.Scheme, target.Host
+		return server.Client().Transport.RoundTrip(r)
+	})}
+	return mux, cookie, "/admin/v1/quota/" + c.ID + "/codex-reset-credits", forgotten, seen, &exchanges
+}
+
+func freshSecret() (credentials.Secret, error) {
+	return credentials.Secret{AccessToken: "fresh-secret", RefreshToken: "r2"}, nil
+}
+
+func rejectStale(auth string, w http.ResponseWriter) {
+	if auth == "Bearer stale-secret" {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	io.WriteString(w, `{"code":"reset","windows_reset":1}`)
+}
+
+// A credential refusal is definite, so the spend is replayed once with the same
+// redeem id and a forced refresh (codex-reset-credits/route.js:136-147).
+func TestCodexResetCreditRefusedCredentialRetriesOnceWithSameIDAndFreshToken(t *testing.T) {
+	mux, cookie, path, forgotten, seen, exchanges := retryRig(t, "r1", freshSecret, rejectStale)
+	got := doJSON(t, mux, cookie, http.MethodPost, path, `{"confirm":true}`)
+	if got.Code != http.StatusOK {
+		t.Fatalf("%d %s", got.Code, got.Body)
+	}
+	if len(*seen) != 2 || (*seen)[0][0] == "" || (*seen)[0][0] != (*seen)[1][0] || (*seen)[1][1] != "Bearer fresh-secret" || *exchanges != 1 {
+		t.Fatalf("requests %v, exchanges %d", *seen, *exchanges)
+	}
+	if len(*forgotten) != 1 {
+		t.Fatalf("cached quota forgotten %d times, want 1", len(*forgotten))
+	}
+	if strings.Contains(got.Body.String(), "fresh-secret") || strings.Contains(got.Body.String(), "stale-secret") {
+		t.Fatal("credential in the reply")
+	}
+}
+
+// The retry is one, never a loop: a second refusal is reported and nothing more
+// is sent.
+func TestCodexResetCreditSecondRefusalIsNotRetriedAgain(t *testing.T) {
+	mux, cookie, path, forgotten, seen, exchanges := retryRig(t, "r1", freshSecret, func(_ string, w http.ResponseWriter) { w.WriteHeader(http.StatusUnauthorized) })
+	got := doJSON(t, mux, cookie, http.MethodPost, path, `{"confirm":true}`)
+	if got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "reauth_required") || len(*seen) != 2 || *exchanges != 1 || len(*forgotten) != 0 {
+		t.Fatalf("%d %s requests %v exchanges %d", got.Code, got.Body, *seen, *exchanges)
+	}
+}
+
+// An ambiguous outcome on the retried attempt is as final as on the first.
+func TestCodexResetCreditAmbiguousRetryOutcomeIsNotSentAgain(t *testing.T) {
+	mux, cookie, path, forgotten, seen, _ := retryRig(t, "r1", freshSecret, func(auth string, w http.ResponseWriter) {
+		if auth == "Bearer stale-secret" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusBadGateway)
+	})
+	got := doJSON(t, mux, cookie, http.MethodPost, path, `{"confirm":true}`)
+	if got.Code != http.StatusBadGateway || len(*seen) != 2 || (*seen)[0][0] != (*seen)[1][0] || len(*forgotten) != 0 {
+		t.Fatalf("%d %s requests %v", got.Code, got.Body, *seen)
+	}
+}
+
+// With nothing to refresh with, or a refresh that fails, no second spend is sent.
+func TestCodexResetCreditRefusalWithoutUsableRefreshIsNotRetried(t *testing.T) {
+	for name, tc := range map[string]struct {
+		refreshToken string
+		exchange     func() (credentials.Secret, error)
+		exchanges    int
+	}{
+		"no refresh token": {"", freshSecret, 0},
+		"refresh fails":    {"r1", func() (credentials.Secret, error) { return credentials.Secret{}, io.ErrUnexpectedEOF }, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mux, cookie, path, forgotten, seen, exchanges := retryRig(t, tc.refreshToken, tc.exchange, rejectStale)
+			got := doJSON(t, mux, cookie, http.MethodPost, path, `{"confirm":true}`)
+			if got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "reauth_required") || len(*seen) != 1 || *exchanges != tc.exchanges || len(*forgotten) != 0 {
+				t.Fatalf("%d %s requests %v exchanges %d", got.Code, got.Body, *seen, *exchanges)
+			}
+		})
+	}
+}

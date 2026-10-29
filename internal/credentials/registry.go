@@ -67,7 +67,11 @@ type entry struct {
 	generation uint64
 	current    Secret
 	seeded     bool
-	inflight   *refreshCall
+	// rejected is an access token the provider refused. While it is still the
+	// current one the credential counts as expired, so the next Secret refreshes
+	// it; any other token clears the effect without bookkeeping.
+	rejected string
+	inflight *refreshCall
 }
 
 type refreshCall struct {
@@ -449,6 +453,37 @@ func (r *Registry) Secret(ctx context.Context, connectionID string) (Secret, err
 	}
 }
 
+// ErrNoRefreshToken means a forced refresh was asked of a credential that has
+// nothing to refresh with.
+var ErrNoRefreshToken = errors.New("connection has no refresh token")
+
+// ForceRefresh returns a credential the provider has not refused: the access
+// token the caller was just refused is treated as expired and replaced under the
+// same singleflight and durable commit as a timed refresh. If another caller
+// already rotated past the refused token, that newer credential is returned
+// instead of rotating again, so a refresh token is never reused (the pin
+// re-reads the latest tokens before a forced refresh, usage route.js:25-28).
+func (r *Registry) ForceRefresh(ctx context.Context, connectionID, rejectedAccessToken string) (Secret, error) {
+	current, err := r.lookup(connectionID)
+	if err != nil {
+		return Secret{}, err
+	}
+	current.mu.Lock()
+	if current.exchanger == nil {
+		current.mu.Unlock()
+		return Secret{}, ErrNoExchanger
+	}
+	if current.current.AccessToken == rejectedAccessToken {
+		if strings.TrimSpace(current.current.RefreshToken) == "" {
+			current.mu.Unlock()
+			return Secret{}, ErrNoRefreshToken
+		}
+		current.rejected = rejectedAccessToken
+	}
+	current.mu.Unlock()
+	return r.Secret(ctx, connectionID)
+}
+
 // refresh runs the provider exchange and durably commits the rotated payload
 // before a successful refresh becomes visible to any caller. The commit is
 // bounded and detached so an already-rotated upstream token is not dropped when
@@ -605,6 +640,9 @@ func (r *Registry) validLocked(current *entry) bool {
 	}
 	secret := current.current
 	if secret.AccessToken == "" && secret.Cookie == "" {
+		return false
+	}
+	if current.rejected != "" && current.rejected == secret.AccessToken {
 		return false
 	}
 	expiry := secret.Expiry

@@ -56,17 +56,7 @@ func (h *Handler) handleCodexResetCredits(w http.ResponseWriter, r *http.Request
 		writeError(w, 502, "credential_unavailable", "Codex credential could not be refreshed")
 		return
 	}
-	account := secret.ProviderData["workspaceId"]
-	if account == "" {
-		account = secret.ProviderData["chatgptAccountId"]
-	}
-	if account == "" {
-		account = secret.ProviderData["accountId"]
-	}
-	if account == "" {
-		account = connection.AccountID
-	}
-	client := codex.UsageClient{Client: h.opts.OAuthClient, AccountID: account}
+	client := codex.UsageClient{Client: h.opts.OAuthClient, AccountID: codexAccount(secret, connection)}
 	if r.Method == http.MethodGet {
 		result, err := client.ResetCredits(ctx, secret.AccessToken)
 		if err != nil {
@@ -77,7 +67,17 @@ func (h *Handler) handleCodexResetCredits(w http.ResponseWriter, r *http.Request
 		return
 	}
 	// Never retry an ambiguous spend; the upstream may already have consumed it.
-	result, err := client.ConsumeResetCredit(ctx, secret.AccessToken, uuid.NewString())
+	// The one retry is after a credential refusal, which is definite (nothing was
+	// spent): same redeem id, forced token refresh (codex-reset-credits/route.js:
+	// 136-147). The id makes a replay the same spend, never a second one.
+	redeemID := uuid.NewString()
+	result, err := client.ConsumeResetCredit(ctx, secret.AccessToken, redeemID)
+	if errors.Is(err, codex.ErrReauthRequired) {
+		if refreshed, refreshErr := h.opts.CredentialRegistry.ForceRefresh(ctx, connection.ID, secret.AccessToken); refreshErr == nil {
+			client.AccountID = codexAccount(refreshed, connection)
+			result, err = client.ConsumeResetCredit(ctx, refreshed.AccessToken, redeemID)
+		}
+	}
 	if errors.Is(err, codex.ErrReauthRequired) {
 		// Codex refused the credential, so nothing was spent. 401 is the admin
 		// session's status here, so the refusal is a 403.
@@ -107,4 +107,13 @@ func (h *Handler) handleCodexResetCredits(w http.ResponseWriter, r *http.Request
 	}
 	result.Message = ""
 	writeJSON(w, status, result)
+}
+
+func codexAccount(secret credentials.Secret, connection credentials.Connection) string {
+	for _, key := range []string{"workspaceId", "chatgptAccountId", "accountId"} {
+		if id := secret.ProviderData[key]; id != "" {
+			return id
+		}
+	}
+	return connection.AccountID
 }

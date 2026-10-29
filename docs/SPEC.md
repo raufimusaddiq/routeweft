@@ -2473,7 +2473,10 @@ whose observation predates the job's start as not updated by it.
 GET `/admin/v1/quota/{id}/codex-reset-credits` returns the existing normalized credit listing. Session-gated POST at the same
 path requires `{"confirm":true}`, spends one credit with a server UUID, returns
 409 for no credit and 502 for an unavailable/ambiguous result. It never retries
-an ambiguous spend. A Codex refusal is definite and keeps its 4xx status
+an ambiguous spend; the one replay is after a credential refusal (401/403, so
+nothing was spent): once, with the same redeem id and a forced refresh of the
+access token (`Registry.ForceRefresh`; codex-reset-credits/route.js:136-147), and
+only when the connection has a refresh token. A Codex refusal is definite and keeps its 4xx status
 (codex-reset-credits/route.js:42-47); a refused credential is 403
 `reauth_required`, because 401 is the admin session's status. Both actions reject non-Codex token connections before any
 network work and refresh credentials through the shared registry. The UI lists
