@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
@@ -19,7 +20,10 @@ import (
 type upstreamLog struct {
 	mu     sync.Mutex
 	models []string
+	bodies map[string][]string // model -> raw request bodies, in order
 	fail   map[string]int
+	// failBody, when set for a model, is the error body its failure carries.
+	failBody map[string]string
 }
 
 func (u *upstreamLog) handler() http.Handler {
@@ -31,12 +35,20 @@ func (u *upstreamLog) handler() http.Handler {
 		_ = json.Unmarshal(raw, &body)
 		u.mu.Lock()
 		u.models = append(u.models, body.Model)
+		if u.bodies == nil {
+			u.bodies = map[string][]string{}
+		}
+		u.bodies[body.Model] = append(u.bodies[body.Model], string(raw))
 		status := u.fail[body.Model]
+		failBody := u.failBody[body.Model]
 		u.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		if status != 0 {
 			w.WriteHeader(status)
-			fmt.Fprint(w, `{"error":{"message":"scripted failure"}}`)
+			if failBody == "" {
+				failBody = `{"error":{"message":"scripted failure"}}`
+			}
+			fmt.Fprint(w, failBody)
 			return
 		}
 		fmt.Fprintf(w, `{"served_by":%q}`, body.Model)
@@ -329,5 +341,188 @@ func TestComboServingEveryProtocol(t *testing.T) {
 		if w.Code != 200 || upstream.seen() != "text-a text-b" {
 			t.Fatalf("%s: status=%d seen=%q body=%s", tc.path, w.Code, upstream.seen(), w.Body)
 		}
+	}
+}
+
+// messageCount is how many messages the upstream received for a model's nth call.
+func (u *upstreamLog) messageCount(t *testing.T, model string, call int) int {
+	t.Helper()
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if call >= len(u.bodies[model]) {
+		t.Fatalf("no call %d to %s (have %d)", call, model, len(u.bodies[model]))
+	}
+	var body struct {
+		Messages []json.RawMessage `json:"messages"`
+		Input    []json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal([]byte(u.bodies[model][call]), &body); err != nil {
+		t.Fatal(err)
+	}
+	return len(body.Messages) + len(body.Input)
+}
+
+func longHistory(turns int, last string) string {
+	var messages []string
+	for i := 0; i < turns; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		messages = append(messages, fmt.Sprintf(`{"role":%q,"content":"turn %d"}`, role, i))
+	}
+	messages = append(messages, last)
+	return `{"model":"%s","messages":[` + strings.Join(messages, ",") + `]}`
+}
+
+// A model the gateway added has its history fitted to its context window; the
+// Combo's own members, called later as fallback, get the whole history
+// (capacityAdapter.js:98-169,154-168).
+func TestComboServingFitsHistoryOnlyForAdapterModels(t *testing.T) {
+	upstream := &upstreamLog{fail: map[string]int{"also-sees": 503}}
+	a, key := comboServingApp(t, upstream)
+	setCombos(t, a, runtime.Combo{ID: "c", Name: "texty", Members: members("text-a")})
+	if _, err := a.runtime.SetSettings(context.Background(), map[string]string{
+		"capacityAdapterVision": `{"enabled":true,"roundRobin":false,"pool":[{"providerId":"test","modelId":"also-sees"}]}`,
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	image := `{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}`
+	// Ten older turns, an image on the current one: six older turns are kept (the
+	// oracle's HEAD_KEEP), the other four dropped, then the current turn.
+	w := post(a, key, fmt.Sprintf(longHistory(10, image), "texty"))
+	if w.Code != 200 || upstream.seen() != "also-sees text-a" {
+		t.Fatalf("status=%d seen=%q body=%s", w.Code, upstream.seen(), w.Body)
+	}
+	if got := upstream.messageCount(t, "also-sees", 0); got != 7 {
+		t.Fatalf("adapter model received %d messages, want 7 (six older turns and the current one)", got)
+	}
+	if got := upstream.messageCount(t, "text-a", 0); got != 11 {
+		t.Fatalf("the Combo's own member received %d messages, want all 11", got)
+	}
+	// Rescuing a single model fits history the same way, on every protocol that
+	// carries messages.
+	upstream.reset()
+	clearCooldowns(a)
+	upstream.mu.Lock()
+	upstream.fail = map[string]int{}
+	upstream.bodies = nil
+	upstream.mu.Unlock()
+	if w := post(a, key, fmt.Sprintf(longHistory(10, image), "test/text-a")); w.Code != 200 || upstream.seen() != "also-sees" {
+		t.Fatalf("single model: status=%d seen=%q", w.Code, upstream.seen())
+	}
+	if got := upstream.messageCount(t, "also-sees", 0); got != 7 {
+		t.Fatalf("single model rescue received %d messages, want 7", got)
+	}
+}
+
+// When every member fails the answer is the first failed member's status and the
+// last failure's message, not the last upstream body (combo.js:363-381).
+func TestComboServingAnswersAnExhaustedComboLikeTheOracle(t *testing.T) {
+	upstream := &upstreamLog{
+		fail:     map[string]int{"text-a": 502, "text-b": 500},
+		failBody: map[string]string{"text-a": `{"error":{"message":"bad gateway"}}`, "text-b": `{"error":"boom"}`},
+	}
+	a, key := comboServingApp(t, upstream)
+	setCombos(t, a, runtime.Combo{ID: "c", Name: "duo", Members: members("text-a", "text-b")})
+	w := post(a, key, fmt.Sprintf(textRequest, "duo"))
+	var body struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body %s: %v", w.Body, err)
+	}
+	if w.Code != 502 || body.Error.Message != "boom" || upstream.seen() != "text-a text-b" {
+		t.Fatalf("status=%d message=%q seen=%q body=%s", w.Code, body.Error.Message, upstream.seen(), w.Body)
+	}
+}
+
+// A message that names a transient condition on a 502/503/504 is waited out
+// before the Combo falls through, within five seconds (combo.js:342-349).
+func TestComboServingWaitsOutATransientFailureBeforeFallingThrough(t *testing.T) {
+	upstream := &upstreamLog{
+		fail:     map[string]int{"text-a": 503},
+		failBody: map[string]string{"text-a": `{"error":{"message":"The model is overloaded"}}`},
+	}
+	a, key := comboServingApp(t, upstream)
+	setCombos(t, a, runtime.Combo{ID: "c", Name: "duo", Members: members("text-a", "text-b")})
+	started := time.Now()
+	w := post(a, key, fmt.Sprintf(textRequest, "duo"))
+	elapsed := time.Since(started)
+	if w.Code != 200 || upstream.seen() != "text-a text-b" {
+		t.Fatalf("status=%d seen=%q body=%s", w.Code, upstream.seen(), w.Body)
+	}
+	if elapsed < 1900*time.Millisecond || elapsed > 4*time.Second {
+		t.Fatalf("waited %v, want about 2s", elapsed)
+	}
+	// A bare 503 is not waited on.
+	upstream.mu.Lock()
+	upstream.failBody = nil
+	upstream.mu.Unlock()
+	upstream.reset()
+	clearCooldowns(a)
+	started = time.Now()
+	post(a, key, fmt.Sprintf(textRequest, "duo"))
+	if elapsed = time.Since(started); elapsed > time.Second {
+		t.Fatalf("a bare 503 waited %v", elapsed)
+	}
+}
+
+// The client leaving during the wait ends the request.
+func TestComboServingTransientWaitStopsWhenTheClientLeaves(t *testing.T) {
+	upstream := &upstreamLog{
+		fail:     map[string]int{"text-a": 503},
+		failBody: map[string]string{"text-a": `{"error":{"message":"overloaded"}}`},
+	}
+	a, key := comboServingApp(t, upstream)
+	setCombos(t, a, runtime.Combo{ID: "c", Name: "duo", Members: members("text-a", "text-b")})
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(fmt.Sprintf(textRequest, "duo"))).WithContext(ctx)
+	request.Header.Set("Authorization", "Bearer "+key)
+	started := time.Now()
+	a.Handler().ServeHTTP(httptest.NewRecorder(), request)
+	if elapsed := time.Since(started); elapsed > time.Second || upstream.seen() != "text-a" {
+		t.Fatalf("request lasted %v and tried %q; the wait must end with the client", elapsed, upstream.seen())
+	}
+}
+
+// Every protocol that carries a history fits it for an adapter model: the handler
+// swaps the request it parsed for the fitted one for that model's attempt.
+func TestComboServingFitsHistoryOnEveryProtocol(t *testing.T) {
+	older := func(key string) string {
+		var turns []string
+		for i := 0; i < 10; i++ {
+			role := "user"
+			if i%2 == 1 {
+				role = "assistant"
+			}
+			turns = append(turns, fmt.Sprintf(`{"role":%q,"content":"turn %d"}`, role, i))
+		}
+		return strings.Join(turns, ",")
+	}
+	for _, tc := range []struct{ path, body string }{
+		{"/v1/chat/completions", `{"model":"texty","messages":[` + older("messages") + `,{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}]}`},
+		{"/v1/responses", `{"model":"texty","input":[` + older("input") + `,{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}]}`},
+		{"/v1/messages", `{"model":"texty","max_tokens":8,"messages":[` + older("messages") + `,{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}]}]}`},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			upstream := &upstreamLog{}
+			a, key := comboServingApp(t, upstream)
+			setCombos(t, a, runtime.Combo{ID: "c", Name: "texty", Members: members("text-a")})
+			if _, err := a.runtime.SetSettings(context.Background(), map[string]string{
+				"capacityAdapterVision": `{"enabled":true,"roundRobin":false,"pool":[{"providerId":"test","modelId":"also-sees"}]}`,
+			}, nil); err != nil {
+				t.Fatal(err)
+			}
+			if w := serveRequest(a.Handler(), key, tc.path, tc.body); w.Code != 200 || upstream.seen() != "also-sees" {
+				t.Fatalf("status=%d seen=%q body=%s", w.Code, upstream.seen(), w.Body)
+			}
+			if got := upstream.messageCount(t, "also-sees", 0); got != 7 {
+				t.Fatalf("adapter model received %d history items, want 7", got)
+			}
+		})
 	}
 }

@@ -14,9 +14,9 @@ export const git = (...args) => execFileSync('git', ['-C', process.env.ORACLE_DI
 assert.equal(git('rev-parse', `${pin}^{commit}`).trim(), pin);
 export const source = path => git('show', `${pin}:${path}`);
 
-export async function load(path, dependencies) {
+export async function load(path, dependencies, globals = {}) {
   const context = vm.createContext({ Request, Response, Headers, URL, ReadableStream, AbortController, DOMException,
-    Set, console: { log() {}, warn() {}, error() {} }, process: { env: {} } });
+    Set, console: { log() {}, warn() {}, error() {} }, process: { env: {} }, ...globals });
   const code = source(path);
   const names = [...code.matchAll(/^export\s+(?:(?:async\s+)?function|const)\s+(\w+)/gm)].map(m => m[1]);
   // Replace module declarations only; imports cannot reach v1 state or host services.

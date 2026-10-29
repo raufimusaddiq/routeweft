@@ -770,6 +770,12 @@ A compiled Combo contains:
 - judge model;
 - capability metadata.
 
+### 15.0 Nested Combos and failure
+
+A Combo member with no provider names another Combo. It is served by that Combo's own strategy, rotation and capability handling when the outer Combo reaches it (an inner rotation moves only then). The name is checked when the Combos are saved: it must be a Combo (an alias or model of that name wins), a Combo may not reach itself, and nesting is at most 8 deep (the oracle accepts a cycle and recurses until the process fails; PARITY D15).
+
+When a Combo's models have all failed, the client gets the status of the first model that failed (503 if the last message says credentials are missing) and the message of the last failure, taken from the error body (`error.message`, a string `error`, or `message`), else the status text, else the status code. A failure the loop treats as terminal is returned as it is. Before the Combo falls past a 502, 503 or 504 whose message names a short transient condition (`request not allowed`: 5 s; rate limit, quota, capacity, overloaded and similar: 2 s) it waits that long, also after the last model; a bare 5xx, or any longer cooldown, is not waited on. The wait ends with the client.
+
 ### 15.1 Ordered fallback
 
 Try candidates in configured order. Only fallback-classified failures advance.
@@ -798,12 +804,13 @@ Enabled empty pool is a deliberate no-op.
 
 Vision/audio-input are initially exposed in UI. pdf/video configuration may exist without creating standalone media endpoints.
 
-When an adapter target has smaller context, history trimming (not yet applied in serving, PARITY 6.34):
+When an adapter model (one the gateway added) is called, its history is fitted to that model's context window first (open-sse `stripHistoryForContext`), for every protocol that carries a history:
 
-- keeps system/developer instruction head;
-- keeps the active user/media tail;
-- drops older middle turns first;
-- leaves headroom for response generation.
+- keeps every system/developer message;
+- keeps the active user turn (the run of messages after the last assistant turn), which carries the media;
+- keeps the first six older messages while they fit, drops the rest of the older middle first, and drops kept older messages from the end while the total exceeds 80% of the window at four characters a token;
+- uses a 200,000-token window when the capability table has none;
+- never changes a Combo's own members or a client-chosen model.
 
 ## 16. Fusion
 

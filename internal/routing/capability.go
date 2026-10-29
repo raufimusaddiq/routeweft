@@ -9,6 +9,9 @@ type Member struct {
 	Position      int
 	Capabilities  []string
 	ContextWindow int
+	// Adapter marks a capacity-adapter model the gateway added to the list; the
+	// client did not choose it (open-sse chat.js adapterAdded).
+	Adapter bool
 }
 
 // CapabilityRequirement names a hard capability an active request needs.

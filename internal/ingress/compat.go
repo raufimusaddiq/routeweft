@@ -186,6 +186,9 @@ func (h *Handler) handleGeminiRoute(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
+	setBodyRewriter(r, func(raw []byte) (func(), error) {
+		return swapRequest(request, func() (*geminiadapter.Request, error) { return geminiadapter.ParseRequest(model, stream, raw) })
+	})
 	native := nativeSpec{
 		endpoint: "v1beta/models/" + model + ":" + method,
 		body:     func(string) ([]byte, error) { return request.MarshalBody("") },
@@ -219,6 +222,11 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
 		return
+	}
+	if snapshot.AdaptersActive() {
+		setBodyRewriter(r, func(raw []byte) (func(), error) {
+			return swapRequest(request, func() (*openaiadapter.ChatRequest, error) { return openaiadapter.ParseChatRequest(raw) })
+		})
 	}
 	started := time.Now()
 	response, provider, err := h.dispatchAttempts(r, snapshot, request.Model, ollamaadapter.Protocol, false, request.Stream, func(provider routing.ProviderRef) (ChatTranslation, error) {

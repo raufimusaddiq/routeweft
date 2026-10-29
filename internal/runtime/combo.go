@@ -3,6 +3,7 @@ package runtime
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/routing"
@@ -22,7 +23,9 @@ type Combo struct {
 	Members      []ComboMember
 }
 
-// ComboMember is one ordered Combo route candidate.
+// ComboMember is one ordered Combo route candidate. A member with no provider
+// names another Combo (a nested Combo, served by its own strategy when reached,
+// open-sse chat.js:177-229); every other member is a provider/model pair.
 type ComboMember struct {
 	ProviderID string
 	ModelID    string
@@ -30,11 +33,19 @@ type ComboMember struct {
 	Selected   bool
 }
 
+// IsCombo reports whether the member names a nested Combo.
+func (m ComboMember) IsCombo() bool { return m.ProviderID == "" && m.ModelID != "" }
+
+// MaxComboDepth bounds how deeply Combos may nest. The oracle has no bound and
+// recurses until the process fails on a cycle; a cycle is rejected when the
+// Combos are compiled and this limit also bounds legitimate chains.
+const MaxComboDepth = 8
+
 // Resolve returns the selected members in position order.
 func (c Combo) Resolve() []ComboMember {
 	members := make([]ComboMember, 0, len(c.Members))
 	for _, member := range c.Members {
-		if member.Selected && member.ProviderID != "" && member.ModelID != "" {
+		if member.Selected && member.ModelID != "" && (member.ProviderID != "" || member.IsCombo()) {
 			members = append(members, member)
 		}
 	}
@@ -90,8 +101,17 @@ func compileCombos(combos []Combo, models map[string]Model, aliases map[string]M
 		seen := make(map[string]struct{}, len(combo.Members))
 		for _, member := range combo.Members {
 			key := modelKey(member.ProviderID, member.ModelID)
-			if member.ProviderID == "" || member.ModelID == "" {
+			if member.ModelID == "" {
 				return nil, fmt.Errorf("combo %q: member provider and model are required", name)
+			}
+			if member.ProviderID == "" {
+				// A nested Combo; the names are checked against each other below.
+				key = "combo\x00" + member.ModelID
+				if _, duplicate := seen[key]; duplicate {
+					return nil, fmt.Errorf("combo %q: duplicate member %s", name, member.ModelID)
+				}
+				seen[key] = struct{}{}
+				continue
 			}
 			if _, ok := models[key]; !ok {
 				return nil, fmt.Errorf("combo %q: member %s is not a known model", name, key)
@@ -109,7 +129,55 @@ func compileCombos(combos []Combo, models map[string]Model, aliases map[string]M
 		// combo (src/sse/handlers/chat.js:136).
 		compiled[name] = combo
 	}
+	if err := checkNestedCombos(compiled); err != nil {
+		return nil, err
+	}
 	return compiled, nil
+}
+
+// checkNestedCombos requires every nested member to name a Combo, forbids a
+// Combo from reaching itself and bounds the nesting depth.
+func checkNestedCombos(combos map[string]Combo) error {
+	state := make(map[string]int, len(combos)) // 1 = on the current path, 2 = done
+	var visit func(name string, depth int) error
+	visit = func(name string, depth int) error {
+		if depth > MaxComboDepth {
+			return fmt.Errorf("combo %q: nested Combos are deeper than %d", name, MaxComboDepth)
+		}
+		state[name] = 1
+		for _, member := range combos[name].Members {
+			if !member.IsCombo() {
+				continue
+			}
+			inner, ok := combos[member.ModelID]
+			if !ok {
+				return fmt.Errorf("combo %q: member %s is not a known model or Combo", name, member.ModelID)
+			}
+			switch state[inner.Name] {
+			case 1:
+				return fmt.Errorf("combo %q: nested Combo %q forms a cycle", name, inner.Name)
+			case 0:
+				if err := visit(inner.Name, depth+1); err != nil {
+					return err
+				}
+			}
+		}
+		state[name] = 2
+		return nil
+	}
+	names := make([]string, 0, len(combos))
+	for name := range combos {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if state[name] == 0 {
+			if err := visit(name, 1); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func parseComboStrategy(raw string) (string, error) {

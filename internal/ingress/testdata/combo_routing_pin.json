@@ -1943,5 +1943,1393 @@
         }
       ]
     }
+  ],
+  "strip": [
+    {
+      "name": "no message array",
+      "body": {
+        "model": "m",
+        "temperature": 0.2
+      },
+      "window": 1000,
+      "result": {
+        "model": "m",
+        "temperature": 0.2
+      }
+    },
+    {
+      "name": "empty messages",
+      "body": {
+        "messages": []
+      },
+      "window": 1000,
+      "result": {
+        "messages": []
+      }
+    },
+    {
+      "name": "only system and a user turn",
+      "body": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "rules"
+          },
+          {
+            "role": "user",
+            "content": "hi"
+          }
+        ]
+      },
+      "window": 1000,
+      "result": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "rules"
+          },
+          {
+            "role": "user",
+            "content": "hi"
+          }
+        ]
+      }
+    },
+    {
+      "name": "older turns that fit are kept",
+      "body": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "s"
+          },
+          {
+            "role": "user",
+            "content": "a"
+          },
+          {
+            "role": "assistant",
+            "content": "b"
+          },
+          {
+            "role": "user",
+            "content": "c"
+          }
+        ]
+      },
+      "window": 1000,
+      "result": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "s"
+          },
+          {
+            "role": "user",
+            "content": "a"
+          },
+          {
+            "role": "assistant",
+            "content": "b"
+          },
+          {
+            "role": "user",
+            "content": "c"
+          }
+        ]
+      }
+    },
+    {
+      "name": "more than six older turns drop the middle even when they fit",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "turn 0"
+          },
+          {
+            "role": "assistant",
+            "content": "turn 1"
+          },
+          {
+            "role": "user",
+            "content": "turn 2"
+          },
+          {
+            "role": "assistant",
+            "content": "turn 3"
+          },
+          {
+            "role": "user",
+            "content": "turn 4"
+          },
+          {
+            "role": "assistant",
+            "content": "turn 5"
+          },
+          {
+            "role": "user",
+            "content": "turn 6"
+          },
+          {
+            "role": "assistant",
+            "content": "turn 7"
+          },
+          {
+            "role": "user",
+            "content": "turn 8"
+          },
+          {
+            "role": "assistant",
+            "content": "turn 9"
+          },
+          {
+            "role": "user",
+            "content": "now"
+          }
+        ]
+      },
+      "window": 100000,
+      "result": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "turn 0"
+          },
+          {
+            "role": "assistant",
+            "content": "turn 1"
+          },
+          {
+            "role": "user",
+            "content": "turn 2"
+          },
+          {
+            "role": "assistant",
+            "content": "turn 3"
+          },
+          {
+            "role": "user",
+            "content": "turn 4"
+          },
+          {
+            "role": "assistant",
+            "content": "turn 5"
+          },
+          {
+            "role": "user",
+            "content": "now"
+          }
+        ]
+      }
+    },
+    {
+      "name": "head overflow drops head turns from the end",
+      "body": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "assistant",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "assistant",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        ]
+      },
+      "window": 150,
+      "result": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "assistant",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "assistant",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        ]
+      }
+    },
+    {
+      "name": "everything but the tail dropped",
+      "body": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "xxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "assistant",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        ]
+      },
+      "window": 100,
+      "result": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "xxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        ]
+      }
+    },
+    {
+      "name": "developer role is a system message",
+      "body": {
+        "messages": [
+          {
+            "role": "developer",
+            "content": "dev"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "assistant",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "now"
+          }
+        ]
+      },
+      "window": 100,
+      "result": {
+        "messages": [
+          {
+            "role": "developer",
+            "content": "dev"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "now"
+          }
+        ]
+      }
+    },
+    {
+      "name": "system messages in the middle are hoisted",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "system",
+            "content": "late rules"
+          },
+          {
+            "role": "assistant",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "now"
+          }
+        ]
+      },
+      "window": 100,
+      "result": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "late rules"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "now"
+          }
+        ]
+      }
+    },
+    {
+      "name": "trailing user run of several items is kept",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "assistant",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "one"
+          },
+          {
+            "role": "user",
+            "content": "two"
+          },
+          {
+            "role": "user",
+            "content": "three"
+          }
+        ]
+      },
+      "window": 100,
+      "result": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "one"
+          },
+          {
+            "role": "user",
+            "content": "two"
+          },
+          {
+            "role": "user",
+            "content": "three"
+          }
+        ]
+      }
+    },
+    {
+      "name": "no assistant turn means no older history",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        ]
+      },
+      "window": 100,
+      "result": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        ]
+      }
+    },
+    {
+      "name": "block arrays count text and 50 for a block without text",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              },
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "u"
+                }
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "now"
+              }
+            ]
+          }
+        ]
+      },
+      "window": 60,
+      "result": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              },
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "u"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "now"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "non-string non-array content counts zero",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": null
+          },
+          {
+            "role": "assistant",
+            "content": 5
+          },
+          {
+            "role": "user",
+            "content": {
+              "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            }
+          },
+          {
+            "role": "assistant",
+            "content": "ok"
+          },
+          {
+            "role": "user",
+            "content": "now"
+          }
+        ]
+      },
+      "window": 50,
+      "result": {
+        "messages": [
+          {
+            "role": "user",
+            "content": null
+          },
+          {
+            "role": "assistant",
+            "content": 5
+          },
+          {
+            "role": "user",
+            "content": {
+              "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            }
+          },
+          {
+            "role": "assistant",
+            "content": "ok"
+          },
+          {
+            "role": "user",
+            "content": "now"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UTF-16 length: astral characters count twice",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+          },
+          {
+            "role": "assistant",
+            "content": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+          },
+          {
+            "role": "user",
+            "content": "now"
+          }
+        ]
+      },
+      "window": 100,
+      "result": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+          },
+          {
+            "role": "user",
+            "content": "now"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Responses input array",
+      "body": {
+        "model": "m",
+        "input": [
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "assistant",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "now"
+          }
+        ],
+        "store": false
+      },
+      "window": 100,
+      "result": {
+        "model": "m",
+        "input": [
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "now"
+          }
+        ],
+        "store": false
+      }
+    },
+    {
+      "name": "Gemini contents use parts",
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              }
+            ]
+          },
+          {
+            "role": "model",
+            "parts": [
+              {
+                "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "now"
+              }
+            ]
+          }
+        ]
+      },
+      "window": 100,
+      "result": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "now"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "messages win over input",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "assistant",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "now"
+          }
+        ],
+        "input": [
+          {
+            "role": "user",
+            "content": "keep me"
+          }
+        ]
+      },
+      "window": 100,
+      "result": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "now"
+          }
+        ],
+        "input": [
+          {
+            "role": "user",
+            "content": "keep me"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown window defaults to 200000",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "xxxxxxxxxx"
+          },
+          {
+            "role": "assistant",
+            "content": "xxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxx"
+          },
+          {
+            "role": "assistant",
+            "content": "xxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxx"
+          },
+          {
+            "role": "assistant",
+            "content": "xxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxx"
+          },
+          {
+            "role": "assistant",
+            "content": "xxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "now"
+          }
+        ]
+      },
+      "window": null,
+      "result": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "xxxxxxxxxx"
+          },
+          {
+            "role": "assistant",
+            "content": "xxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxx"
+          },
+          {
+            "role": "assistant",
+            "content": "xxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxx"
+          },
+          {
+            "role": "assistant",
+            "content": "xxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "xxxxxxxxxx"
+          },
+          {
+            "role": "user",
+            "content": "now"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown fields and message extras survive",
+      "body": {
+        "model": "m",
+        "metadata": {
+          "a": [
+            1,
+            2
+          ]
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "name": "n"
+          },
+          {
+            "role": "assistant",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "tool_calls": []
+          },
+          {
+            "role": "user",
+            "content": "now",
+            "extra": true
+          }
+        ]
+      },
+      "window": 100,
+      "result": {
+        "model": "m",
+        "metadata": {
+          "a": [
+            1,
+            2
+          ]
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "name": "n"
+          },
+          {
+            "role": "user",
+            "content": "now",
+            "extra": true
+          }
+        ]
+      }
+    }
+  ],
+  "outcomes": [
+    {
+      "name": "one model fails transiently with a message that names the condition",
+      "terminal": false,
+      "success": false,
+      "members": [
+        {
+          "status": 503,
+          "body": "{\"error\":{\"message\":\"The model is overloaded\"}}",
+          "statusText": "Reason"
+        }
+      ],
+      "tried": 1,
+      "status": 503,
+      "message": "The model is overloaded",
+      "waits": [
+        2000
+      ]
+    },
+    {
+      "name": "a bare 503 is not waited on",
+      "terminal": false,
+      "success": false,
+      "members": [
+        {
+          "status": 503,
+          "body": "{\"error\":{\"message\":\"down\"}}",
+          "statusText": "Reason"
+        }
+      ],
+      "tried": 1,
+      "status": 503,
+      "message": "down",
+      "waits": []
+    },
+    {
+      "name": "a 502 with request not allowed waits five seconds",
+      "terminal": false,
+      "success": false,
+      "members": [
+        {
+          "status": 502,
+          "body": "{\"error\":{\"message\":\"request not allowed\"}}",
+          "statusText": "Reason"
+        },
+        {
+          "status": 500,
+          "body": "{\"error\":{\"message\":\"boom\"}}",
+          "statusText": "Reason"
+        }
+      ],
+      "tried": 2,
+      "status": 502,
+      "message": "boom",
+      "waits": [
+        5000
+      ]
+    },
+    {
+      "name": "a 504 with a capacity message waits two seconds",
+      "terminal": false,
+      "success": true,
+      "members": [
+        {
+          "status": 504,
+          "body": "{\"error\":{\"message\":\"out of capacity\"}}",
+          "statusText": "Reason"
+        },
+        {
+          "status": 200,
+          "body": "{\"ok\":true}",
+          "statusText": "Reason"
+        }
+      ],
+      "tried": 2,
+      "status": 200,
+      "message": null,
+      "waits": [
+        2000
+      ]
+    },
+    {
+      "name": "a 429 is a fallback but not a transient wait",
+      "terminal": false,
+      "success": false,
+      "members": [
+        {
+          "status": 429,
+          "body": "{\"error\":{\"message\":\"Rate limit hit\"}}",
+          "statusText": "Reason"
+        },
+        {
+          "status": 500,
+          "body": "{\"error\":{\"message\":\"last\"}}",
+          "statusText": "Reason"
+        }
+      ],
+      "tried": 2,
+      "status": 429,
+      "message": "last",
+      "waits": []
+    },
+    {
+      "name": "first status wins, last message wins",
+      "terminal": false,
+      "success": false,
+      "members": [
+        {
+          "status": 502,
+          "body": "{\"error\":{\"message\":\"bad gateway\"}}",
+          "statusText": "Reason"
+        },
+        {
+          "status": 500,
+          "body": "{\"error\":{\"message\":\"boom\"}}",
+          "statusText": "Reason"
+        },
+        {
+          "status": 504,
+          "body": "{\"error\":{\"message\":\"timeout\"}}",
+          "statusText": "Reason"
+        }
+      ],
+      "tried": 3,
+      "status": 502,
+      "message": "timeout",
+      "waits": []
+    },
+    {
+      "name": "missing credentials answer 503 whatever the first status",
+      "terminal": false,
+      "success": false,
+      "members": [
+        {
+          "status": 404,
+          "body": "{\"error\":{\"message\":\"a\"}}",
+          "statusText": "Reason"
+        },
+        {
+          "status": 404,
+          "body": "{\"error\":{\"message\":\"No credentials for provider: x\"}}",
+          "statusText": "Reason"
+        }
+      ],
+      "tried": 2,
+      "status": 503,
+      "message": "No credentials for provider: x",
+      "waits": []
+    },
+    {
+      "name": "a terminal client error is returned as it is",
+      "terminal": true,
+      "success": false,
+      "members": [
+        {
+          "status": 400,
+          "body": "{\"error\":{\"message\":\"bad request\"}}",
+          "statusText": "Reason"
+        },
+        {
+          "status": 200,
+          "body": "{\"ok\":true}",
+          "statusText": "Reason"
+        }
+      ],
+      "tried": 1,
+      "status": 400,
+      "message": "bad request",
+      "waits": []
+    },
+    {
+      "name": "a terminal error after a fallback is returned as it is",
+      "terminal": true,
+      "success": false,
+      "members": [
+        {
+          "status": 503,
+          "body": "{\"error\":{\"message\":\"down\"}}",
+          "statusText": "Reason"
+        },
+        {
+          "status": 400,
+          "body": "{\"error\":{\"message\":\"bad request\"}}",
+          "statusText": "Reason"
+        }
+      ],
+      "tried": 2,
+      "status": 400,
+      "message": "bad request",
+      "waits": []
+    },
+    {
+      "name": "error as a plain string",
+      "terminal": false,
+      "success": false,
+      "members": [
+        {
+          "status": 503,
+          "body": "{\"error\":\"plain string\"}",
+          "statusText": "Reason"
+        }
+      ],
+      "tried": 1,
+      "status": 503,
+      "message": "plain string",
+      "waits": []
+    },
+    {
+      "name": "message at the top level",
+      "terminal": false,
+      "success": false,
+      "members": [
+        {
+          "status": 503,
+          "body": "{\"message\":\"top level\"}",
+          "statusText": "Reason"
+        }
+      ],
+      "tried": 1,
+      "status": 503,
+      "message": "top level",
+      "waits": []
+    },
+    {
+      "name": "error object without a message is written as JSON",
+      "terminal": false,
+      "success": false,
+      "members": [
+        {
+          "status": 503,
+          "body": "{\"error\":{\"code\":\"x\"}}",
+          "statusText": "Reason"
+        }
+      ],
+      "tried": 1,
+      "status": 503,
+      "message": "{\"code\":\"x\"}",
+      "waits": []
+    },
+    {
+      "name": "unparseable body falls back to the status text",
+      "terminal": false,
+      "success": false,
+      "members": [
+        {
+          "status": 503,
+          "body": "not json",
+          "statusText": "Service Unavailable"
+        }
+      ],
+      "tried": 1,
+      "status": 503,
+      "message": "Service Unavailable",
+      "waits": []
+    },
+    {
+      "name": "no body and no status text falls back to the status code",
+      "terminal": false,
+      "success": false,
+      "members": [
+        {
+          "status": 502,
+          "body": "",
+          "statusText": ""
+        }
+      ],
+      "tried": 1,
+      "status": 502,
+      "message": "502",
+      "waits": []
+    },
+    {
+      "name": "context overflow falls through without waiting",
+      "terminal": false,
+      "success": true,
+      "members": [
+        {
+          "status": 503,
+          "body": "{\"error\":{\"message\":\"maximum context length exceeded\"}}",
+          "statusText": "Reason"
+        },
+        {
+          "status": 200,
+          "body": "{\"ok\":true}",
+          "statusText": "Reason"
+        }
+      ],
+      "tried": 2,
+      "status": 200,
+      "message": null,
+      "waits": []
+    },
+    {
+      "name": "quota text on a 503 waits two seconds",
+      "terminal": false,
+      "success": false,
+      "members": [
+        {
+          "status": 503,
+          "body": "{\"error\":{\"message\":\"quota exceeded for today\"}}",
+          "statusText": "Reason"
+        },
+        {
+          "status": 503,
+          "body": "{\"error\":{\"message\":\"quota exceeded for today\"}}",
+          "statusText": "Reason"
+        }
+      ],
+      "tried": 2,
+      "status": 503,
+      "message": "quota exceeded for today",
+      "waits": [
+        2000,
+        2000
+      ]
+    }
+  ],
+  "nestedTable": {
+    "outer": [
+      "inner",
+      "p/z"
+    ],
+    "inner": [
+      "p/a",
+      "p/b"
+    ],
+    "rr": [
+      "inner",
+      "p/z"
+    ],
+    "deep": [
+      "mid",
+      "p/z"
+    ],
+    "mid": [
+      "inner"
+    ],
+    "pair": [
+      "left",
+      "right"
+    ],
+    "left": [
+      "p/a",
+      "p/b"
+    ],
+    "right": [
+      "p/c",
+      "p/d"
+    ]
+  },
+  "nestedStrategy": {
+    "rr": "round-robin",
+    "inner": "round-robin"
+  },
+  "nested": [
+    {
+      "name": "the nested Combo is the first member and serves",
+      "root": "outer",
+      "calls": [
+        {
+          "results": {},
+          "tried": [
+            "p/a"
+          ],
+          "status": 200
+        },
+        {
+          "results": {},
+          "tried": [
+            "p/b"
+          ],
+          "status": 200
+        }
+      ]
+    },
+    {
+      "name": "the nested Combo fails through to the next outer member",
+      "root": "outer",
+      "calls": [
+        {
+          "results": {
+            "p/a": 503,
+            "p/b": 503
+          },
+          "tried": [
+            "p/a",
+            "p/b",
+            "p/z"
+          ],
+          "status": 200
+        }
+      ]
+    },
+    {
+      "name": "the nested Combo is not reached when an earlier member serves",
+      "root": "pair",
+      "calls": [
+        {
+          "results": {},
+          "tried": [
+            "p/a"
+          ],
+          "status": 200
+        },
+        {
+          "results": {},
+          "tried": [
+            "p/a"
+          ],
+          "status": 200
+        },
+        {
+          "results": {},
+          "tried": [
+            "p/a"
+          ],
+          "status": 200
+        }
+      ]
+    },
+    {
+      "name": "a nested round-robin rotates only when reached",
+      "root": "rr",
+      "calls": [
+        {
+          "results": {},
+          "tried": [
+            "p/a"
+          ],
+          "status": 200
+        },
+        {
+          "results": {
+            "p/a": 503,
+            "p/b": 503
+          },
+          "tried": [
+            "p/z"
+          ],
+          "status": 200
+        },
+        {
+          "results": {},
+          "tried": [
+            "p/b"
+          ],
+          "status": 200
+        },
+        {
+          "results": {},
+          "tried": [
+            "p/z"
+          ],
+          "status": 200
+        }
+      ]
+    },
+    {
+      "name": "a Combo nested two deep",
+      "root": "deep",
+      "calls": [
+        {
+          "results": {
+            "p/a": 503
+          },
+          "tried": [
+            "p/a",
+            "p/b"
+          ],
+          "status": 200
+        },
+        {
+          "results": {
+            "p/a": 503,
+            "p/b": 503
+          },
+          "tried": [
+            "p/b",
+            "p/a",
+            "p/z"
+          ],
+          "status": 200
+        }
+      ]
+    },
+    {
+      "name": "every leaf of a nested pair fails",
+      "root": "pair",
+      "calls": [
+        {
+          "results": {
+            "p/a": 503,
+            "p/b": 503,
+            "p/c": 503,
+            "p/d": 503
+          },
+          "tried": [
+            "p/a",
+            "p/b",
+            "p/c",
+            "p/d"
+          ],
+          "status": 503
+        }
+      ]
+    },
+    {
+      "name": "the first nested Combo fails and the second serves",
+      "root": "pair",
+      "calls": [
+        {
+          "results": {
+            "p/a": 503,
+            "p/b": 503
+          },
+          "tried": [
+            "p/a",
+            "p/b",
+            "p/c"
+          ],
+          "status": 200
+        },
+        {
+          "results": {},
+          "tried": [
+            "p/a"
+          ],
+          "status": 200
+        }
+      ]
+    }
   ]
 }
