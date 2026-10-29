@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 )
@@ -169,6 +170,13 @@ func TestCodexResetCreditRefusalKeepsItsStatus(t *testing.T) {
 // answers each consume by the bearer it carries.
 func retryRig(t *testing.T, refreshToken, authType string, exchange func() (credentials.Secret, error), answer func(auth string, w http.ResponseWriter)) (*http.ServeMux, *http.Cookie, string, *[]string, *[][2]string, *int) {
 	t.Helper()
+	return retryRigCtx(t, refreshToken, authType, func(context.Context) (credentials.Secret, error) { return exchange() }, answer)
+}
+
+// retryRigCtx hands the exchange the context the registry gives a real refresh,
+// so a test can honor its deadline as an HTTP exchange does.
+func retryRigCtx(t *testing.T, refreshToken, authType string, exchange func(context.Context) (credentials.Secret, error), answer func(auth string, w http.ResponseWriter)) (*http.ServeMux, *http.Cookie, string, *[]string, *[][2]string, *int) {
+	t.Helper()
 	h, mux, store, creds, cookie := newProvidersAPI(t, false, nil)
 	t.Cleanup(func() { store.Close() })
 	ctx := context.Background()
@@ -182,9 +190,9 @@ func retryRig(t *testing.T, refreshToken, authType string, exchange func() (cred
 	}
 	exchanges := 0
 	h.opts.CredentialRegistry.SetExchangerResolver(func(credentials.Connection) credentials.Exchanger {
-		return func(context.Context, credentials.Secret) (credentials.Secret, error) {
+		return func(ctx context.Context, _ credentials.Secret) (credentials.Secret, error) {
 			exchanges++
-			return exchange()
+			return exchange(ctx)
 		}
 	})
 	forgotten := &[]string{}
@@ -331,5 +339,46 @@ func TestCodexResetCreditAccessTokenConnectionIsNeverRefreshed(t *testing.T) {
 	got := doJSON(t, mux, cookie, http.MethodPost, path, `{"confirm":true}`)
 	if got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "reauth_required") || len(*seen) != 1 || *exchanges != 0 || len(*forgotten) != 0 {
 		t.Fatalf("%d %s requests %v exchanges %d", got.Code, got.Body, *seen, *exchanges)
+	}
+}
+
+// Each leg has its own budget: a refresh that takes most of one budget does not
+// leave the replay without time.
+func TestCodexResetCreditRefreshAndReplayEachGetTheirOwnBudget(t *testing.T) {
+	old := resetCreditLegTimeout
+	resetCreditLegTimeout = 400 * time.Millisecond
+	t.Cleanup(func() { resetCreditLegTimeout = old })
+	slow := func(auth string, w http.ResponseWriter) {
+		time.Sleep(250 * time.Millisecond)
+		rejectStale(auth, w)
+	}
+	exchange := func() (credentials.Secret, error) {
+		time.Sleep(250 * time.Millisecond)
+		return freshSecret()
+	}
+	mux, cookie, path, _, seen, exchanges := retryRig(t, "r1", "", exchange, slow)
+	got := doJSON(t, mux, cookie, http.MethodPost, path, `{"confirm":true}`)
+	if got.Code != http.StatusOK || len(*seen) != 2 || *exchanges != 1 {
+		t.Fatalf("%d %s requests %v exchanges %d", got.Code, got.Body, *seen, *exchanges)
+	}
+}
+
+// A refresh that outlives its budget leaves the first refusal, which stays a
+// definite 403 reauth_required and is not turned into an unknown outcome.
+func TestCodexResetCreditSlowRefreshKeepsTheRefusalDefinite(t *testing.T) {
+	old := resetCreditLegTimeout
+	resetCreditLegTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { resetCreditLegTimeout = old })
+	mux, cookie, path, forgotten, seen, _ := retryRigCtx(t, "r1", "", func(ctx context.Context) (credentials.Secret, error) {
+		select {
+		case <-time.After(600 * time.Millisecond):
+			return freshSecret()
+		case <-ctx.Done():
+			return credentials.Secret{}, ctx.Err()
+		}
+	}, rejectStale)
+	got := doJSON(t, mux, cookie, http.MethodPost, path, `{"confirm":true}`)
+	if got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "reauth_required") || len(*seen) != 1 || len(*forgotten) != 0 {
+		t.Fatalf("%d %s requests %v", got.Code, got.Body, *seen)
 	}
 }

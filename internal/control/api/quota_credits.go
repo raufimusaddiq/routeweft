@@ -12,16 +12,21 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
+// resetCreditLegTimeout bounds each upstream leg of a spend (the consume, the
+// forced refresh, the replay) on its own, so a slow refresh cannot use up the
+// budget a replay needs and turn a definite refusal into an unknown outcome.
+var resetCreditLegTimeout = 15 * time.Second
+
 func (h *Handler) handleCodexResetCredits(w http.ResponseWriter, r *http.Request) {
 	if h.opts.Credentials == nil || h.opts.CredentialRegistry == nil {
 		writeError(w, 503, "quota_unavailable", "provider credentials are not configured")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
 	// Reset credits leave through the connection's proxy
 	// (codex-reset-credits/route.js:66-72).
-	ctx = transport.WithConnection(ctx, r.PathValue("id"))
+	base := transport.WithConnection(r.Context(), r.PathValue("id"))
+	ctx, cancel := context.WithTimeout(base, resetCreditLegTimeout)
+	defer cancel()
 	connection, err := h.opts.Credentials.GetConnection(ctx, r.PathValue("id"))
 	if errors.Is(err, credentials.ErrNotFound) {
 		writeError(w, 404, "connection_not_found", "connection not found")
@@ -76,9 +81,17 @@ func (h *Handler) handleCodexResetCredits(w http.ResponseWriter, r *http.Request
 	// text reads as an expired credential (route.js:9-20,140). An access-token
 	// connection never refreshes (route.js:130,140), so it is refused as is.
 	if (errors.Is(err, codex.ErrReauthRequired) || (err == nil && result.AuthExpired())) && secret.AuthType != credentials.AuthTypeAccessToken {
-		if refreshed, refreshErr := h.opts.CredentialRegistry.ForceRefresh(ctx, connection.ID, secret.AccessToken); refreshErr == nil {
+		// A refresh that fails or times out leaves the first refusal, which is
+		// still definite (route.js:145-147). The refresh and the replay each get a
+		// fresh budget.
+		refreshCtx, cancelRefresh := context.WithTimeout(base, resetCreditLegTimeout)
+		refreshed, refreshErr := h.opts.CredentialRegistry.ForceRefresh(refreshCtx, connection.ID, secret.AccessToken)
+		cancelRefresh()
+		if refreshErr == nil {
 			client.AccountID = codexAccount(refreshed, connection)
-			result, err = client.ConsumeResetCredit(ctx, refreshed.AccessToken, redeemID)
+			replayCtx, cancelReplay := context.WithTimeout(base, resetCreditLegTimeout)
+			result, err = client.ConsumeResetCredit(replayCtx, refreshed.AccessToken, redeemID)
+			cancelReplay()
 		}
 	}
 	if errors.Is(err, codex.ErrReauthRequired) {

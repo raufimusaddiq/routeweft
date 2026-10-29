@@ -152,3 +152,36 @@ func TestInstallClearsTheRefusedMarkerEvenForTheSameToken(t *testing.T) {
 		}
 	})
 }
+
+// Register installs a credential that differs from the one held, which clears the
+// marker; one equal to it changes nothing, so the refusal still stands and the
+// next read refreshes (a refresh in flight must not be superseded, #252).
+func TestRegisterClearsTheRefusedMarkerOnlyForADifferentCredential(t *testing.T) {
+	exchange := func(Secret) (Secret, error) {
+		return Secret{AccessToken: "new", RefreshToken: "r2", Expiry: time.Now().Add(time.Hour)}, nil
+	}
+	calls := 0
+	exchanger := func(_ context.Context, current Secret) (Secret, error) { calls++; return exchange(current) }
+	same, id, _ := forceRigWith(t, exchange)
+	markRejected(t, same, id, "old")
+	stored, _ := same.lookup(id)
+	connection := stored.connection
+	same.Register(connection, exchanger)
+	if rejectedOf(t, same, id) != "old" {
+		t.Fatal("re-registering the identical credential cleared the refusal")
+	}
+	if secret, err := same.Secret(context.Background(), id); err != nil || secret.AccessToken != "new" || calls != 1 {
+		t.Fatalf("%+v %v exchanges %d", secret, err, calls)
+	}
+
+	calls = 0
+	other, id, _ := forceRigWith(t, exchange)
+	markRejected(t, other, id, "old")
+	stored, _ = other.lookup(id)
+	connection = stored.connection
+	connection.Secret = Secret{AccessToken: "installed", RefreshToken: "r3", Expiry: time.Now().Add(time.Hour)}
+	other.Register(connection, exchanger)
+	if secret, err := other.Secret(context.Background(), id); err != nil || secret.AccessToken != "installed" || calls != 0 || rejectedOf(t, other, id) != "" {
+		t.Fatalf("%+v %v exchanges %d marker %q", secret, err, calls, rejectedOf(t, other, id))
+	}
+}
