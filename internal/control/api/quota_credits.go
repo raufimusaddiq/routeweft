@@ -12,16 +12,23 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/transport"
 )
 
+// resetCreditLegTimeout bounds each upstream leg of a spend (the consume, the
+// forced refresh, the replay) on its own, so a slow refresh cannot use up the
+// budget a replay needs and turn a definite refusal into an unknown outcome. It
+// does not bound a refresh's durable commit, which is detached from the caller
+// and bounded at 30s on its own (credentials.Registry.refresh).
+var resetCreditLegTimeout = 15 * time.Second
+
 func (h *Handler) handleCodexResetCredits(w http.ResponseWriter, r *http.Request) {
 	if h.opts.Credentials == nil || h.opts.CredentialRegistry == nil {
 		writeError(w, 503, "quota_unavailable", "provider credentials are not configured")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
 	// Reset credits leave through the connection's proxy
 	// (codex-reset-credits/route.js:66-72).
-	ctx = transport.WithConnection(ctx, r.PathValue("id"))
+	base := transport.WithConnection(r.Context(), r.PathValue("id"))
+	ctx, cancel := context.WithTimeout(base, resetCreditLegTimeout)
+	defer cancel()
 	connection, err := h.opts.Credentials.GetConnection(ctx, r.PathValue("id"))
 	if errors.Is(err, credentials.ErrNotFound) {
 		writeError(w, 404, "connection_not_found", "connection not found")
@@ -56,17 +63,7 @@ func (h *Handler) handleCodexResetCredits(w http.ResponseWriter, r *http.Request
 		writeError(w, 502, "credential_unavailable", "Codex credential could not be refreshed")
 		return
 	}
-	account := secret.ProviderData["workspaceId"]
-	if account == "" {
-		account = secret.ProviderData["chatgptAccountId"]
-	}
-	if account == "" {
-		account = secret.ProviderData["accountId"]
-	}
-	if account == "" {
-		account = connection.AccountID
-	}
-	client := codex.UsageClient{Client: h.opts.OAuthClient, AccountID: account}
+	client := codex.UsageClient{Client: h.opts.OAuthClient, AccountID: codexAccount(secret, connection)}
 	if r.Method == http.MethodGet {
 		result, err := client.ResetCredits(ctx, secret.AccessToken)
 		if err != nil {
@@ -77,7 +74,30 @@ func (h *Handler) handleCodexResetCredits(w http.ResponseWriter, r *http.Request
 		return
 	}
 	// Never retry an ambiguous spend; the upstream may already have consumed it.
-	result, err := client.ConsumeResetCredit(ctx, secret.AccessToken, uuid.NewString())
+	// The one retry is after a credential refusal, which is definite (nothing was
+	// spent): same redeem id, forced token refresh (codex-reset-credits/route.js:
+	// 136-147). The id makes a replay the same spend, never a second one.
+	redeemID := uuid.NewString()
+	result, err := client.ConsumeResetCredit(ctx, secret.AccessToken, redeemID)
+	// A 401/403 is a refusal whatever its body says; any other 4xx is one when its
+	// text reads as an expired credential (route.js:9-20,140). An access-token
+	// connection never refreshes (route.js:130,140), so it is refused as is; the
+	// test is the one the sign-in match uses (codexTokenOnly), including a
+	// connection stored before its auth type was recorded.
+	if (errors.Is(err, codex.ErrReauthRequired) || (err == nil && result.AuthExpired())) && !codexTokenOnly(secret) {
+		// A refresh that fails or times out leaves the first refusal, which is
+		// still definite (route.js:145-147). The refresh and the replay each get a
+		// fresh budget.
+		refreshCtx, cancelRefresh := context.WithTimeout(base, resetCreditLegTimeout)
+		refreshed, refreshErr := h.opts.CredentialRegistry.ForceRefresh(refreshCtx, connection.ID, secret.AccessToken)
+		cancelRefresh()
+		if refreshErr == nil {
+			client.AccountID = codexAccount(refreshed, connection)
+			replayCtx, cancelReplay := context.WithTimeout(base, resetCreditLegTimeout)
+			result, err = client.ConsumeResetCredit(replayCtx, refreshed.AccessToken, redeemID)
+			cancelReplay()
+		}
+	}
 	if errors.Is(err, codex.ErrReauthRequired) {
 		// Codex refused the credential, so nothing was spent. 401 is the admin
 		// session's status here, so the refusal is a 403.
@@ -107,4 +127,13 @@ func (h *Handler) handleCodexResetCredits(w http.ResponseWriter, r *http.Request
 	}
 	result.Message = ""
 	writeJSON(w, status, result)
+}
+
+func codexAccount(secret credentials.Secret, connection credentials.Connection) string {
+	for _, key := range []string{"workspaceId", "chatgptAccountId", "accountId"} {
+		if id := secret.ProviderData[key]; id != "" {
+			return id
+		}
+	}
+	return connection.AccountID
 }

@@ -54,6 +54,31 @@ type ResetResult struct {
 	Code         string  `json:"code,omitempty"`
 	WindowsReset float64 `json:"windowsReset"`
 	Message      string  `json:"message,omitempty"`
+	// Detail and ErrorText are the body's detail and error members, kept only to
+	// judge a refusal (AuthExpired); they are never sent back to a client.
+	Detail    string `json:"-"`
+	ErrorText string `json:"-"`
+}
+
+var authExpiredPatterns = []string{"expired", "authentication", "unauthorized", "401", "re-authorize"}
+
+// AuthExpired reports whether a refusal reads as an expired credential, by the
+// pin's test on message, code, detail and error (codex-reset-credits/route.js:
+// 9-20). Only a 4xx answer can be one: Codex refused, so nothing was spent. A
+// 2xx or 5xx whose text happens to match is an unknown outcome, never a refusal.
+func (r ResetResult) AuthExpired() bool {
+	if r.OK || r.NoCredit || r.Status < 400 || r.Status >= 500 {
+		return false
+	}
+	for _, value := range []string{r.Message, r.Code, r.Detail, r.ErrorText} {
+		value = strings.ToLower(value)
+		for _, pattern := range authExpiredPatterns {
+			if value != "" && strings.Contains(value, pattern) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // UsageClient fetches Codex usage and manages reset credits. AccountID maps to
@@ -161,6 +186,8 @@ func (c UsageClient) ConsumeResetCredit(ctx context.Context, accessToken, redeem
 		Code:         code,
 		WindowsReset: windowsReset,
 		Message:      shared.String(shared.FirstTruthy(decoded["message"])),
+		Detail:       shared.String(shared.FirstTruthy(decoded["detail"])),
+		ErrorText:    shared.String(shared.FirstTruthy(decoded["error"])),
 	}, nil
 }
 

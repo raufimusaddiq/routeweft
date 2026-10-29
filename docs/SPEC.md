@@ -2473,8 +2473,11 @@ whose observation predates the job's start as not updated by it.
 GET `/admin/v1/quota/{id}/codex-reset-credits` returns the existing normalized credit listing. Session-gated POST at the same
 path requires `{"confirm":true}`, spends one credit with a server UUID, returns
 409 for no credit and 502 for an unavailable/ambiguous result. It never retries
-an ambiguous spend. A Codex refusal is definite and keeps its 4xx status
-(codex-reset-credits/route.js:42-47); a refused credential is 403
+an ambiguous spend; the one replay is after a credential refusal (401/403, so
+nothing was spent): once, with the same redeem id and a forced refresh of the
+access token (`Registry.ForceRefresh`; codex-reset-credits/route.js:136-147), and
+only when the connection has a refresh token and is not an access-token connection. A 4xx whose text reads as an expired credential (route.js:9-20) is replayed like 401/403; a 2xx or 5xx never is. The consume, the refresh and the replay each have their own 15s budget; a refresh's durable commit is detached and bounded at 30s separately, so one POST can take about 75s (about 105s if the refresh before the spend also commits). An access-token connection is the sign-in match's `codexTokenOnly`, including one stored before its auth type was recorded. A Codex refusal is definite and keeps its 4xx status
+(codex-reset-credits/route.js:42-47), including a text-matched 4xx after the replay or a failed refresh; a refused credential (401/403) is 403
 `reauth_required`, because 401 is the admin session's status. Both actions reject non-Codex token connections before any
 network work and refresh credentials through the shared registry. The UI lists
 credits soonest expiry first, spends one credit per confirmed click only when a

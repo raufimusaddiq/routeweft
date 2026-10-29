@@ -67,7 +67,12 @@ type entry struct {
 	generation uint64
 	current    Secret
 	seeded     bool
-	inflight   *refreshCall
+	// rejected is an access token the provider refused. While it is still the
+	// current one the credential counts as expired, so the next Secret refreshes
+	// it. Every install, committed refresh and failed forced refresh clears it,
+	// so it lasts one refresh attempt and never turns later reads into exchanges.
+	rejected string
+	inflight *refreshCall
 }
 
 type refreshCall struct {
@@ -203,6 +208,7 @@ func install(current *entry, connection Connection, exchanger Exchanger, name, e
 	}
 	current.current = connection.Secret
 	current.seeded = true
+	current.rejected = ""
 	current.generation++
 }
 
@@ -317,6 +323,7 @@ func (r *Registry) exclusive(ctx context.Context, connectionID string, write fun
 		current.exchanger = exchanger
 		current.current = updated.Secret
 		current.seeded = true
+		current.rejected = ""
 		current.generation++
 	}
 	// Callers that waited on the held slot check the credential again and
@@ -449,6 +456,47 @@ func (r *Registry) Secret(ctx context.Context, connectionID string) (Secret, err
 	}
 }
 
+// ErrNoRefreshToken means a forced refresh was asked of a credential that has
+// nothing to refresh with.
+var ErrNoRefreshToken = errors.New("connection has no refresh token")
+
+// ForceRefresh returns a credential the provider has not refused: the access
+// token the caller was just refused is treated as expired and replaced under the
+// same singleflight and durable commit as a timed refresh. If another caller
+// already rotated past the refused token, that newer credential is returned
+// instead of rotating again, so a refresh token is never reused (the pin
+// re-reads the latest tokens before a forced refresh, usage route.js:25-28).
+func (r *Registry) ForceRefresh(ctx context.Context, connectionID, rejectedAccessToken string) (Secret, error) {
+	current, err := r.lookup(connectionID)
+	if err != nil {
+		return Secret{}, err
+	}
+	current.mu.Lock()
+	if current.exchanger == nil {
+		current.mu.Unlock()
+		return Secret{}, ErrNoExchanger
+	}
+	if current.current.AccessToken == rejectedAccessToken {
+		if strings.TrimSpace(current.current.RefreshToken) == "" {
+			current.mu.Unlock()
+			return Secret{}, ErrNoRefreshToken
+		}
+		current.rejected = rejectedAccessToken
+	}
+	current.mu.Unlock()
+	secret, err := r.Secret(ctx, connectionID)
+	if err != nil {
+		// A failed exchange leaves the refused token in place; fall back to the
+		// ordinary expiry path rather than exchanging again on every read.
+		current.mu.Lock()
+		if current.rejected == rejectedAccessToken {
+			current.rejected = ""
+		}
+		current.mu.Unlock()
+	}
+	return secret, err
+}
+
 // refresh runs the provider exchange and durably commits the rotated payload
 // before a successful refresh becomes visible to any caller. The commit is
 // bounded and detached so an already-rotated upstream token is not dropped when
@@ -510,6 +558,7 @@ func (r *Registry) refresh(ctx context.Context, connectionID string, stored Secr
 	current.mu.Lock()
 	current.current = refreshed
 	current.seeded = true
+	current.rejected = ""
 	current.mu.Unlock()
 	return refreshed, nil
 }
@@ -572,6 +621,7 @@ func (r *Registry) Import(ctx context.Context, connectionID, identity string, se
 	current.mu.Lock()
 	current.current = secret
 	current.seeded = true
+	current.rejected = ""
 	current.mu.Unlock()
 	// Audit bookkeeping is advisory: the import already succeeded durably, so a
 	// failed event write must not report the credential install as failed.
@@ -605,6 +655,9 @@ func (r *Registry) validLocked(current *entry) bool {
 	}
 	secret := current.current
 	if secret.AccessToken == "" && secret.Cookie == "" {
+		return false
+	}
+	if current.rejected != "" && current.rejected == secret.AccessToken {
 		return false
 	}
 	expiry := secret.Expiry
