@@ -194,3 +194,64 @@ func TestPutComboRenameAndDuplicateName(t *testing.T) {
 		t.Fatal("rename onto an existing name accepted")
 	}
 }
+
+// A Combo may name another Combo as a member (open-sse chat.js:177-229). The
+// member has no provider; it survives storage and restart and Resolve keeps it.
+func TestNestedComboMembersPersistAndResolve(t *testing.T) {
+	ctx := context.Background()
+	manager, store := newTestManager(t)
+	defer store.Close()
+	comboModels(t, manager)
+	if _, err := manager.SetCombos(ctx, []Combo{
+		{ID: "outer", Name: "outer", Members: []ComboMember{{ModelID: "inner", Position: 0, Selected: true}, {ProviderID: "openai", ModelID: "gpt-text", Position: 1, Selected: true}}},
+		{ID: "inner", Name: "inner", Members: []ComboMember{{ProviderID: "anthropic", ModelID: "claude-text", Position: 0, Selected: true}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := manager.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outer, _ := loaded.ComboByName("outer")
+	members := outer.Resolve()
+	if len(members) != 2 || !members[0].IsCombo() || members[0].ModelID != "inner" || members[1].IsCombo() {
+		t.Fatalf("members %+v", members)
+	}
+	// An alias wins over a Combo of the same name, as getModelInfo precedes the
+	// Combo lookup in the oracle.
+	if err := manager.PutAlias(ctx, "inner2", ModelRef{ProviderID: "openai", ModelID: "gpt-text"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.SetCombos(ctx, []Combo{{ID: "a", Name: "a", Members: []ComboMember{{ModelID: "inner2", Position: 0, Selected: true}}}, {ID: "inner2", Name: "inner2", Members: []ComboMember{{ProviderID: "anthropic", ModelID: "claude-text", Position: 0, Selected: true}}}}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ = manager.Load()
+	aliased, _ := loaded.ComboByName("a")
+	if member := aliased.Members[0]; member.IsCombo() || member.ProviderID != "openai" {
+		t.Fatalf("an alias must resolve before a Combo name: %+v", member)
+	}
+}
+
+// The v1 importer turns a bare name into a provider-less member; a Combo that
+// names another Combo is stored once that one is, whatever order they came in.
+func TestV1ImportStoresNestedCombosInAnyOrder(t *testing.T) {
+	ctx := context.Background()
+	manager, store := newTestManager(t)
+	defer store.Close()
+	comboModels(t, manager)
+	plan := &V1Plan{Combos: []Combo{
+		{ID: "v1-outer", Name: "outer", Members: []ComboMember{{ModelID: "inner", Position: 0, Selected: true}}},
+		{ID: "v1-inner", Name: "inner", Members: []ComboMember{{ProviderID: "openai", ModelID: "gpt-text", Position: 0, Selected: true}}},
+	}}
+	if failed := plan.ApplyCatalog(ctx, manager); len(failed) != 0 {
+		t.Fatalf("failed=%+v", failed)
+	}
+	snapshot, _ := manager.Load()
+	if outer, ok := snapshot.ComboByName("outer"); !ok || !outer.Members[0].IsCombo() {
+		t.Fatalf("outer=%+v", outer)
+	}
+	bad := &V1Plan{Combos: []Combo{{ID: "v1-x", Name: "x", Members: []ComboMember{{ModelID: "nobody", Position: 0, Selected: true}}}}}
+	if failed := bad.ApplyCatalog(ctx, manager); len(failed) != 1 {
+		t.Fatalf("a name that is neither an alias nor a Combo must fail: %+v", failed)
+	}
+}

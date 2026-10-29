@@ -56,6 +56,16 @@ func (h *Handler) handleOpenAI(w http.ResponseWriter, r *http.Request, source st
 		h.writeError(w, 503, "snapshot_unavailable", err.Error())
 		return
 	}
+	if snapshot.AdaptersActive() {
+		setBodyRewriter(r, func(raw []byte) (func(), error) {
+			if chat != nil {
+				return swapRequest(chat, func() (*openaiadapter.ChatRequest, error) { return openaiadapter.ParseChatRequest(raw) })
+			}
+			return swapRequest(responses, func() (*openaiadapter.ResponsesRequest, error) {
+				return openaiadapter.ParseResponsesRequest(raw, compact)
+			})
+		})
+	}
 	started := time.Now()
 	var translation ChatTranslation
 	response, provider, err := h.dispatchAttempts(r, snapshot, model, source, compact, stream, func(provider routing.ProviderRef) (ChatTranslation, error) {

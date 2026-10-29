@@ -110,12 +110,14 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 		return nil, routing.ProviderRef{}, &dispatchError{403, "model_not_allowed", modelNotAllowed(model)}
 	}
 	var candidates []routing.ProviderRef
+	var slots []attemptSlot
 	attemptCap := maxAccountAttempts
-	if routed, cap, handled, err := h.planModelRoute(r, snapshot, model, source, compact); handled {
+	comboRoute := false
+	if routed, handled, err := h.planModelRoute(r, snapshot, model, source, compact); handled {
 		if err != nil {
 			return nil, routing.ProviderRef{}, err
 		}
-		candidates, attemptCap = routed, cap
+		slots, attemptCap, comboRoute = routed.slots, routed.attemptCap, routed.combo
 	} else if h.opts.Candidates != nil && h.opts.AccountProvider != nil {
 		providerID := modelProviderID(model)
 		if resolved, ok := snapshot.ServingModel(model); ok {
@@ -135,7 +137,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 	} else {
 		return nil, routing.ProviderRef{}, &dispatchError{503, "no_provider", "no provider is configured"}
 	}
-	if len(candidates) == 0 {
+	if len(candidates) == 0 && len(slots) == 0 {
 		return nil, routing.ProviderRef{}, &dispatchError{503, "no_eligible_accounts", routing.ErrNoEligibleAccounts.Error()}
 	}
 	// What to tell the client when no candidate answers. An attempt that reached
@@ -178,7 +180,67 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 		}
 	}()
 	authFailureSeen := false
-	for index, provider := range candidates {
+	// How each model of a Combo failed, for the answer when none serves and for
+	// the wait before falling past it (combo.js:300-381). Only a Combo keeps one.
+	var trace *comboTrace
+	var restoreHistory func()
+	if comboRoute {
+		trace = &comboTrace{failures: map[int]modelFailure{}}
+		defer func() {
+			if restoreHistory != nil {
+				restoreHistory()
+			}
+		}()
+	}
+	previousMember := 0
+	for index := 0; ; index++ {
+		total := len(candidates)
+		if comboRoute {
+			total = len(slots)
+		}
+		if index >= total {
+			break
+		}
+		var slot attemptSlot
+		if comboRoute {
+			slot = slots[index]
+		} else {
+			slot.ref = candidates[index]
+		}
+		if slot.expand != nil {
+			expanded, err := slot.expand()
+			if err != nil {
+				return nil, routing.ProviderRef{}, err
+			}
+			members := map[int]struct{}{}
+			for _, inner := range expanded {
+				if inner.expand == nil && inner.unavailable == nil {
+					members[inner.member] = struct{}{}
+				}
+			}
+			attemptCap += maxAccountAttempts * len(members)
+			slots = append(slots[:index:index], append(expanded, slots[index+1:]...)...)
+			index--
+			continue
+		}
+		provider := slot.ref
+		member := slot.member
+		hasMore := comboRoute || index+1 < total
+		if restoreHistory != nil {
+			restoreHistory()
+			restoreHistory = nil
+		}
+		if member != previousMember && previousMember != 0 {
+			if err := trace.wait(r.Context(), previousMember); err != nil {
+				return nil, provider, err
+			}
+		}
+		previousMember = member
+		if slot.unavailable != nil {
+			trace.note(member, slot.unavailable.status, slot.unavailable.message)
+			preAttemptErr = slot.unavailable
+			continue
+		}
 		if used == attemptCap {
 			break
 		}
@@ -193,6 +255,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				}
 				h.recordClassification(provider.ConnectionID, routing.Classification{Outcome: routing.OutcomeAuthRefreshRequired}, time.Now())
 				preAttemptErr = &dispatchError{503, "credentials_unavailable", "provider credentials are unavailable"}
+				trace.note(member, 503, "provider credentials are unavailable")
 				if errors.Is(err, credentials.ErrKeyRequired) {
 					return nil, provider, preAttemptErr
 				}
@@ -209,6 +272,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 		if wire.RequiresCredential(provider.ProviderID) && strings.TrimSpace(provider.APIToken) == "" {
 			h.recordClassification(provider.ConnectionID, routing.Classification{Outcome: routing.OutcomeAuthRefreshRequired}, time.Now())
 			preAttemptErr = &dispatchError{503, "credentials_unavailable", "provider credentials are unavailable"}
+			trace.note(member, 503, "provider credentials are unavailable")
 			continue
 		}
 		// A model that was escalated before goes straight to the wire that served
@@ -221,6 +285,18 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				escalated = true
 			}
 		}
+		// A model the gateway added is called with its history fitted to its own
+		// context window (capacityAdapter.js:154-168).
+		if slot.adapter {
+			if rewrite := bodyRewriterOf(r); rewrite != nil {
+				original := clientBodyOf(r, nil)
+				if fitted := stripHistoryForContext(original, slot.contextWindow); !bytes.Equal(fitted, original) {
+					if restore, err := rewrite(fitted); err == nil {
+						restoreHistory = restore
+					}
+				}
+			}
+		}
 		outbound, err := prepare(provider)
 		if err != nil {
 			// The request cannot be expressed for this candidate's wire, which says
@@ -229,6 +305,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			if translationErr == nil {
 				translationErr = &dispatchError{502, "request_translation_failed", err.Error()}
 			}
+			trace.note(member, 502, err.Error())
 			continue
 		}
 		// A refused wire is replayed on the other one at most once per candidate
@@ -253,6 +330,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				if errors.As(err, &credentialErr) {
 					h.recordClassification(provider.ConnectionID, routing.Classification{Outcome: routing.OutcomeAuthRefreshRequired}, time.Now())
 					preAttemptErr = &dispatchError{503, "credentials_unavailable", credentialErr.Error()}
+					trace.note(member, 503, credentialErr.Error())
 					break
 				}
 				var refused *wire.TargetError
@@ -262,6 +340,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 					if translationErr == nil {
 						translationErr = &dispatchError{502, "request_translation_failed", refused.Error()}
 					}
+					trace.note(member, 502, refused.Error())
 					break
 				}
 				return nil, provider, &dispatchError{502, "upstream_configuration_error", "provider URL or endpoint is not allowed"}
@@ -286,6 +365,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				}
 				h.recordClassification(provider.ConnectionID, routing.Classification{Outcome: routing.OutcomeFallbackAccount}, time.Now())
 				failedAttempt(err, nil, provider)
+				trace.note(member, 502, err.Error())
 				break
 			}
 			if response.StatusCode >= 200 && response.StatusCode < 300 {
@@ -307,7 +387,8 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				if failure, failed := wire.AcceptedFailure(provider, response); failed {
 					now := time.Now()
 					h.recordClassification(provider.ConnectionID, failure.Classification, now)
-					if failure.AllowsFallback() && index+1 < len(candidates) && used < attemptCap {
+					if failure.AllowsFallback() && hasMore && used < attemptCap {
+						trace.note(member, response.StatusCode, failureText(response.StatusCode, reasonPhrase(response), nil))
 						failedAttempt(nil, response, provider)
 						break
 					}
@@ -332,6 +413,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				}
 				kept := *response
 				kept.Header = response.Header.Clone()
+				trace.note(member, response.StatusCode, failureText(response.StatusCode, reasonPhrase(response), nil))
 				failedAttempt(nil, &kept, provider)
 				break
 			}
@@ -390,7 +472,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				retry++
 				continue
 			}
-			if classification.AllowsFallback() && readErr == nil && index+1 < len(candidates) && used < attemptCap {
+			if classification.AllowsFallback() && readErr == nil && hasMore && used < attemptCap {
 				// Keep the unread tail too, in case later candidates cannot serve.
 				kept := *response
 				kept.Header = response.Header.Clone()
@@ -398,6 +480,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 					io.Reader
 					io.Closer
 				}{io.MultiReader(bytes.NewReader(prefix), response.Body), response.Body}
+				trace.note(member, response.StatusCode, failureText(response.StatusCode, reasonPhrase(response), prefix))
 				failedAttempt(nil, &kept, provider)
 				break
 			}
@@ -407,6 +490,16 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			}{io.MultiReader(bytes.NewReader(prefix), response.Body), response.Body}
 			return response, provider, nil
 		}
+	}
+	if comboRoute && previousMember != 0 {
+		if err := trace.wait(r.Context(), previousMember); err != nil {
+			return nil, routing.ProviderRef{}, err
+		}
+	}
+	if comboRoute && len(trace.order) > 0 {
+		// Every model failed. The answer is the first failed model's status and
+		// the last failure's message, not the last upstream body (combo.js:363-381).
+		return nil, routing.ProviderRef{}, comboExhausted(trace.failures[trace.order[0]].status, trace.lastText)
 	}
 	switch {
 	case attemptResponse != nil:

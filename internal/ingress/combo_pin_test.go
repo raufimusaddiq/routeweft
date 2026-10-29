@@ -3,7 +3,10 @@ package ingress
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -137,5 +140,141 @@ func TestComboMemberOrderMatchesTheOracle(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+type comboPinPart2 struct {
+	Strip []struct {
+		Name   string          `json:"name"`
+		Body   json.RawMessage `json:"body"`
+		Window *int            `json:"window"`
+		Result json.RawMessage `json:"result"`
+	} `json:"strip"`
+	Outcomes []struct {
+		Name     string `json:"name"`
+		Terminal bool   `json:"terminal"`
+		Success  bool   `json:"success"`
+		Members  []struct {
+			Status     int    `json:"status"`
+			Body       string `json:"body"`
+			StatusText string `json:"statusText"`
+		} `json:"members"`
+		Tried   int    `json:"tried"`
+		Status  int    `json:"status"`
+		Message string `json:"message"`
+		Waits   []int  `json:"waits"`
+	} `json:"outcomes"`
+	NestedTable    map[string][]string `json:"nestedTable"`
+	NestedStrategy map[string]string   `json:"nestedStrategy"`
+	Nested         []struct {
+		Name  string `json:"name"`
+		Root  string `json:"root"`
+		Calls []struct {
+			Results map[string]int `json:"results"`
+			Tried   []string       `json:"tried"`
+			Status  int            `json:"status"`
+		} `json:"calls"`
+	} `json:"nested"`
+}
+
+func loadComboPinPart2(t *testing.T) comboPinPart2 {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/combo_routing_pin.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pin comboPinPart2
+	if err := json.Unmarshal(raw, &pin); err != nil {
+		t.Fatal(err)
+	}
+	if len(pin.Strip) < 15 || len(pin.Outcomes) < 12 || len(pin.Nested) < 6 {
+		t.Fatalf("pin is incomplete: strip=%d outcomes=%d nested=%d", len(pin.Strip), len(pin.Outcomes), len(pin.Nested))
+	}
+	return pin
+}
+
+func TestStripHistoryForContextMatchesTheOracle(t *testing.T) {
+	pin := loadComboPinPart2(t)
+	for _, c := range pin.Strip {
+		window := 0
+		if c.Window != nil {
+			window = *c.Window
+		}
+		got := stripHistoryForContext(c.Body, window)
+		var gotValue, wantValue any
+		if err := json.Unmarshal(got, &gotValue); err != nil {
+			t.Fatalf("%s: result is not JSON: %v", c.Name, err)
+		}
+		if err := json.Unmarshal(c.Result, &wantValue); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(gotValue, wantValue) {
+			t.Errorf("%s:\n got  %s\n want %s", c.Name, got, c.Result)
+		}
+	}
+}
+
+// What the oracle answers when its models fail, and how long it waits first.
+// The fallback decision itself is the attempt loop's (the app-level tests); this
+// pins the pieces that turn failures into the answer.
+func TestComboFailureAnswerAndWaitsMatchTheOracle(t *testing.T) {
+	pin := loadComboPinPart2(t)
+	for _, c := range pin.Outcomes {
+		t.Run(c.Name, func(t *testing.T) {
+			var waits []int
+			firstStatus, lastText := 0, ""
+			failed := c.Tried
+			if c.Success || c.Terminal {
+				failed-- // the model that served, or ended the walk, did not fall through
+			}
+			for i := 0; i < failed; i++ {
+				member := c.Members[i]
+				text := failureText(member.Status, member.StatusText, []byte(member.Body))
+				if firstStatus == 0 {
+					firstStatus = member.Status
+				}
+				lastText = text
+				if wait := transientWait(member.Status, text); wait > 0 {
+					waits = append(waits, int(wait.Milliseconds()))
+				}
+			}
+			if strings.Join(intStrings(waits), ",") != strings.Join(intStrings(c.Waits), ",") {
+				t.Fatalf("waits %v, oracle %v", waits, c.Waits)
+			}
+			if c.Success || c.Terminal {
+				return
+			}
+			answer := comboExhausted(firstStatus, lastText)
+			if answer.status != c.Status || answer.message != c.Message {
+				t.Fatalf("answer %d %q, oracle %d %q", answer.status, answer.message, c.Status, c.Message)
+			}
+		})
+	}
+}
+
+func intStrings(values []int) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = append(out, strconv.Itoa(value))
+	}
+	return out
+}
+
+// swapRequest is what every protocol's body rewriter is built on: the fitted
+// request replaces the parsed one for an adapter model's attempt and the original
+// comes back afterwards, also when the new body does not parse.
+func TestSwapRequestReplacesAndRestores(t *testing.T) {
+	type request struct{ Items []string }
+	current := &request{Items: []string{"a", "b", "c"}}
+	restore, err := swapRequest(current, func() (*request, error) { return &request{Items: []string{"c"}}, nil })
+	if err != nil || len(current.Items) != 1 {
+		t.Fatalf("swap: %v %+v", err, current)
+	}
+	restore()
+	if len(current.Items) != 3 {
+		t.Fatalf("restore: %+v", current)
+	}
+	if restore, err = swapRequest(current, func() (*request, error) { return nil, errors.New("unparseable") }); err == nil || restore != nil || len(current.Items) != 3 {
+		t.Fatalf("a body that does not parse must leave the request alone: %v %+v", err, current)
 	}
 }

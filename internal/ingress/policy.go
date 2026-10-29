@@ -39,6 +39,27 @@ const errorBodyPeek int64 = 32 << 10
 // directly (keyAccess.js:168-177). The Combo's own members are admitted by the
 // Combo's grant.
 func (h *Handler) PlanCombo(snapshot *runtime.RuntimeSnapshot, access auth.Entry, name string, required []string) ([]runtime.ComboMember, bool) {
+	planned, ok := h.planCombo(snapshot, access, name, required)
+	return plainMembers(planned), ok
+}
+
+// plannedMember is one ordered model of a plan. Adapter marks a model the gateway
+// added; its history is fitted to ContextWindow before it is called.
+type plannedMember struct {
+	runtime.ComboMember
+	Adapter       bool
+	ContextWindow int
+}
+
+func plainMembers(planned []plannedMember) []runtime.ComboMember {
+	members := make([]runtime.ComboMember, 0, len(planned))
+	for _, member := range planned {
+		members = append(members, member.ComboMember)
+	}
+	return members
+}
+
+func (h *Handler) planCombo(snapshot *runtime.RuntimeSnapshot, access auth.Entry, name string, required []string) ([]plannedMember, bool) {
 	combo, ok := snapshot.ComboByName(name)
 	if !ok {
 		return nil, false
@@ -56,7 +77,7 @@ func (h *Handler) PlanCombo(snapshot *runtime.RuntimeSnapshot, access auth.Entry
 		strategy = routing.StrategyStickyRR
 	}
 	ordered := h.orderModels(snapshot, access, "combo|"+combo.ID, strategy, snapshot.ComboStickyLimit(name), routed, required)
-	return toComboMembers(ordered), true
+	return toPlanned(ordered), true
 }
 
 // PlanSolo is the oracle's single-model path: a target that lacks a required
@@ -65,6 +86,11 @@ func (h *Handler) PlanCombo(snapshot *runtime.RuntimeSnapshot, access auth.Entry
 // the sticky limit is the default of 1. A false result means no adapter applies
 // and the model is served as requested.
 func (h *Handler) PlanSolo(snapshot *runtime.RuntimeSnapshot, access auth.Entry, providerID, modelID string, required []string) ([]runtime.ComboMember, bool) {
+	planned, ok := h.planSolo(snapshot, access, providerID, modelID, required)
+	return plainMembers(planned), ok
+}
+
+func (h *Handler) planSolo(snapshot *runtime.RuntimeSnapshot, access auth.Entry, providerID, modelID string, required []string) ([]plannedMember, bool) {
 	solo := []routing.Member{h.routingMember(snapshot, providerID, modelID, 0)}
 	augmented := h.augmentWithAdapters(snapshot, access, solo, required)
 	if len(augmented) < 2 {
@@ -81,13 +107,13 @@ func (h *Handler) PlanSolo(snapshot *runtime.RuntimeSnapshot, access auth.Entry,
 		}
 	}
 	ordered := h.orderModels(snapshot, access, "solo|"+providerID+"/"+modelID, strategy, 1, solo, required)
-	return toComboMembers(ordered), true
+	return toPlanned(ordered), true
 }
 
-func toComboMembers(ordered []routing.Member) []runtime.ComboMember {
-	members := make([]runtime.ComboMember, 0, len(ordered))
+func toPlanned(ordered []routing.Member) []plannedMember {
+	members := make([]plannedMember, 0, len(ordered))
 	for index, member := range ordered {
-		members = append(members, runtime.ComboMember{ProviderID: member.ProviderID, ModelID: member.ModelID, Position: index, Selected: true})
+		members = append(members, plannedMember{ComboMember: runtime.ComboMember{ProviderID: member.ProviderID, ModelID: member.ModelID, Position: index, Selected: true}, Adapter: member.Adapter, ContextWindow: member.ContextWindow})
 	}
 	return members
 }
@@ -95,6 +121,11 @@ func toComboMembers(ordered []routing.Member) []runtime.ComboMember {
 // routingMember resolves a model's capabilities from the same table the oracle
 // reads (getCapabilitiesForModel), plus any the catalog entry names itself.
 func (h *Handler) routingMember(snapshot *runtime.RuntimeSnapshot, providerID, modelID string, position int) routing.Member {
+	if providerID == "" {
+		// A nested Combo carries no model capabilities (getCapabilitiesForModel
+		// of a bare name, combo.js:68-75), so it sorts with the incapable models.
+		return routing.Member{ModelID: modelID, Position: position}
+	}
 	declared, _, _ := snapshot.ModelCapabilities(providerID, modelID)
 	details := snapshot.ModelCapabilityDetails(providerID, modelID)
 	have := map[string]bool{}
@@ -155,6 +186,7 @@ func (h *Handler) augmentWithAdapters(snapshot *runtime.RuntimeSnapshot, access 
 			}
 			present[key] = true
 			member := h.routingMember(snapshot, ref.ProviderID, ref.ModelID, 0)
+			member.Adapter = true
 			if hasAll(member, required) && snapshot.KeyAllows(access, key) {
 				pool = append(pool, member)
 			}

@@ -452,8 +452,8 @@ Fusion must preserve:
 
 - detect hard capability needed by active LLM request;
 - stably prioritize existing capable Combo members;
-- only consult capacity-adapter pool when original candidates cannot satisfy capability;
-- per-capability fallback or RR;
+- only consult capacity-adapter pool when no original candidate satisfies every required capability;
+- per-capability fallback or RR, applied to a single-model target; a Combo's adapter models rotate with the Combo's own strategy (PARITY 6.34);
 - enabled empty pool = no-op;
 - final adapter model may be deselected;
 - adapter target with smaller context trims old middle history first while preserving system/instructions and active user/media tail.

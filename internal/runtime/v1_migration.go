@@ -555,10 +555,23 @@ func (p *V1Plan) ApplyCatalog(ctx context.Context, manager *Manager) []V1Item {
 			failed = append(failed, V1Item{Path: "modelAliases." + alias, Reason: "not accepted by the catalog (unknown or duplicate member, or name conflict); " + v1ComboNeedsBase})
 		}
 	}
-	for _, combo := range p.Combos {
-		if _, err := manager.PutCombo(ctx, combo); err != nil {
-			failed = append(failed, V1Item{Path: "combos." + combo.Name, Reason: "not accepted by the catalog (unknown or duplicate member, or name conflict); " + v1ComboNeedsBase})
+	// A Combo may name another Combo, so a Combo that is refused only because the
+	// one it names is not stored yet is tried again once the others are in.
+	pending := append([]Combo(nil), p.Combos...)
+	for len(pending) > 0 {
+		var refused []Combo
+		for _, combo := range pending {
+			if _, err := manager.PutCombo(ctx, combo); err != nil {
+				refused = append(refused, combo)
+			}
 		}
+		if len(refused) == len(pending) {
+			for _, combo := range refused {
+				failed = append(failed, V1Item{Path: "combos." + combo.Name, Reason: "not accepted by the catalog (unknown or duplicate member, or name conflict); " + v1ComboNeedsBase})
+			}
+			break
+		}
+		pending = refused
 	}
 	return failed
 }

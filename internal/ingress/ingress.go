@@ -336,6 +336,11 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusServiceUnavailable, "snapshot_unavailable", err.Error())
 		return
 	}
+	if snapshot.AdaptersActive() {
+		setBodyRewriter(r, func(raw []byte) (func(), error) {
+			return swapRequest(request, func() (*anthropicadapter.MessagesRequest, error) { return anthropicadapter.ParseMessagesRequest(raw) })
+		})
+	}
 	var translation ChatTranslation
 	response, provider, err := h.dispatchAttempts(r, snapshot, request.Model, anthropicadapter.MessagesProtocol, false, request.Stream, func(provider routing.ProviderRef) (ChatTranslation, error) {
 		translation = ChatTranslation{}
@@ -479,13 +484,21 @@ type clientBodyKey struct{}
 // such as metadata.user_id, and the pin resolves the session before translating
 // (handlers/chatCore.js:69-74).
 func withClientBody(r *http.Request, body []byte) *http.Request {
-	return r.WithContext(context.WithValue(r.Context(), clientBodyKey{}, body))
+	return r.WithContext(context.WithValue(r.Context(), clientBodyKey{}, &clientRequest{body: body}))
+}
+
+// clientRequest is what the handler recorded about the request it is serving: the
+// body the client sent and, once it has parsed it, how to swap in a fitted copy.
+// One context value carries both, so registering the swap costs no new request.
+type clientRequest struct {
+	body    []byte
+	rewrite bodyRewriter
 }
 
 // clientBodyOf is the client's original body, or fallback when none was recorded.
 func clientBodyOf(r *http.Request, fallback []byte) []byte {
-	if body, ok := r.Context().Value(clientBodyKey{}).([]byte); ok {
-		return body
+	if recorded, ok := r.Context().Value(clientBodyKey{}).(*clientRequest); ok {
+		return recorded.body
 	}
 	return fallback
 }
