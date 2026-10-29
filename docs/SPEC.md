@@ -832,6 +832,8 @@ client request
 
 Default judge is first Combo model when no explicit judge is configured.
 
+Serving (PARITY 6.34): a Combo is Fusion when its `comboStrategies[name].fallbackStrategy` is `fusion`, or when its own flag is set and the entry names no plain strategy. `judgeModel` and `fusionTuning` come from the entry, else from the Combo. The panel and the judge are in-process requests to the same handler with the caller's credentials; a member is admitted by the Combo's grant. A panel answer counts when the call returned 2xx and has non-blank assistant text; answers reach the judge in panel order, anonymised as `[Source N]`. A single answer is returned by calling that model with the original request. Calls still running when the collection ends are cancelled, and a panel larger than 8, an answer over 1 MiB, and a ninth concurrent Fusion request are refused or dropped (these caps are Routeweft's; the oracle has none).
+
 Fusion limits must cap:
 
 - panel fan-out;

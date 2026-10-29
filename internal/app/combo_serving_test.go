@@ -24,6 +24,25 @@ type upstreamLog struct {
 	fail   map[string]int
 	// failBody, when set for a model, is the error body its failure carries.
 	failBody map[string]string
+	// answer, when set, makes a successful call answer as a chat completion whose
+	// text is answer(model); delay holds a model back first.
+	answer func(model string) string
+	delay  map[string]time.Duration
+	// script, when set, decides every call: how long to hold it, its status and
+	// body. call counts the calls to that model, from zero.
+	script func(model string, call int) (time.Duration, int, string)
+	count  map[string]int
+	calls  []upstreamCall
+	// cancelled counts calls the client abandoned while the upstream held them.
+	cancelled int
+	started   int
+}
+
+// upstreamCall is one request the upstream received, in arrival order.
+type upstreamCall struct {
+	model string
+	index int // how many calls to this model came before
+	body  string
 }
 
 func (u *upstreamLog) handler() http.Handler {
@@ -41,14 +60,53 @@ func (u *upstreamLog) handler() http.Handler {
 		u.bodies[body.Model] = append(u.bodies[body.Model], string(raw))
 		status := u.fail[body.Model]
 		failBody := u.failBody[body.Model]
+		delay := u.delay[body.Model]
+		answer := u.answer
+		if u.script != nil {
+			if u.count == nil {
+				u.count = map[string]int{}
+			}
+			index := u.count[body.Model]
+			u.count[body.Model]++
+			u.calls = append(u.calls, upstreamCall{body.Model, index, string(raw)})
+			var scriptedBody string
+			delay, status, scriptedBody = u.script(body.Model, index)
+			failBody = scriptedBody
+		}
 		u.mu.Unlock()
+		u.mu.Lock()
+		u.started++
+		u.mu.Unlock()
+		if delay > 0 {
+			select {
+			case <-time.After(delay):
+			case <-r.Context().Done():
+				u.mu.Lock()
+				u.cancelled++
+				u.mu.Unlock()
+				return
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
+		if u.script != nil && strings.HasPrefix(failBody, "data:") {
+			w.Header().Set("Content-Type", "text/event-stream")
+		}
 		if status != 0 {
 			w.WriteHeader(status)
 			if failBody == "" {
 				failBody = `{"error":{"message":"scripted failure"}}`
 			}
 			fmt.Fprint(w, failBody)
+			return
+		}
+		if u.script != nil {
+			w.WriteHeader(status)
+			fmt.Fprint(w, failBody)
+			return
+		}
+		if answer != nil {
+			encoded, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": answer(body.Model)}}}})
+			w.Write(encoded)
 			return
 		}
 		fmt.Fprintf(w, `{"served_by":%q}`, body.Model)
@@ -311,17 +369,6 @@ func TestComboServingRestrictedKeyNeverReachesAnUnlistedPoolModel(t *testing.T) 
 	// And a Combo it was not granted is refused before anything is planned.
 	if w := post(a, direct, fmt.Sprintf(textRequest, "texty")); w.Code != 403 {
 		t.Fatalf("ungranted combo: status=%d", w.Code)
-	}
-}
-
-// A Combo whose strategy is fusion is not silently served as a fallback list.
-func TestComboServingFusionIsNotServedAsFallback(t *testing.T) {
-	upstream := &upstreamLog{}
-	a, key := comboServingApp(t, upstream)
-	setCombos(t, a, runtime.Combo{ID: "f", Name: "panel", FusionEnabled: true, Members: members("text-a", "text-b")})
-	w := post(a, key, fmt.Sprintf(textRequest, "panel"))
-	if w.Code != http.StatusNotImplemented || upstream.seen() != "" {
-		t.Fatalf("status=%d seen=%q body=%s", w.Code, upstream.seen(), w.Body)
 	}
 }
 

@@ -236,10 +236,92 @@ func TestC04StrategyOverrideObjects(t *testing.T) {
 			t.Fatalf("providerStrategies accepted %s", bad)
 		}
 	}
-	for _, bad := range []string{`{"c":{"judgeModel":"x"}}`, `{"c":{"fusionTuning":{}}}`, `{"c":{"stickyRoundRobinLimit":2}}`, `{"c":{"fallbackStrategy":"fusion"}}`} {
+	for _, bad := range []string{
+		`{"c":{"stickyRoundRobinLimit":2}}`,
+		`{"c":{"judgeModel":3}}`,
+		`{"c":{"fusionTuning":3}}`,
+		`{"c":{"fusionTuning":{"timeout":5}}}`,
+		`{"c":{"fusionTuning":{"minPanel":"2"}}}`,
+		`{"c":{"fusionTuning":{"minPanel":2.5}}}`,
+		`{"c":{"fusionTuning":{"minPanel":-1}}}`,
+		`{"c":{"fusionTuning":{"panelHardTimeoutMs":0}}}`,
+		`{"c":{"fusionTuning":{"stragglerGraceMs":600001}}}`,
+		`{"c":{"fallbackStrategy":"fusion-ish"}}`,
+	} {
 		if _, err := manager.SetSettings(context.Background(), map[string]string{"comboStrategies": bad}, nil); err == nil {
 			t.Fatalf("comboStrategies accepted %s", bad)
 		}
+	}
+	// The pin's fusion fields (chat.js:116-133) are accepted, alone or together.
+	for _, good := range []string{
+		`{"c":{"fallbackStrategy":"fusion"}}`,
+		`{"c":{"fallbackStrategy":"fusion","judgeModel":"openai/gpt-text"}}`,
+		`{"c":{"fallbackStrategy":"fusion","judgeModel":null,"fusionTuning":{"minPanel":3,"stragglerGraceMs":0,"panelHardTimeoutMs":5000}}}`,
+		`{"c":{"fusionTuning":{"minPanel":null}}}`,
+	} {
+		if _, err := manager.SetSettings(context.Background(), map[string]string{"comboStrategies": good}, nil); err != nil {
+			t.Fatalf("comboStrategies refused %s: %v", good, err)
+		}
+	}
+}
+
+// comboStrategies[name] decides whether a Combo is served as Fusion and carries its
+// judge and timing (chat.js:116-133); a plain strategy turns a stored fusion flag
+// off, and an entry for a name that is not a Combo does nothing.
+func TestComboStrategiesFusionOverlay(t *testing.T) {
+	manager, store := newTestManager(t)
+	defer store.Close()
+	comboModels(t, manager)
+	ctx := context.Background()
+	members := []ComboMember{{ProviderID: "openai", ModelID: "gpt-text", Selected: true}, {ProviderID: "anthropic", ModelID: "claude-text", Position: 1, Selected: true}}
+	two, thirty := 2, int64(30000)
+	if _, err := manager.SetCombos(ctx, []Combo{
+		{ID: "a", Name: "plain", Members: members},
+		{ID: "b", Name: "stored", FusionEnabled: true, JudgeModel: "own/judge", FusionTuning: routing.FusionTuning{MinPanel: &two}, Members: members},
+		{ID: "c", Name: "empty", Members: nil},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ := manager.Load()
+	if snapshot.HasFusion() != true {
+		t.Fatal("a stored fusion Combo must be found")
+	}
+	if _, ok := snapshot.FusionCombo("plain"); ok {
+		t.Fatal("a plain Combo is not Fusion")
+	}
+	if _, ok := snapshot.FusionCombo("stored"); !ok {
+		t.Fatal("a stored fusion Combo is Fusion")
+	}
+	if _, err := manager.SetSettings(ctx, map[string]string{"comboStrategies": `{"plain":{"fallbackStrategy":"fusion","judgeModel":"openai/gpt-text","fusionTuning":{"minPanel":0,"stragglerGraceMs":0,"panelHardTimeoutMs":30000}},"stored":"round-robin","nobody":{"fallbackStrategy":"fusion"}}`}, nil); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ = manager.Load()
+	plain, ok := snapshot.FusionCombo("plain")
+	if !ok || plain.JudgeModel != "openai/gpt-text" || plain.FusionTuning.MinPanel == nil || *plain.FusionTuning.MinPanel != 2 || *plain.FusionTuning.PanelHardTimeoutMs != thirty || *plain.FusionTuning.StragglerGraceMs != 0 {
+		t.Fatalf("settings did not make plain a Fusion Combo: %+v ok=%v", plain, ok)
+	}
+	if _, ok := snapshot.FusionCombo("stored"); ok {
+		t.Fatal("a plain strategy must turn the stored fusion flag off")
+	}
+	if _, ok := snapshot.FusionCombo("nobody"); ok {
+		t.Fatal("an entry for a name that is not a Combo does nothing")
+	}
+	if _, ok := snapshot.FusionCombo("empty"); ok {
+		t.Fatal("a Combo with no members is not Fusion")
+	}
+	if _, ok := snapshot.FusionCombo("openai/plain"); ok {
+		t.Fatal("a name with a slash is never a Combo")
+	}
+	// Clearing the entry returns the Combo to its stored configuration.
+	if _, err := manager.SetSettings(ctx, map[string]string{"comboStrategies": `{}`}, nil); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ = manager.Load()
+	if _, ok := snapshot.FusionCombo("plain"); ok {
+		t.Fatal("plain must stop being Fusion when its entry is cleared")
+	}
+	if _, ok := snapshot.FusionCombo("stored"); !ok {
+		t.Fatal("stored must be Fusion again when its entry is cleared")
 	}
 }
 

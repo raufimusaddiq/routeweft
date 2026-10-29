@@ -63,8 +63,10 @@ func (h *Handler) planModelRoute(r *http.Request, snapshot *runtime.RuntimeSnaps
 	plan := comboPlan{h: h, r: r, snapshot: snapshot, source: source, compact: compact}
 	// A name with a slash is never a Combo (combo.js:254-257).
 	if combo, ok := snapshot.ComboByName(model); ok && !strings.Contains(model, "/") && len(combo.Resolve()) > 0 {
-		if combo.FusionEnabled {
-			return modelRoute{}, true, &dispatchError{http.StatusNotImplemented, "combo_fusion_unavailable", fmt.Sprintf("combo %q uses the fusion strategy, which is not served yet", model)}
+		if _, fusion := snapshot.FusionCombo(model); fusion {
+			// Fusion Combos are answered before the attempt loop (fusion_serving.go);
+			// a request that still gets here has no handler to run a panel.
+			return modelRoute{}, true, &dispatchError{http.StatusNotImplemented, "combo_fusion_unavailable", fmt.Sprintf("combo %q uses the fusion strategy, which cannot be served from here", model)}
 		}
 		plan.access = callerKey(r, snapshot)
 		plan.required = detectRequiredCapabilities(clientBodyOf(r, nil))
@@ -121,12 +123,11 @@ func (p *comboPlan) slots(ordered []plannedMember, depth int) ([]attemptSlot, er
 				return nil, &dispatchError{http.StatusBadGateway, "combo_too_deep", fmt.Sprintf("combo %q nests deeper than %d", name, runtime.MaxComboDepth)}
 			}
 			slots = append(slots, attemptSlot{label: name, expand: func() ([]attemptSlot, error) {
-				inner, ok := p.snapshot.ComboByName(name)
-				if !ok {
+				if _, ok := p.snapshot.ComboByName(name); !ok {
 					return nil, nil
 				}
-				if inner.FusionEnabled {
-					return nil, &dispatchError{http.StatusNotImplemented, "combo_fusion_unavailable", fmt.Sprintf("combo %q uses the fusion strategy, which is not served yet", name)}
+				if _, fusion := p.snapshot.FusionCombo(name); fusion {
+					return nil, &dispatchError{http.StatusNotImplemented, "combo_fusion_unavailable", fmt.Sprintf("combo %q is a Fusion Combo nested in an ordered Combo, which is not served", name)}
 				}
 				planned, _ := p.h.planCombo(p.snapshot, p.access, name, p.required)
 				return p.slots(planned, depth+1)
