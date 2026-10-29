@@ -1118,7 +1118,7 @@ itself. Every spend on the page reads the credit list from Codex first and
 spends nothing while that read fails, including after leaving the page or
 reloading it. A refused credential (Codex 401/403) is the one outcome the server
 replays, once: nothing was spent, so it refreshes the token and sends the same
-redeem id again; each of the three upstream calls has its own 15s budget. A 4xx whose body reads as an expired credential is replayed the same way and, if it still fails, keeps Codex's own status (for example 400): reconnect the account if it persists. Another 4xx means Codex
+redeem id again; each of the three upstream calls has its own 15s budget, and a token refresh's save is bounded separately at 30s, so a spend that needs a refresh can take about 75 seconds before it answers. A 4xx whose body reads as an expired credential is replayed the same way and, if it still fails, keeps Codex's own status (for example 400): reconnect the account if it persists. Another 4xx means Codex
 refused and nothing was spent; 403 `reauth_required` means reconnect the account.
 On the Quota page, Credit expiry lists the credits and Use 1 reset credit asks
 before spending one.

@@ -170,12 +170,12 @@ func TestCodexResetCreditRefusalKeepsItsStatus(t *testing.T) {
 // answers each consume by the bearer it carries.
 func retryRig(t *testing.T, refreshToken, authType string, exchange func() (credentials.Secret, error), answer func(auth string, w http.ResponseWriter)) (*http.ServeMux, *http.Cookie, string, *[]string, *[][2]string, *int) {
 	t.Helper()
-	return retryRigCtx(t, refreshToken, authType, func(context.Context) (credentials.Secret, error) { return exchange() }, answer)
+	return retryRigCtx(t, refreshToken, authType, nil, func(context.Context) (credentials.Secret, error) { return exchange() }, answer)
 }
 
 // retryRigCtx hands the exchange the context the registry gives a real refresh,
 // so a test can honor its deadline as an HTTP exchange does.
-func retryRigCtx(t *testing.T, refreshToken, authType string, exchange func(context.Context) (credentials.Secret, error), answer func(auth string, w http.ResponseWriter)) (*http.ServeMux, *http.Cookie, string, *[]string, *[][2]string, *int) {
+func retryRigCtx(t *testing.T, refreshToken, authType string, providerData map[string]string, exchange func(context.Context) (credentials.Secret, error), answer func(auth string, w http.ResponseWriter)) (*http.ServeMux, *http.Cookie, string, *[]string, *[][2]string, *int) {
 	t.Helper()
 	h, mux, store, creds, cookie := newProvidersAPI(t, false, nil)
 	t.Cleanup(func() { store.Close() })
@@ -184,7 +184,7 @@ func retryRigCtx(t *testing.T, refreshToken, authType string, exchange func(cont
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := creds.PutConnection(ctx, credentials.Connection{NodeID: node.ID, Name: "fixture", Identity: "fixture", AuthKind: credentials.AuthOAuth, Enabled: true, Secret: credentials.Secret{AccessToken: "stale-secret", RefreshToken: refreshToken, AuthType: authType}})
+	c, err := creds.PutConnection(ctx, credentials.Connection{NodeID: node.ID, Name: "fixture", Identity: "fixture", AuthKind: credentials.AuthOAuth, Enabled: true, Secret: credentials.Secret{AccessToken: "stale-secret", RefreshToken: refreshToken, AuthType: authType, ProviderData: providerData}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +369,7 @@ func TestCodexResetCreditSlowRefreshKeepsTheRefusalDefinite(t *testing.T) {
 	old := resetCreditLegTimeout
 	resetCreditLegTimeout = 200 * time.Millisecond
 	t.Cleanup(func() { resetCreditLegTimeout = old })
-	mux, cookie, path, forgotten, seen, _ := retryRigCtx(t, "r1", "", func(ctx context.Context) (credentials.Secret, error) {
+	mux, cookie, path, forgotten, seen, _ := retryRigCtx(t, "r1", "", nil, func(ctx context.Context) (credentials.Secret, error) {
 		select {
 		case <-time.After(600 * time.Millisecond):
 			return freshSecret()
@@ -380,5 +380,33 @@ func TestCodexResetCreditSlowRefreshKeepsTheRefusalDefinite(t *testing.T) {
 	got := doJSON(t, mux, cookie, http.MethodPost, path, `{"confirm":true}`)
 	if got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "reauth_required") || len(*seen) != 1 || len(*forgotten) != 0 {
 		t.Fatalf("%d %s requests %v", got.Code, got.Body, *seen)
+	}
+}
+
+// The access-token test is the sign-in match's (codexTokenOnly): a connection
+// stored before its auth type was recorded, whose data says access_token, is
+// refused as is even with a refresh token; a bulk item (auth type oauth) with the
+// same data is a sign-in and does refresh, as the pin treats authType oauth.
+func TestCodexResetCreditAccessTokenDetectionMatchesTheSignInMatch(t *testing.T) {
+	data := map[string]string{"authMethod": "access_token"}
+	for _, tc := range []struct {
+		name     string
+		authType string
+		sent     int
+	}{
+		{"legacy access-token connection", "", 1},
+		{"recorded access token", credentials.AuthTypeAccessToken, 1},
+		{"bulk item with the same data", credentials.AuthTypeOAuth, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mux, cookie, path, _, seen, exchanges := retryRigCtx(t, "r1", tc.authType, data, func(context.Context) (credentials.Secret, error) { return freshSecret() }, rejectStale)
+			got := doJSON(t, mux, cookie, http.MethodPost, path, `{"confirm":true}`)
+			if len(*seen) != tc.sent || *exchanges != tc.sent-1 {
+				t.Fatalf("%d %s requests %v exchanges %d", got.Code, got.Body, *seen, *exchanges)
+			}
+			if tc.sent == 1 && got.Code != http.StatusForbidden {
+				t.Fatalf("%d %s", got.Code, got.Body)
+			}
+		})
 	}
 }

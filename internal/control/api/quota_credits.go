@@ -14,7 +14,9 @@ import (
 
 // resetCreditLegTimeout bounds each upstream leg of a spend (the consume, the
 // forced refresh, the replay) on its own, so a slow refresh cannot use up the
-// budget a replay needs and turn a definite refusal into an unknown outcome.
+// budget a replay needs and turn a definite refusal into an unknown outcome. It
+// does not bound a refresh's durable commit, which is detached from the caller
+// and bounded at 30s on its own (credentials.Registry.refresh).
 var resetCreditLegTimeout = 15 * time.Second
 
 func (h *Handler) handleCodexResetCredits(w http.ResponseWriter, r *http.Request) {
@@ -79,8 +81,10 @@ func (h *Handler) handleCodexResetCredits(w http.ResponseWriter, r *http.Request
 	result, err := client.ConsumeResetCredit(ctx, secret.AccessToken, redeemID)
 	// A 401/403 is a refusal whatever its body says; any other 4xx is one when its
 	// text reads as an expired credential (route.js:9-20,140). An access-token
-	// connection never refreshes (route.js:130,140), so it is refused as is.
-	if (errors.Is(err, codex.ErrReauthRequired) || (err == nil && result.AuthExpired())) && secret.AuthType != credentials.AuthTypeAccessToken {
+	// connection never refreshes (route.js:130,140), so it is refused as is; the
+	// test is the one the sign-in match uses (codexTokenOnly), including a
+	// connection stored before its auth type was recorded.
+	if (errors.Is(err, codex.ErrReauthRequired) || (err == nil && result.AuthExpired())) && !codexTokenOnly(secret) {
 		// A refresh that fails or times out leaves the first refusal, which is
 		// still definite (route.js:145-147). The refresh and the replay each get a
 		// fresh budget.
