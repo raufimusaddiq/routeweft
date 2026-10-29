@@ -2476,7 +2476,7 @@ path requires `{"confirm":true}`, spends one credit with a server UUID, returns
 an ambiguous spend; the one replay is after a credential refusal (401/403, so
 nothing was spent): once, with the same redeem id and a forced refresh of the
 access token (`Registry.ForceRefresh`; codex-reset-credits/route.js:136-147), and
-only when the connection has a refresh token. A Codex refusal is definite and keeps its 4xx status
+only when the connection has a refresh token and is not an access-token connection. A 4xx whose text reads as an expired credential (route.js:9-20) counts as a refusal like 401/403; a 2xx or 5xx never does. A Codex refusal is definite and keeps its 4xx status
 (codex-reset-credits/route.js:42-47); a refused credential is 403
 `reauth_required`, because 401 is the admin session's status. Both actions reject non-Codex token connections before any
 network work and refresh credentials through the shared registry. The UI lists

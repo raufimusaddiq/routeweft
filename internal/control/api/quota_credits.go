@@ -72,7 +72,10 @@ func (h *Handler) handleCodexResetCredits(w http.ResponseWriter, r *http.Request
 	// 136-147). The id makes a replay the same spend, never a second one.
 	redeemID := uuid.NewString()
 	result, err := client.ConsumeResetCredit(ctx, secret.AccessToken, redeemID)
-	if errors.Is(err, codex.ErrReauthRequired) {
+	// A 401/403 is a refusal whatever its body says; any other 4xx is one when its
+	// text reads as an expired credential (route.js:9-20,140). An access-token
+	// connection never refreshes (route.js:130,140), so it is refused as is.
+	if (errors.Is(err, codex.ErrReauthRequired) || (err == nil && result.AuthExpired())) && secret.AuthType != credentials.AuthTypeAccessToken {
 		if refreshed, refreshErr := h.opts.CredentialRegistry.ForceRefresh(ctx, connection.ID, secret.AccessToken); refreshErr == nil {
 			client.AccountID = codexAccount(refreshed, connection)
 			result, err = client.ConsumeResetCredit(ctx, refreshed.AccessToken, redeemID)
