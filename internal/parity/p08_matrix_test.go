@@ -890,12 +890,10 @@ shapes and cached-versus-ordinary token accounting, for all 81 active providers.
 The catalog listing a provider is not evidence that it works; a cell is evidence
 only when a named test would fail if the behaviour were absent.
 
-Oracle: ` + "`/opt/9router`" + ` is absent on this host, so the pinned reference was read from the
-clone at ` + "`/home/ubuntu/9router`" + ` with ` + "`git -C /home/ubuntu/9router show 1c3b9f47:<path>`" + `
-(the pin in ` + "`compat/parity/oracle.mjs`" + `). The clone's working tree has an unrelated
-local edit to ` + "`scripts/deploy.sh`" + `; it was not read. Every pin citation below is a
-path and line at that commit. ` + "`ORACLE_DIR=/home/ubuntu/9router`" + ` drives the oracle-gated
-tests.
+Oracle: the matrix was written against the reference at ` + "`1c3b9f47`" + `, read with
+` + "`git show 1c3b9f47:<path>`" + `. The current oracle is LiteRouter ` + "`main`" + `, resolved once per run
+(` + "`compat/parity/resolve-oracle.mjs`" + `, #289); the oracle-gated tests read the commit in
+` + "`ORACLE_SHA`" + `. Every pin citation below is a path and line at ` + "`1c3b9f47`" + `.
 
 This file is generated from ` + "`internal/parity/p08_matrix_test.go`" + `. ` + "`TestP08MatrixCoversEveryActiveProviderWithRealEvidence`" + `
 fails if a row is missing, a cell names a test that does not exist, a not-applicable

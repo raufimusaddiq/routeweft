@@ -16,7 +16,7 @@ type oracle struct {
 	dir, pin string
 }
 
-// pinnedOracle returns the pinned oracle, or skips when ORACLE_DIR is unset like
+// pinnedOracle returns the run's oracle (the commit in ORACLE_SHA), or skips when ORACLE_DIR is unset like
 // the other dedicated parity gates. The CI parity job always sets it.
 func pinnedOracle(t *testing.T) oracle {
 	t.Helper()
@@ -24,18 +24,16 @@ func pinnedOracle(t *testing.T) oracle {
 	if dir == "" {
 		t.Skip("pinned drift gate sets ORACLE_DIR; normal unit tests need no oracle")
 	}
-	// The pin has one definition, in the node gate, so the two cannot disagree.
-	script, err := os.ReadFile("../../compat/parity/oracle.mjs")
-	if err != nil {
-		t.Fatal(err)
+	// The run's commit is resolved once by compat/parity/resolve-oracle.mjs and
+	// handed to every gate as ORACLE_SHA, so Go and node cannot disagree. There is
+	// no default: a run without one fails rather than guessing.
+	sha := os.Getenv("ORACLE_SHA")
+	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(sha) {
+		t.Fatal("ORACLE_SHA must be the 40-hex oracle commit of this run (compat/parity/resolve-oracle.mjs)")
 	}
-	match := regexp.MustCompile(`export const pin = '([0-9a-f]{40})'`).FindSubmatch(script)
-	if match == nil {
-		t.Fatal("compat/parity/oracle.mjs defines no pin")
-	}
-	o := oracle{dir: dir, pin: string(match[1])}
+	o := oracle{dir: dir, pin: sha}
 	if got := strings.TrimSpace(o.git(t, "rev-parse", o.pin+"^{commit}")); got != o.pin {
-		t.Fatalf("oracle does not contain the pinned commit %s", o.pin)
+		t.Fatalf("oracle does not contain the run's commit %s", o.pin)
 	}
 	return o
 }

@@ -12,8 +12,9 @@ would add an SSRF surface and offline/upstream-change failures to immutable data
 Regenerate or check with:
 
 ```bash
-ORACLE_DIR=/opt/9router node compat/parity/generate-capabilities.mjs
-ORACLE_DIR=/opt/9router node compat/parity/generate-capabilities.mjs --check
+# ORACLE_DIR / ORACLE_SHA from `node compat/parity/resolve-oracle.mjs`
+node compat/parity/generate-capabilities.mjs
+node compat/parity/generate-capabilities.mjs --check
 ```
 
 `gofmt` must be on PATH. Both commands read only git objects at the pin.

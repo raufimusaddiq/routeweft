@@ -19,12 +19,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Fetch immutable oracle into disposable test storage
-        run: |
-          oracle_dir=$(mktemp -d)
-          git init --bare "$oracle_dir"
-          git -C "$oracle_dir" fetch --depth=1 https://github.com/raufimusaddiq/literouter.git 1c3b9f47837d42ea64992063309064af755a14a3
-          echo "ORACLE_DIR=$oracle_dir" >> "$GITHUB_ENV"
+      # The resolver's own tests need no network and no oracle.
+      - run: node --test compat/parity/resolve-oracle.test.mjs
+      # LiteRouter refs/heads/main is resolved once for this job and frozen: every
+      # step below reads ORACLE_SHA. A failed resolve fails the job; there is no
+      # fallback SHA. Re-run a recorded commit with
+      # `node compat/parity/resolve-oracle.mjs --sha <sha>` (#289).
+      - name: Resolve and fetch the LiteRouter main oracle into disposable test storage
+        run: node compat/parity/resolve-oracle.mjs
+      - name: Upload the oracle run record
+        uses: actions/upload-artifact@v4
+        with:
+          name: oracle-run
+          path: ${{ env.ORACLE_RECORD }}
       - run: node compat/parity/inventory.mjs
       - run: go test -race ./internal/app -run TestPinnedSystemOneDifferential -count=1
       - run: go test -race ./internal/security ./internal/ingress ./internal/providers/shared ./internal/providers/wire ./internal/protocol/concerns

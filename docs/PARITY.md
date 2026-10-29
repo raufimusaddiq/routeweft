@@ -5,7 +5,7 @@ Parent: #73; sprint tracker #75. Baseline audit: 2026-10-17. R11 review: 2026-10
 
 ## 1. Scope, pins and interpretation
 
-- Oracle: `raufimusaddiq/literouter@1c3b9f47837d42ea64992063309064af755a14a3`.
+- Oracle: `raufimusaddiq/literouter` `refs/heads/main`, resolved once per run and frozen (#289; `compat/parity/resolve-oracle.mjs`, recorded in `oracle-run.json`), replacing the fixed `1c3b9f47837d42ea64992063309064af755a14a3` of this audit. `1c3b9f47` below is the commit this audit and the committed `*_pin.json` fixtures were written against; it is history, not the current oracle. Observed source at the run's commit is the authority.
 - Routeweft: `013d26a2014c16e0e4f2a35aa9acf2fa5bfd4e7c` (the common `main` / `origin/main` base).
 - Worktree: `/home/ubuntu/routeweft-wt/s5-parity-73`; branch: `sprint/5-parity-73`.
 - The oracle checkout actually reports `2df83ab99d158e3beb53eb88a089fc28e6dae948`, with existing untracked intake files. All oracle evidence below is read using `git show 1c3b9f47:<path>` / `git ls-tree`, never the newer working files. No oracle checkout, database, credentials, runtime or deployment is modified/accessed.
@@ -56,7 +56,8 @@ supported client-key form in the pinned dashboard guard. It rejects an
 unannotated gap. Run with:
 
 ```bash
-ORACLE_DIR=/opt/9router make parity-test
+# ORACLE_DIR / ORACLE_SHA from `node compat/parity/resolve-oracle.mjs` (compat/parity/README.md)
+make parity-test
 ```
 
 Only `git show` / `git ls-tree` / commit resolution read the oracle. CI fetches
