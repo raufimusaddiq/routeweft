@@ -53,3 +53,102 @@ func TestForceRefreshWithoutRefreshTokenFails(t *testing.T) {
 		t.Fatalf("%v exchanges %d", err, *exchanges)
 	}
 }
+
+func forceRigWith(t *testing.T, exchange func(Secret) (Secret, error)) (*Registry, string, *int) {
+	t.Helper()
+	store, _ := testStore(t)
+	node := seedNode(t, store, "codex")
+	connection, err := store.PutConnection(context.Background(), Connection{NodeID: node.ID, Name: "primary", AuthKind: AuthOAuth, Identity: "acct", Enabled: true, Secret: Secret{AccessToken: "old", RefreshToken: "r1", Expiry: time.Now().Add(time.Hour)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := NewRegistry(store, nil)
+	exchanges := 0
+	registry.Register(connection, func(_ context.Context, current Secret) (Secret, error) {
+		exchanges++
+		return exchange(current)
+	})
+	return registry, connection.ID, &exchanges
+}
+
+func markRejected(t *testing.T, registry *Registry, id, token string) {
+	t.Helper()
+	current, err := registry.lookup(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.mu.Lock()
+	current.rejected = token
+	current.mu.Unlock()
+}
+
+func rejectedOf(t *testing.T, registry *Registry, id string) string {
+	t.Helper()
+	current, _ := registry.lookup(id)
+	current.mu.Lock()
+	defer current.mu.Unlock()
+	return current.rejected
+}
+
+// A forced refresh that fails is one attempt: later reads take the ordinary
+// expiry path and do not exchange again.
+func TestFailedForceRefreshDoesNotExchangeOnEveryRead(t *testing.T) {
+	registry, id, exchanges := forceRigWith(t, func(Secret) (Secret, error) { return Secret{}, errors.New("provider down") })
+	if _, err := registry.ForceRefresh(context.Background(), id, "old"); err == nil {
+		t.Fatal("forced refresh should fail")
+	}
+	for i := 0; i < 3; i++ {
+		secret, err := registry.Secret(context.Background(), id)
+		if err != nil || secret.AccessToken != "old" {
+			t.Fatalf("read %d: %+v %v", i, secret, err)
+		}
+	}
+	if *exchanges != 1 || rejectedOf(t, registry, id) != "" {
+		t.Fatalf("exchanges %d, marker %q", *exchanges, rejectedOf(t, registry, id))
+	}
+}
+
+// An exchange that hands back the same access token still commits a valid
+// credential, so the marker must not keep it invalid.
+func TestForceRefreshReturningTheSameTokenIsServedWithoutFurtherExchanges(t *testing.T) {
+	registry, id, exchanges := forceRigWith(t, func(current Secret) (Secret, error) {
+		return Secret{AccessToken: current.AccessToken, RefreshToken: "r2", Expiry: time.Now().Add(time.Hour)}, nil
+	})
+	if secret, err := registry.ForceRefresh(context.Background(), id, "old"); err != nil || secret.AccessToken != "old" {
+		t.Fatalf("%+v %v", secret, err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := registry.Secret(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if *exchanges != 1 || rejectedOf(t, registry, id) != "" {
+		t.Fatalf("exchanges %d, marker %q", *exchanges, rejectedOf(t, registry, id))
+	}
+}
+
+// An operator re-import or edit that installs the very token that was refused
+// is served as installed, not rotated away.
+func TestInstallClearsTheRefusedMarkerEvenForTheSameToken(t *testing.T) {
+	never := func(Secret) (Secret, error) { return Secret{}, errors.New("must not be called") }
+	t.Run("import", func(t *testing.T) {
+		registry, id, exchanges := forceRigWith(t, never)
+		markRejected(t, registry, id, "old")
+		if err := registry.Import(context.Background(), id, "acct", Secret{AccessToken: "old", RefreshToken: "r1", Expiry: time.Now().Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		if secret, err := registry.Secret(context.Background(), id); err != nil || secret.AccessToken != "old" || *exchanges != 0 {
+			t.Fatalf("%+v %v exchanges %d", secret, err, *exchanges)
+		}
+	})
+	t.Run("update", func(t *testing.T) {
+		registry, id, exchanges := forceRigWith(t, never)
+		markRejected(t, registry, id, "old")
+		if _, err := registry.Update(context.Background(), id, func(c Connection) (Connection, error) { c.Name = "renamed"; return c, nil }); err != nil {
+			t.Fatal(err)
+		}
+		if secret, err := registry.Secret(context.Background(), id); err != nil || secret.AccessToken != "old" || *exchanges != 0 {
+			t.Fatalf("%+v %v exchanges %d", secret, err, *exchanges)
+		}
+	})
+}

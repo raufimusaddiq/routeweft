@@ -69,7 +69,8 @@ type entry struct {
 	seeded     bool
 	// rejected is an access token the provider refused. While it is still the
 	// current one the credential counts as expired, so the next Secret refreshes
-	// it; any other token clears the effect without bookkeeping.
+	// it. Every install, committed refresh and failed forced refresh clears it,
+	// so it lasts one refresh attempt and never turns later reads into exchanges.
 	rejected string
 	inflight *refreshCall
 }
@@ -207,6 +208,7 @@ func install(current *entry, connection Connection, exchanger Exchanger, name, e
 	}
 	current.current = connection.Secret
 	current.seeded = true
+	current.rejected = ""
 	current.generation++
 }
 
@@ -321,6 +323,7 @@ func (r *Registry) exclusive(ctx context.Context, connectionID string, write fun
 		current.exchanger = exchanger
 		current.current = updated.Secret
 		current.seeded = true
+		current.rejected = ""
 		current.generation++
 	}
 	// Callers that waited on the held slot check the credential again and
@@ -481,7 +484,17 @@ func (r *Registry) ForceRefresh(ctx context.Context, connectionID, rejectedAcces
 		current.rejected = rejectedAccessToken
 	}
 	current.mu.Unlock()
-	return r.Secret(ctx, connectionID)
+	secret, err := r.Secret(ctx, connectionID)
+	if err != nil {
+		// A failed exchange leaves the refused token in place; fall back to the
+		// ordinary expiry path rather than exchanging again on every read.
+		current.mu.Lock()
+		if current.rejected == rejectedAccessToken {
+			current.rejected = ""
+		}
+		current.mu.Unlock()
+	}
+	return secret, err
 }
 
 // refresh runs the provider exchange and durably commits the rotated payload
@@ -545,6 +558,7 @@ func (r *Registry) refresh(ctx context.Context, connectionID string, stored Secr
 	current.mu.Lock()
 	current.current = refreshed
 	current.seeded = true
+	current.rejected = ""
 	current.mu.Unlock()
 	return refreshed, nil
 }
@@ -607,6 +621,7 @@ func (r *Registry) Import(ctx context.Context, connectionID, identity string, se
 	current.mu.Lock()
 	current.current = secret
 	current.seeded = true
+	current.rejected = ""
 	current.mu.Unlock()
 	// Audit bookkeeping is advisory: the import already succeeded durably, so a
 	// failed event write must not report the credential install as failed.
