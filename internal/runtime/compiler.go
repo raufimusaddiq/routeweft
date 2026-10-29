@@ -208,6 +208,7 @@ func (c Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, erro
 	snapshot.proxyEnabled, _ = strconv.ParseBool(strings.TrimSpace(settings["outboundProxyEnabled"]))
 	snapshot.proxyURL = strings.TrimSpace(settings["outboundProxyUrl"])
 	snapshot.noProxy, _ = parseNoProxy(settings["noProxy"])
+	snapshot.compileCapacityAdapters()
 	snapshot.compileServingIndexes()
 	snapshot.compileKeyAccess(config.APIKeys)
 	return snapshot, nil

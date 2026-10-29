@@ -26,16 +26,19 @@ type AccountProvider func(*runtime.RuntimeSnapshot, string, string, string) (rou
 // classification before it is relayed to the client unchanged (SPEC §14).
 const errorBodyPeek int64 = 32 << 10
 
-// PlanCombo orders the selected members of one Combo candidate list. It
-// applies capability reorder and capacity adapters before Combo-local strategy
-// rotation (SPEC §15.2-15.4). A named Combo overrides the direct model route.
+// PlanCombo orders the selected members of one Combo for a request that needs
+// the hard capabilities in required (nil when it needs none). It follows the
+// oracle's combo path: capacity-adapter models are added when no member covers
+// every required capability, the whole list is rotated by the Combo's strategy
+// (adapter models included), then models that satisfy every required capability
+// float ahead, stably (chat.js:104-149, capacityAdapter.js:88-96,
+// combo.js:63-82,280-294). A named Combo overrides the direct model route.
 //
-// access is the caller's key: a restricted key must never reach a capacity-adapter
-// pool member outside its allowlist, so they are filtered here before ordering.
-// NOTE: PlanCombo has no production caller yet, so this is not enforced in
-// serving; the dispatch wiring must pass the request's key (SPEC §12.1). Combo members themselves are admitted
-// by the Combo's own entry in the allowlist.
-func (h *Handler) PlanCombo(snapshot *runtime.RuntimeSnapshot, access auth.Entry, name string, requirements []routing.CapabilityRequirement) ([]runtime.ComboMember, bool) {
+// access is the caller's key: an adapter model is added by the gateway, not
+// chosen by the client, so a restricted key only gets the ones it may call
+// directly (keyAccess.js:168-177). The Combo's own members are admitted by the
+// Combo's grant.
+func (h *Handler) PlanCombo(snapshot *runtime.RuntimeSnapshot, access auth.Entry, name string, required []string) ([]runtime.ComboMember, bool) {
 	combo, ok := snapshot.ComboByName(name)
 	if !ok {
 		return nil, false
@@ -43,152 +46,157 @@ func (h *Handler) PlanCombo(snapshot *runtime.RuntimeSnapshot, access auth.Entry
 	members := combo.Resolve()
 	routed := make([]routing.Member, 0, len(members))
 	for _, member := range members {
-		capabilities, contextWindow, _ := snapshot.ModelCapabilities(member.ProviderID, member.ModelID)
-		routed = append(routed, routing.Member{ProviderID: member.ProviderID, ModelID: member.ModelID, Position: member.Position, Capabilities: capabilities, ContextWindow: contextWindow})
+		routed = append(routed, h.routingMember(snapshot, member.ProviderID, member.ModelID, member.Position))
 	}
-	// Adapters are consulted per unsatisfied hard capability and stay in their
-	// own tier ahead of the Combo fallback order (SPEC §15.3-15.4).
-	var adapterRequirements []routing.CapabilityRequirement
-	for _, requirement := range requirements {
-		// A Combo member already carrying this capability is promoted by the
-		// capability reorder below; the adapter pool is only for unmet ones.
-		if !anyMemberHas(routed, requirement.Name) {
-			adapterRequirements = append(adapterRequirements, requirement)
-		}
-	}
-	adapterTier := eligibleAdapters(snapshot, access, adapterRequirements, routed)
-	if len(adapterTier) > 0 {
-		adapterTier = orderAdapterTier(adapterTier, adapterRequirements, name, snapshot, h)
-	}
-	routed = routing.OrderCombo(routed, requirements)
 	strategy := routing.StrategyFillFirst
 	switch snapshot.ComboStrategy(name) {
-	case "round-robin":
-		strategy = routing.StrategyRoundRobin
-	case "sticky-round-robin":
+	case "round-robin", "sticky-round-robin":
+		// The oracle has one rotating strategy whose step is the sticky limit
+		// (combo.js:208-237); a limit of 1 is plain round-robin.
 		strategy = routing.StrategyStickyRR
 	}
-	cursor := uint64(0)
-	if h.opts.State != nil && strategy != routing.StrategyFillFirst {
-		cursor = h.opts.State.NextCursor("combo|" + combo.ID)
-	}
-	selection := routing.Select(routing.SelectOptions{
-		Strategy:    strategy,
-		StickyLimit: snapshot.ComboStickyLimit(name),
-		Cursor:      cursor,
-		Accounts:    comboAccounts(routed),
-	})
-	if len(requirements) > 0 {
-		selection.Candidates = prioritizeSelectedCapabilities(selection.Candidates, routed, requirements)
-	}
-	ordered := make([]runtime.ComboMember, 0, len(adapterTier)+len(selection.Candidates))
-	for _, adapter := range adapterTier {
-		ordered = append(ordered, runtime.ComboMember{ProviderID: adapter.ProviderID, ModelID: adapter.ModelID, Position: len(ordered), Selected: true})
-	}
-	for _, candidate := range selection.Candidates {
-		providerID, modelID, _ := strings.Cut(candidate.ID, "\x00")
-		ordered = append(ordered, runtime.ComboMember{ProviderID: providerID, ModelID: modelID, Position: len(ordered), Selected: true})
-	}
-	return ordered, true
+	ordered := h.orderModels(snapshot, access, "combo|"+combo.ID, strategy, snapshot.ComboStickyLimit(name), routed, required)
+	return toComboMembers(ordered), true
 }
 
-// prioritizeSelectedCapabilities re-applies hard capability tiers after RR
-// rotation while preserving the cursor-derived order inside each tier.
-func prioritizeSelectedCapabilities(candidates []routing.Account, members []routing.Member, requirements []routing.CapabilityRequirement) []routing.Account {
-	byID := make(map[string]routing.Member, len(members))
-	for _, member := range members {
-		byID[member.ProviderID+"\x00"+member.ModelID] = member
+// PlanSolo is the oracle's single-model path: a target that lacks a required
+// capability may be rescued by an adapter model (chat.js:152-169). The strategy
+// is the first required capability's adapter pool (capacityAdapter.js:64-72) and
+// the sticky limit is the default of 1. A false result means no adapter applies
+// and the model is served as requested.
+func (h *Handler) PlanSolo(snapshot *runtime.RuntimeSnapshot, access auth.Entry, providerID, modelID string, required []string) ([]runtime.ComboMember, bool) {
+	solo := []routing.Member{h.routingMember(snapshot, providerID, modelID, 0)}
+	augmented := h.augmentWithAdapters(snapshot, access, solo, required)
+	if len(augmented) < 2 {
+		return nil, false
 	}
-	capable := make([]routing.Account, 0, len(candidates))
-	fallback := make([]routing.Account, 0, len(candidates))
-	for _, candidate := range candidates {
-		providerID, modelID, _ := strings.Cut(candidate.ID, "\x00")
-		if satisfies(byID[providerID+"\x00"+modelID], requirements) {
-			capable = append(capable, candidate)
-		} else {
-			fallback = append(fallback, candidate)
+	strategy := routing.StrategyFillFirst
+	for _, capability := range required {
+		config := snapshot.CapacityAdapter(capability)
+		if config.Enabled && len(config.Pool) > 0 {
+			if config.Strategy() == routing.StrategyRoundRobin {
+				strategy = routing.StrategyStickyRR
+			}
+			break
 		}
 	}
-	return append(capable, fallback...)
+	ordered := h.orderModels(snapshot, access, "solo|"+providerID+"/"+modelID, strategy, 1, solo, required)
+	return toComboMembers(ordered), true
 }
 
-func anyMemberHas(members []routing.Member, capability string) bool {
-	for _, member := range members {
-		if member.Has(capability) {
-			return true
+func toComboMembers(ordered []routing.Member) []runtime.ComboMember {
+	members := make([]runtime.ComboMember, 0, len(ordered))
+	for index, member := range ordered {
+		members = append(members, runtime.ComboMember{ProviderID: member.ProviderID, ModelID: member.ModelID, Position: index, Selected: true})
+	}
+	return members
+}
+
+// routingMember resolves a model's capabilities from the same table the oracle
+// reads (getCapabilitiesForModel), plus any the catalog entry names itself.
+func (h *Handler) routingMember(snapshot *runtime.RuntimeSnapshot, providerID, modelID string, position int) routing.Member {
+	declared, _, _ := snapshot.ModelCapabilities(providerID, modelID)
+	details := snapshot.ModelCapabilityDetails(providerID, modelID)
+	have := map[string]bool{}
+	for _, capability := range declared {
+		have[capability] = true
+	}
+	have[capVision] = have[capVision] || details.Vision
+	have[capPDF] = have[capPDF] || details.PDF
+	have[capAudioInput] = have[capAudioInput] || details.AudioInput
+	have[capVideoInput] = have[capVideoInput] || details.VideoInput
+	var capabilities []string
+	for capability := range have {
+		if have[capability] {
+			capabilities = append(capabilities, capability)
 		}
 	}
-	return false
+	sort.Strings(capabilities)
+	return routing.Member{ProviderID: providerID, ModelID: modelID, Position: position, Capabilities: capabilities, ContextWindow: int(details.ContextWindow)}
 }
 
-// eligibleAdapters keeps only enabled, non-empty pools and drops candidates
-// already present in the Combo fallback list so a member never appears twice.
-func eligibleAdapters(snapshot *runtime.RuntimeSnapshot, access auth.Entry, requirements []routing.CapabilityRequirement, routed []routing.Member) []routing.Member {
-	members := routing.AdapterCandidates(requirements, nil)
-	present := make(map[string]struct{}, len(routed))
-	for _, member := range routed {
-		present[member.ProviderID+"\x00"+member.ModelID] = struct{}{}
+func hasAll(member routing.Member, required []string) bool {
+	for _, capability := range required {
+		if !member.Has(capability) {
+			return false
+		}
 	}
-	kept := members[:0]
-	for _, member := range members {
-		if _, exists := present[member.ProviderID+"\x00"+member.ModelID]; exists {
+	return true
+}
+
+// augmentWithAdapters is augmentModelsWithCapacityAdapter
+// (capacityAdapter.js:88-96) followed by filterAdapterModels: when no original
+// model satisfies every required hard capability, the enabled pools of every
+// capability (in the oracle's fixed order, de-duplicated) that do satisfy them
+// all and are not already present go first. An enabled empty pool adds nothing.
+func (h *Handler) augmentWithAdapters(snapshot *runtime.RuntimeSnapshot, access auth.Entry, models []routing.Member, required []string) []routing.Member {
+	if len(required) == 0 || len(models) == 0 {
+		return models
+	}
+	for _, model := range models {
+		if hasAll(model, required) {
+			return models
+		}
+	}
+	present := make(map[string]bool, len(models))
+	for _, model := range models {
+		present[model.ProviderID+"/"+model.ModelID] = true
+	}
+	var pool []routing.Member
+	for _, capability := range hardCapabilities {
+		config := snapshot.CapacityAdapter(capability)
+		if !config.Enabled {
 			continue
 		}
-		if !snapshot.KeyAllows(access, member.ProviderID+"/"+member.ModelID) {
-			continue
-		}
-		kept = append(kept, member)
-	}
-	return append([]routing.Member(nil), kept...)
-}
-
-// orderAdapterTier applies each capability's fallback/RR strategy within its
-// own group using Combo-local adapter cursors.
-func orderAdapterTier(members []routing.Member, requirements []routing.CapabilityRequirement, name string, snapshot *runtime.RuntimeSnapshot, h *Handler) []routing.Member {
-	ordered := make([]routing.Member, 0, len(members))
-	claimed := make(map[string]struct{}, len(members))
-	for _, requirement := range requirements {
-		var group []routing.Member
-		for _, member := range members {
-			key := member.ProviderID + "\x00" + member.ModelID
-			if _, taken := claimed[key]; taken || !member.Has(requirement.Name) {
+		for _, ref := range config.Pool {
+			key := ref.ProviderID + "/" + ref.ModelID
+			if present[key] {
 				continue
 			}
-			group = append(group, member)
-		}
-		sort.SliceStable(group, func(i, j int) bool { return group[i].Position < group[j].Position })
-		if len(group) > 1 {
-			cursor := uint64(0)
-			if h.opts.State != nil {
-				cursor = h.opts.State.NextCursor("combo-adapter|" + name + "|" + requirement.Name)
-			}
-			switch requirement.Strategy {
-			case routing.StrategyRoundRobin:
-				start := int(cursor % uint64(len(group)))
-				group = append(group[start:], group[:start]...)
-			case routing.StrategyStickyRR:
-				start := int((cursor / routing.StickyRotations(snapshot.ComboStickyLimit(name))) % uint64(len(group)))
-				group = append(group[start:], group[:start]...)
+			present[key] = true
+			member := h.routingMember(snapshot, ref.ProviderID, ref.ModelID, 0)
+			if hasAll(member, required) && snapshot.KeyAllows(access, key) {
+				pool = append(pool, member)
 			}
 		}
-		for _, member := range group {
-			claimed[member.ProviderID+"\x00"+member.ModelID] = struct{}{}
-		}
-		ordered = append(ordered, group...)
 	}
-	for _, member := range members {
-		if _, taken := claimed[member.ProviderID+"\x00"+member.ModelID]; taken {
-			continue
-		}
-		ordered = append(ordered, member)
+	if len(pool) == 0 {
+		return models
 	}
-	return ordered
+	return append(pool, models...)
+}
+
+// orderModels adds adapter models, rotates the list by strategy and floats the
+// models that satisfy every required capability (stable, never dropping one).
+func (h *Handler) orderModels(snapshot *runtime.RuntimeSnapshot, access auth.Entry, rotationKey string, strategy routing.Strategy, sticky uint64, models []routing.Member, required []string) []routing.Member {
+	models = h.augmentWithAdapters(snapshot, access, models, required)
+	if len(models) < 2 {
+		return models
+	}
+	rotated := models
+	if strategy != routing.StrategyFillFirst && h.opts.State != nil {
+		start := h.opts.State.ComboRotation(rotationKey, len(models), sticky)
+		rotated = append(append([]routing.Member(nil), models[start:]...), models[:start]...)
+	}
+	if len(required) == 0 {
+		return rotated
+	}
+	capable := make([]routing.Member, 0, len(rotated))
+	rest := make([]routing.Member, 0, len(rotated))
+	for _, model := range rotated {
+		if hasAll(model, required) {
+			capable = append(capable, model)
+		} else {
+			rest = append(rest, model)
+		}
+	}
+	return append(capable, rest...)
 }
 
 // PlanComboRequest selects a Combo route and applies smaller-context trimming
 // to opaque message units before the caller dispatches the selected member.
-func (h *Handler) PlanComboRequest(snapshot *runtime.RuntimeSnapshot, access auth.Entry, name string, requirements []routing.CapabilityRequirement, messages []string, budget routing.ContextBudget) ([]runtime.ComboMember, []string, bool) {
-	ordered, ok := h.PlanCombo(snapshot, access, name, requirements)
+func (h *Handler) PlanComboRequest(snapshot *runtime.RuntimeSnapshot, access auth.Entry, name string, required []string, messages []string, budget routing.ContextBudget) ([]runtime.ComboMember, []string, bool) {
+	ordered, ok := h.PlanCombo(snapshot, access, name, required)
 	if !ok || len(ordered) == 0 {
 		return ordered, append([]string(nil), messages...), ok
 	}
@@ -196,22 +204,12 @@ func (h *Handler) PlanComboRequest(snapshot *runtime.RuntimeSnapshot, access aut
 	// Any ordered candidate may be attempted on fallback, so trim to the
 	// smallest context across the whole planned tier (SPEC §15.4).
 	for _, member := range ordered {
-		_, contextWindow, ok := snapshot.ModelCapabilities(member.ProviderID, member.ModelID)
-		if !ok || contextWindow <= 0 {
+		contextWindow := h.routingMember(snapshot, member.ProviderID, member.ModelID, 0).ContextWindow
+		if contextWindow <= 0 {
 			continue
 		}
 		if targetContext == 0 || contextWindow < targetContext {
 			targetContext = contextWindow
-		}
-	}
-	// Adapter ceilings come from the request requirements because an adapter
-	// model may not be in the discovered catalog.
-	for _, requirement := range requirements {
-		if requirement.AdapterContextWindow <= 0 {
-			continue
-		}
-		if targetContext == 0 || requirement.AdapterContextWindow < targetContext {
-			targetContext = requirement.AdapterContextWindow
 		}
 	}
 	if targetContext > 0 && (budget.Limit <= 0 || targetContext < budget.Limit) {
@@ -227,43 +225,6 @@ func (h *Handler) TrimComboHistoryForTarget(messages []string, budget routing.Co
 		budget.Limit = targetContext
 	}
 	return routing.TrimHistory(messages, budget)
-}
-
-func satisfies(member routing.Member, requirements []routing.CapabilityRequirement) bool {
-	for _, requirement := range requirements {
-		if !member.Has(requirement.Name) {
-			return false
-		}
-	}
-	return true
-}
-
-func anySatisfies(members []routing.Member, requirements []routing.CapabilityRequirement) bool {
-	for _, member := range members {
-		satisfied := true
-		for _, requirement := range requirements {
-			if !member.Has(requirement.Name) {
-				satisfied = false
-				break
-			}
-		}
-		if satisfied {
-			return true
-		}
-	}
-	return false
-}
-
-// comboAccounts encodes provider and model without an ambiguous separator so
-// selection order can be decoded losslessly. Priority is the current slice
-// index so an already-applied capability reorder survives Select's stable
-// priority sort (SPEC §15.3).
-func comboAccounts(members []routing.Member) []routing.Account {
-	accounts := make([]routing.Account, 0, len(members))
-	for index, member := range members {
-		accounts = append(accounts, routing.Account{ID: member.ProviderID + "\x00" + member.ModelID, Priority: index, Enabled: true})
-	}
-	return accounts
 }
 
 func (h *Handler) planProviderAttempts(snapshot *runtime.RuntimeSnapshot, providerID, model, source string, compact bool, now time.Time) ([]routing.ProviderRef, bool) {

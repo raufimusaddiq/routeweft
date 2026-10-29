@@ -37,6 +37,8 @@ type RuntimeSnapshot struct {
 	keyAccess           map[string]keyGrants
 	disabledModels      map[string]struct{}
 	combos              map[string]Combo
+	capacityAdapters    map[string]CapacityAdapterConfig
+	adaptersActive      bool
 	poolBindings        map[string]string
 	poolPools           map[string]proxyPoolEntry
 	connectionProxies   map[string]ConnectionProxy

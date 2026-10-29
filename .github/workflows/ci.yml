@@ -58,6 +58,9 @@ jobs:
           name: oracle-change-report
           path: ${{ env.ORACLE_REPORT_DIR }}
       - run: node compat/parity/inventory.mjs
+      # The oracle's Combo routing (member order, capability detection, adapter pools) is
+      # re-run and compared with the pin the Go tests replay (#270).
+      - run: node compat/parity/generate-combo-routing.mjs --check
       - run: go test -race ./internal/app -run TestPinnedSystemOneDifferential -count=1
       - run: go test -race ./internal/security ./internal/ingress ./internal/providers/shared ./internal/providers/wire ./internal/protocol/concerns
       - run: go test -race ./internal/parity ./internal/protocol/hub -count=1

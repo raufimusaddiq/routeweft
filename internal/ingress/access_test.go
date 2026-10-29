@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/raufimusaddiq/routeweft/internal/auth"
-	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
@@ -220,11 +219,15 @@ func TestPlanComboFiltersAdapterPoolByCallerKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := manager.SetSettings(ctx, map[string]string{"capacityAdapterVision": `{"enabled":true,"roundRobin":false,"pool":[{"providerId":"pool","modelId":"vision-ok"},{"providerId":"pool","modelId":"vision-secret"}]}`}, nil); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = manager.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
 	h := New(manager, Options{})
-	requirements := []routing.CapabilityRequirement{{Name: "vision", AdapterEnabled: true, AdapterPool: []routing.Member{
-		{ProviderID: "pool", ModelID: "vision-ok", Capabilities: []string{"vision"}},
-		{ProviderID: "pool", ModelID: "vision-secret", Capabilities: []string{"vision"}},
-	}}}
+	requirements := []string{"vision"}
 	used := func(access auth.Entry) map[string]bool {
 		ordered, ok := h.PlanCombo(snapshot, access, "auto", requirements)
 		if !ok {

@@ -1,0 +1,1947 @@
+{
+  "oracle": "raufimusaddiq/literouter",
+  "sha": "fc8dd1fc4f61383e7944dd880d94b6529fe92526",
+  "capabilities": {
+    "p/text": [],
+    "p/vision": [
+      "vision"
+    ],
+    "q/vision2": [
+      "vision"
+    ],
+    "p/vision-pdf": [
+      "vision",
+      "pdf"
+    ],
+    "a/vision": [
+      "vision"
+    ],
+    "a/audio": [
+      "audio-input"
+    ],
+    "a/both": [
+      "vision",
+      "audio-input"
+    ],
+    "a/pdf": [
+      "pdf"
+    ],
+    "a/text": []
+  },
+  "detect": [
+    {
+      "name": "empty",
+      "body": {},
+      "required": []
+    },
+    {
+      "name": "textOnly",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ]
+      },
+      "required": []
+    },
+    {
+      "name": "imageUrl",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              },
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AAAA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "required": [
+        "vision"
+      ]
+    },
+    {
+      "name": "imageOlderTurnOnly",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AAAA"
+                }
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": "seen"
+          },
+          {
+            "role": "user",
+            "content": "and now?"
+          }
+        ]
+      },
+      "required": []
+    },
+    {
+      "name": "imageInTrailingRun",
+      "body": {
+        "messages": [
+          {
+            "role": "assistant",
+            "content": "ok"
+          },
+          {
+            "role": "user",
+            "content": "look"
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AAAA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "required": [
+        "vision"
+      ]
+    },
+    {
+      "name": "audioInput",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_audio",
+                "input_audio": {
+                  "data": "AAAA",
+                  "format": "wav"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "required": [
+        "audio-input"
+      ]
+    },
+    {
+      "name": "videoUrl",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "video_url",
+                "video_url": {
+                  "url": "x"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "required": [
+        "video-input"
+      ]
+    },
+    {
+      "name": "pdfFile",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "file",
+                "file": {
+                  "file_data": "data:application/pdf;base64,AAAA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "required": [
+        "pdf"
+      ]
+    },
+    {
+      "name": "fileWithoutMime",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "file",
+                "file": {
+                  "filename": "a"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "required": [
+        "pdf"
+      ]
+    },
+    {
+      "name": "documentImageSource",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "document",
+                "source": {
+                  "media_type": "image/png",
+                  "data": "AAAA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "required": [
+        "vision"
+      ]
+    },
+    {
+      "name": "documentAudioSource",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "document",
+                "source": {
+                  "data": "data:audio/mp3;base64,AAAA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "required": [
+        "audio-input"
+      ]
+    },
+    {
+      "name": "fileInputAudio",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "file",
+                "input_audio": {
+                  "format": "mp3"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "required": [
+        "audio-input"
+      ]
+    },
+    {
+      "name": "ollamaImages",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "x",
+            "images": [
+              "AAAA"
+            ]
+          }
+        ]
+      },
+      "required": [
+        "vision"
+      ]
+    },
+    {
+      "name": "ollamaEmptyImages",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "x",
+            "images": []
+          }
+        ]
+      },
+      "required": []
+    },
+    {
+      "name": "attachmentMime",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "x",
+            "experimental_attachments": [
+              {
+                "contentType": "application/pdf"
+              }
+            ]
+          }
+        ]
+      },
+      "required": [
+        "pdf"
+      ]
+    },
+    {
+      "name": "attachmentDataUrl",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "x",
+            "attachments": [
+              {
+                "url": "data:audio/wav;base64,AAAA"
+              }
+            ]
+          }
+        ]
+      },
+      "required": [
+        "audio-input"
+      ]
+    },
+    {
+      "name": "attachmentBareUrl",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "x",
+            "attachments": [
+              {
+                "url": "https://example.invalid/a"
+              }
+            ]
+          }
+        ]
+      },
+      "required": [
+        "vision"
+      ]
+    },
+    {
+      "name": "messageImageField",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "x",
+            "image_url": "https://example.invalid/a.png"
+          }
+        ]
+      },
+      "required": [
+        "vision"
+      ]
+    },
+    {
+      "name": "messageAudioField",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "x",
+            "audio": "AAAA"
+          }
+        ]
+      },
+      "required": [
+        "audio-input"
+      ]
+    },
+    {
+      "name": "stringDataImage",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "see data:image/png;base64,AAAA"
+          }
+        ]
+      },
+      "required": [
+        "vision"
+      ]
+    },
+    {
+      "name": "stringDataAudio",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "see data:audio/wav;base64,AAAA"
+          }
+        ]
+      },
+      "required": [
+        "audio-input"
+      ]
+    },
+    {
+      "name": "stringDataPdf",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "see data:application/pdf;base64,AAAA"
+          }
+        ]
+      },
+      "required": [
+        "pdf"
+      ]
+    },
+    {
+      "name": "stringImageBeatsAudio",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "data:image/png;base64,A data:audio/wav;base64,B"
+          }
+        ]
+      },
+      "required": [
+        "vision"
+      ]
+    },
+    {
+      "name": "responsesInputImage",
+      "body": {
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_image",
+                "image_url": "x"
+              }
+            ]
+          }
+        ]
+      },
+      "required": [
+        "vision"
+      ]
+    },
+    {
+      "name": "responsesOlderImage",
+      "body": {
+        "input": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_image"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": []
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "x"
+              }
+            ]
+          }
+        ]
+      },
+      "required": []
+    },
+    {
+      "name": "geminiInline",
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "inlineData": {
+                  "mimeType": "image/jpeg",
+                  "data": "AAAA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "required": [
+        "vision"
+      ]
+    },
+    {
+      "name": "geminiFileData",
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "fileData": {
+                  "mimeType": "application/pdf",
+                  "fileUri": "x"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "required": [
+        "pdf"
+      ]
+    },
+    {
+      "name": "geminiModelTurnThenText",
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "inlineData": {
+                  "mimeType": "image/png"
+                }
+              }
+            ]
+          },
+          {
+            "role": "model",
+            "parts": [
+              {
+                "text": "a"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "b"
+              }
+            ]
+          }
+        ]
+      },
+      "required": []
+    },
+    {
+      "name": "antigravityRequest",
+      "body": {
+        "request": {
+          "contents": [
+            {
+              "role": "user",
+              "parts": [
+                {
+                  "inlineData": {
+                    "mimeType": "audio/wav"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "required": [
+        "audio-input"
+      ]
+    },
+    {
+      "name": "imageThenAudioOrder",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_audio",
+                "input_audio": {
+                  "data": "AAAA",
+                  "format": "wav"
+                }
+              },
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AAAA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "required": [
+        "audio-input",
+        "vision"
+      ]
+    },
+    {
+      "name": "imageAndPdfOrder",
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "file",
+                "source": {
+                  "media_type": "application/pdf"
+                }
+              },
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AAAA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "required": [
+        "pdf",
+        "vision"
+      ]
+    },
+    {
+      "name": "notAnObject",
+      "body": [],
+      "required": []
+    }
+  ],
+  "order": [
+    {
+      "name": "fallback keeps order without a requirement",
+      "solo": false,
+      "models": [
+        "p/text",
+        "p/vision",
+        "q/vision2"
+      ],
+      "strategy": "fallback",
+      "sticky": null,
+      "required": [],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi"
+          }
+        ]
+      },
+      "adapters": {},
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "p/text",
+            "p/vision",
+            "q/vision2"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "p/text",
+            "p/vision",
+            "q/vision2"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "capable members float, stably",
+      "solo": false,
+      "models": [
+        "p/text",
+        "p/vision",
+        "q/vision2"
+      ],
+      "strategy": "fallback",
+      "sticky": null,
+      "required": [
+        "vision"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AAAA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {},
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "p/vision",
+            "q/vision2",
+            "p/text"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "round-robin rotates before the reorder",
+      "solo": false,
+      "models": [
+        "p/vision",
+        "p/text",
+        "q/vision2"
+      ],
+      "strategy": "round-robin",
+      "sticky": 1,
+      "required": [
+        "vision"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AAAA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {},
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "p/vision",
+            "q/vision2",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "q/vision2",
+            "p/vision",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "q/vision2",
+            "p/vision",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "p/vision",
+            "q/vision2",
+            "p/text"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "round-robin without a requirement",
+      "solo": false,
+      "models": [
+        "p/text",
+        "p/vision",
+        "q/vision2"
+      ],
+      "strategy": "round-robin",
+      "sticky": 1,
+      "required": [],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi"
+          }
+        ]
+      },
+      "adapters": {},
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "p/text",
+            "p/vision",
+            "q/vision2"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "p/vision",
+            "q/vision2",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "q/vision2",
+            "p/text",
+            "p/vision"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "p/text",
+            "p/vision",
+            "q/vision2"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "p/vision",
+            "q/vision2",
+            "p/text"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "sticky limit holds the start",
+      "solo": false,
+      "models": [
+        "p/text",
+        "p/vision",
+        "q/vision2"
+      ],
+      "strategy": "round-robin",
+      "sticky": 2,
+      "required": [],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi"
+          }
+        ]
+      },
+      "adapters": {},
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "p/text",
+            "p/vision",
+            "q/vision2"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "p/text",
+            "p/vision",
+            "q/vision2"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "p/vision",
+            "q/vision2",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "p/vision",
+            "q/vision2",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "q/vision2",
+            "p/text",
+            "p/vision"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "q/vision2",
+            "p/text",
+            "p/vision"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "p/text",
+            "p/vision",
+            "q/vision2"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "sticky limit of 3",
+      "solo": false,
+      "models": [
+        "p/text",
+        "p/vision"
+      ],
+      "strategy": "round-robin",
+      "sticky": 3,
+      "required": [],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "hi"
+          }
+        ]
+      },
+      "adapters": {},
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "p/text",
+            "p/vision"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "p/text",
+            "p/vision"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "p/text",
+            "p/vision"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "p/vision",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "p/vision",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "p/vision",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "p/text",
+            "p/vision"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "adapter added when no member is capable",
+      "solo": false,
+      "models": [
+        "p/text",
+        "a/text"
+      ],
+      "strategy": "fallback",
+      "sticky": null,
+      "required": [
+        "audio-input"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_audio",
+                "input_audio": {
+                  "data": "AAAA",
+                  "format": "wav"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {
+        "audioInput": {
+          "enabled": true,
+          "roundRobin": false,
+          "models": [
+            "a/audio"
+          ]
+        }
+      },
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "a/audio",
+            "p/text",
+            "a/text"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "adapter not added when a member covers the request",
+      "solo": false,
+      "models": [
+        "p/text",
+        "p/vision"
+      ],
+      "strategy": "fallback",
+      "sticky": null,
+      "required": [
+        "vision"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AAAA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {
+        "vision": {
+          "enabled": true,
+          "roundRobin": false,
+          "models": [
+            "a/vision"
+          ]
+        }
+      },
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "p/vision",
+            "p/text"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "adapter pool enabled but empty is a no-op",
+      "solo": false,
+      "models": [
+        "p/text"
+      ],
+      "strategy": "fallback",
+      "sticky": null,
+      "required": [
+        "audio-input"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_audio",
+                "input_audio": {
+                  "data": "AAAA",
+                  "format": "wav"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {
+        "audioInput": {
+          "enabled": true,
+          "roundRobin": false,
+          "models": []
+        }
+      },
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "p/text"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "adapter pool disabled is ignored",
+      "solo": false,
+      "models": [
+        "p/text"
+      ],
+      "strategy": "fallback",
+      "sticky": null,
+      "required": [
+        "audio-input"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_audio",
+                "input_audio": {
+                  "data": "AAAA",
+                  "format": "wav"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {
+        "audioInput": {
+          "enabled": false,
+          "roundRobin": false,
+          "models": [
+            "a/audio"
+          ]
+        }
+      },
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "p/text"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pool model without the capability is left out",
+      "solo": false,
+      "models": [
+        "p/text"
+      ],
+      "strategy": "fallback",
+      "sticky": null,
+      "required": [
+        "audio-input"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_audio",
+                "input_audio": {
+                  "data": "AAAA",
+                  "format": "wav"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {
+        "audioInput": {
+          "enabled": true,
+          "roundRobin": false,
+          "models": [
+            "a/text",
+            "a/audio"
+          ]
+        }
+      },
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "a/audio",
+            "p/text"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pool model already in the combo is not duplicated",
+      "solo": false,
+      "models": [
+        "a/audio",
+        "p/text"
+      ],
+      "strategy": "fallback",
+      "sticky": null,
+      "required": [
+        "vision"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AAAA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {
+        "vision": {
+          "enabled": true,
+          "roundRobin": false,
+          "models": [
+            "a/vision"
+          ]
+        }
+      },
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "a/vision",
+            "a/audio",
+            "p/text"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pools of all capabilities are flattened in the oracle key order",
+      "solo": false,
+      "models": [
+        "p/text"
+      ],
+      "strategy": "fallback",
+      "sticky": null,
+      "required": [
+        "vision",
+        "audio-input"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AAAA"
+                }
+              },
+              {
+                "type": "input_audio",
+                "input_audio": {
+                  "data": "AAAA",
+                  "format": "wav"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {
+        "audioInput": {
+          "enabled": true,
+          "roundRobin": false,
+          "models": [
+            "a/both",
+            "a/audio"
+          ]
+        },
+        "vision": {
+          "enabled": true,
+          "roundRobin": false,
+          "models": [
+            "a/vision",
+            "a/both"
+          ]
+        }
+      },
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "a/both",
+            "p/text"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "an adapter model must satisfy every required capability",
+      "solo": false,
+      "models": [
+        "p/vision",
+        "p/text"
+      ],
+      "strategy": "fallback",
+      "sticky": null,
+      "required": [
+        "vision",
+        "audio-input"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AAAA"
+                }
+              },
+              {
+                "type": "input_audio",
+                "input_audio": {
+                  "data": "AAAA",
+                  "format": "wav"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {
+        "audioInput": {
+          "enabled": true,
+          "roundRobin": false,
+          "models": [
+            "a/audio",
+            "a/both"
+          ]
+        }
+      },
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "a/both",
+            "p/vision",
+            "p/text"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "no adapter satisfies every capability",
+      "solo": false,
+      "models": [
+        "p/vision"
+      ],
+      "strategy": "fallback",
+      "sticky": null,
+      "required": [
+        "vision",
+        "audio-input"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AAAA"
+                }
+              },
+              {
+                "type": "input_audio",
+                "input_audio": {
+                  "data": "AAAA",
+                  "format": "wav"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {
+        "audioInput": {
+          "enabled": true,
+          "roundRobin": false,
+          "models": [
+            "a/audio"
+          ]
+        },
+        "vision": {
+          "enabled": true,
+          "roundRobin": false,
+          "models": [
+            "a/vision"
+          ]
+        }
+      },
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "p/vision"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a pdf pool rescues a pdf request",
+      "solo": false,
+      "models": [
+        "p/text"
+      ],
+      "strategy": "fallback",
+      "sticky": null,
+      "required": [
+        "pdf"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "file",
+                "source": {
+                  "media_type": "application/pdf"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {
+        "pdf": {
+          "enabled": true,
+          "roundRobin": false,
+          "models": [
+            "a/pdf"
+          ]
+        }
+      },
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "a/pdf",
+            "p/text"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "adapter models rotate with the combo strategy, not their own flag",
+      "solo": false,
+      "models": [
+        "p/vision",
+        "p/text"
+      ],
+      "strategy": "round-robin",
+      "sticky": 1,
+      "required": [
+        "audio-input"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_audio",
+                "input_audio": {
+                  "data": "AAAA",
+                  "format": "wav"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {
+        "audioInput": {
+          "enabled": true,
+          "roundRobin": true,
+          "models": [
+            "a/audio",
+            "a/both"
+          ]
+        }
+      },
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "a/audio",
+            "a/both",
+            "p/vision",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "a/both",
+            "a/audio",
+            "p/vision",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "a/audio",
+            "a/both",
+            "p/vision",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "a/audio",
+            "a/both",
+            "p/text",
+            "p/vision"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "the pool roundRobin flag does not rotate a fallback combo",
+      "solo": false,
+      "models": [
+        "p/text"
+      ],
+      "strategy": "fallback",
+      "sticky": null,
+      "required": [
+        "audio-input"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_audio",
+                "input_audio": {
+                  "data": "AAAA",
+                  "format": "wav"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {
+        "audioInput": {
+          "enabled": true,
+          "roundRobin": true,
+          "models": [
+            "a/audio",
+            "a/both"
+          ]
+        }
+      },
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "a/audio",
+            "a/both",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "a/audio",
+            "a/both",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "a/audio",
+            "a/both",
+            "p/text"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "single model rescued by a fill-first pool",
+      "solo": true,
+      "models": [
+        "p/text"
+      ],
+      "strategy": null,
+      "sticky": null,
+      "required": [
+        "vision"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AAAA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {
+        "vision": {
+          "enabled": true,
+          "roundRobin": false,
+          "models": [
+            "a/vision",
+            "q/vision2"
+          ]
+        }
+      },
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "a/vision",
+            "q/vision2",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "a/vision",
+            "q/vision2",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "a/vision",
+            "q/vision2",
+            "p/text"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "single model rescued by a round-robin pool",
+      "solo": true,
+      "models": [
+        "p/text"
+      ],
+      "strategy": null,
+      "sticky": null,
+      "required": [
+        "vision"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AAAA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {
+        "vision": {
+          "enabled": true,
+          "roundRobin": true,
+          "models": [
+            "a/vision",
+            "q/vision2"
+          ]
+        }
+      },
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "a/vision",
+            "q/vision2",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "q/vision2",
+            "a/vision",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "a/vision",
+            "q/vision2",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "a/vision",
+            "q/vision2",
+            "p/text"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "single model needing two capabilities uses the first required pool",
+      "solo": true,
+      "models": [
+        "p/text"
+      ],
+      "strategy": null,
+      "sticky": null,
+      "required": [
+        "vision",
+        "audio-input"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AAAA"
+                }
+              },
+              {
+                "type": "input_audio",
+                "input_audio": {
+                  "data": "AAAA",
+                  "format": "wav"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {
+        "vision": {
+          "enabled": true,
+          "roundRobin": false,
+          "models": [
+            "a/both",
+            "a/vision"
+          ]
+        },
+        "audioInput": {
+          "enabled": true,
+          "roundRobin": true,
+          "models": [
+            "a/both"
+          ]
+        }
+      },
+      "calls": [
+        {
+          "rescued": true,
+          "order": [
+            "a/both",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "a/both",
+            "p/text"
+          ]
+        },
+        {
+          "rescued": true,
+          "order": [
+            "a/both",
+            "p/text"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "single capable model is not rescued",
+      "solo": true,
+      "models": [
+        "p/vision"
+      ],
+      "strategy": null,
+      "sticky": null,
+      "required": [
+        "vision"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AAAA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {
+        "vision": {
+          "enabled": true,
+          "roundRobin": true,
+          "models": [
+            "a/vision"
+          ]
+        }
+      },
+      "calls": [
+        {
+          "rescued": false,
+          "order": [
+            "p/vision"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "single model with no pool is not rescued",
+      "solo": true,
+      "models": [
+        "p/text"
+      ],
+      "strategy": null,
+      "sticky": null,
+      "required": [
+        "vision"
+      ],
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,AAAA"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "adapters": {},
+      "calls": [
+        {
+          "rescued": false,
+          "order": [
+            "p/text"
+          ]
+        }
+      ]
+    }
+  ]
+}
