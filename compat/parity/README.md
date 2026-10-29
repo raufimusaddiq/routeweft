@@ -26,6 +26,50 @@ are imported.
 `resolve-oracle.test.mjs` covers a moving main, a failed resolution and one
 consistent SHA per run, against a local remote and no network.
 
+## Change report (`report-changes.mjs`, #290)
+
+After the run's snapshot is frozen, `report-changes.mjs` compares it with the
+previous recorded snapshot and lists what moved upstream, so a changed LiteRouter
+`main` becomes a reviewable list of candidate Routeweft gaps instead of a silent
+update. It writes `oracle-change-report.json` and `.md` under `ORACLE_REPORT_DIR`
+(default `$ORACLE_DIR/change-report`) and appends the Markdown to the CI step
+summary; CI uploads both as the `oracle-change-report` artifact.
+
+```sh
+node compat/parity/report-changes.mjs --previous <sha | path to an earlier oracle-run.json>
+```
+
+`ORACLE_PREVIOUS` is the same value as `--previous`. CI takes it from the
+`oracle-run` artifact of the last successful `main` run, so a PR is compared with
+the snapshot `main` last recorded. Both SHAs are in the report. Surfaces compared:
+API routes (added, removed, exported methods), dashboard pages, registry providers
+(entry changed, activated, hidden), translator formats and conversion legs,
+configuration and model-capability sources, and UI sources. Each entry carries the
+lines of `docs/PARITY.md` and `docs/PROVIDER_BASELINE.md` that cite the same route,
+provider or file, with the status word and issue numbers on those lines, or
+`not-inventoried` when nothing cites it.
+
+Rules the report keeps:
+
+- Every entry is `unverified`. A difference is never classified as parity, an
+  absent entry is not a parity claim, and inventory links are citations, not a
+  verdict that the gap is real or closed. A person reads the source change and
+  decides.
+- First run (no previous record) reports `first-run` and no differences. A
+  previous SHA the remote no longer has reports `previous-unavailable`. Identical
+  snapshots report `unchanged`. A malformed `--previous` is an error.
+- An unavailable *current* upstream is not handled here: `resolve-oracle.mjs`
+  already fails the run without a fallback (#289).
+- The report is informational: no upstream state (first run, unavailable or
+  unchanged snapshots) fails the job, and it does not create or comment on
+  issues, post anywhere or change anything outside its own files. The remote is
+  only read.
+
+`report-changes.test.mjs` covers added, removed and modified routes, pages,
+providers (including activation and hiding), formats and legs, configuration and
+capability sources, inventory links, the first run, an unavailable previous
+snapshot, unchanged snapshots and bad input, against a local remote.
+
 `inventory.mjs` verifies 97 route files, 153 exported operations, remote guard
 behavior, key forms, 81 provider entries, 16 pages and every open-row disposition.
 Its assertions are also the inventory check; a new unannotated gap fails CI.

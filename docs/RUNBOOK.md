@@ -931,7 +931,11 @@ arbitrary remote command endpoint.
    `make parity-test` in a disposable development checkout, then review the
    `parity` PR CI result and its `oracle-run` artifact. The suite reads the
    resolved oracle commit's source and synthetic inputs only. It never calls a
-   live provider.
+   live provider. Read the `oracle-change-report` artifact (or run
+   `node compat/parity/report-changes.mjs --previous <sha|oracle-run.json>`) for
+   what changed in LiteRouter since the previous recorded snapshot: its entries are
+   unverified candidates for follow-up, not findings, and nothing is filed from
+   them automatically.
 3. Use a dedicated test client/key to send sanitized, consented inputs to each
    selected router independently. Do not mirror production prompts by default.
    Compare status, model/account attribution, JSON shape, native unknown fields,

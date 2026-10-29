@@ -10,6 +10,9 @@ permissions:
 jobs:
   parity:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -20,7 +23,7 @@ jobs:
         with:
           node-version: 22
       # The resolver's own tests need no network and no oracle.
-      - run: node --test compat/parity/resolve-oracle.test.mjs
+      - run: node --test compat/parity/resolve-oracle.test.mjs compat/parity/report-changes.test.mjs
       # LiteRouter refs/heads/main is resolved once for this job and frozen: every
       # step below reads ORACLE_SHA. A failed resolve fails the job; there is no
       # fallback SHA. Re-run a recorded commit with
@@ -32,6 +35,28 @@ jobs:
         with:
           name: oracle-run
           path: ${{ env.ORACLE_RECORD }}
+      # Compare this run's frozen snapshot with the one the last successful main run
+      # recorded (#290). No earlier record is a first run, reported as such; the
+      # report is informational (no upstream state fails the job), and nothing is
+      # posted or filed from it.
+      - name: Fetch the previous recorded oracle snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          previous="$RUNNER_TEMP/previous-oracle"
+          run_id=$(gh run list --workflow ci.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty' || true)
+          if [ -n "$run_id" ] && gh run download "$run_id" --name oracle-run --dir "$previous" && [ -f "$previous/oracle-run.json" ]; then
+            echo "ORACLE_PREVIOUS=$previous/oracle-run.json" >> "$GITHUB_ENV"
+          else
+            echo "::notice::No previous oracle-run record is available; the change report will say first-run."
+          fi
+      - name: Report LiteRouter changes since the previous snapshot
+        run: node compat/parity/report-changes.mjs
+      - name: Upload the oracle change report
+        uses: actions/upload-artifact@v4
+        with:
+          name: oracle-change-report
+          path: ${{ env.ORACLE_REPORT_DIR }}
       - run: node compat/parity/inventory.mjs
       - run: go test -race ./internal/app -run TestPinnedSystemOneDifferential -count=1
       - run: go test -race ./internal/security ./internal/ingress ./internal/providers/shared ./internal/providers/wire ./internal/protocol/concerns
