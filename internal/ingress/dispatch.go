@@ -110,7 +110,13 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 		return nil, routing.ProviderRef{}, &dispatchError{403, "model_not_allowed", modelNotAllowed(model)}
 	}
 	var candidates []routing.ProviderRef
-	if h.opts.Candidates != nil && h.opts.AccountProvider != nil {
+	attemptCap := maxAccountAttempts
+	if routed, cap, handled, err := h.planModelRoute(r, snapshot, model, source, compact); handled {
+		if err != nil {
+			return nil, routing.ProviderRef{}, err
+		}
+		candidates, attemptCap = routed, cap
+	} else if h.opts.Candidates != nil && h.opts.AccountProvider != nil {
 		providerID := modelProviderID(model)
 		if resolved, ok := snapshot.ServingModel(model); ok {
 			providerID = resolved.ProviderID
@@ -173,7 +179,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 	}()
 	authFailureSeen := false
 	for index, provider := range candidates {
-		if used == maxAccountAttempts {
+		if used == attemptCap {
 			break
 		}
 		if err := r.Context().Err(); err != nil {
@@ -227,7 +233,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 		}
 		// A refused wire is replayed on the other one at most once per candidate
 		// (wire.Hook.Escalate); the replay's own answer, whatever it is, stands.
-		for retry, endpointAttempt := 0, 0; retry < 2 && used < maxAccountAttempts; {
+		for retry, endpointAttempt := 0, 0; retry < 2 && used < attemptCap; {
 			if err := r.Context().Err(); err != nil {
 				return nil, provider, err
 			}
@@ -301,7 +307,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				if failure, failed := wire.AcceptedFailure(provider, response); failed {
 					now := time.Now()
 					h.recordClassification(provider.ConnectionID, failure.Classification, now)
-					if failure.AllowsFallback() && index+1 < len(candidates) && used < maxAccountAttempts {
+					if failure.AllowsFallback() && index+1 < len(candidates) && used < attemptCap {
 						failedAttempt(nil, response, provider)
 						break
 					}
@@ -315,7 +321,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			}
 			if provider.ProviderID == "kiro" && (response.StatusCode == 401 || response.StatusCode == 403 || response.StatusCode == 404) {
 				endpointAttempt++
-				if endpointAttempt < target.EndpointCount && used < maxAccountAttempts {
+				if endpointAttempt < target.EndpointCount && used < attemptCap {
 					response.Body.Close()
 					// A host's auth rejection does not prove the credential is invalid on another surface.
 					continue
@@ -334,7 +340,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				response.Body.Close()
 				return nil, provider, r.Context().Err()
 			}
-			if !escalated && readErr == nil && used < maxAccountAttempts {
+			if !escalated && readErr == nil && used < attemptCap {
 				if protocol, endpoint := wire.Escalation(provider, response.StatusCode, prefix); protocol != "" {
 					next := provider
 					next.Protocol, next.Endpoint = protocol, endpoint
@@ -368,7 +374,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			if classification.Outcome == routing.OutcomeAuthRefreshRequired {
 				authFailureSeen = true
 			}
-			if classification.Outcome == routing.OutcomeRetrySameAccount && retry == 0 && used < maxAccountAttempts && readErr == nil {
+			if classification.Outcome == routing.OutcomeRetrySameAccount && retry == 0 && used < attemptCap && readErr == nil {
 				response.Body.Close()
 				delay := time.Until(routing.CooldownDeadline(classification, now, time.Second))
 				if delay > retryDelayCap {
@@ -384,7 +390,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				retry++
 				continue
 			}
-			if classification.AllowsFallback() && readErr == nil && index+1 < len(candidates) && used < maxAccountAttempts {
+			if classification.AllowsFallback() && readErr == nil && index+1 < len(candidates) && used < attemptCap {
 				// Keep the unread tail too, in case later candidates cannot serve.
 				kept := *response
 				kept.Header = response.Header.Clone()

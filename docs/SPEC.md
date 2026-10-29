@@ -776,27 +776,29 @@ Try candidates in configured order. Only fallback-classified failures advance.
 
 ### 15.2 Round-robin/sticky
 
-Rotate starting candidate by Combo-local RuntimeState. Sticky limit controls requests per selected starting candidate.
+Rotate the starting candidate by Combo-local RuntimeState. Round-robin and sticky round-robin are one rotation whose step is the sticky limit (1 is plain round-robin); the position is re-reduced by the current list length, so a list that gains an adapter model keeps its place. Rotation runs over the whole list, adapter models included, before the capability reorder (PARITY 6.34).
 
 ### 15.3 Capability-aware reorder
 
-Inspect only capabilities relevant to the active LLM request. If an existing Combo member satisfies required hard capabilities, stably move capable members ahead without dropping original fallback candidates.
+Inspect only capabilities relevant to the active LLM request: input modalities (vision, pdf, audio-input, video-input) read from the current user turn only, so media in older turns never pins a Combo. After rotation, stably move members that satisfy every required hard capability ahead without dropping original fallback candidates. Member capabilities come from the capability table (docs/MODEL_CAPABILITIES.md) plus any a catalog entry declares.
 
 ### 15.4 Capacity adapter
 
-If none of the original candidates satisfy a required hard capability:
+If none of the original candidates satisfies every required hard capability:
 
-- inspect configured capability pool;
-- keep only capable adapter models;
-- apply per-capability fallback/RR;
-- prepend eligible adapter candidates;
+- inspect the enabled capability pools, flattened in the order vision, pdf, audio-input, video-input and de-duplicated;
+- keep only adapter models that satisfy every required capability and are not already candidates;
+- keep only the adapter models the calling key may use directly (a restricted key is never routed to an unlisted pool model);
+- add them ahead of the original candidates; they are then rotated and reordered with the rest of the list by the Combo's strategy;
 - preserve original routes as fallback.
+
+A single model (not a Combo) that lacks a required capability is rescued the same way, with itself as the last fallback; there the strategy is the pool strategy of the first required capability that has an enabled non-empty pool (round-robin only if that pool's roundRobin is set), with a sticky limit of 1. The pool's roundRobin flag has no effect on a Combo.
 
 Enabled empty pool is a deliberate no-op.
 
 Vision/audio-input are initially exposed in UI. pdf/video configuration may exist without creating standalone media endpoints.
 
-When an adapter target has smaller context, history trimming:
+When an adapter target has smaller context, history trimming (not yet applied in serving, PARITY 6.34):
 
 - keeps system/developer instruction head;
 - keeps the active user/media tail;

@@ -133,6 +133,15 @@ multiple-window, alias, order, auth, error, timeout and invalid-JSON answers, Mi
 session reads in sequence, and writes `internal/providers/usage/testdata/billing_quota_pin.json` (PARITY 6.31). It
 needs `ORACLE_DIR`.
 
+`compat/parity/generate-combo-routing.mjs` executes the pinned `open-sse/services/combo.js` and
+`capacityAdapter.js` with a scripted capability table: `detectRequiredCapabilities` over 32 request
+bodies, then `augmentModelsWithCapacityAdapter` and the real `handleComboChat` (whose
+`handleSingleModel` records the order it is asked to try and answers 500) over 23 member/strategy/pool
+scenarios, including the single-model branch of `chat.js`. It writes
+`internal/ingress/testdata/combo_routing_pin.json` (PARITY 6.34), which `internal/ingress/combo_pin_test.go`
+replays; `--check` re-runs the oracle and fails if its answers (not its commit) differ from the file. It
+needs `ORACLE_DIR` and `ORACLE_SHA`.
+
 CI runs this as the `parity` PR job, alongside existing Go/UI/container jobs.
 No test may update golden files from its actual output or turn a missing oracle
 into a passing dedicated gate. Ordinary unit tests remain usable without v1.

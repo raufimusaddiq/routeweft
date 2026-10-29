@@ -2,14 +2,22 @@ package ingress
 
 import (
 	"context"
-	"github.com/raufimusaddiq/routeweft/internal/auth"
+	"encoding/json"
+	"strings"
 	"testing"
+
+	"github.com/raufimusaddiq/routeweft/internal/auth"
 
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
 func comboSnapshot(t *testing.T) *runtime.RuntimeSnapshot {
+	t.Helper()
+	return mustLoad(t, comboManager(t))
+}
+
+func comboManager(t *testing.T) *runtime.Manager {
 	t.Helper()
 	manager := newManager(t)
 	ctx := context.Background()
@@ -30,38 +38,45 @@ func comboSnapshot(t *testing.T) *runtime.RuntimeSnapshot {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := manager.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return snapshot
+	return manager
 }
 
 func TestPlanComboReorderAndDeselect(t *testing.T) {
 	snapshot := comboSnapshot(t)
 	handler := New(nil, Options{State: runtime.NewState()})
-	ordered, ok := handler.PlanCombo(snapshot, auth.Entry{}, "auto", []routing.CapabilityRequirement{{Name: "vision"}})
+	ordered, ok := handler.PlanCombo(snapshot, auth.Entry{}, "auto", []string{"vision"})
 	if !ok || len(ordered) != 3 {
 		t.Fatalf("ordered=%+v ok=%v", ordered, ok)
 	}
-	if ordered[0].ModelID != "vision" || ordered[1].ModelID != "text" || ordered[2].ModelID != "claude" {
+	// The list is rotated first (text, claude, vision), then the models that
+	// satisfy the request float stably. Capabilities come from the oracle's own
+	// table (capabilities.js), which marks Claude models vision-capable, plus the
+	// vision a catalog entry declares; nothing is dropped.
+	if ordered[0].ModelID != "claude" || ordered[1].ModelID != "vision" || ordered[2].ModelID != "text" {
 		t.Fatalf("capability reorder failed: %+v", ordered)
 	}
 }
 
 func TestPlanComboAdapterPrependWhenNoCandidateCapable(t *testing.T) {
-	snapshot := comboSnapshot(t)
+	snapshot := withAdapterPools(t, comboManager(t), map[string]string{"capacityAdapterAudioInput": adapterPool(true, false, "adapter/audio")})
 	handler := New(nil, Options{State: runtime.NewState()})
-	ordered, ok := handler.PlanCombo(snapshot, auth.Entry{}, "auto", []routing.CapabilityRequirement{{Name: "audio-input", AdapterEnabled: true, AdapterPool: []routing.Member{{ProviderID: "adapter", ModelID: "audio", Capabilities: []string{"audio-input"}}}}})
+	ordered, ok := handler.PlanCombo(snapshot, auth.Entry{}, "auto", []string{"audio-input"})
 	if !ok || len(ordered) != 4 {
 		t.Fatalf("ordered=%+v", ordered)
 	}
 	if ordered[0].ModelID != "audio" {
 		t.Fatalf("adapter not prepended: %+v", ordered)
 	}
-	empty, ok := handler.PlanCombo(snapshot, auth.Entry{}, "auto", []routing.CapabilityRequirement{{Name: "audio-input", AdapterEnabled: true}})
-	if !ok || len(empty) != 3 {
-		t.Fatalf("empty pool must be no-op: %+v", empty)
+	// An enabled empty pool is a deliberate no-op (capacityAdapter.js:32-34).
+	empty := withAdapterPools(t, comboManager(t), map[string]string{"capacityAdapterAudioInput": adapterPool(true, false)})
+	noop, ok := handler.PlanCombo(empty, auth.Entry{}, "auto", []string{"audio-input"})
+	if !ok || len(noop) != 3 {
+		t.Fatalf("empty pool must be no-op: %+v", noop)
+	}
+	// A disabled pool is not consulted either.
+	off := withAdapterPools(t, comboManager(t), map[string]string{"capacityAdapterAudioInput": adapterPool(false, false, "adapter/audio")})
+	if disabled, _ := handler.PlanCombo(off, auth.Entry{}, "auto", []string{"audio-input"}); len(disabled) != 3 {
+		t.Fatalf("disabled pool must be no-op: %+v", disabled)
 	}
 }
 
@@ -79,8 +94,10 @@ func TestPlanComboStickyRoundRobinRotates(t *testing.T) {
 	}
 }
 
-func TestPlanComboAdaptersStayAheadAndRotateIndependently(t *testing.T) {
-	snapshot := comboSnapshot(t)
+// The oracle rotates the whole list, adapter models included, with the Combo's
+// own strategy; a pool's roundRobin flag only matters for a single-model target
+// (chat.js:113,138-149 vs 154-168; capacityAdapter.js:64-72).
+func TestPlanComboAdapterModelsFollowTheComboStrategy(t *testing.T) {
 	ctx := context.Background()
 	manager := newManager(t)
 	for _, model := range []runtime.Model{
@@ -93,38 +110,48 @@ func TestPlanComboAdaptersStayAheadAndRotateIndependently(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := manager.SetCombos(ctx, []runtime.Combo{{ID: "c2", Name: "adapter", Members: []runtime.ComboMember{
-		{ProviderID: "openai", ModelID: "vision", Position: 0, Selected: true},
-		{ProviderID: "openai", ModelID: "text", Position: 1, Selected: true},
-	}}}); err != nil {
+	if _, err := manager.SetCombos(ctx, []runtime.Combo{
+		{ID: "c2", Name: "adapter", Members: []runtime.ComboMember{
+			{ProviderID: "openai", ModelID: "vision", Position: 0, Selected: true},
+			{ProviderID: "openai", ModelID: "text", Position: 1, Selected: true},
+		}},
+		{ID: "c3", Name: "rotating", Strategy: "round-robin", Members: []runtime.ComboMember{
+			{ProviderID: "openai", ModelID: "vision", Position: 0, Selected: true},
+			{ProviderID: "openai", ModelID: "text", Position: 1, Selected: true},
+		}},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := manager.Load()
-	if err != nil {
-		t.Fatal(err)
+	snapshot := withAdapterPools(t, manager, map[string]string{"capacityAdapterAudioInput": adapterPool(true, true, "adapter/vision-audio", "adapter/text-audio")})
+	handler := New(nil, Options{State: runtime.NewState()})
+	ids := func(members []runtime.ComboMember) []string {
+		out := make([]string, 0, len(members))
+		for _, member := range members {
+			out = append(out, member.ModelID)
+		}
+		return out
 	}
-	state := runtime.NewState()
-	handler := New(nil, Options{State: state})
-	requirement := routing.CapabilityRequirement{Name: "audio-input", Strategy: routing.StrategyRoundRobin, AdapterEnabled: true, AdapterPool: []routing.Member{
-		{ProviderID: "adapter", ModelID: "vision-audio", Position: 0},
-		{ProviderID: "adapter", ModelID: "text-audio", Position: 1},
-	}}
-	// Adapters lack the capability so the pool stays a no-op until members carry it.
-	requirement.AdapterPool[0].Capabilities = []string{"audio-input"}
-	requirement.AdapterPool[1].Capabilities = []string{"audio-input"}
-	first, ok := handler.PlanCombo(snapshot, auth.Entry{}, "adapter", []routing.CapabilityRequirement{requirement})
-	if !ok || len(first) != 4 {
-		t.Fatalf("first=%+v", first)
+	// Fill-first Combo: the pool's roundRobin flag does not rotate the adapters.
+	for i := 0; i < 2; i++ {
+		got, _ := handler.PlanCombo(snapshot, auth.Entry{}, "adapter", []string{"audio-input"})
+		if want := "vision-audio text-audio vision text"; strings.Join(ids(got), " ") != want {
+			t.Fatalf("call %d: %v, want %s", i, ids(got), want)
+		}
 	}
-	if first[0].ModelID != "vision-audio" || first[1].ModelID != "text-audio" {
-		t.Fatalf("adapter tier not first or misordered: %+v", first)
+	// Round-robin Combo: rotation covers the adapter models, then the capable ones float.
+	first, _ := handler.PlanCombo(snapshot, auth.Entry{}, "rotating", []string{"audio-input"})
+	second, _ := handler.PlanCombo(snapshot, auth.Entry{}, "rotating", []string{"audio-input"})
+	if strings.Join(ids(first), " ") != "vision-audio text-audio vision text" || strings.Join(ids(second), " ") != "text-audio vision-audio vision text" {
+		t.Fatalf("first=%v second=%v", ids(first), ids(second))
 	}
-	second, _ := handler.PlanCombo(snapshot, auth.Entry{}, "adapter", []routing.CapabilityRequirement{requirement})
-	if second[0].ModelID != "text-audio" || second[1].ModelID != "vision-audio" {
-		t.Fatalf("adapter rotation wrong: %+v", second)
+	// A single-model target uses the first required capability's pool strategy.
+	soloFirst, ok := handler.PlanSolo(snapshot, auth.Entry{}, "openai", "text", []string{"audio-input"})
+	soloSecond, _ := handler.PlanSolo(snapshot, auth.Entry{}, "openai", "text", []string{"audio-input"})
+	if !ok || strings.Join(ids(soloFirst), " ") != "vision-audio text-audio text" || strings.Join(ids(soloSecond), " ") != "text-audio vision-audio text" {
+		t.Fatalf("solo first=%v second=%v", ids(soloFirst), ids(soloSecond))
 	}
-	if second[2].ModelID != "vision" || second[3].ModelID != "text" {
-		t.Fatalf("original tier changed: %+v", second)
+	if _, ok := handler.PlanSolo(snapshot, auth.Entry{}, "openai", "text", nil); ok {
+		t.Fatal("a request that needs nothing must not be rescued")
 	}
 }
 
@@ -142,38 +169,35 @@ func TestTrimComboHistoryForTargetUsesSmallerAdapterContext(t *testing.T) {
 	}
 }
 
-func TestPlanComboRequestTrimsHistoryForSmallerAdapter(t *testing.T) {
-	snapshot := comboSnapshot(t)
-	state := runtime.NewState()
-	handler := New(nil, Options{State: state})
+func TestPlanComboRequestTrimsHistoryToTheBudget(t *testing.T) {
+	snapshot := withAdapterPools(t, comboManager(t), map[string]string{"capacityAdapterAudioInput": adapterPool(true, false, "adapter/audio")})
+	handler := New(nil, Options{State: runtime.NewState()})
 	messages := []string{"sys", "old1", "old2", "old3", "user"}
-	requirement := routing.CapabilityRequirement{
-		Name:                 "audio-input",
-		AdapterEnabled:       true,
-		AdapterContextWindow: 3,
-		AdapterPool:          []routing.Member{{ProviderID: "adapter", ModelID: "audio", Capabilities: []string{"audio-input"}}},
-	}
-	ordered, trimmed, ok := handler.PlanComboRequest(snapshot, auth.Entry{}, "auto", []routing.CapabilityRequirement{requirement}, messages, routing.ContextBudget{Head: 1, Tail: 1})
+	ordered, trimmed, ok := handler.PlanComboRequest(snapshot, auth.Entry{}, "auto", []string{"audio-input"}, messages, routing.ContextBudget{Head: 1, Tail: 1, Limit: 3})
 	if !ok || len(ordered) != 4 {
 		t.Fatalf("ordered=%+v ok=%v", ordered, ok)
 	}
 	if len(trimmed) != 3 || trimmed[0] != "sys" || trimmed[len(trimmed)-1] != "user" {
 		t.Fatalf("trimmed=%v", trimmed)
 	}
-	// Without an adapter requirement the original history is preserved.
+	// Without a requirement the original history is preserved.
 	_, untouched, _ := handler.PlanComboRequest(snapshot, auth.Entry{}, "auto", nil, messages, routing.ContextBudget{Head: 1, Tail: 1})
 	if len(untouched) != len(messages) {
 		t.Fatalf("untouched=%v", untouched)
 	}
 }
 
-func TestPlanComboDedupesAdapterAndSelectsPerCapability(t *testing.T) {
+// The adapter test is "does any original model satisfy EVERY required hard
+// capability", and a pool model must satisfy every one too
+// (capacityAdapter.js:88-96); a model already in the Combo is not added twice.
+func TestPlanComboAdapterNeedsEveryRequiredCapability(t *testing.T) {
 	manager := newManager(t)
 	ctx := context.Background()
 	for _, model := range []runtime.Model{
 		{ProviderID: "openai", ID: "text"},
 		{ProviderID: "openai", ID: "vision", Capabilities: []string{"vision"}},
 		{ProviderID: "adapter", ID: "audio", Capabilities: []string{"audio-input"}},
+		{ProviderID: "adapter", ID: "both", Capabilities: []string{"vision", "audio-input"}},
 	} {
 		if err := manager.PutModel(ctx, model); err != nil {
 			t.Fatal(err)
@@ -185,31 +209,26 @@ func TestPlanComboDedupesAdapterAndSelectsPerCapability(t *testing.T) {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := manager.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler := New(nil, Options{State: runtime.NewState()})
-	// vision is already a capable Combo member, so no adapter is needed for it;
-	// audio-input is unmet and pulls exactly one adapter candidate.
-	ordered, ok := handler.PlanCombo(snapshot, auth.Entry{}, "multi", []routing.CapabilityRequirement{
-		{Name: "vision"},
-		{Name: "audio-input", AdapterEnabled: true, AdapterPool: []routing.Member{{ProviderID: "adapter", ModelID: "audio", Capabilities: []string{"audio-input"}}}},
+	snapshot := withAdapterPools(t, manager, map[string]string{
+		"capacityAdapterVision":     adapterPool(true, false, "openai/vision", "adapter/both"),
+		"capacityAdapterAudioInput": adapterPool(true, false, "adapter/audio", "adapter/both"),
 	})
-	if !ok || len(ordered) != 3 {
-		t.Fatalf("ordered=%+v", ordered)
+	handler := New(nil, Options{State: runtime.NewState()})
+	// vision alone: a member has it, so no adapter is consulted.
+	only, _ := handler.PlanCombo(snapshot, auth.Entry{}, "multi", []string{"vision"})
+	if len(only) != 2 || only[0].ModelID != "vision" {
+		t.Fatalf("vision alone: %+v", only)
 	}
-	seen := map[string]int{}
-	for _, member := range ordered {
-		seen[member.ProviderID+"/"+member.ModelID]++
+	// vision + audio-input: no member has both, and only adapter/both does; the
+	// audio-only pool model cannot satisfy the request and is left out; the
+	// Combo's own vision model is not duplicated by the vision pool.
+	both, _ := handler.PlanCombo(snapshot, auth.Entry{}, "multi", []string{"vision", "audio-input"})
+	got := make([]string, 0, len(both))
+	for _, member := range both {
+		got = append(got, member.ProviderID+"/"+member.ModelID)
 	}
-	for key, count := range seen {
-		if count > 1 {
-			t.Fatalf("duplicate candidate %s in %+v", key, ordered)
-		}
-	}
-	if ordered[0].ModelID != "audio" {
-		t.Fatalf("adapter for the unmet capability should lead: %+v", ordered)
+	if strings.Join(got, " ") != "adapter/both openai/vision openai/text" {
+		t.Fatalf("multi-capability order: %v", got)
 	}
 }
 
@@ -232,14 +251,11 @@ func TestPlanComboRRNeverPutsNonCapableFallbackFirst(t *testing.T) {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := manager.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
+	snapshot := mustLoad(t, manager)
 	state := runtime.NewState()
-	state.NextCursor("combo|rr") // start from the non-capable member before capability reorder.
+	state.ComboRotation("combo|rr", 3, 1) // start from the non-capable member before capability reorder.
 	handler := New(nil, Options{State: state})
-	ordered, ok := handler.PlanCombo(snapshot, auth.Entry{}, "rr", []routing.CapabilityRequirement{{Name: "vision"}})
+	ordered, ok := handler.PlanCombo(snapshot, auth.Entry{}, "rr", []string{"vision"})
 	if !ok || ordered[0].ModelID != "v2" || ordered[1].ModelID != "v1" || ordered[2].ModelID != "text" {
 		t.Fatalf("RR capability order=%+v", ordered)
 	}
@@ -274,4 +290,34 @@ func TestStickyLimitForAppliesProviderOverride(t *testing.T) {
 	if got := forced.StickyLimitFor(snapshot, "openai"); got != 2 {
 		t.Fatalf("explicit option=%d want 2", got)
 	}
+}
+
+func mustLoad(t *testing.T, manager *runtime.Manager) *runtime.RuntimeSnapshot {
+	t.Helper()
+	snapshot, err := manager.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
+}
+
+// adapterPool is a stored capacity-adapter value for provider/model strings.
+func adapterPool(enabled, roundRobin bool, models ...string) string {
+	pool := make([]map[string]string, 0, len(models))
+	for _, model := range models {
+		provider, id, _ := strings.Cut(model, "/")
+		pool = append(pool, map[string]string{"providerId": provider, "modelId": id})
+	}
+	encoded, _ := json.Marshal(map[string]any{"enabled": enabled, "roundRobin": roundRobin, "pool": pool})
+	return string(encoded)
+}
+
+// withAdapterPools stores adapter settings through the real manager and returns
+// the republished snapshot.
+func withAdapterPools(t *testing.T, manager *runtime.Manager, settings map[string]string) *runtime.RuntimeSnapshot {
+	t.Helper()
+	if _, err := manager.SetSettings(context.Background(), settings, nil); err != nil {
+		t.Fatal(err)
+	}
+	return mustLoad(t, manager)
 }

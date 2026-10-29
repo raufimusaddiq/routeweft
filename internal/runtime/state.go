@@ -12,6 +12,7 @@ import (
 type RuntimeState struct {
 	mu        sync.Mutex
 	cursors   map[string]uint64
+	rotations map[string]rotation
 	cooldowns map[string]time.Time
 	quotas    map[string]QuotaObservation
 	wires     map[string]string
@@ -27,7 +28,7 @@ type QuotaObservation struct {
 }
 
 func NewState() *RuntimeState {
-	return &RuntimeState{cursors: make(map[string]uint64), cooldowns: make(map[string]time.Time), quotas: make(map[string]QuotaObservation), wires: make(map[string]string), codecs: wire.NewCodecState()}
+	return &RuntimeState{cursors: make(map[string]uint64), rotations: make(map[string]rotation), cooldowns: make(map[string]time.Time), quotas: make(map[string]QuotaObservation), wires: make(map[string]string), codecs: wire.NewCodecState()}
 }
 
 // NextCursor atomically returns a provider-local monotonically increasing RR
@@ -38,6 +39,38 @@ func (s *RuntimeState) NextCursor(provider string) uint64 {
 	value := s.cursors[provider]
 	s.cursors[provider] = value + 1
 	return value
+}
+
+// rotation is one Combo's round-robin position: the start index and how many
+// consecutive requests have used it.
+type rotation struct {
+	index int
+	uses  uint64
+}
+
+// ComboRotation returns the start index for a list of length models and
+// advances the Combo's position. It is the oracle's getRotatedModels state
+// machine (open-sse/services/combo.js:208-237): the stored index is re-reduced by
+// the current length, and it moves on only once sticky consecutive requests have
+// used it, so a list that grows or shrinks between requests (an adapter model
+// appearing) keeps the position the oracle would keep. A sticky limit below 1 is 1.
+func (s *RuntimeState) ComboRotation(key string, length int, sticky uint64) int {
+	if length <= 0 {
+		return 0
+	}
+	if sticky < 1 {
+		sticky = 1
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state := s.rotations[key]
+	current := state.index % length
+	if state.uses+1 >= sticky {
+		s.rotations[key] = rotation{index: (current + 1) % length}
+	} else {
+		s.rotations[key] = rotation{index: current, uses: state.uses + 1}
+	}
+	return current
 }
 
 // Cursor returns the current value without advancing it.

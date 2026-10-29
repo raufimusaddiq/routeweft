@@ -129,17 +129,34 @@ func CapacityAdapters() []CapacityAdapterBinding {
 	return append([]CapacityAdapterBinding(nil), capacityAdapterSettings...)
 }
 
+// compileCapacityAdapters parses the four adapter settings once, at publication,
+// so a request never decodes JSON to learn whether a pool applies.
+func (s *RuntimeSnapshot) compileCapacityAdapters() {
+	s.capacityAdapters = make(map[string]CapacityAdapterConfig, len(capacityAdapterSettings))
+	for _, adapter := range capacityAdapterSettings {
+		config, err := parseCapacityAdapter(s.settings[adapter.Setting])
+		if err != nil {
+			config = CapacityAdapterConfig{}
+		}
+		s.capacityAdapters[adapter.Name] = config
+		if config.Enabled && len(config.Pool) > 0 {
+			s.adaptersActive = true
+		}
+	}
+}
+
 // CapacityAdapter returns the compiled adapter for one capability. An unknown
 // capability or malformed stored value yields a disabled adapter, which is the
 // no-op the empty/deselect contract requires.
 func (s *RuntimeSnapshot) CapacityAdapter(capability string) CapacityAdapterConfig {
-	setting, ok := CapacityAdapterSetting(capability)
-	if !ok || s == nil {
+	if s == nil {
 		return CapacityAdapterConfig{}
 	}
-	config, err := parseCapacityAdapter(s.settings[setting])
-	if err != nil {
-		return CapacityAdapterConfig{}
-	}
+	config := s.capacityAdapters[capability]
+	config.Pool = append([]ModelRef(nil), config.Pool...)
 	return config
 }
+
+// AdaptersActive reports whether any capacity adapter is enabled with a
+// non-empty pool; without one no request needs its body inspected for rescue.
+func (s *RuntimeSnapshot) AdaptersActive() bool { return s != nil && s.adaptersActive }
