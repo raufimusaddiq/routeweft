@@ -925,9 +925,13 @@ arbitrary remote command endpoint.
 1. Record the independent image commit, schema/config revision and Routeweft
    backup. Check `/health/live` and `/health/ready` on the separate port. Leave
    ordinary clients pointed at v1; health alone does not prove provider parity.
-2. Run `ORACLE_DIR=/path/to/pinned-oracle make parity-test` in a disposable
-   development checkout, then review the `parity` PR CI result. The suite reads
-   pinned source and synthetic inputs only. It never calls a live provider.
+2. Resolve the oracle once (`node compat/parity/resolve-oracle.mjs`: LiteRouter
+   `main`, frozen for the run, recorded in `oracle-run.json`; `--sha <recorded>`
+   repeats a run), export its `ORACLE_DIR` and `ORACLE_SHA`, and run
+   `make parity-test` in a disposable development checkout, then review the
+   `parity` PR CI result and its `oracle-run` artifact. The suite reads the
+   resolved oracle commit's source and synthetic inputs only. It never calls a
+   live provider.
 3. Use a dedicated test client/key to send sanitized, consented inputs to each
    selected router independently. Do not mirror production prompts by default.
    Compare status, model/account attribution, JSON shape, native unknown fields,

@@ -3,8 +3,13 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-export const pin = '1c3b9f47837d42ea64992063309064af755a14a3';
-assert.ok(process.env.ORACLE_DIR, 'ORACLE_DIR must contain the pinned oracle; no working files are read');
+// The run's oracle commit. compat/parity/resolve-oracle.mjs resolves LiteRouter
+// refs/heads/main once, fetches that commit into ORACLE_DIR and exports it as
+// ORACLE_SHA; every reader below uses that one commit, never a branch or HEAD, and
+// there is no default to fall back to (#289).
+export const pin = process.env.ORACLE_SHA;
+assert.ok(process.env.ORACLE_DIR, 'ORACLE_DIR must contain the oracle; no working files are read');
+assert.match(pin ?? '', /^[0-9a-f]{40}$/, 'ORACLE_SHA must be the 40-hex commit of this run (run compat/parity/resolve-oracle.mjs)');
 export const git = (...args) => execFileSync('git', ['-C', process.env.ORACLE_DIR, ...args], { encoding: 'utf8', maxBuffer: 8 << 20 });
 assert.equal(git('rev-parse', `${pin}^{commit}`).trim(), pin);
 export const source = path => git('show', `${pin}:${path}`);

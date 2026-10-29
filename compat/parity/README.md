@@ -1,8 +1,30 @@
-# Pinned differential gate
+# Differential gate against LiteRouter main
 
-Run `ORACLE_DIR=/path/to/literouter make parity-test` from the repository root.
-The oracle must contain commit `1c3b9f47837d42ea64992063309064af755a14a3`.
-Node 22 and Go from go.mod are required. No oracle working files are imported.
+The oracle is `refs/heads/main` of `raufimusaddiq/literouter`, resolved **once per
+run** by `resolve-oracle.mjs` and frozen: the resolver fetches that one commit into
+`ORACLE_DIR`, exports it as `ORACLE_SHA`, and writes `oracle-run.json`
+(`{sha, ref, remote, mode, resolvedAt}`); every gate in the run reads only that
+commit, never a branch or `HEAD`, and none re-resolves. A failed resolve or fetch
+fails the run with a clear message; there is no stale or default SHA to fall back
+to, and a gate without `ORACLE_SHA` fails. CI uploads the record as the
+`oracle-run` artifact and in the step summary.
+
+```sh
+cd <repo root>
+eval "$(node compat/parity/resolve-oracle.mjs | sed 's/^/export /')"   # resolve main now
+make parity-test
+node compat/parity/resolve-oracle.mjs --sha <recorded sha>             # reproduce a recorded run
+```
+
+`ORACLE_REMOTE` overrides the remote (tests use a local one); the remote is only
+read. Committed `*_pin.json` fixtures and `Source: ... at <sha>` headers record the
+commit they were generated at and stay as they are until a generator is re-run on
+purpose: that is how a moved oracle shows up, as a failing byte-for-byte check, not as
+a silent change. Node 22 and Go from go.mod are required. No oracle working files
+are imported.
+
+`resolve-oracle.test.mjs` covers a moving main, a failed resolution and one
+consistent SHA per run, against a local remote and no network.
 
 `inventory.mjs` verifies 97 route files, 153 exported operations, remote guard
 behavior, key forms, 81 provider entries, 16 pages and every open-row disposition.

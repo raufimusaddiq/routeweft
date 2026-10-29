@@ -25,6 +25,8 @@ compat-test:
 	go test ./compat/...
 
 parity-test:
+	@test -n "$$ORACLE_DIR" -a -n "$$ORACLE_SHA" || { echo "set ORACLE_DIR and ORACLE_SHA, see compat/parity/README.md (eval \"\$$(node compat/parity/resolve-oracle.mjs | sed 's/^/export /')\")" >&2; exit 1; }
+	node --test compat/parity/resolve-oracle.test.mjs
 	node compat/parity/inventory.mjs
 	go test -race ./internal/app -run TestPinnedSystemOneDifferential -count=1
 	go test -race ./internal/security ./internal/ingress ./internal/providers/shared ./internal/providers/wire ./internal/protocol/concerns
