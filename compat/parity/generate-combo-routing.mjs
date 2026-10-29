@@ -29,12 +29,15 @@ const caps = (provider, model) => {
   const names = table[`${provider}/${model}`] ?? [];
   return Object.fromEntries(names.map(name => [name, true]));
 };
+// extractTextContent is the oracle's own (translator/formats/gemini.js:113-119); the
+// module's other imports are not reached by it.
+const { extractTextContent } = await load('open-sse/translator/formats/gemini.js', { safeParseJSON: () => null, OPENAI_BLOCK: { TEXT: 'text' }, isGemini4Model: () => false });
 const deps = {
+  extractTextContent,
   checkFallbackError: () => ({ shouldFallback: true, cooldownMs: 0 }),
   formatRetryAfter: () => '',
   unavailableResponse: (status, message) => new Response(JSON.stringify({ error: { message } }), { status }),
   getCapabilitiesForModel: caps,
-  extractTextContent: () => '',
 };
 const delays = [];
 const timers = { setTimeout: (fn, ms) => { delays.push(ms); fn(); return 0; }, clearTimeout() {} };
@@ -261,7 +264,116 @@ for (const scenario of nestedScenarios) {
   nestedOut.push({ name: scenario.name, root: scenario.root, calls });
 }
 
-const pinned = { oracle: 'raufimusaddiq/literouter', sha: pin, capabilities: Object.fromEntries(Object.entries(T).map(([k, v]) => [k, kebab(v)])), detect, order, strip, outcomes, nestedTable, nestedStrategy, nested: nestedOut };
+
+// Fusion (combo.js:471-625). The oracle's own handleFusionChat runs under a
+// virtual clock: setTimeout is replaced, every panel call resolves at the virtual
+// time its scenario gives it, and time advances only when nothing else can run.
+// handleSingleModel records each call it is asked for (model, whether it is a
+// panel call, the body, the virtual time) and answers as scripted.
+function virtualClock() {
+  let now = 0;
+  let seq = 0;
+  const queue = [];
+  return {
+    now: () => now,
+    globals: {
+      setTimeout(fn, ms = 0) { const timer = { at: now + Math.max(0, ms), seq: seq++, fn, off: false }; queue.push(timer); return timer; },
+      clearTimeout(timer) { if (timer) timer.off = true; },
+    },
+    async run(promise) {
+      let finished = false;
+      let value;
+      let failure;
+      promise.then(v => { finished = true; value = v; }, e => { finished = true; failure = e; });
+      for (;;) {
+        await new Promise(resolve => setImmediate(resolve));
+        if (finished) break;
+        const next = queue.filter(t => !t.off).sort((a, b) => a.at - b.at || a.seq - b.seq)[0];
+        if (!next) { await new Promise(resolve => setImmediate(resolve)); if (finished) break; throw new Error('fusion scenario stalled'); }
+        next.off = true;
+        now = next.at;
+        next.fn();
+      }
+      if (failure) throw failure;
+      return value;
+    },
+  };
+}
+
+const answerShapes = {
+  openai: text => ({ choices: [{ message: { role: 'assistant', content: text } }] }),
+  openaiBlocks: text => ({ choices: [{ message: { role: 'assistant', content: [{ type: 'text', text }, { type: 'image_url', image_url: { url: 'u' } }] } }] }),
+  delta: text => ({ choices: [{ delta: { content: text } }] }),
+  choiceText: text => ({ choices: [{ text }] }),
+  claude: text => ({ type: 'message', content: [{ type: 'text', text }] }),
+  gemini: text => ({ candidates: [{ content: { parts: [{ text }, { text: ' more' }] } }] }),
+  responses: text => ({ output: [{ type: 'message', content: [{ type: 'output_text', text }] }, { type: 'reasoning' }] }),
+  ollama: text => ({ message: { role: 'assistant', content: text } }),
+};
+const ok = (delay, text, shape = 'openai') => ({ delay, status: 200, body: JSON.stringify(answerShapes[shape](text)) });
+const bad = (delay, status = 500) => ({ delay, status, body: JSON.stringify({ error: { message: 'scripted' } }) });
+const plainUser = { messages: [{ role: 'user', content: 'question' }] };
+const toolConversation = {
+  model: 'panel', stream: true, stream_options: { include_usage: true }, tool_choice: 'auto',
+  tools: [{ type: 'function', function: { name: 'lookup' } }],
+  temperature: 0.3,
+  messages: [
+    { role: 'system', content: 'rules' },
+    { role: 'user', content: 'find it' },
+    { role: 'assistant', content: 'checking', tool_calls: [{ id: '1', function: { name: 'lookup', arguments: '{}' } }, { id: '2', name: 'other' }, { id: '3' }] },
+    { role: 'tool', tool_call_id: '1', content: 'result text' },
+    { role: 'function', name: 'f', content: [{ type: 'text', text: 'blocks' }, { type: 'text', text: ' joined' }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'let me' }, { type: 'tool_use', id: 'a', name: 'search', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: 'found' }, { type: 'text', text: 'thanks' }] },
+    { role: 'assistant', content: null, tool_calls: [{ function: { name: 'x' } }] },
+    { role: 'user', content: 'now answer' },
+  ],
+};
+const fusionScenarios = [
+  { name: 'every panel model answers; the judge gets the sources in panel order', panel: ['pa/a', 'pb/b', 'pc/c'], judge: 'pj/j', members: { 'pa/a': ok(60, 'alpha'), 'pb/b': ok(20, 'beta'), 'pc/c': ok(40, 'gamma') }, tuning: { stragglerGraceMs: 500, panelHardTimeoutMs: 2000 }, body: plainUser },
+  { name: 'a straggler within the grace window is included', panel: ['pa/a', 'pb/b', 'pc/c'], judge: 'pj/j', members: { 'pa/a': ok(20, 'alpha'), 'pb/b': ok(40, 'beta'), 'pc/c': ok(120, 'gamma') }, tuning: { minPanel: 2, stragglerGraceMs: 200, panelHardTimeoutMs: 2000 }, body: plainUser },
+  { name: 'a straggler past the grace window is dropped', panel: ['pa/a', 'pb/b', 'pc/c'], judge: 'pj/j', members: { 'pa/a': ok(20, 'alpha'), 'pb/b': ok(40, 'beta'), 'pc/c': ok(500, 'gamma') }, tuning: { minPanel: 2, stragglerGraceMs: 100, panelHardTimeoutMs: 2000 }, body: plainUser },
+  { name: 'zero grace stops at the quorum', panel: ['pa/a', 'pb/b', 'pc/c'], judge: 'pj/j', members: { 'pa/a': ok(20, 'alpha'), 'pb/b': ok(60, 'beta'), 'pc/c': ok(200, 'gamma') }, tuning: { minPanel: 2, stragglerGraceMs: 0, panelHardTimeoutMs: 2000 }, body: plainUser },
+  { name: 'a higher minPanel waits for more answers before the grace window opens', panel: ['pa/a', 'pb/b', 'pc/c'], judge: 'pj/j', members: { 'pa/a': ok(20, 'alpha'), 'pb/b': ok(60, 'beta'), 'pc/c': ok(200, 'gamma') }, tuning: { minPanel: 3, stragglerGraceMs: 50, panelHardTimeoutMs: 2000 }, body: plainUser },
+  { name: 'minPanel below two is two', panel: ['pa/a', 'pb/b', 'pc/c'], judge: 'pj/j', members: { 'pa/a': ok(20, 'alpha'), 'pb/b': ok(60, 'beta'), 'pc/c': ok(300, 'gamma') }, tuning: { minPanel: 0, stragglerGraceMs: 50, panelHardTimeoutMs: 2000 }, body: plainUser },
+  { name: 'minPanel above the panel size is the panel size', panel: ['pa/a', 'pb/b'], judge: 'pj/j', members: { 'pa/a': ok(20, 'alpha'), 'pb/b': ok(60, 'beta') }, tuning: { minPanel: 9, stragglerGraceMs: 50, panelHardTimeoutMs: 2000 }, body: plainUser },
+  { name: 'the hard timeout ends the panel; one answer is returned directly', panel: ['pa/a', 'pb/b', 'pc/c'], judge: 'pj/j', members: { 'pa/a': ok(20, 'alpha'), 'pb/b': ok(900, 'beta'), 'pc/c': ok(900, 'gamma') }, tuning: { minPanel: 2, stragglerGraceMs: 100, panelHardTimeoutMs: 300 }, body: plainUser },
+  { name: 'every panel model fails', panel: ['pa/a', 'pb/b', 'pc/c'], judge: 'pj/j', members: { 'pa/a': bad(20), 'pb/b': bad(40, 503), 'pc/c': bad(60, 429) }, tuning: { stragglerGraceMs: 100, panelHardTimeoutMs: 2000 }, body: plainUser },
+  { name: 'every panel model times out', panel: ['pa/a', 'pb/b'], judge: 'pj/j', members: { 'pa/a': ok(900, 'alpha'), 'pb/b': ok(900, 'beta') }, tuning: { stragglerGraceMs: 100, panelHardTimeoutMs: 200 }, body: plainUser },
+  { name: 'failures do not count toward the quorum', panel: ['pa/a', 'pb/b', 'pc/c'], judge: 'pj/j', members: { 'pa/a': bad(20), 'pb/b': ok(40, 'beta'), 'pc/c': ok(100, 'gamma') }, tuning: { minPanel: 2, stragglerGraceMs: 100, panelHardTimeoutMs: 2000 }, body: plainUser },
+  { name: 'one success is answered by calling that model with the original request', panel: ['pa/a', 'pb/b', 'pc/c'], judge: 'pj/j', members: { 'pa/a': bad(20), 'pb/b': ok(40, 'beta'), 'pc/c': bad(60) }, tuning: { stragglerGraceMs: 100, panelHardTimeoutMs: 2000 }, body: toolConversation },
+  { name: 'an answer with no text is not an answer', panel: ['pa/a', 'pb/b'], judge: 'pj/j', members: { 'pa/a': ok(20, '   '), 'pb/b': ok(40, 'beta') }, tuning: { stragglerGraceMs: 100, panelHardTimeoutMs: 2000 }, body: plainUser },
+  { name: 'an unparseable answer is not an answer', panel: ['pa/a', 'pb/b'], judge: 'pj/j', members: { 'pa/a': { delay: 20, status: 200, body: 'not json' }, 'pb/b': ok(40, 'beta') }, tuning: { stragglerGraceMs: 100, panelHardTimeoutMs: 2000 }, body: plainUser },
+  { name: 'no judge configured: the first panel model judges', panel: ['pa/a', 'pb/b'], judge: undefined, members: { 'pa/a': ok(20, 'alpha'), 'pb/b': ok(40, 'beta') }, tuning: { stragglerGraceMs: 100, panelHardTimeoutMs: 2000 }, body: plainUser },
+  { name: 'a blank judge is no judge', panel: ['pa/a', 'pb/b'], judge: '   ', members: { 'pa/a': ok(20, 'alpha'), 'pb/b': ok(40, 'beta') }, tuning: { stragglerGraceMs: 100, panelHardTimeoutMs: 2000 }, body: plainUser },
+  { name: 'panel calls drop tools and flatten tool turns; the judge call keeps the request as it came', panel: ['pa/a', 'pb/b'], judge: 'pj/j', members: { 'pa/a': ok(20, 'alpha'), 'pb/b': ok(40, 'beta') }, tuning: { stragglerGraceMs: 100, panelHardTimeoutMs: 2000 }, body: toolConversation },
+  { name: 'Responses input array', panel: ['pa/a', 'pb/b'], judge: 'pj/j', members: { 'pa/a': ok(20, 'alpha', 'responses'), 'pb/b': ok(40, 'beta', 'responses') }, tuning: { stragglerGraceMs: 100, panelHardTimeoutMs: 2000 }, body: { model: 'panel', stream: false, tools: [{ type: 'function', name: 'f' }], input: [{ role: 'user', content: 'hi' }, { role: 'tool', content: 'out' }, { role: 'user', content: 'again' }] } },
+  { name: 'Gemini contents are not flattened and the judge turn uses parts', panel: ['pa/a', 'pb/b'], judge: 'pj/j', members: { 'pa/a': ok(20, 'alpha', 'gemini'), 'pb/b': ok(40, 'beta', 'gemini') }, tuning: { stragglerGraceMs: 100, panelHardTimeoutMs: 2000 }, body: { contents: [{ role: 'user', parts: [{ text: 'hi' }] }] } },
+  { name: 'a body with no message array gets a messages array for the judge', panel: ['pa/a', 'pb/b'], judge: 'pj/j', members: { 'pa/a': ok(20, 'alpha'), 'pb/b': ok(40, 'beta') }, tuning: { stragglerGraceMs: 100, panelHardTimeoutMs: 2000 }, body: { model: 'panel', prompt: 'old style' } },
+  { name: 'answer shapes: Claude blocks, Gemini parts, Responses output, delta, choice text', panel: ['pa/a', 'pb/b', 'pc/c'], judge: 'pj/j', members: { 'pa/a': ok(20, 'from claude', 'claude'), 'pb/b': ok(40, 'from gemini', 'gemini'), 'pc/c': ok(60, 'from responses', 'responses') }, tuning: { minPanel: 3, stragglerGraceMs: 100, panelHardTimeoutMs: 2000 }, body: plainUser },
+  { name: 'answer shapes: delta, choice text and text blocks beside other blocks', panel: ['pa/a', 'pb/b', 'pc/c'], judge: 'pj/j', members: { 'pa/a': ok(20, 'from delta', 'delta'), 'pb/b': ok(40, 'from text', 'choiceText'), 'pc/c': ok(60, 'from blocks', 'openaiBlocks') }, tuning: { minPanel: 3, stragglerGraceMs: 100, panelHardTimeoutMs: 2000 }, body: plainUser },
+  { name: 'a single-model Fusion answers directly', panel: ['pa/a'], judge: 'pj/j', members: { 'pa/a': ok(20, 'alpha') }, tuning: {}, body: toolConversation },
+];
+const fusionOut = [];
+for (const scenario of fusionScenarios) {
+  const clock = virtualClock();
+  const fusionCombo = await load('open-sse/services/combo.js', { ...deps, checkFallbackError: fallback.checkFallbackError, formatRetryAfter: fallback.formatRetryAfter }, clock.globals);
+  const calls = [];
+  const seenPanel = new Set();
+  const handleSingleModel = (body, model, isPanel) => new Promise(resolve => {
+    calls.push({ model, panel: !!isPanel, at: clock.now(), body: JSON.parse(JSON.stringify(body)) });
+    const script = isPanel ? scenario.members[model] : { delay: 0, status: 200, body: JSON.stringify(answerShapes.openai('FINAL')) };
+    clock.globals.setTimeout(() => resolve(new Response(script.body, { status: script.status })), script.delay);
+  });
+  void seenPanel;
+  const response = await clock.run(fusionCombo.handleFusionChat({ body: scenario.body, models: scenario.panel, handleSingleModel, log, comboName: 'panel', judgeModel: scenario.judge, tuning: scenario.tuning }));
+  fusionOut.push({
+    name: scenario.name, panel: scenario.panel, judge: scenario.judge ?? null, tuning: scenario.tuning, body: scenario.body,
+    members: scenario.members, calls, final: { status: response.status, body: await response.text() }, endedAt: clock.now(),
+  });
+}
+
+const pinned = { oracle: 'raufimusaddiq/literouter', sha: pin, capabilities: Object.fromEntries(Object.entries(T).map(([k, v]) => [k, kebab(v)])), detect, order, strip, outcomes, nestedTable, nestedStrategy, nested: nestedOut, fusion: fusionOut };
 if (process.argv.includes('--check')) {
   // The committed file records the commit it was generated at, so a moved main is
   // not a difference; a changed answer is. A failure means the oracle's Combo

@@ -139,8 +139,9 @@ bodies, then `augmentModelsWithCapacityAdapter` and the real `handleComboChat` (
 `handleSingleModel` records the order it is asked to try and answers 500) over 23 member/strategy/pool
 scenarios, including the single-model branch of `chat.js`; `stripHistoryForContext` over 19 bodies; the
 answer and waits of `handleComboChat` when its models fail (with the oracle's own `accountFallback.js`
-and `errorConfig.js`) over 16 scenarios; and 7 nested-Combo walks (the only restated code is the five-line
-nested dispatch of `chat.js:177-229`, which cannot be executed here). It writes
+and `errorConfig.js`) over 16 scenarios; 7 nested-Combo walks; and 23 Fusion runs (`handleFusionChat` under a
+virtual clock: the calls it makes, with their bodies, and its answer). The only restated code is the nested
+dispatch of `chat.js:177-229`, which cannot be executed here. It writes
 `internal/ingress/testdata/combo_routing_pin.json` (PARITY 6.34), which `internal/ingress/combo_pin_test.go`
 replays; `--check` re-runs the oracle and fails if its answers (not its commit) differ from the file. It
 needs `ORACLE_DIR` and `ORACLE_SHA`.

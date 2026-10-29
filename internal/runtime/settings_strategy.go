@@ -20,13 +20,20 @@ type strategyOverride struct {
 	Strategy string
 	// StickyLimit is 0 when the entry inherits the global sticky limit.
 	StickyLimit uint64
+	// Fusion is set by a combo entry whose fallbackStrategy is "fusion"
+	// (src/sse/handlers/chat.js:116-133): the Combo is served as a panel and a
+	// judge instead of an ordered list. JudgeModel and Tuning belong to it.
+	Fusion     bool
+	JudgeModel string
+	Tuning     routing.FusionTuning
 }
 
 // parseStrategyOverrides decodes and validates a providerStrategies (combo
-// false) or comboStrategies (combo true) setting. Fields Routeweft does not
-// apply are rejected by name instead of being stored and ignored: the pin's
-// proxyPoolId/rotateStrategy (no-auth proxy rotation), judgeModel and
-// fusionTuning are owned by other items (PARITY 5.2).
+// false) or comboStrategies (combo true) setting. A combo entry may carry the
+// pin's fallbackStrategy "fusion", judgeModel and fusionTuning. Fields Routeweft
+// does not apply are rejected by name instead of being stored and ignored: the
+// pin's proxyPoolId/rotateStrategy (no-auth proxy rotation) are owned by another
+// item (PARITY 5.2).
 func parseStrategyOverrides(raw string, combo bool) (map[string]strategyOverride, error) {
 	out, errs, err := parseStrategyOverridesEach(raw, combo)
 	if err != nil {
@@ -90,6 +97,23 @@ func parseStrategyOverride(name string, value json.RawMessage, combo bool) (stra
 				if err := json.Unmarshal(fields[key], &override.Strategy); err != nil {
 					return strategyOverride{}, fmt.Errorf("%q: fallbackStrategy must be a string", name)
 				}
+				if combo && override.Strategy == "fusion" {
+					override.Fusion, override.Strategy = true, ""
+				}
+			case key == "judgeModel" && combo:
+				var judge *string
+				if err := json.Unmarshal(fields[key], &judge); err != nil {
+					return strategyOverride{}, fmt.Errorf("%q: judgeModel must be a string", name)
+				}
+				if judge != nil {
+					override.JudgeModel = strings.TrimSpace(*judge)
+				}
+			case key == "fusionTuning" && combo:
+				tuning, err := parseFusionTuning(fields[key])
+				if err != nil {
+					return strategyOverride{}, fmt.Errorf("%q: %w", name, err)
+				}
+				override.Tuning = tuning
 			case key == "stickyRoundRobinLimit" && !combo:
 				var limit int64
 				if err := json.Unmarshal(fields[key], &limit); err != nil || limit < 0 {
@@ -102,7 +126,7 @@ func parseStrategyOverride(name string, value json.RawMessage, combo bool) (stra
 		}
 	}
 	if combo {
-		if _, err := parseComboStrategy(override.Strategy); err != nil {
+		if _, err := parseComboStrategy(override.Strategy); err != nil { // "" when the entry is fusion
 			return strategyOverride{}, fmt.Errorf("%q: unsupported strategy %q", name, override.Strategy)
 		}
 	} else if _, err := routing.ParseStrategy(override.Strategy); err != nil {
@@ -136,3 +160,64 @@ func pinRoundRobinStrategy(limit uint64) string {
 func formatUint(v uint64) string { return strconv.FormatUint(v, 10) }
 
 func trimmedLower(v string) string { return strings.ToLower(strings.TrimSpace(v)) }
+
+// parseFusionTuning reads the pin's comboStrategies[name].fusionTuning object
+// (chat.js:132; combo.js:473-475). A null or absent key keeps the default, as an
+// absent key does in `{...FUSION_DEFAULTS, ...tuning}`; any other key, or a value
+// that is not a whole number, is refused by name. A minPanel below 2 is stored
+// as 2, the value it resolves to (combo.js:562).
+func parseFusionTuning(raw json.RawMessage) (routing.FusionTuning, error) {
+	var tuning routing.FusionTuning
+	if string(bytes.TrimSpace(raw)) == "null" {
+		return tuning, nil
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil || fields == nil {
+		return tuning, fmt.Errorf("fusionTuning must be an object")
+	}
+	whole := func(key string) (*int64, error) {
+		value, ok := fields[key]
+		if !ok || string(bytes.TrimSpace(value)) == "null" {
+			return nil, nil
+		}
+		if trimmed := bytes.TrimSpace(value); len(trimmed) == 0 || trimmed[0] == '"' {
+			return nil, fmt.Errorf("fusionTuning.%s must be a whole number", key)
+		}
+		var number json.Number
+		decoder := json.NewDecoder(bytes.NewReader(value))
+		decoder.UseNumber()
+		if decoder.Decode(&number) != nil {
+			return nil, fmt.Errorf("fusionTuning.%s must be a whole number", key)
+		}
+		parsed, err := number.Int64()
+		if err != nil {
+			return nil, fmt.Errorf("fusionTuning.%s must be a whole number", key)
+		}
+		return &parsed, nil
+	}
+	for key := range fields {
+		switch key {
+		case "minPanel", "stragglerGraceMs", "panelHardTimeoutMs":
+		default:
+			return tuning, fmt.Errorf("fusionTuning.%s is not supported", key)
+		}
+	}
+	minPanel, err := whole("minPanel")
+	if err != nil {
+		return tuning, err
+	}
+	if minPanel != nil {
+		value := int(*minPanel)
+		tuning.MinPanel = &value
+	}
+	if tuning.StragglerGraceMs, err = whole("stragglerGraceMs"); err != nil {
+		return tuning, err
+	}
+	if tuning.PanelHardTimeoutMs, err = whole("panelHardTimeoutMs"); err != nil {
+		return tuning, err
+	}
+	if err := tuning.Validate(); err != nil {
+		return tuning, err
+	}
+	return tuning.Normalize(), nil
+}

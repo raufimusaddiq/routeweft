@@ -3331,5 +3331,2936 @@
         }
       ]
     }
+  ],
+  "fusion": [
+    {
+      "name": "every panel model answers; the judge gets the sources in panel order",
+      "panel": [
+        "pa/a",
+        "pb/b",
+        "pc/c"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "stragglerGraceMs": 500,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 60,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"alpha\"}}]}"
+        },
+        "pb/b": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        },
+        "pc/c": {
+          "delay": 40,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"gamma\"}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pc/c",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pj/j",
+          "panel": false,
+          "at": 60,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              },
+              {
+                "role": "user",
+                "content": "You are the JUDGE in a model-fusion panel. 3 expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\nDo NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\nFirst, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.\n\n=== PANEL RESPONSES ===\n[Source 1]\nalpha\n\n[Source 2]\nbeta\n\n[Source 3]\ngamma\n=== END PANEL RESPONSES ===\n\nNow write the final answer to the user's original request."
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 60
+    },
+    {
+      "name": "a straggler within the grace window is included",
+      "panel": [
+        "pa/a",
+        "pb/b",
+        "pc/c"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "minPanel": 2,
+        "stragglerGraceMs": 200,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"alpha\"}}]}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        },
+        "pc/c": {
+          "delay": 120,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"gamma\"}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pc/c",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pj/j",
+          "panel": false,
+          "at": 120,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              },
+              {
+                "role": "user",
+                "content": "You are the JUDGE in a model-fusion panel. 3 expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\nDo NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\nFirst, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.\n\n=== PANEL RESPONSES ===\n[Source 1]\nalpha\n\n[Source 2]\nbeta\n\n[Source 3]\ngamma\n=== END PANEL RESPONSES ===\n\nNow write the final answer to the user's original request."
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 120
+    },
+    {
+      "name": "a straggler past the grace window is dropped",
+      "panel": [
+        "pa/a",
+        "pb/b",
+        "pc/c"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "minPanel": 2,
+        "stragglerGraceMs": 100,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"alpha\"}}]}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        },
+        "pc/c": {
+          "delay": 500,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"gamma\"}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pc/c",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pj/j",
+          "panel": false,
+          "at": 140,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              },
+              {
+                "role": "user",
+                "content": "You are the JUDGE in a model-fusion panel. 2 expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\nDo NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\nFirst, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.\n\n=== PANEL RESPONSES ===\n[Source 1]\nalpha\n\n[Source 2]\nbeta\n=== END PANEL RESPONSES ===\n\nNow write the final answer to the user's original request."
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 140
+    },
+    {
+      "name": "zero grace stops at the quorum",
+      "panel": [
+        "pa/a",
+        "pb/b",
+        "pc/c"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "minPanel": 2,
+        "stragglerGraceMs": 0,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"alpha\"}}]}"
+        },
+        "pb/b": {
+          "delay": 60,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        },
+        "pc/c": {
+          "delay": 200,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"gamma\"}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pc/c",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pj/j",
+          "panel": false,
+          "at": 60,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              },
+              {
+                "role": "user",
+                "content": "You are the JUDGE in a model-fusion panel. 2 expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\nDo NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\nFirst, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.\n\n=== PANEL RESPONSES ===\n[Source 1]\nalpha\n\n[Source 2]\nbeta\n=== END PANEL RESPONSES ===\n\nNow write the final answer to the user's original request."
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 60
+    },
+    {
+      "name": "a higher minPanel waits for more answers before the grace window opens",
+      "panel": [
+        "pa/a",
+        "pb/b",
+        "pc/c"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "minPanel": 3,
+        "stragglerGraceMs": 50,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"alpha\"}}]}"
+        },
+        "pb/b": {
+          "delay": 60,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        },
+        "pc/c": {
+          "delay": 200,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"gamma\"}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pc/c",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pj/j",
+          "panel": false,
+          "at": 200,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              },
+              {
+                "role": "user",
+                "content": "You are the JUDGE in a model-fusion panel. 3 expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\nDo NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\nFirst, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.\n\n=== PANEL RESPONSES ===\n[Source 1]\nalpha\n\n[Source 2]\nbeta\n\n[Source 3]\ngamma\n=== END PANEL RESPONSES ===\n\nNow write the final answer to the user's original request."
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 200
+    },
+    {
+      "name": "minPanel below two is two",
+      "panel": [
+        "pa/a",
+        "pb/b",
+        "pc/c"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "minPanel": 0,
+        "stragglerGraceMs": 50,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"alpha\"}}]}"
+        },
+        "pb/b": {
+          "delay": 60,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        },
+        "pc/c": {
+          "delay": 300,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"gamma\"}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pc/c",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pj/j",
+          "panel": false,
+          "at": 110,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              },
+              {
+                "role": "user",
+                "content": "You are the JUDGE in a model-fusion panel. 2 expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\nDo NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\nFirst, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.\n\n=== PANEL RESPONSES ===\n[Source 1]\nalpha\n\n[Source 2]\nbeta\n=== END PANEL RESPONSES ===\n\nNow write the final answer to the user's original request."
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 110
+    },
+    {
+      "name": "minPanel above the panel size is the panel size",
+      "panel": [
+        "pa/a",
+        "pb/b"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "minPanel": 9,
+        "stragglerGraceMs": 50,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"alpha\"}}]}"
+        },
+        "pb/b": {
+          "delay": 60,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pj/j",
+          "panel": false,
+          "at": 60,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              },
+              {
+                "role": "user",
+                "content": "You are the JUDGE in a model-fusion panel. 2 expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\nDo NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\nFirst, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.\n\n=== PANEL RESPONSES ===\n[Source 1]\nalpha\n\n[Source 2]\nbeta\n=== END PANEL RESPONSES ===\n\nNow write the final answer to the user's original request."
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 60
+    },
+    {
+      "name": "the hard timeout ends the panel; one answer is returned directly",
+      "panel": [
+        "pa/a",
+        "pb/b",
+        "pc/c"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "minPanel": 2,
+        "stragglerGraceMs": 100,
+        "panelHardTimeoutMs": 300
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"alpha\"}}]}"
+        },
+        "pb/b": {
+          "delay": 900,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        },
+        "pc/c": {
+          "delay": 900,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"gamma\"}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pc/c",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pa/a",
+          "panel": false,
+          "at": 300,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 300
+    },
+    {
+      "name": "every panel model fails",
+      "panel": [
+        "pa/a",
+        "pb/b",
+        "pc/c"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "stragglerGraceMs": 100,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 500,
+          "body": "{\"error\":{\"message\":\"scripted\"}}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 503,
+          "body": "{\"error\":{\"message\":\"scripted\"}}"
+        },
+        "pc/c": {
+          "delay": 60,
+          "status": 429,
+          "body": "{\"error\":{\"message\":\"scripted\"}}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pc/c",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        }
+      ],
+      "final": {
+        "status": 503,
+        "body": "{\"error\":{\"message\":\"All fusion panel models failed\"}}"
+      },
+      "endedAt": 60
+    },
+    {
+      "name": "every panel model times out",
+      "panel": [
+        "pa/a",
+        "pb/b"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "stragglerGraceMs": 100,
+        "panelHardTimeoutMs": 200
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 900,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"alpha\"}}]}"
+        },
+        "pb/b": {
+          "delay": 900,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        }
+      ],
+      "final": {
+        "status": 503,
+        "body": "{\"error\":{\"message\":\"All fusion panel models failed\"}}"
+      },
+      "endedAt": 200
+    },
+    {
+      "name": "failures do not count toward the quorum",
+      "panel": [
+        "pa/a",
+        "pb/b",
+        "pc/c"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "minPanel": 2,
+        "stragglerGraceMs": 100,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 500,
+          "body": "{\"error\":{\"message\":\"scripted\"}}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        },
+        "pc/c": {
+          "delay": 100,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"gamma\"}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pc/c",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pj/j",
+          "panel": false,
+          "at": 100,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              },
+              {
+                "role": "user",
+                "content": "You are the JUDGE in a model-fusion panel. 2 expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\nDo NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\nFirst, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.\n\n=== PANEL RESPONSES ===\n[Source 1]\nbeta\n\n[Source 2]\ngamma\n=== END PANEL RESPONSES ===\n\nNow write the final answer to the user's original request."
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 100
+    },
+    {
+      "name": "one success is answered by calling that model with the original request",
+      "panel": [
+        "pa/a",
+        "pb/b",
+        "pc/c"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "stragglerGraceMs": 100,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "model": "panel",
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "tool_choice": "auto",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "lookup"
+            }
+          }
+        ],
+        "temperature": 0.3,
+        "messages": [
+          {
+            "role": "system",
+            "content": "rules"
+          },
+          {
+            "role": "user",
+            "content": "find it"
+          },
+          {
+            "role": "assistant",
+            "content": "checking",
+            "tool_calls": [
+              {
+                "id": "1",
+                "function": {
+                  "name": "lookup",
+                  "arguments": "{}"
+                }
+              },
+              {
+                "id": "2",
+                "name": "other"
+              },
+              {
+                "id": "3"
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "1",
+            "content": "result text"
+          },
+          {
+            "role": "function",
+            "name": "f",
+            "content": [
+              {
+                "type": "text",
+                "text": "blocks"
+              },
+              {
+                "type": "text",
+                "text": " joined"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "let me"
+              },
+              {
+                "type": "tool_use",
+                "id": "a",
+                "name": "search",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "a",
+                "content": "found"
+              },
+              {
+                "type": "text",
+                "text": "thanks"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "function": {
+                  "name": "x"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": "now answer"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 500,
+          "body": "{\"error\":{\"message\":\"scripted\"}}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        },
+        "pc/c": {
+          "delay": 60,
+          "status": 500,
+          "body": "{\"error\":{\"message\":\"scripted\"}}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "model": "panel",
+            "stream": false,
+            "temperature": 0.3,
+            "messages": [
+              {
+                "role": "system",
+                "content": "rules"
+              },
+              {
+                "role": "user",
+                "content": "find it"
+              },
+              {
+                "role": "assistant",
+                "content": "checking\n[Called tools: lookup, other, tool]"
+              },
+              {
+                "role": "assistant",
+                "content": "[Tool result: result text]"
+              },
+              {
+                "role": "assistant",
+                "content": "[Tool result: blocks joined]"
+              },
+              {
+                "role": "assistant",
+                "content": "let me\n[Called tools: search]"
+              },
+              {
+                "role": "user",
+                "content": "thanks\n[Tool result: found]"
+              },
+              {
+                "role": "assistant",
+                "content": "[Called tools: x]"
+              },
+              {
+                "role": "user",
+                "content": "now answer"
+              }
+            ]
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "model": "panel",
+            "stream": false,
+            "temperature": 0.3,
+            "messages": [
+              {
+                "role": "system",
+                "content": "rules"
+              },
+              {
+                "role": "user",
+                "content": "find it"
+              },
+              {
+                "role": "assistant",
+                "content": "checking\n[Called tools: lookup, other, tool]"
+              },
+              {
+                "role": "assistant",
+                "content": "[Tool result: result text]"
+              },
+              {
+                "role": "assistant",
+                "content": "[Tool result: blocks joined]"
+              },
+              {
+                "role": "assistant",
+                "content": "let me\n[Called tools: search]"
+              },
+              {
+                "role": "user",
+                "content": "thanks\n[Tool result: found]"
+              },
+              {
+                "role": "assistant",
+                "content": "[Called tools: x]"
+              },
+              {
+                "role": "user",
+                "content": "now answer"
+              }
+            ]
+          }
+        },
+        {
+          "model": "pc/c",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "model": "panel",
+            "stream": false,
+            "temperature": 0.3,
+            "messages": [
+              {
+                "role": "system",
+                "content": "rules"
+              },
+              {
+                "role": "user",
+                "content": "find it"
+              },
+              {
+                "role": "assistant",
+                "content": "checking\n[Called tools: lookup, other, tool]"
+              },
+              {
+                "role": "assistant",
+                "content": "[Tool result: result text]"
+              },
+              {
+                "role": "assistant",
+                "content": "[Tool result: blocks joined]"
+              },
+              {
+                "role": "assistant",
+                "content": "let me\n[Called tools: search]"
+              },
+              {
+                "role": "user",
+                "content": "thanks\n[Tool result: found]"
+              },
+              {
+                "role": "assistant",
+                "content": "[Called tools: x]"
+              },
+              {
+                "role": "user",
+                "content": "now answer"
+              }
+            ]
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": false,
+          "at": 60,
+          "body": {
+            "model": "panel",
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "function": {
+                  "name": "lookup"
+                }
+              }
+            ],
+            "temperature": 0.3,
+            "messages": [
+              {
+                "role": "system",
+                "content": "rules"
+              },
+              {
+                "role": "user",
+                "content": "find it"
+              },
+              {
+                "role": "assistant",
+                "content": "checking",
+                "tool_calls": [
+                  {
+                    "id": "1",
+                    "function": {
+                      "name": "lookup",
+                      "arguments": "{}"
+                    }
+                  },
+                  {
+                    "id": "2",
+                    "name": "other"
+                  },
+                  {
+                    "id": "3"
+                  }
+                ]
+              },
+              {
+                "role": "tool",
+                "tool_call_id": "1",
+                "content": "result text"
+              },
+              {
+                "role": "function",
+                "name": "f",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "blocks"
+                  },
+                  {
+                    "type": "text",
+                    "text": " joined"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "let me"
+                  },
+                  {
+                    "type": "tool_use",
+                    "id": "a",
+                    "name": "search",
+                    "input": {}
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "tool_use_id": "a",
+                    "content": "found"
+                  },
+                  {
+                    "type": "text",
+                    "text": "thanks"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [
+                  {
+                    "function": {
+                      "name": "x"
+                    }
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": "now answer"
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 60
+    },
+    {
+      "name": "an answer with no text is not an answer",
+      "panel": [
+        "pa/a",
+        "pb/b"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "stragglerGraceMs": 100,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"   \"}}]}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": false,
+          "at": 40,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 40
+    },
+    {
+      "name": "an unparseable answer is not an answer",
+      "panel": [
+        "pa/a",
+        "pb/b"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "stragglerGraceMs": 100,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "not json"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": false,
+          "at": 40,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 40
+    },
+    {
+      "name": "no judge configured: the first panel model judges",
+      "panel": [
+        "pa/a",
+        "pb/b"
+      ],
+      "judge": null,
+      "tuning": {
+        "stragglerGraceMs": 100,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"alpha\"}}]}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pa/a",
+          "panel": false,
+          "at": 40,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              },
+              {
+                "role": "user",
+                "content": "You are the JUDGE in a model-fusion panel. 2 expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\nDo NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\nFirst, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.\n\n=== PANEL RESPONSES ===\n[Source 1]\nalpha\n\n[Source 2]\nbeta\n=== END PANEL RESPONSES ===\n\nNow write the final answer to the user's original request."
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 40
+    },
+    {
+      "name": "a blank judge is no judge",
+      "panel": [
+        "pa/a",
+        "pb/b"
+      ],
+      "judge": "   ",
+      "tuning": {
+        "stragglerGraceMs": 100,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"alpha\"}}]}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pa/a",
+          "panel": false,
+          "at": 40,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              },
+              {
+                "role": "user",
+                "content": "You are the JUDGE in a model-fusion panel. 2 expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\nDo NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\nFirst, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.\n\n=== PANEL RESPONSES ===\n[Source 1]\nalpha\n\n[Source 2]\nbeta\n=== END PANEL RESPONSES ===\n\nNow write the final answer to the user's original request."
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 40
+    },
+    {
+      "name": "panel calls drop tools and flatten tool turns; the judge call keeps the request as it came",
+      "panel": [
+        "pa/a",
+        "pb/b"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "stragglerGraceMs": 100,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "model": "panel",
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "tool_choice": "auto",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "lookup"
+            }
+          }
+        ],
+        "temperature": 0.3,
+        "messages": [
+          {
+            "role": "system",
+            "content": "rules"
+          },
+          {
+            "role": "user",
+            "content": "find it"
+          },
+          {
+            "role": "assistant",
+            "content": "checking",
+            "tool_calls": [
+              {
+                "id": "1",
+                "function": {
+                  "name": "lookup",
+                  "arguments": "{}"
+                }
+              },
+              {
+                "id": "2",
+                "name": "other"
+              },
+              {
+                "id": "3"
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "1",
+            "content": "result text"
+          },
+          {
+            "role": "function",
+            "name": "f",
+            "content": [
+              {
+                "type": "text",
+                "text": "blocks"
+              },
+              {
+                "type": "text",
+                "text": " joined"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "let me"
+              },
+              {
+                "type": "tool_use",
+                "id": "a",
+                "name": "search",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "a",
+                "content": "found"
+              },
+              {
+                "type": "text",
+                "text": "thanks"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "function": {
+                  "name": "x"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": "now answer"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"alpha\"}}]}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "model": "panel",
+            "stream": false,
+            "temperature": 0.3,
+            "messages": [
+              {
+                "role": "system",
+                "content": "rules"
+              },
+              {
+                "role": "user",
+                "content": "find it"
+              },
+              {
+                "role": "assistant",
+                "content": "checking\n[Called tools: lookup, other, tool]"
+              },
+              {
+                "role": "assistant",
+                "content": "[Tool result: result text]"
+              },
+              {
+                "role": "assistant",
+                "content": "[Tool result: blocks joined]"
+              },
+              {
+                "role": "assistant",
+                "content": "let me\n[Called tools: search]"
+              },
+              {
+                "role": "user",
+                "content": "thanks\n[Tool result: found]"
+              },
+              {
+                "role": "assistant",
+                "content": "[Called tools: x]"
+              },
+              {
+                "role": "user",
+                "content": "now answer"
+              }
+            ]
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "model": "panel",
+            "stream": false,
+            "temperature": 0.3,
+            "messages": [
+              {
+                "role": "system",
+                "content": "rules"
+              },
+              {
+                "role": "user",
+                "content": "find it"
+              },
+              {
+                "role": "assistant",
+                "content": "checking\n[Called tools: lookup, other, tool]"
+              },
+              {
+                "role": "assistant",
+                "content": "[Tool result: result text]"
+              },
+              {
+                "role": "assistant",
+                "content": "[Tool result: blocks joined]"
+              },
+              {
+                "role": "assistant",
+                "content": "let me\n[Called tools: search]"
+              },
+              {
+                "role": "user",
+                "content": "thanks\n[Tool result: found]"
+              },
+              {
+                "role": "assistant",
+                "content": "[Called tools: x]"
+              },
+              {
+                "role": "user",
+                "content": "now answer"
+              }
+            ]
+          }
+        },
+        {
+          "model": "pj/j",
+          "panel": false,
+          "at": 40,
+          "body": {
+            "model": "panel",
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "function": {
+                  "name": "lookup"
+                }
+              }
+            ],
+            "temperature": 0.3,
+            "messages": [
+              {
+                "role": "system",
+                "content": "rules"
+              },
+              {
+                "role": "user",
+                "content": "find it"
+              },
+              {
+                "role": "assistant",
+                "content": "checking",
+                "tool_calls": [
+                  {
+                    "id": "1",
+                    "function": {
+                      "name": "lookup",
+                      "arguments": "{}"
+                    }
+                  },
+                  {
+                    "id": "2",
+                    "name": "other"
+                  },
+                  {
+                    "id": "3"
+                  }
+                ]
+              },
+              {
+                "role": "tool",
+                "tool_call_id": "1",
+                "content": "result text"
+              },
+              {
+                "role": "function",
+                "name": "f",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "blocks"
+                  },
+                  {
+                    "type": "text",
+                    "text": " joined"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "let me"
+                  },
+                  {
+                    "type": "tool_use",
+                    "id": "a",
+                    "name": "search",
+                    "input": {}
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "tool_use_id": "a",
+                    "content": "found"
+                  },
+                  {
+                    "type": "text",
+                    "text": "thanks"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [
+                  {
+                    "function": {
+                      "name": "x"
+                    }
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": "now answer"
+              },
+              {
+                "role": "user",
+                "content": "You are the JUDGE in a model-fusion panel. 2 expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\nDo NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\nFirst, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.\n\n=== PANEL RESPONSES ===\n[Source 1]\nalpha\n\n[Source 2]\nbeta\n=== END PANEL RESPONSES ===\n\nNow write the final answer to the user's original request."
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 40
+    },
+    {
+      "name": "Responses input array",
+      "panel": [
+        "pa/a",
+        "pb/b"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "stragglerGraceMs": 100,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "model": "panel",
+        "stream": false,
+        "tools": [
+          {
+            "type": "function",
+            "name": "f"
+          }
+        ],
+        "input": [
+          {
+            "role": "user",
+            "content": "hi"
+          },
+          {
+            "role": "tool",
+            "content": "out"
+          },
+          {
+            "role": "user",
+            "content": "again"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"alpha\"}]},{\"type\":\"reasoning\"}]}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 200,
+          "body": "{\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"beta\"}]},{\"type\":\"reasoning\"}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "model": "panel",
+            "stream": false,
+            "input": [
+              {
+                "role": "user",
+                "content": "hi"
+              },
+              {
+                "role": "assistant",
+                "content": "[Tool result: out]"
+              },
+              {
+                "role": "user",
+                "content": "again"
+              }
+            ]
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "model": "panel",
+            "stream": false,
+            "input": [
+              {
+                "role": "user",
+                "content": "hi"
+              },
+              {
+                "role": "assistant",
+                "content": "[Tool result: out]"
+              },
+              {
+                "role": "user",
+                "content": "again"
+              }
+            ]
+          }
+        },
+        {
+          "model": "pj/j",
+          "panel": false,
+          "at": 40,
+          "body": {
+            "model": "panel",
+            "stream": false,
+            "tools": [
+              {
+                "type": "function",
+                "name": "f"
+              }
+            ],
+            "input": [
+              {
+                "role": "user",
+                "content": "hi"
+              },
+              {
+                "role": "tool",
+                "content": "out"
+              },
+              {
+                "role": "user",
+                "content": "again"
+              },
+              {
+                "role": "user",
+                "content": "You are the JUDGE in a model-fusion panel. 2 expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\nDo NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\nFirst, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.\n\n=== PANEL RESPONSES ===\n[Source 1]\nalpha\n\n[Source 2]\nbeta\n=== END PANEL RESPONSES ===\n\nNow write the final answer to the user's original request."
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 40
+    },
+    {
+      "name": "Gemini contents are not flattened and the judge turn uses parts",
+      "panel": [
+        "pa/a",
+        "pb/b"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "stragglerGraceMs": 100,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "hi"
+              }
+            ]
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"alpha\"},{\"text\":\" more\"}]}}]}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 200,
+          "body": "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"beta\"},{\"text\":\" more\"}]}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "contents": [
+              {
+                "role": "user",
+                "parts": [
+                  {
+                    "text": "hi"
+                  }
+                ]
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "contents": [
+              {
+                "role": "user",
+                "parts": [
+                  {
+                    "text": "hi"
+                  }
+                ]
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pj/j",
+          "panel": false,
+          "at": 40,
+          "body": {
+            "contents": [
+              {
+                "role": "user",
+                "parts": [
+                  {
+                    "text": "hi"
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "parts": [
+                  {
+                    "text": "You are the JUDGE in a model-fusion panel. 2 expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\nDo NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\nFirst, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.\n\n=== PANEL RESPONSES ===\n[Source 1]\nalpha more\n\n[Source 2]\nbeta more\n=== END PANEL RESPONSES ===\n\nNow write the final answer to the user's original request."
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 40
+    },
+    {
+      "name": "a body with no message array gets a messages array for the judge",
+      "panel": [
+        "pa/a",
+        "pb/b"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "stragglerGraceMs": 100,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "model": "panel",
+        "prompt": "old style"
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"alpha\"}}]}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "model": "panel",
+            "prompt": "old style",
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "model": "panel",
+            "prompt": "old style",
+            "stream": false
+          }
+        },
+        {
+          "model": "pj/j",
+          "panel": false,
+          "at": 40,
+          "body": {
+            "model": "panel",
+            "prompt": "old style",
+            "messages": [
+              {
+                "role": "user",
+                "content": "You are the JUDGE in a model-fusion panel. 2 expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\nDo NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\nFirst, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.\n\n=== PANEL RESPONSES ===\n[Source 1]\nalpha\n\n[Source 2]\nbeta\n=== END PANEL RESPONSES ===\n\nNow write the final answer to the user's original request."
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 40
+    },
+    {
+      "name": "answer shapes: Claude blocks, Gemini parts, Responses output, delta, choice text",
+      "panel": [
+        "pa/a",
+        "pb/b",
+        "pc/c"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "minPanel": 3,
+        "stragglerGraceMs": 100,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"from claude\"}]}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 200,
+          "body": "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"from gemini\"},{\"text\":\" more\"}]}}]}"
+        },
+        "pc/c": {
+          "delay": 60,
+          "status": 200,
+          "body": "{\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"from responses\"}]},{\"type\":\"reasoning\"}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pc/c",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pj/j",
+          "panel": false,
+          "at": 60,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              },
+              {
+                "role": "user",
+                "content": "You are the JUDGE in a model-fusion panel. 3 expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\nDo NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\nFirst, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.\n\n=== PANEL RESPONSES ===\n[Source 1]\nfrom claude\n\n[Source 2]\nfrom gemini more\n\n[Source 3]\nfrom responses\n=== END PANEL RESPONSES ===\n\nNow write the final answer to the user's original request."
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 60
+    },
+    {
+      "name": "answer shapes: delta, choice text and text blocks beside other blocks",
+      "panel": [
+        "pa/a",
+        "pb/b",
+        "pc/c"
+      ],
+      "judge": "pj/j",
+      "tuning": {
+        "minPanel": 3,
+        "stragglerGraceMs": 100,
+        "panelHardTimeoutMs": 2000
+      },
+      "body": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"choices\":[{\"delta\":{\"content\":\"from delta\"}}]}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 200,
+          "body": "{\"choices\":[{\"text\":\"from text\"}]}"
+        },
+        "pc/c": {
+          "delay": 60,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"from blocks\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"u\"}}]}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pc/c",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pj/j",
+          "panel": false,
+          "at": 60,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              },
+              {
+                "role": "user",
+                "content": "You are the JUDGE in a model-fusion panel. 3 expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\nDo NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\nFirst, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.\n\n=== PANEL RESPONSES ===\n[Source 1]\nfrom delta\n\n[Source 2]\nfrom text\n\n[Source 3]\nfrom blocks\n=== END PANEL RESPONSES ===\n\nNow write the final answer to the user's original request."
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 60
+    },
+    {
+      "name": "a single-model Fusion answers directly",
+      "panel": [
+        "pa/a"
+      ],
+      "judge": "pj/j",
+      "tuning": {},
+      "body": {
+        "model": "panel",
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "tool_choice": "auto",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "lookup"
+            }
+          }
+        ],
+        "temperature": 0.3,
+        "messages": [
+          {
+            "role": "system",
+            "content": "rules"
+          },
+          {
+            "role": "user",
+            "content": "find it"
+          },
+          {
+            "role": "assistant",
+            "content": "checking",
+            "tool_calls": [
+              {
+                "id": "1",
+                "function": {
+                  "name": "lookup",
+                  "arguments": "{}"
+                }
+              },
+              {
+                "id": "2",
+                "name": "other"
+              },
+              {
+                "id": "3"
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "1",
+            "content": "result text"
+          },
+          {
+            "role": "function",
+            "name": "f",
+            "content": [
+              {
+                "type": "text",
+                "text": "blocks"
+              },
+              {
+                "type": "text",
+                "text": " joined"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "let me"
+              },
+              {
+                "type": "tool_use",
+                "id": "a",
+                "name": "search",
+                "input": {}
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "tool_use_id": "a",
+                "content": "found"
+              },
+              {
+                "type": "text",
+                "text": "thanks"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "function": {
+                  "name": "x"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": "now answer"
+          }
+        ]
+      },
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"alpha\"}}]}"
+        }
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": false,
+          "at": 0,
+          "body": {
+            "model": "panel",
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "function": {
+                  "name": "lookup"
+                }
+              }
+            ],
+            "temperature": 0.3,
+            "messages": [
+              {
+                "role": "system",
+                "content": "rules"
+              },
+              {
+                "role": "user",
+                "content": "find it"
+              },
+              {
+                "role": "assistant",
+                "content": "checking",
+                "tool_calls": [
+                  {
+                    "id": "1",
+                    "function": {
+                      "name": "lookup",
+                      "arguments": "{}"
+                    }
+                  },
+                  {
+                    "id": "2",
+                    "name": "other"
+                  },
+                  {
+                    "id": "3"
+                  }
+                ]
+              },
+              {
+                "role": "tool",
+                "tool_call_id": "1",
+                "content": "result text"
+              },
+              {
+                "role": "function",
+                "name": "f",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "blocks"
+                  },
+                  {
+                    "type": "text",
+                    "text": " joined"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "let me"
+                  },
+                  {
+                    "type": "tool_use",
+                    "id": "a",
+                    "name": "search",
+                    "input": {}
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "tool_use_id": "a",
+                    "content": "found"
+                  },
+                  {
+                    "type": "text",
+                    "text": "thanks"
+                  }
+                ]
+              },
+              {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [
+                  {
+                    "function": {
+                      "name": "x"
+                    }
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": "now answer"
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      },
+      "endedAt": 0
+    }
   ]
 }

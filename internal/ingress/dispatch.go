@@ -106,7 +106,12 @@ func foldForcedStream(ctx context.Context, response *http.Response, provider rou
 func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSnapshot, model, source string, compact, stream bool, prepare func(routing.ProviderRef) (ChatTranslation, error)) (response *http.Response, chosen routing.ProviderRef, resultErr error) {
 	// Key policy is checked before any resolution so a restricted key cannot
 	// probe which models, aliases or Combos exist.
-	if !requestPermitted(callerKey(r, snapshot), snapshot, model) {
+	// A call the gateway makes for a Fusion Combo serves the panel or judge model it
+	// names; the Combo's own entry in the key's allowlist admitted its members
+	// (keyAccess.js:162-177), so the key is not asked again for them.
+	if call := internalCallOf(r); call != nil {
+		model = call.target
+	} else if !requestPermitted(callerKey(r, snapshot), snapshot, model) {
 		return nil, routing.ProviderRef{}, &dispatchError{403, "model_not_allowed", modelNotAllowed(model)}
 	}
 	var candidates []routing.ProviderRef

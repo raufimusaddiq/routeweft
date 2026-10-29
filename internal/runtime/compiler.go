@@ -209,6 +209,7 @@ func (c Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, erro
 	snapshot.proxyURL = strings.TrimSpace(settings["outboundProxyUrl"])
 	snapshot.noProxy, _ = parseNoProxy(settings["noProxy"])
 	snapshot.compileCapacityAdapters()
+	snapshot.fusion = effectiveFusion(combos, strategyOverridesTolerant(settings["comboStrategies"], true))
 	snapshot.compileServingIndexes()
 	snapshot.compileKeyAccess(config.APIKeys)
 	return snapshot, nil

@@ -172,6 +172,8 @@ type Handler struct {
 	snapshot Snapshot
 	opts     Options
 	client   *http.Client
+	// fusionSlots bounds the Fusion requests in flight (SPEC §16).
+	fusionSlots chan struct{}
 }
 
 // New builds the public ingress handler.
@@ -183,7 +185,7 @@ func New(snapshot Snapshot, opts Options) *Handler {
 	if opts.AllowPrivateUpstreams {
 		client = transport.NewTrustedLocalSSRFProtectedClient()
 	}
-	return &Handler{snapshot: snapshot, opts: opts, client: client}
+	return &Handler{snapshot: snapshot, opts: opts, client: client, fusionSlots: make(chan struct{}, routing.DefaultFusionConfig().MaxConcurrent)}
 }
 
 // clientFor resolves the outbound client for one provider connection, honoring a
@@ -283,28 +285,28 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 		mux.HandleFunc("GET "+prefix+"/models/info", h.withCORS(h.handleModelsInfo))
 		mux.HandleFunc("GET "+prefix+"/models/{kind}", h.withCORS(h.handleModelKind))
 		mux.HandleFunc("GET "+prefix+"/models/{provider}/{model...}", h.withCORS(h.handleModel))
-		mux.HandleFunc("POST "+prefix+"/chat/completions", h.withCORS(h.handleChatCompletions))
-		mux.HandleFunc("POST "+prefix+"/responses", h.withCORS(h.handleResponses))
-		mux.HandleFunc("POST "+prefix+"/responses/compact", h.withCORS(h.handleResponsesCompact))
-		mux.HandleFunc("POST "+prefix+"/messages", h.withCORS(h.handleMessages))
+		mux.HandleFunc("POST "+prefix+"/chat/completions", h.withCORS(h.fused(h.handleChatCompletions)))
+		mux.HandleFunc("POST "+prefix+"/responses", h.withCORS(h.fused(h.handleResponses)))
+		mux.HandleFunc("POST "+prefix+"/responses/compact", h.withCORS(h.fused(h.handleResponsesCompact)))
+		mux.HandleFunc("POST "+prefix+"/messages", h.withCORS(h.fused(h.handleMessages)))
 		mux.HandleFunc("POST "+prefix+"/messages/count_tokens", h.withCORS(h.handleCountTokens))
-		mux.HandleFunc("POST "+prefix+"/api/chat", h.withCORS(h.handleOllamaChat))
+		mux.HandleFunc("POST "+prefix+"/api/chat", h.withCORS(h.fused(h.handleOllamaChat)))
 		mux.HandleFunc("POST "+prefix+"/systemone", h.withCORS(h.handleSystemOne))
 	}
-	mux.HandleFunc("POST /responses", h.withCORS(h.handleResponses))
-	mux.HandleFunc("POST /codex/{path...}", h.withCORS(h.handleResponses))
-	mux.HandleFunc("POST /codex", h.withCORS(h.handleResponses))
+	mux.HandleFunc("POST /responses", h.withCORS(h.fused(h.handleResponses)))
+	mux.HandleFunc("POST /codex/{path...}", h.withCORS(h.fused(h.handleResponses)))
+	mux.HandleFunc("POST /codex", h.withCORS(h.fused(h.handleResponses)))
 	mux.HandleFunc("OPTIONS /responses", h.withCORS(h.handlePreflight))
 	mux.HandleFunc("OPTIONS /codex/{path...}", h.withCORS(h.handlePreflight))
 	mux.HandleFunc("OPTIONS /codex", h.withCORS(h.handlePreflight))
-	mux.HandleFunc("POST /messages", h.withCORS(h.handleMessages))
+	mux.HandleFunc("POST /messages", h.withCORS(h.fused(h.handleMessages)))
 	mux.HandleFunc("POST /messages/count_tokens", h.withCORS(h.handleCountTokens))
 	mux.HandleFunc("OPTIONS /messages", h.withCORS(h.handlePreflight))
 	mux.HandleFunc("OPTIONS /messages/count_tokens", h.withCORS(h.handlePreflight))
 	for _, prefix := range []string{"/v1beta", "/api/v1beta"} {
 		mux.HandleFunc("GET "+prefix+"/models", h.withCORS(h.handleGeminiModels))
 		mux.HandleFunc("OPTIONS "+prefix+"/{rest...}", h.withCORS(h.handlePreflight))
-		mux.HandleFunc("POST "+prefix+"/models/{rest...}", h.withCORS(h.handleGeminiRoute))
+		mux.HandleFunc("POST "+prefix+"/models/{rest...}", h.withCORS(h.fused(h.handleGeminiRoute)))
 	}
 	mux.HandleFunc("GET /api/tags", h.withCORS(h.handleOllamaTags))
 	mux.HandleFunc("OPTIONS /api/tags", h.withCORS(h.handlePreflight))

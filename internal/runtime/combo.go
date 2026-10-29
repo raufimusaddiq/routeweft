@@ -135,35 +135,96 @@ func compileCombos(combos []Combo, models map[string]Model, aliases map[string]M
 	return compiled, nil
 }
 
-// checkNestedCombos requires every nested member to name a Combo, forbids a
-// Combo from reaching itself and bounds the nesting depth.
-func checkNestedCombos(combos map[string]Combo) error {
-	state := make(map[string]int, len(combos)) // 1 = on the current path, 2 = done
-	var visit func(name string, depth int) error
-	visit = func(name string, depth int) error {
-		if depth > MaxComboDepth {
-			return fmt.Errorf("combo %q: nested Combos are deeper than %d", name, MaxComboDepth)
+// effectiveFusion lays the comboStrategies entries over the stored Combos the way
+// the pin reads them and returns the Combos served as Fusion, overlaid. The
+// entry's fallbackStrategy decides whether a Combo is Fusion (chat.js:110-133)
+// and its judgeModel and fusionTuning apply to it; an entry with a plain
+// strategy turns a Combo's own fusion flag off, an entry naming no strategy leaves
+// the Combo as stored, and an entry for a name that is not a Combo does nothing.
+// The stored Combos are not changed: the snapshot's Combos are what the next
+// configuration update writes back, and an overlay must not become stored.
+func effectiveFusion(combos map[string]Combo, overrides map[string]strategyOverride) map[string]Combo {
+	fusion := make(map[string]Combo)
+	for name, combo := range combos {
+		override := overrides[name]
+		enabled := combo.FusionEnabled
+		switch {
+		case override.Fusion:
+			enabled = true
+			if override.JudgeModel != "" {
+				combo.JudgeModel = override.JudgeModel
+			}
+			if !override.Tuning.IsZero() {
+				combo.FusionTuning = override.Tuning
+			}
+		case override.Strategy != "":
+			enabled = false
 		}
-		state[name] = 1
+		if enabled && len(combo.Resolve()) > 0 && !strings.Contains(name, "/") {
+			combo.FusionEnabled = true
+			fusion[name] = combo
+		}
+	}
+	return fusion
+}
+
+// FusionCombo returns the Combo, as configured for Fusion, when it is served as
+// Fusion: a name without a slash with at least one selected member
+// (combo.js:254-266).
+func (s *RuntimeSnapshot) FusionCombo(name string) (Combo, bool) {
+	if s == nil || len(s.fusion) == 0 {
+		return Combo{}, false
+	}
+	combo, ok := s.fusion[name]
+	if !ok {
+		return Combo{}, false
+	}
+	combo.Members = append([]ComboMember(nil), combo.Members...)
+	combo.FusionTuning = combo.FusionTuning.Clone()
+	return combo, true
+}
+
+// HasFusion reports whether any Combo is served as Fusion, so a request for
+// anything else never pays to find out.
+func (s *RuntimeSnapshot) HasFusion() bool { return s != nil && len(s.fusion) > 0 }
+
+// checkNestedCombos requires every nested member to name a Combo, forbids a
+// Combo from reaching itself and bounds the nesting depth. The depth of a Combo
+// is the longest chain below it, so it does not depend on which Combo is visited
+// first.
+func checkNestedCombos(combos map[string]Combo) error {
+	const onPath = -1
+	height := make(map[string]int, len(combos)) // 0 = unvisited, onPath = on the current path
+	var visit func(name string) (int, error)
+	visit = func(name string) (int, error) {
+		switch height[name] {
+		case onPath:
+			return 0, fmt.Errorf("combo %q: nested Combo %q forms a cycle", name, name)
+		case 0:
+		default:
+			return height[name], nil
+		}
+		height[name] = onPath
+		deepest := 0
 		for _, member := range combos[name].Members {
 			if !member.IsCombo() {
 				continue
 			}
 			inner, ok := combos[member.ModelID]
 			if !ok {
-				return fmt.Errorf("combo %q: member %s is not a known model or Combo", name, member.ModelID)
+				return 0, fmt.Errorf("combo %q: member %s is not a known model or Combo", name, member.ModelID)
 			}
-			switch state[inner.Name] {
-			case 1:
-				return fmt.Errorf("combo %q: nested Combo %q forms a cycle", name, inner.Name)
-			case 0:
-				if err := visit(inner.Name, depth+1); err != nil {
-					return err
-				}
+			h, err := visit(inner.Name)
+			if err != nil {
+				return 0, err
 			}
+			deepest = max(deepest, h)
 		}
-		state[name] = 2
-		return nil
+		height[name] = deepest + 1
+		if height[name] > MaxComboDepth {
+			return 0, fmt.Errorf("combo %q: nested Combos are deeper than %d", name, MaxComboDepth)
+		}
+		return height[name], nil
 	}
 	names := make([]string, 0, len(combos))
 	for name := range combos {
@@ -171,10 +232,8 @@ func checkNestedCombos(combos map[string]Combo) error {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		if state[name] == 0 {
-			if err := visit(name, 1); err != nil {
-				return err
-			}
+		if _, err := visit(name); err != nil {
+			return err
 		}
 	}
 	return nil
