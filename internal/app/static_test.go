@@ -272,3 +272,62 @@ func TestStaticUIRequiresIndex(t *testing.T) {
 		t.Fatalf("health: %d", rr.Code)
 	}
 }
+
+// #279: the dashboard's runtime translator fetches /i18n/literals/<locale>.json. Vite copies
+// ui/public to the UI root, so the real server must serve the committed catalogs from there:
+// every locale but English, byte for byte, as JSON that revalidates (not an immutable asset),
+// and a locale with no catalog is a 404, not index.html, which the translator would parse as JSON.
+func TestStaticUIServesTheLocaleCatalogs(t *testing.T) {
+	source := filepath.Join("..", "..", "ui", "public", "i18n", "literals")
+	entries, err := os.ReadDir(source)
+	if err != nil || len(entries) != 34 {
+		t.Fatalf("catalogs in %s: %d, %v (want 34, one per locale but English)", source, len(entries), err)
+	}
+	dir := uiFixture(t)
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(source, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(dir, "i18n", "literals", entry.Name())
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := New(Config{UIDir: dir}, nil).Handler()
+	for _, entry := range entries {
+		want, _ := os.ReadFile(filepath.Join(source, entry.Name()))
+		rr := getUI(t, h, http.MethodGet, "/i18n/literals/"+entry.Name())
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: got %d", entry.Name(), rr.Code)
+		}
+		if got := rr.Header().Get("Content-Type"); got != "application/json" {
+			t.Errorf("%s: content-type %q", entry.Name(), got)
+		}
+		if got := rr.Header().Get("Cache-Control"); got != "no-cache" {
+			t.Errorf("%s: cache-control %q, want no-cache so a corrected catalog is picked up", entry.Name(), got)
+		}
+		if rr.Body.String() != string(want) {
+			t.Errorf("%s: served bytes differ from the committed catalog", entry.Name())
+		}
+	}
+	for _, missing := range []string{"/i18n/literals/en.json", "/i18n/literals/xx.json", "/i18n/literals/"} {
+		if rr := getUI(t, h, http.MethodGet, missing); rr.Code != http.StatusNotFound {
+			t.Errorf("%s: got %d, want 404 (never index.html)", missing, rr.Code)
+		}
+	}
+	// A path that climbs out of the directory is cleaned by the mux (a redirect) and the
+	// cleaned path has no catalog either; nothing is served from it.
+	rr := getUI(t, h, http.MethodGet, "/i18n/literals/../vi.json")
+	if rr.Code == http.StatusOK {
+		t.Fatalf("a climbing path was served: %d", rr.Code)
+	}
+	if rr.Code == http.StatusTemporaryRedirect || rr.Code == http.StatusMovedPermanently {
+		if followed := getUI(t, h, http.MethodGet, rr.Header().Get("Location")); followed.Code != http.StatusNotFound {
+			t.Errorf("following the redirect to %s: got %d, want 404", rr.Header().Get("Location"), followed.Code)
+		}
+	}
+}

@@ -40,6 +40,7 @@ parity-test:
 	node compat/parity/generate-proxy-pools.mjs --check
 	node compat/parity/generate-protocol-legs.mjs --check
 	node compat/parity/generate-control-workflows.mjs --check
+	node compat/parity/generate-locales.mjs --check
 	node compat/parity/ledger.mjs --check
 	go test -race ./internal/app -run TestPinnedSystemOneDifferential -count=1
 	go test -race ./internal/security ./internal/ingress ./internal/providers/shared ./internal/providers/wire ./internal/protocol/concerns

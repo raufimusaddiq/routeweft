@@ -104,7 +104,12 @@ every route, not only the UI), which is then
 404 unless it names a built file. Symlinks inside the UI directory are followed
 only while they resolve inside it (the directory may itself be a symlink); a link
 to anything outside is a 404, so nothing outside the UI directory is read. Leave it
-unset to serve API only and let Caddy serve the assets. A directory without
+unset to serve API only and let Caddy serve the assets, all of them: the dashboard
+also loads its language catalogs from `/i18n/literals/<locale>.json` (34 files from
+`ui/public/i18n/literals/`, copied to the UI root by the build); a proxy that serves
+the assets but not that path leaves the dashboard in English. The language is the
+`locale` cookie in the operator's browser (path `/`, one year); the server never reads
+it. A directory without
 `index.html` logs an error and disables the UI; the API keeps running.
 
 The default request-body limit is 128 MiB. Cross-origin requests are denied

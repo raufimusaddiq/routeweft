@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { LanguageButton } from './LanguageSelector'
 
 type Values = Record<string, string>
 type Props = { onUnauthorized: () => void }
@@ -198,6 +199,10 @@ export function Settings({ onUnauthorized }: Props) {
     {error && <p className="auth-error" role="alert">{error}</p>}{notice && <p className="inline-notice" role="status">{notice}</p>}
 
     <div className="settings-grid">
+      <section className="detail-panel" aria-labelledby="settings-language-title">
+        <div className="section-heading"><div><h2 id="settings-language-title">Language</h2><p>The language this dashboard is shown in. It is kept in this browser and applies to the sign-in page too.</p></div></div>
+        <div className="settings-language"><span id="settings-language-label" className="count-label">Display language</span><LanguageButton id="settings-language-button" labelId="settings-language-label" /></div>
+      </section>
       <section className="detail-panel" aria-labelledby="settings-auth-title">
         <div className="section-heading"><div><h2 id="settings-auth-title">Authentication</h2><p>Dashboard login is mandatory; inference API-key enforcement is configurable.</p></div></div>
         <div className="setting-toggle"><div><strong>Dashboard login</strong><small>Admin control-plane routes always require a valid session.</small></div><span className="state-tag state-good">Required</span></div>

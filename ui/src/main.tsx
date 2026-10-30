@@ -8,6 +8,8 @@ import { Overview } from './Overview'
 import { Providers } from './Providers'
 import { Quota } from './Quota'
 import { SignIn } from './SignIn'
+import { LanguageButton } from './LanguageSelector'
+import { initI18n } from './i18n'
 import { Settings } from './Settings'
 import { SystemOne } from './SystemOne'
 import { TokenSaver } from './TokenSaver'
@@ -183,6 +185,8 @@ function App() {
             <option value="light">Light</option>
             <option value="dark">Dark</option>
           </select>
+          <span id="language-label" className="sidebar-footer-label">Language</span>
+          <LanguageButton id="language-button" labelId="language-label" />
           <span className="build-label"><span className="status-dot" /> Service shell</span>
         </div>
       </aside>
@@ -222,6 +226,9 @@ function App() {
     </div>
   )
 }
+
+// Translate the page in the saved language from the first render on (#279); English needs no catalog.
+initI18n()
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode><App /></React.StrictMode>,
