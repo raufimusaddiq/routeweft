@@ -2750,3 +2750,19 @@ settings transaction protocol under non-writable `quotaAutoPingHistory`.
 Codex streams must finish before a ping counts as successful. A crash between
 upstream acceptance and the local commit can repeat a ping after restart.
 Per-provider evidence and retained gaps: `P05_QUOTA_AUDIT.md`.
+
+**Warming switch on the Quota page (#297).** `GET /admin/v1/quota` items carry
+`authKind` (the connection's credential kind, never a secret). The page draws a
+per-account switch only for `claude` and `codex` items whose `authKind` is `oauth`,
+as the oracle does (`usage/components/ProviderLimits/index.js:1193`, LiteRouter
+`4279093457458e168a2431604935f0145f2e76ec`). It reads the opt-ins from
+`GET /admin/v1/settings` (`:543-555`), and a change reads them again, sets or removes
+only that account's entry and writes the provider's whole `{"connections":{...}}`
+value with `PATCH /admin/v1/settings` (`:557-577`); the account list is therefore
+last-writer-wins across browsers, as the oracle's is. Unlike the oracle, which reverts
+only when the request throws and ignores an HTTP error, the page also leaves the
+switch unchanged and reports the error on a refused save, and it hides the switches
+when the settings cannot be read instead of drawing them off. State is shown in words,
+not colour alone; the controls are keyboard operable with 44px targets and no
+horizontal overflow at 320px. Default-off and the bounded, one-at-a-time worker above
+are unchanged.

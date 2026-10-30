@@ -221,3 +221,20 @@ func TestQuotaRefreshDeadlineHoldsAgainstARefresherThatIgnoresCancellation(t *te
 		t.Fatalf("refreshers started %d, want 2", n)
 	}
 }
+
+// The slot a refresh holds is free by the time its success is announced: a client
+// that reacts to the "succeeded" event with another request must be accepted, not
+// told the previous refresh has not stopped (409 refresh_busy). Before the slot was
+// released ahead of the announcement this failed intermittently, which is how
+// TestQuotaRefreshJoinsTheJobInFlight flaked on CI.
+func TestQuotaRefreshSlotIsFreeWhenSuccessIsAnnounced(t *testing.T) {
+	_, mux, cookie, events := newRefreshRig(t, func(context.Context) error { return nil })
+	for i := 0; i < 300; i++ {
+		accepted := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/quota/refresh", "")
+		if accepted.Code != http.StatusAccepted {
+			t.Fatalf("request %d: %d %s", i, accepted.Code, accepted.Body)
+		}
+		job := decodeRefresh(t, accepted.Body.String())
+		awaitRefresh(t, events, job.Job.ID, quotaRefreshSucceeded)
+	}
+}
