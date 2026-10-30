@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchAll } from './ProviderPaging'
+import { useLiveChannel } from './liveChannel'
+import type { ChannelState } from './liveEvents'
 import type { Summary, UsageEvent } from './format'
 
 export type Overview = {
@@ -20,8 +22,16 @@ export type OverviewData = {
   loading: boolean
   error: string
   updatedAt: string
+  /** The shared live channel's state: Live, or the polling fallback in force. */
+  live: ChannelState
   reload: () => void
 }
+
+// What changes the Overview's numbers: configuration (counts, accounts, readiness) and finished requests (traffic,
+// errors, the recent log). Other events (pending counts, console lines, quota refreshes) do not, so they do not reload it.
+const OVERVIEW_EVENTS = ['config.updated', 'request.completed'] as const
+/** At most one reload this often, however many events arrive; a request burst is one reload at its end. */
+export const OVERVIEW_MIN_RELOAD_MS = 3000
 
 // The overview itself is required. Everything that only enriches it (usage history, the request log,
 // the connection list) is fail-open: if one of those fails the page still renders what it has.
@@ -34,11 +44,14 @@ async function optional<T>(url: string, signal: AbortSignal, onUnauthorized: () 
 }
 
 export function useOverviewData(onUnauthorized: () => void): OverviewData {
-  const [state, setState] = useState<Omit<OverviewData, 'reload'>>({ overview: null, week: null, month: null, events: [], connections: [], loading: true, error: '', updatedAt: '' })
+  const [state, setState] = useState<Omit<OverviewData, 'reload' | 'live'>>({ overview: null, week: null, month: null, events: [], connections: [], loading: true, error: '', updatedAt: '' })
   const controller = useRef<AbortController | null>(null)
+  const lastLoad = useRef(0)
+  const pending = useRef<number | null>(null)
 
   const load = useCallback(async () => {
     controller.current?.abort()
+    lastLoad.current = Date.now()
     const abort = new AbortController()
     controller.current = abort
     const { signal } = abort
@@ -66,5 +79,16 @@ export function useOverviewData(onUnauthorized: () => void): OverviewData {
   }, [onUnauthorized])
 
   useEffect(() => { void load(); return () => controller.current?.abort() }, [load])
-  return { ...state, reload: () => void load() }
+
+  // Targeted invalidation: a relevant event, a missed event, a restored stream, or the polling fallback's tick all
+  // ask for one trailing reload, never more often than OVERVIEW_MIN_RELOAD_MS.
+  const reloadSoon = useCallback(() => {
+    if (pending.current !== null) return
+    const wait = Math.max(0, lastLoad.current + OVERVIEW_MIN_RELOAD_MS - Date.now())
+    pending.current = window.setTimeout(() => { pending.current = null; void load() }, wait)
+  }, [load])
+  useEffect(() => () => { if (pending.current !== null) window.clearTimeout(pending.current) }, [])
+  const live = useLiveChannel({ types: OVERVIEW_EVENTS, onEvent: reloadSoon, onRefresh: reloadSoon })
+
+  return { ...state, live, reload: () => void load() }
 }

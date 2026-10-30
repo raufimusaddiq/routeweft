@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	controlevents "github.com/raufimusaddiq/routeweft/internal/control/events"
 )
 
 const (
@@ -39,6 +41,100 @@ type LogBuffer struct {
 	entries  []ConsoleLog
 	capacity int
 	nextID   uint64
+	feed     *consoleFeed
+}
+
+// Console records reach the dashboard on the shared event channel (SPEC 22.1, #277), in the
+// oracle's shape: the buffered lines are read once (GET /admin/v1/logs), then new lines and the
+// clear are pushed (src/app/api/console-logs/stream/route.js:28-65). A burst is coalesced into
+// one "console.log" event per consoleBatchDelay, as the live view coalesces "usage.pending", so
+// per-request log volume cannot flood the bounded subscriber queues that carry configuration
+// invalidations. A burst larger than consoleBatchMax sends the newest consoleBatchMax lines and
+// says so (truncated), and the page re-reads the buffer.
+const (
+	consoleBatchDelay = 150 * time.Millisecond
+	consoleBatchMax   = 100
+)
+
+type consoleFeed struct {
+	bus   *controlevents.Bus
+	delay time.Duration
+
+	mu        sync.Mutex
+	scheduled bool
+	published uint64 // the id of the newest record already announced
+}
+
+// PublishTo announces new records and clears on bus. A nil bus stops announcing.
+func (b *LogBuffer) PublishTo(bus *controlevents.Bus) { b.publishTo(bus, consoleBatchDelay) }
+
+func (b *LogBuffer) publishTo(bus *controlevents.Bus, delay time.Duration) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if bus == nil {
+		b.feed = nil
+		return
+	}
+	b.feed = &consoleFeed{bus: bus, delay: delay, published: b.nextID}
+}
+
+func (f *consoleFeed) changed(b *LogBuffer) {
+	f.mu.Lock()
+	if f.scheduled {
+		f.mu.Unlock()
+		return
+	}
+	f.scheduled = true
+	f.mu.Unlock()
+	time.AfterFunc(f.delay, func() { f.flush(b) })
+}
+
+func (f *consoleFeed) flush(b *LogBuffer) {
+	f.mu.Lock()
+	f.scheduled = false
+	after := f.published
+	f.mu.Unlock()
+	lines, newest, truncated := b.since(after, consoleBatchMax)
+	if len(lines) == 0 {
+		return
+	}
+	f.mu.Lock()
+	if newest > f.published {
+		f.published = newest
+	}
+	f.mu.Unlock()
+	f.bus.Publish("console.log", map[string]any{"lines": lines, "truncated": truncated})
+}
+
+// since returns the records after id in id order, at most max of them (the newest ones when more
+// arrived), the newest id seen, and whether older new records were left out.
+func (b *LogBuffer) since(id uint64, max int) ([]any, uint64, bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	start := len(b.entries)
+	for start > 0 && b.entries[start-1].ID > id {
+		start--
+	}
+	fresh := b.entries[start:]
+	if len(fresh) == 0 {
+		return nil, id, false
+	}
+	truncated := false
+	if len(fresh) > max {
+		fresh, truncated = fresh[len(fresh)-max:], true
+	}
+	lines := make([]any, 0, len(fresh))
+	for _, entry := range fresh {
+		line := map[string]any{"id": entry.ID, "time": entry.Time.Format(time.RFC3339Nano), "level": entry.Level, "message": entry.Message}
+		if len(entry.Attributes) > 0 {
+			line["attributes"] = entry.Attributes
+		}
+		lines = append(lines, line)
+	}
+	return lines, fresh[len(fresh)-1].ID, truncated
 }
 
 func NewLogBuffer(capacity int) *LogBuffer {
@@ -60,7 +156,6 @@ func (b *LogBuffer) append(record slog.Record, attrs map[string]any) {
 		attrs = map[string]any{"omitted": "log attributes exceeded size limit"}
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	b.nextID++
 	entry := ConsoleLog{ID: b.nextID, Time: record.Time.UTC(), Level: record.Level.String(), Message: message, Attributes: attrs}
 	if entry.Time.IsZero() {
@@ -69,9 +164,14 @@ func (b *LogBuffer) append(record slog.Record, attrs map[string]any) {
 	if len(b.entries) == b.capacity {
 		copy(b.entries, b.entries[1:])
 		b.entries[len(b.entries)-1] = entry
-		return
+	} else {
+		b.entries = append(b.entries, entry)
 	}
-	b.entries = append(b.entries, entry)
+	feed := b.feed
+	b.mu.Unlock()
+	if feed != nil {
+		feed.changed(b)
+	}
 }
 
 // clear drops every buffered record and reports how many it removed. Record ids
@@ -81,9 +181,18 @@ func (b *LogBuffer) clear() int {
 		return 0
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	removed := len(b.entries)
 	b.entries = b.entries[:0]
+	feed, newest := b.feed, b.nextID
+	b.mu.Unlock()
+	if feed != nil {
+		// Nothing before the clear is announced afterwards, and every page is told at once
+		// (the oracle's "clear" message, console-logs/stream/route.js:53-61).
+		feed.mu.Lock()
+		feed.published = newest
+		feed.mu.Unlock()
+		feed.bus.Publish("console.cleared", map[string]any{"cleared": removed})
+	}
 	return removed
 }
 
