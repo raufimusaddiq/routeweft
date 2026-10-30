@@ -1251,7 +1251,11 @@ terminated paths stop it as well. Waits are on page conditions, never sleeps.
 Playwright is pinned to `playwright-core` 1.49.1, installed with
 `npm install --no-save --no-package-lock` (the manifest is untouched); Chromium and
 Firefox are cached under `~/.cache/ms-playwright` by that version and the system
-libraries are installed with `playwright-core install-deps`. The evidence directory and
+libraries are installed with `playwright-core install-deps`. The scripts launch the
+full Chromium that install provides (`chromium.executablePath()`), not Playwright's
+headless-shell default, because the OAuth journeys script asserts there are no console
+errors and the headless shell reports a blocked popup navigation the full browser does
+not; `ROUTEWEFT_SMOKE_CHROME` still overrides the binary. The evidence directory and
 the preview log are uploaded as the `ui-smoke-evidence` artifact.
 
 **Required checks are branch-protection settings, not repository code.** When #280 was

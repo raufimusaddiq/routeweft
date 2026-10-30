@@ -28,7 +28,7 @@ const PROVIDERS = {
 const SENTINELS = ['claude-code-sentinel', 'xai-code-sentinel', 'gemini-code-sentinel', 'ag-code-sentinel', 'gitlab-code-sentinel', 'cline-code-sentinel', 'clinepass-code-sentinel', 'iflow-code-sentinel', 'kimchi-token-sentinel', 'xiaomi-encrypted-sentinel', 'zed-encrypted-sentinel', 'gitlab-secret-sentinel'];
 
 (async () => {
-  const chrome = await chromium.launch({ executablePath: process.env.ROUTEWEFT_SMOKE_CHROME || '/root/.cache/ms-playwright/chromium-1148/chrome-linux/chrome', args: ['--no-sandbox'] });
+  const chrome = await chromium.launch({ executablePath: process.env.ROUTEWEFT_SMOKE_CHROME || chromium.executablePath(), args: ['--no-sandbox'] });
   const page = await chrome.newPage({ viewport: { width: 1440, height: 900 } });
   const errors = [];
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));
