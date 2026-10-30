@@ -5,18 +5,22 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/store/migrations"
 	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
 func newManager(t *testing.T) *runtime.Manager {
 	t.Helper()
 	ctx := context.Background()
-	store, err := sqlite.Open(ctx, t.TempDir()+"/routeweft.sqlite")
+	path := filepath.Join(t.TempDir(), "routeweft.sqlite")
+	storetest.Seed(t, path)
+	store, err := sqlite.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}

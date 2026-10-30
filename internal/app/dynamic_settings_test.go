@@ -5,12 +5,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 	"github.com/raufimusaddiq/routeweft/internal/telemetry"
 )
 
 func TestObservabilitySettingsApplyWithoutRestart(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	a := New(Config{DataDir: t.TempDir()}, nil)
+	a := New(Config{DataDir: storetest.DataDir(t)}, nil)
 	if err := a.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}

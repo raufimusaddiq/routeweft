@@ -19,6 +19,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/store/migrations"
 	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
 func TestCustomTypedNodeAndCloudflareAccountWorkflow(t *testing.T) {
@@ -98,7 +99,9 @@ func TestCustomTypedNodeAndCloudflareAccountWorkflow(t *testing.T) {
 func newProvidersAPI(t *testing.T, allowPrivate bool, upstream *discovery.Client) (*Handler, *http.ServeMux, *sqlite.Store, *credentials.Store, *http.Cookie) {
 	t.Helper()
 	ctx := context.Background()
-	store, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "routeweft.sqlite"))
+	dbPath := filepath.Join(t.TempDir(), "routeweft.sqlite")
+	storetest.Seed(t, dbPath)
+	store, err := sqlite.Open(ctx, dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}

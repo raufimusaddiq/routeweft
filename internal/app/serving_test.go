@@ -19,11 +19,12 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
 func servingApp(t testing.TB, upstream string, count int) (*App, string) {
 	t.Helper()
-	a := New(Config{DataDir: t.TempDir(), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true}, nil)
+	a := New(Config{DataDir: storetest.DataDir(t), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true}, nil)
 	ctx := context.Background()
 	if err := a.Initialize(ctx); err != nil {
 		t.Fatal(err)
@@ -118,7 +119,7 @@ func TestConfiguredServingControlMutations(t *testing.T) {
 		fmt.Fprint(w, r.URL.Path+" "+r.Header.Get("Authorization"))
 	}))
 	defer upstream.Close()
-	a := New(Config{DataDir: t.TempDir(), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true, AdminBootstrapUsername: "operator", AdminBootstrapPassword: "synthetic-password"}, nil)
+	a := New(Config{DataDir: storetest.DataDirWithAdmin(t, "operator", "synthetic-password"), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true, AdminBootstrapUsername: "operator", AdminBootstrapPassword: "synthetic-password"}, nil)
 	if err := a.Initialize(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -744,7 +745,7 @@ func TestFreshInstallRoutesSeededModel(t *testing.T) {
 		fmt.Fprint(w, r.URL.Path)
 	}))
 	defer upstream.Close()
-	a := New(Config{DataDir: t.TempDir(), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true, AdminBootstrapUsername: "operator", AdminBootstrapPassword: "synthetic-password"}, nil)
+	a := New(Config{DataDir: storetest.DataDirWithAdmin(t, "operator", "synthetic-password"), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true, AdminBootstrapUsername: "operator", AdminBootstrapPassword: "synthetic-password"}, nil)
 	if err := a.Initialize(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -796,7 +797,7 @@ func TestEverySeededProviderServesItsFirstModel(t *testing.T) {
 		fmt.Fprint(w, r.URL.Path)
 	}))
 	defer upstream.Close()
-	a := New(Config{DataDir: t.TempDir(), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true}, nil)
+	a := New(Config{DataDir: storetest.DataDir(t), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true}, nil)
 	if err := a.Initialize(context.Background()); err != nil {
 		t.Fatal(err)
 	}

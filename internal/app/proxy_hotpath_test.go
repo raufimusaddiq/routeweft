@@ -6,6 +6,7 @@ import (
 
 	"github.com/raufimusaddiq/routeweft/internal/proxy"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
 // TestProxySelectionIsDatabaseFreeOnTheHotPath proves the review fix: after the
@@ -17,7 +18,7 @@ func TestProxySelectionIsDatabaseFreeOnTheHotPath(t *testing.T) {
 	for i := range key {
 		key[i] = byte(i + 3)
 	}
-	application := New(Config{Listen: ":0", DataDir: t.TempDir(), CredentialKey: key, AllowPrivateUpstreams: true}, nil)
+	application := New(Config{Listen: ":0", DataDir: storetest.DataDir(t), CredentialKey: key, AllowPrivateUpstreams: true}, nil)
 	if err := application.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}

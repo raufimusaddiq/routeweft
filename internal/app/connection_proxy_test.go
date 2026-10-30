@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
 // hopRecorder is a stand-in proxy: it records the destination host of every
@@ -69,7 +70,7 @@ func TestImportedCodexConnectionProxyEndToEnd(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			legacy, global := newHopRecorder(t), newHopRecorder(t)
-			a := New(Config{DataDir: t.TempDir(), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true}, nil)
+			a := New(Config{DataDir: storetest.DataDir(t), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true}, nil)
 			if err := a.Initialize(ctx); err != nil {
 				t.Fatal(err)
 			}

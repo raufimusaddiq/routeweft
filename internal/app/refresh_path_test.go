@@ -6,13 +6,14 @@ import (
 	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
 // TestProductionRefreshPathUsesARealClient exercises the wiring the app installs,
 // not a test-supplied resolver: a nil client there failed every refresh at request
 // time while the resolver still looked healthy.
 func TestProductionRefreshPathUsesARealClient(t *testing.T) {
-	a := New(Config{DataDir: t.TempDir(), CredentialKey: []byte("01234567890123456789012345678901")}, nil)
+	a := New(Config{DataDir: storetest.DataDir(t), CredentialKey: []byte("01234567890123456789012345678901")}, nil)
 	if err := a.Initialize(context.Background()); err != nil {
 		t.Fatal(err)
 	}

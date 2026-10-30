@@ -367,9 +367,18 @@ func TestProxyTestHonorsGlobalProxyEnabledFlag(t *testing.T) {
 func TestProxyPoolTestDialsEveryMemberOfALargePool(t *testing.T) {
 	_, mux, store, _, cookie := newProvidersAPI(t, true, nil)
 	defer store.Close()
+	// closedPort frees its port on return, so the kernel may hand the same
+	// ephemeral port out twice; the pool dedups identical URLs, which would
+	// leave fewer than 9 members. Collect nine distinct addresses.
 	var members []string
-	for i := 0; i < 9; i++ {
-		members = append(members, `{"url":"http://`+closedPort(t)+`"}`)
+	seen := map[string]bool{}
+	for len(members) < 9 {
+		address := closedPort(t)
+		if seen[address] {
+			continue
+		}
+		seen[address] = true
+		members = append(members, `{"url":"http://`+address+`"}`)
 	}
 	created := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/proxy-pools", `{"name":"big","members":[`+strings.Join(members, ",")+`]}`)
 	var pool struct {

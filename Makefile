@@ -43,8 +43,9 @@ parity-test:
 
 race:
 	# 10m is also go test's default per-package timeout; it is spelled out so the
-	# budget RUNBOOK 29 tracks (internal/app was 433s) is visible, not changed.
-	go test -race -timeout 10m ./...
+	# budget RUNBOOK 29 tracks is visible, not changed. CI runs the same command
+	# (the `race` job in .github/workflows/ci.yml).
+	go test -race -count=1 -timeout 10m ./...
 
 bench-router:
 	go test ./bench/router -run '^$$' -bench . -benchmem -count=5

@@ -18,11 +18,12 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/cloudflare"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
 func systemOneApp(t *testing.T, provider, upstream string, accounts int) (*App, string, string) {
 	t.Helper()
-	a := New(Config{DataDir: t.TempDir(), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true}, nil)
+	a := New(Config{DataDir: storetest.DataDir(t), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true}, nil)
 	ctx := context.Background()
 	if err := a.Initialize(ctx); err != nil {
 		t.Fatal(err)
