@@ -68,9 +68,20 @@ jobs:
       - run: node compat/parity/generate-pxpipe.mjs --check
       # Proxy pools, relay pools and the Netlify relay deploy (#272).
       - run: node compat/parity/generate-proxy-pools.mjs --check
+      # The oracle's conversion legs over the corpus, and the divergence ledger every
+      # difference from them is accounted for in (#274).
+      - run: node compat/parity/generate-protocol-legs.mjs --check
+      - run: node compat/parity/generate-control-workflows.mjs --check
+      - run: node compat/parity/ledger.mjs --check
+      - name: Upload the divergence ledger
+        uses: actions/upload-artifact@v4
+        with:
+          name: divergence-ledger
+          path: docs/DIVERGENCE_LEDGER.md
       - run: go test -race ./internal/app -run TestPinnedSystemOneDifferential -count=1
       - run: go test -race ./internal/security ./internal/ingress ./internal/providers/shared ./internal/providers/wire ./internal/protocol/concerns
       - run: go test -race ./internal/parity ./internal/protocol/hub ./internal/pricing ./internal/transforms/... ./internal/proxy/... ./internal/transport -count=1
+      - run: go test -race ./internal/control/api -run "ControlWorkflows" -count=1
       # Provider catalog, model seeds, quota readers and onboarding flows are
       # compared against the oracle: no hand-kept provider list can drift.
       - run: go test -tags oracle ./internal/providers/parity -count=1

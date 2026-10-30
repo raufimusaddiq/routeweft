@@ -171,6 +171,24 @@ fail-open path. It writes `internal/transforms/pxpipe/testdata/host_pin.json`, r
 
 Both support `--check` and need `ORACLE_DIR` and `ORACLE_SHA`.
 
+`compat/parity/generate-protocol-legs.mjs` loads every module of `open-sse/translator/request` and
+`response` and takes the functions each passes to `register()`, so the conversion legs run unmodified
+(`loadTree` stubs the provider registry, whose import cycle runs through the executors, and fixes the clock,
+`Math.random` and every UUID so the recording is repeatable). It feeds them `legs-corpus.mjs` (22 Chat, 12
+Messages, 11 Responses and 8 Gemini requests; 7 Claude, 8 Chat, 5 Responses, 7 Gemini and 5 Ollama streams)
+and writes `internal/parity/testdata/legs_pin.json`: for each request leg the output or the error, for each
+response leg the chunks it produced and their fold (`legs-fold.mjs`). `internal/parity/legs_test.go` and
+`legs_response_test.go` run Routeweft's legs on the same inputs and hold every difference against
+`divergences.json` (PARITY 6.39).
+
+`compat/parity/generate-control-workflows.mjs` runs the oracle's combo, API key and model alias routes over 31
+steps in three workflows against in-memory stand-ins for its data layer, and writes
+`internal/parity/testdata/control_pin.json`, replayed by `internal/control/api/control_workflows_test.go`.
+
+`compat/parity/ledger.mjs` reads `divergences.json` and the D rows of PARITY 6.1 and writes
+`docs/DIVERGENCE_LEDGER.md`, the sheet the owner signs; `--check` fails when it is stale or a reference does
+not resolve. None of the three reads a provider.
+
 `compat/parity/generate-proxy-pools.mjs` runs the oracle's proxy-pool code (#272): the Netlify
 digest-deploy route against a scripted Netlify API (25 scenarios, every call recorded), the pool
 list/create/update/delete routes with their query and body handling, `connectionProxy.js` (26

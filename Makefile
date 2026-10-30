@@ -33,9 +33,12 @@ parity-test:
 	node compat/parity/generate-headroom.mjs --check
 	node compat/parity/generate-pxpipe.mjs --check
 	node compat/parity/generate-proxy-pools.mjs --check
+	node compat/parity/generate-protocol-legs.mjs --check
+	node compat/parity/generate-control-workflows.mjs --check
+	node compat/parity/ledger.mjs --check
 	go test -race ./internal/app -run TestPinnedSystemOneDifferential -count=1
 	go test -race ./internal/security ./internal/ingress ./internal/providers/shared ./internal/providers/wire ./internal/protocol/concerns
-	go test -race ./internal/parity ./internal/protocol/hub ./internal/pricing ./internal/transforms/... ./internal/proxy/... ./internal/transport -count=1
+	go test -race ./internal/parity ./internal/protocol/hub ./internal/pricing ./internal/transforms/... ./internal/proxy/... ./internal/transport ./internal/control/api -run "ControlWorkflows|Ledger" -count=1
 
 race:
 	# 10m is also go test's default per-package timeout; it is spelled out so the

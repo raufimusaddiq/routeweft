@@ -1,0 +1,198 @@
+{
+ "oracle": "raufimusaddiq/literouter",
+ "sha": "4279093457458e168a2431604935f0145f2e76ec",
+ "workflows": [
+  {
+   "workflow": "combos",
+   "steps": [
+    {
+     "step": "create a combo",
+     "status": 201,
+     "error": null
+    },
+    {
+     "step": "create a combo with the same name",
+     "status": 400,
+     "error": "Combo name already exists"
+    },
+    {
+     "step": "create a combo whose name has a space",
+     "status": 400,
+     "error": "Name can only contain letters, numbers, -, _ and ."
+    },
+    {
+     "step": "create a combo named with dots, underscores and hyphens",
+     "status": 201,
+     "error": null
+    },
+    {
+     "step": "create a combo with no name",
+     "status": 400,
+     "error": "Name is required"
+    },
+    {
+     "step": "create a combo named with spaces only",
+     "status": 400,
+     "error": "Name can only contain letters, numbers, -, _ and ."
+    },
+    {
+     "step": "rename a combo to a name in use",
+     "status": 400,
+     "error": "Combo name already exists"
+    },
+    {
+     "step": "rename a combo to a new name",
+     "status": 200,
+     "error": null
+    },
+    {
+     "step": "rename a combo to a name with a space",
+     "status": 400,
+     "error": "Name can only contain letters, numbers, -, _ and ."
+    },
+    {
+     "step": "update a combo that does not exist",
+     "status": 404,
+     "error": "Combo not found"
+    },
+    {
+     "step": "keep a combo's own name on update",
+     "status": 200,
+     "error": null
+    },
+    {
+     "step": "delete a combo",
+     "status": 200,
+     "error": null
+    },
+    {
+     "step": "delete the same combo again",
+     "status": 404,
+     "error": "Combo not found"
+    },
+    {
+     "step": "read a combo that does not exist",
+     "status": 404,
+     "error": "Combo not found"
+    }
+   ],
+   "final": {
+    "names": [
+     "good-name"
+    ]
+   }
+  },
+  {
+   "workflow": "keys",
+   "steps": [
+    {
+     "step": "create a key",
+     "status": 201,
+     "error": null,
+     "secret": true
+    },
+    {
+     "step": "create a key with no name",
+     "status": 400,
+     "error": "Name is required",
+     "secret": false
+    },
+    {
+     "step": "create a key named with spaces only",
+     "status": 201,
+     "error": null,
+     "secret": true
+    },
+    {
+     "step": "disable a key",
+     "status": 200,
+     "error": null,
+     "secret": false
+    },
+    {
+     "step": "update a key that does not exist",
+     "status": 404,
+     "error": "Key not found",
+     "secret": false
+    },
+    {
+     "step": "read a key that does not exist",
+     "status": 404,
+     "error": "Key not found",
+     "secret": false
+    },
+    {
+     "step": "delete a key",
+     "status": 200,
+     "error": null,
+     "secret": false
+    },
+    {
+     "step": "delete the same key again",
+     "status": 404,
+     "error": "Key not found",
+     "secret": false
+    }
+   ],
+   "final": {
+    "count": 1
+   }
+  },
+  {
+   "workflow": "aliases",
+   "steps": [
+    {
+     "step": "set an alias",
+     "status": 200,
+     "error": null
+    },
+    {
+     "step": "set an alias with no model",
+     "status": 400,
+     "error": "Model and alias required"
+    },
+    {
+     "step": "set an alias with no name",
+     "status": 400,
+     "error": "Model and alias required"
+    },
+    {
+     "step": "set an alias named with spaces only",
+     "status": 200,
+     "error": null
+    },
+    {
+     "step": "point an alias at a model nothing provides",
+     "status": 200,
+     "error": null
+    },
+    {
+     "step": "replace an alias",
+     "status": 200,
+     "error": null
+    },
+    {
+     "step": "delete an alias",
+     "status": 200,
+     "error": null
+    },
+    {
+     "step": "delete the same alias again",
+     "status": 200,
+     "error": null
+    },
+    {
+     "step": "delete with no alias named",
+     "status": 400,
+     "error": "Alias required"
+    }
+   ],
+   "final": {
+    "aliases": [
+     "   ",
+     "ghost"
+    ]
+   }
+  }
+ ]
+}
