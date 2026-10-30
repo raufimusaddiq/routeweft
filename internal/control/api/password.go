@@ -29,7 +29,7 @@ func (h *Handler) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_password", "new password must not be empty")
 		return
 	}
-	key := clientKey(r)
+	key := h.clientIP.Key(r)
 	if retry := h.throttler.retryAfter(key); retry > 0 {
 		w.Header().Set("Retry-After", strconv.Itoa(retry))
 		writeError(w, http.StatusTooManyRequests, "too_many_attempts", "too many failed password attempts; try again later")

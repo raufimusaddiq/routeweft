@@ -48,6 +48,9 @@ ROUTEWEFT_LISTEN=:21128
 ROUTEWEFT_DATA_DIR=/var/lib/routeweft
 ROUTEWEFT_LOG_LEVEL=info
 ROUTEWEFT_BOOTSTRAP_ADMIN_PASSWORD='use-a-secret-source'
+# Reverse proxies allowed to vouch for a client address (login throttle only).
+# Empty by default: no peer is trusted. See section 7 and SPEC 12.3.
+ROUTEWEFT_TRUSTED_PROXIES=
 ROUTEWEFT_MAX_BODY_BYTES=134217728
 ROUTEWEFT_CORS_ORIGINS='https://console.example'
 # Operator-facing origin used as the provider sign-in callback. Required only for
@@ -297,8 +300,10 @@ unloadable store. The final stage copies that validated bundle; the test binary
 is not shipped. Outbound TLS uses system roots with certificate verification.
 
 `ROUTEWEFT_LOG_LEVEL` sets the JSON service log threshold (default `info`;
-`debug`, `warn`, and `error` are supported). Invalid levels stop startup before
-opening data. There is no corresponding CLI flag.
+`debug`, `warn`, and `error` are supported; the flag `--log-level` overrides it).
+Invalid levels stop startup before opening data. There is no separate "verbose"
+switch: the per-request `request completed` record always carries the token and
+cache counts at `info` (SPEC 12.3).
 
 ## 7. Reverse proxy
 
@@ -312,22 +317,33 @@ internet/private LAN
     Routeweft:21128
 ```
 
-Routeweft currently ignores forwarded-IP headers from every peer. There is no
-`ROUTEWEFT_TRUSTED_PROXIES` setting or trusted-proxy CLI flag. Login throttling
-uses the socket remote address, so requests through a reverse proxy share its
-throttle identity. Restrict direct access to the service at the network boundary.
+Routeweft ignores forwarded-IP headers from every peer unless the peer is listed in
+`ROUTEWEFT_TRUSTED_PROXIES` (flag `--trusted-proxies`; comma- or space-separated IPs
+and CIDRs, empty by default, a `/0` prefix is refused). The setting changes one
+thing: which address keys the admin login and password-change throttle (SPEC 12.3).
+Set it to the address of the proxy as Routeweft sees it, for example
+`ROUTEWEFT_TRUSTED_PROXIES=127.0.0.1,::1` for the Caddy on the same host above, or
+the Docker network's gateway/subnet when the proxy is another container. Check the
+proxy appends the connecting address to `X-Forwarded-For` (Caddy, nginx
+`proxy_add_x_forwarded_for` and Traefik do); the client is the first hop from the
+right that is not itself a listed proxy, so a client cannot choose its bucket by
+prepending identities. Do not list a network that clients can reach directly: a
+listed peer can name any client.
 
-Consequence: every client behind one reverse proxy is one socket peer and shares
-one admin-login throttle bucket (8 failures per 5 minutes). One client's failed
-logins can lock all operators out of the login route for up to 5 minutes
-(`429` with `Retry-After`); it never grants access. A forged `X-Forwarded-For`,
-`X-Real-Ip` or `Forwarded` value cannot move a request into another bucket or
-out of a full one, and no client address is persisted in usage, request details
-or any other table. Evidence: `TestForwardedHeadersNeverChangeTheThrottleBucket`
-(`internal/control/api`) and `TestForwardedHeadersAreNotRecordedAnywhere`
-(`internal/app`). Operators who need per-client buckets must terminate the
-distinction before Routeweft (separate listeners or networks); a trusted-proxy
-setting is not implemented (PARITY TRUST_PROXY).
+Consequence without the setting: every client behind one reverse proxy is one socket
+peer and shares one admin-login throttle bucket (8 failures per 5 minutes). One
+client's failed logins can lock all operators out of the login route for up to 5
+minutes (`429` with `Retry-After`); it never grants access. With it, each client
+behind a listed proxy has its own bucket. In both cases a forged `X-Forwarded-For`,
+`X-Real-Ip` or `Forwarded` value from a peer that is not a listed proxy cannot move a
+request into another bucket or out of a full one, and no client address is persisted
+in usage, request details or any other table. Evidence:
+`TestForwardedHeadersNeverChangeTheThrottleBucket`,
+`TestUntrustedPeerCannotChooseItsThrottleBucket` and
+`TestTrustedProxyGivesEachClientItsOwnLoginBucket` (`internal/control/api`),
+`TestC10TrustedProxyKeysTheLoginThrottleOnTheRealClient` and
+`TestC10UntrustedPeerCannotEscapeTheLoginLockoutByForging` (`internal/app`, real
+listener) and `TestForwardedHeadersAreNotRecordedAnywhere` (`internal/app`).
 
 Do not expose an unprotected admin API directly to the public network.
 
@@ -336,8 +352,9 @@ Do not expose an unprotected admin API directly to the public network.
 Routeweft has no general inference request-rate limiter. Its admin login and
 password-change handlers share a process-local failed-attempt throttle:
 
-- Key: socket remote IP with the ephemeral port removed; no username, API key,
-  `Forwarded` or `X-Forwarded-For` component (`internal/control/api/api.go:382`).
+- Key: the socket remote IP with the ephemeral port removed, or, when that peer is
+  listed in `ROUTEWEFT_TRUSTED_PROXIES`, the client it names in `X-Forwarded-For`
+  (SPEC 12.3, `internal/clientip`); no username, API key or `Forwarded` component.
 - Policy: eight failed credential checks in a fixed five-minute window starting
   at the first failure. The eighth failure still returns 401; subsequent checks
   return 429 with JSON `error.code=too_many_attempts` and `Retry-After` equal to

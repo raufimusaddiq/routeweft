@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,6 +76,10 @@ type Config struct {
 	// steer a provider redirect. Providers whose client registration pins a
 	// loopback port (Codex, xAI) do not need it.
 	PublicOrigin string
+	// TrustedProxies are the reverse-proxy peers allowed to vouch for a client
+	// address in X-Forwarded-For / X-Real-IP; it only keys the admin login
+	// throttle (SPEC 12.3). Empty trusts no peer.
+	TrustedProxies []netip.Prefix
 }
 
 // loadSnapshot exposes the active snapshot to the proxy binder's binding source.
@@ -346,6 +351,7 @@ func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager 
 		AllowPrivateUpstreams:   a.cfg.AllowPrivateUpstreams,
 		HostCredentialDiscovery: a.cfg.AllowHostCredentialDiscovery,
 		PublicOrigin:            a.cfg.PublicOrigin,
+		TrustedProxies:          a.cfg.TrustedProxies,
 		PXPIPE:                  a.pxpipe,
 		// Model discovery, connection tests, sign-in and reset credits share one
 		// client; work made for a connection leaves through its proxy.

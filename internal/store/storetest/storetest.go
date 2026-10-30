@@ -96,10 +96,7 @@ func DataDirWithAdmin(t testing.TB, username, password string) string {
 	if openErr != nil {
 		t.Fatal(openErr)
 	}
-	salt := []byte("routeweft-storetest")
-	hash := fmt.Sprintf("pbkdf2-sha256$%d$%s$%s", fixtureIterations,
-		base64.RawStdEncoding.EncodeToString(salt),
-		base64.RawStdEncoding.EncodeToString(pbkdf2([]byte(password), salt, fixtureIterations, 32)))
+	hash := AdminHash(password)
 	if _, execErr := store.DB().ExecContext(ctx, "INSERT INTO admin_users (id,username,password_hash) VALUES (?,?,?)", "storetest-admin", username, hash); execErr != nil {
 		_ = store.Close()
 		t.Fatal(execErr)
@@ -108,6 +105,15 @@ func DataDirWithAdmin(t testing.TB, username, password string) string {
 		t.Fatal(closeErr)
 	}
 	return dir
+}
+
+// AdminHash returns the fixture password hash DataDirWithAdmin stores, for a test
+// that inserts an admin into a database it already has open.
+func AdminHash(password string) string {
+	salt := []byte("routeweft-storetest")
+	return fmt.Sprintf("pbkdf2-sha256$%d$%s$%s", fixtureIterations,
+		base64.RawStdEncoding.EncodeToString(salt),
+		base64.RawStdEncoding.EncodeToString(pbkdf2([]byte(password), salt, fixtureIterations, 32)))
 }
 
 const fixtureIterations = 1000
