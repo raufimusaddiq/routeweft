@@ -248,3 +248,12 @@ func TestAdapterHistoryFittingThroughTheGeminiAndOllamaEntryPoints(t *testing.T)
 		})
 	}
 }
+
+// anthropicProtocol is a provider that speaks Anthropic Messages natively, whose
+// usage excludes the cache counts.
+var anthropicProtocol = nativeProtocol{
+	name: "anthropic", transport: "anthropic-messages", baseSuffix: "/v1",
+	answer: func(text string) string {
+		return fmt.Sprintf(`{"type":"message","role":"assistant","content":[{"type":"text","text":%q}],"stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":400,"cache_creation_input_tokens":0}}`, text)
+	},
+}

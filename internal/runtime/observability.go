@@ -10,6 +10,13 @@ import (
 func (s *RuntimeSnapshot) TelemetryOptions() telemetry.Options { return s.telemetryOptions }
 func (s *RuntimeSnapshot) DetailSizeLimit() int                { return s.detailSizeLimit }
 
+// DetailMaxRecords is how many request details are kept; the oldest beyond it are
+// deleted as new ones are written. It is the reference's observabilityMaxRecords
+// (requestDetailsRepo.js:141-147), which here is the setting
+// observabilityMaxDetailRecords because observabilityMaxRecords bounds the live
+// queue (PARITY D17).
+func (s *RuntimeSnapshot) DetailMaxRecords() int { return s.detailMaxRecords }
+
 func telemetryOptions(settings map[string]string) telemetry.Options {
 	opts := telemetry.DefaultOptions()
 	opts.Enabled = settings["enableObservability"] == "true"
@@ -26,6 +33,13 @@ func telemetryOptions(settings map[string]string) telemetry.Options {
 		opts.FlushInterval = time.Duration(value) * time.Millisecond
 	}
 	return opts
+}
+
+func observabilityMaxDetailRecords(settings map[string]string) int {
+	if value, err := strconv.Atoi(settings["observabilityMaxDetailRecords"]); err == nil && value > 0 {
+		return value
+	}
+	return telemetry.DefaultMaxDetailRows
 }
 
 func observabilityMaxJSONSize(settings map[string]string) int {

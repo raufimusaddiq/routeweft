@@ -2,6 +2,7 @@ package capabilities
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -133,4 +134,29 @@ func OutputCeiling(provider, model string) (ceiling int64, ok bool) {
 		return 0, false
 	}
 	return caps.MaxOutput, true
+}
+
+// ProviderKeys are the names a provider is known by in the oracle's tables, which
+// key some entries by id and some by alias: the id itself, the id an alias
+// stands for, and every alias of that id, in a fixed order.
+func ProviderKeys(provider string) []string {
+	if provider == "" {
+		return nil
+	}
+	canonical := provider
+	if id, ok := aliases[provider]; ok {
+		canonical = id
+	}
+	keys := []string{provider}
+	if canonical != provider {
+		keys = append(keys, canonical)
+	}
+	var others []string
+	for alias, id := range aliases {
+		if id == canonical && alias != provider {
+			others = append(others, alias)
+		}
+	}
+	sort.Strings(others)
+	return append(keys, others...)
 }

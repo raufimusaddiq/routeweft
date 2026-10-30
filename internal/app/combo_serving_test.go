@@ -35,6 +35,10 @@ type upstreamLog struct {
 	calls  []upstreamCall
 	// paths holds the request path of every call, in arrival order.
 	paths []string
+	// custom, when it returns true, has answered the request itself (a stream, say).
+	custom func(w http.ResponseWriter, r *http.Request, model string) bool
+	// stop closes the upstream.
+	stop func()
 	// cancelled counts calls the client abandoned while the upstream held them.
 	cancelled int
 	started   int
@@ -85,7 +89,11 @@ func (u *upstreamLog) handler() http.Handler {
 		u.mu.Unlock()
 		u.mu.Lock()
 		u.started++
+		custom := u.custom
 		u.mu.Unlock()
+		if custom != nil && custom(w, r, body.Model) {
+			return
+		}
 		if delay > 0 {
 			select {
 			case <-time.After(delay):

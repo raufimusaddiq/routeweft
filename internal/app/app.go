@@ -99,6 +99,7 @@ type App struct {
 	autoPing     *quota.AutoPinger
 	usage        *telemetry.Service
 	usageStarted bool
+	live         *liveView
 	details      *telemetry.SQLiteDetailStore
 	admin        *adminauth.Store
 	creds        *credentials.Store
@@ -107,6 +108,7 @@ type App struct {
 	events       *controlevents.Bus
 	feed         *controlevents.UsageFeed
 	logs         *controlapi.LogBuffer
+	requestLog   *requestLogger
 	active       atomic.Int64
 	idleMu       sync.Mutex
 	idleCond     *sync.Cond
@@ -130,6 +132,7 @@ func New(cfg Config, log *slog.Logger) *App {
 	logs := controlapi.NewLogBuffer(0)
 	a := &App{cfg: cfg, log: slog.New(controlapi.LogHandler(log.Handler(), logs)), logs: logs, restoreCh: make(chan *backup.Candidate, 1)}
 	a.idleCond = sync.NewCond(&a.idleMu)
+	a.requestLog = newRequestLogger(a.log)
 	return a
 }
 
@@ -190,10 +193,15 @@ func (a *App) initialize(ctx context.Context) error {
 		current, _ := manager.Load()
 		return current.DetailSizeLimit()
 	}
+	a.details.MaxRows = func() int {
+		current, _ := manager.Load()
+		return current.DetailMaxRecords()
+	}
 	usage.WithDetails(a.details)
 	a.usage = usage
 	a.usageStarted = false
 	a.events = controlevents.New()
+	a.live = newLiveView(a.events, func() *credentials.Store { return a.creds })
 	a.feed = controlevents.NewUsageFeed()
 	binder := proxy.NewBinder(loadSnapshot(manager))
 	binder.AllowLocal = a.cfg.AllowPrivateUpstreams
@@ -203,6 +211,8 @@ func (a *App) initialize(ctx context.Context) error {
 		return err
 	}
 	a.ingress = ingress.New(manager, ingress.Options{
+		CaptureDetails: true,
+		Live:           a.live.tracker,
 		TransformFinalBody: func(ctx context.Context, snapshot *runtime.RuntimeSnapshot, protocol string, body []byte) ([]byte, error) {
 			return snapshot.TransformBody(ctx, protocol, body, a.cfg.AllowPrivateUpstreams)
 		},
@@ -229,6 +239,16 @@ func (a *App) initialize(ctx context.Context) error {
 			return binder.ClientFor(context.Background(), connectionID)
 		},
 		OnRequestComplete: func(outcome ingress.RequestOutcome) {
+			// A request that failed before any upstream answer leaves a detail and
+			// nothing else: it is not a completion and has no usage to count.
+			if outcome.Capture != nil {
+				current, _ := manager.Load()
+				limit := current.DetailSizeLimit()
+				usage.RecordDetailLazy(outcome.RequestID, func() telemetry.Detail { return requestDetail(outcome, limit) })
+			}
+			if outcome.DetailOnly {
+				return
+			}
 			// An unanswered outcome is accounting only: the client left before the
 			// response was delivered, so no request completed. It is gated on
 			// the cause, not the status number: an upstream may answer 499 itself.
@@ -236,12 +256,15 @@ func (a *App) initialize(ctx context.Context) error {
 			// carries it; usage persistence below still does.
 			if !outcome.Unanswered {
 				a.events.Publish("request.completed", map[string]any{
-					"requestId":    outcome.RequestID,
-					"providerId":   outcome.ProviderID,
-					"modelId":      outcome.ModelID,
-					"connectionId": outcome.ConnectionID,
-					"status":       outcome.Status,
-					"durationMs":   outcome.Duration.Milliseconds(),
+					"requestId":      outcome.RequestID,
+					"providerId":     outcome.ProviderID,
+					"modelId":        outcome.ModelID,
+					"requestedModel": outcome.RequestedModel,
+					"selectedModel":  outcome.SelectedModel,
+					"connectionId":   outcome.ConnectionID,
+					"status":         outcome.Status,
+					"durationMs":     outcome.Duration.Milliseconds(),
+					"ttftMs":         outcome.TTFT.Milliseconds(),
 				})
 				a.feed.Publish(controlevents.UsageEvent{
 					RequestID: outcome.RequestID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
@@ -251,20 +274,25 @@ func (a *App) initialize(ctx context.Context) error {
 					CreatedAt: time.Now().UTC(),
 				})
 			}
+			a.requestLog.Log(outcome)
 			usage.Record(telemetry.Event{
-				Class:        telemetry.Critical,
-				RequestID:    outcome.RequestID,
-				ProviderID:   outcome.ProviderID,
-				ModelID:      outcome.ModelID,
-				ConnectionID: outcome.ConnectionID,
-				APIKeyID:     outcome.APIKeyID,
-				Status:       outcome.Status,
-				InputTokens:  outcome.InputTokens,
-				OutputTokens: outcome.OutputTokens,
-				CacheRead:    outcome.CacheRead,
-				CacheWrite:   outcome.CacheWrite,
-				DurationMS:   outcome.Duration.Milliseconds(),
-				Termination:  outcome.Termination, UsageUnobserved: outcome.UsageUnobserved,
+				Class:          telemetry.Critical,
+				RequestID:      outcome.RequestID,
+				ProviderID:     outcome.ProviderID,
+				ModelID:        outcome.ModelID,
+				RequestedModel: outcome.RequestedModel,
+				SelectedModel:  outcome.SelectedModel,
+				ConnectionID:   outcome.ConnectionID,
+				APIKeyID:       outcome.APIKeyID,
+				Status:         outcome.Status,
+				InputTokens:    outcome.InputTokens,
+				OutputTokens:   outcome.OutputTokens,
+				CacheRead:      outcome.CacheRead,
+				CacheWrite:     outcome.CacheWrite,
+				DurationMS:     outcome.Duration.Milliseconds(),
+				TTFTMS:         outcome.TTFT.Milliseconds(),
+				Termination:    outcome.Termination, UsageUnobserved: outcome.UsageUnobserved,
+				CacheExclusive: outcome.CacheExclusive,
 			})
 		},
 	})
@@ -328,6 +356,7 @@ func (a *App) initializeAdmin(ctx context.Context, store *sqlite.Store, manager 
 		UsageFeed:       a.feed,
 		Logs:            a.logs,
 		ActiveRequests:  func() int64 { return a.active.Load() },
+		Live:            func() any { return a.live.snapshot() },
 		Ready:           a.ready.Load,
 		Build:           buildinfo.Current(),
 		DataDir:         a.cfg.DataDir,

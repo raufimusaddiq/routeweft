@@ -91,11 +91,13 @@ type Options struct {
 	UsageFeed      *controlevents.UsageFeed
 	Logs           *LogBuffer
 	ActiveRequests func() int64
-	Ready          func() bool
-	Build          buildinfo.Info
-	DataDir        string
-	Backup         func(context.Context, string) (backup.Metadata, error)
-	Restore        func(context.Context, string) (backup.Metadata, error)
+	// Live returns the live view: requests in flight and the latest finished ones.
+	Live    func() any
+	Ready   func() bool
+	Build   buildinfo.Info
+	DataDir string
+	Backup  func(context.Context, string) (backup.Metadata, error)
+	Restore func(context.Context, string) (backup.Metadata, error)
 }
 
 // RuntimeReader exposes immutable active configuration and process-local state.
@@ -289,6 +291,7 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	}
 	mux.Handle("GET /admin/v1/models/disabled", h.requireSessionHandler(h.readModel("models/disabled")))
 	mux.HandleFunc("GET /admin/v1/usage/stream", h.requireSession(h.handleUsageStream))
+	mux.HandleFunc("GET /admin/v1/usage/active", h.requireSession(h.handleUsageActive))
 	mux.HandleFunc("GET /admin/v1/usage/summary", h.requireSession(h.handleUsageSummary))
 	mux.HandleFunc("GET /admin/v1/usage/hourly", h.requireSession(h.handleUsageHourly))
 	mux.HandleFunc("GET /admin/v1/usage/requests/{requestId}", h.requireSession(h.handleUsageRequest))

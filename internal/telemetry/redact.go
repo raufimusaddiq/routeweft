@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 )
 
@@ -99,4 +100,73 @@ func RedactHeaderValue(name, value string) string {
 		return redactedPlaceholder
 	}
 	return value
+}
+
+// DetailRedactor removes what a request detail must never carry (PRD-OBS-002): the
+// value of every credential-shaped key, and, wherever they appear in a string, the
+// credentials the request itself used and any "Bearer" token. It differs from Redact
+// in one way: a token COUNT is kept (max_tokens, prompt_tokens), because a number
+// under a key ending in "tokens" is a quantity, not a secret.
+type DetailRedactor struct {
+	// Secrets are credential values this request used (an API key, an access
+	// token). Each occurrence in any string is replaced, whatever key held it.
+	Secrets []string
+}
+
+var bearerPattern = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=\-]{8,}`)
+
+// minSecret keeps a one-character "secret" from blanking every letter it matches.
+const minSecret = 8
+
+// Redact returns a redacted copy of a decoded JSON value.
+func (d DetailRedactor) Redact(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			if sensitiveKey(key) && !quantity(key, item) {
+				out[key] = redactedPlaceholder
+				continue
+			}
+			out[key] = d.Redact(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = d.Redact(item)
+		}
+		return out
+	case string:
+		return d.scrub(typed)
+	default:
+		return value
+	}
+}
+
+// scrub replaces the request's own credentials and Bearer tokens inside a string.
+func (d DetailRedactor) scrub(text string) string {
+	for _, secret := range d.Secrets {
+		if len(secret) >= minSecret {
+			text = strings.ReplaceAll(text, secret, redactedPlaceholder)
+		}
+	}
+	return bearerPattern.ReplaceAllString(text, "$1 "+redactedPlaceholder)
+}
+
+// Text redacts a string that is not JSON.
+func (d DetailRedactor) Text(text string) string { return d.scrub(text) }
+
+// quantity reports whether the value under a credential-shaped key is a count: a
+// number under a key ending in "tokens" (max_tokens, prompt_tokens, cached_tokens).
+func quantity(key string, value any) bool {
+	switch value.(type) {
+	case float64, json.Number, int, int64:
+		return strings.HasSuffix(normaliseKey(key), "tokens")
+	case map[string]any:
+		// the usage object ("tokens": {prompt_tokens: n, ...}) holds counts; its own
+		// keys are redacted individually on the way down.
+		return normaliseKey(key) == "tokens"
+	}
+	return false
 }

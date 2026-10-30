@@ -1523,6 +1523,12 @@ Under queue pressure:
 
 Normal success path still does not synchronously write SQLite.
 
+### 21.0 Request details, cost and live activity
+
+While observability is enabled the gateway keeps a bounded copy of the client request, the provider request, the first bytes of the provider response and the time of the first upstream byte for each request; they are turned into a detail on the batcher goroutine, never on the request path. A detail is the oracle's document (provider, model, connectionId, requestedModel, selectedModel, status, latency{ttft,total}, tokens, request, providerRequest, providerResponse, response{content,thinking,finish_reason}, routeMode), redacted (keys that name credentials, the request's own credentials and `Bearer` values), with each large field replaced by `{_truncated,_originalSize,_preview}` at `observabilityMaxJsonSize` bytes. Rows are kept by count (`observabilityMaxDetailRecords`) and age (seven days). A request that no upstream answered stores an error detail and no usage row.
+
+A usage row also records `requested_model` (what the client sent), `selected_model` (`provider/model` the router chose; `model_id` is what the provider was called with), `ttft_ms` (the first upstream byte for a stream, the duration otherwise) and `cost`, computed in the batch writer from `pricing_overrides` or the generated default catalog (`internal/pricing`) with the protocol's cache convention. In-flight and recent requests are in `internal/live` and published as `usage.pending`.
+
 ### 21.1 Native OpenAI Chat and Responses accounting
 
 A successful native Chat or Responses request produces exactly one usage record. Usage is read by a tee on the relayed bytes (a streaming scanner for SSE, a bounded capture of the top-level `usage` object for a JSON body); the response is never buffered to be measured, and the client receives the upstream bytes unchanged.
@@ -1659,8 +1665,12 @@ series uses; the others roll back from now. The hourly series below does not ser
 every usage event stored for the id (oldest first, at most 50) and, when the
 `request_details` table holds one, `detail: {routeMode, detail, createdAt}` with the
 payload redacted again on read; otherwise `detail` is `null`. An id with neither is
-`404 request_not_found`. Nothing in the gateway currently enqueues request details,
-so `detail` is null until diagnostics capture is wired.
+`404 request_not_found`. Details are enqueued by the serving path (21.0); `detail` is null for a request
+whose detail was pruned, shed under queue pressure or never captured (observability off).
+
+`GET /admin/v1/usage/active` returns `{activeRequests, recentRequests, errorProvider}`.
+`GET /admin/v1/requests` accepts `providerId`, `modelId`, `connectionId`, `status`
+(`success` or `error`), `startDate` and `endDate`.
 
 `GET /admin/v1/usage/stream` is a session-authenticated `text/event-stream` of
 completed requests for the Usage requests tab. It accepts the usage list's filter

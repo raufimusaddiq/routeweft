@@ -55,6 +55,7 @@ func (h *Handler) dispatchError(w http.ResponseWriter, r *http.Request, err erro
 	if r.Context().Err() != nil {
 		return
 	}
+	h.publishFailure(r, err)
 	var failure *dispatchError
 	if errors.As(err, &failure) {
 		var retry *retryError
@@ -123,10 +124,33 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 	// A call the gateway makes for a Fusion Combo serves the panel or judge model it
 	// names; the Combo's own entry in the key's allowlist admitted its members
 	// (keyAccess.js:162-177), so the key is not asked again for them.
+	requested := model
 	if call := internalCallOf(r); call != nil {
 		model = call.target
+		if call.requested != "" {
+			requested = call.requested
+		}
 	} else if !requestPermitted(callerKey(r, snapshot), snapshot, model) {
 		return nil, routing.ProviderRef{}, &dispatchError{403, "model_not_allowed", modelNotAllowed(model)}
+	}
+	holder := attributionFrom(r)
+	selected := model
+	if resolved, ok := snapshot.ServingModel(model); ok {
+		selected = resolved.ProviderID + "/" + resolved.ID
+	}
+	if holder != nil {
+		holder.requested, holder.selected = requested, selected
+		if h.opts.CaptureDetails && snapshot.TelemetryOptions().Enabled {
+			holder.capture = newRequestCapture(snapshot.DetailSizeLimit(), clientBodyOf(r, nil))
+		}
+		// The answer's body is watched for the time of its first byte, and kept
+		// when details are on. The wrapper changes nothing the client reads.
+		defer func() {
+			if response != nil && resultErr == nil && holder != nil {
+				holder.probe = &bodyProbe{ReadCloser: response.Body, capture: holder.capture}
+				response.Body = holder.probe
+			}
+		}()
 	}
 	var candidates []routing.ProviderRef
 	var slots []attemptSlot
@@ -301,6 +325,20 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			}
 		}
 		outbound, err := prepare(provider)
+		if err == nil && holder != nil {
+			holder.upstream = provider.UpstreamModel
+			holder.selected = selected
+			if slot.label != "" {
+				holder.selected = slot.label
+			}
+			if holder.capture != nil {
+				mode := "native"
+				if provider.Protocol != source {
+					mode = "translated"
+				}
+				holder.capture.attempt(provider.APIToken, mode, outbound.Body)
+			}
+		}
 		if err != nil {
 			// The request cannot be expressed for this candidate's wire, which says
 			// nothing about the account's health: try the next candidate rather
@@ -361,6 +399,14 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				}, body))
 			}
 			used++
+			if h.opts.Live != nil && holder != nil {
+				// An earlier attempt of this request that never produced an answer
+				// ends as failed, and the provider is reported as the latest to fail.
+				if holder.pending != nil {
+					holder.pending(true)
+				}
+				holder.pending = h.opts.Live.Begin(provider.ProviderID, provider.UpstreamModel, provider.ConnectionID)
+			}
 			response, err := wire.Send(provider, h.clientFor(provider), request)
 			if err != nil {
 				if r.Context().Err() != nil {

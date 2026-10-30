@@ -697,7 +697,7 @@ func (h *Handler) keys(w http.ResponseWriter, r *http.Request) error {
 	})
 }
 
-const usageColumns = "id,request_id,provider_id,model_id,connection_id,api_key_id,status,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,duration_ms,ttft_ms,created_at,termination,usage_observed"
+const usageColumns = "id,request_id,provider_id,model_id,connection_id,api_key_id,status,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,duration_ms,ttft_ms,created_at,termination,usage_observed,requested_model,selected_model,cost"
 
 func (h *Handler) usage(w http.ResponseWriter, r *http.Request) error {
 	where, args, err := usageFilter(r.URL.Query())
@@ -730,8 +730,11 @@ func scanUsageEvent(rows *sql.Rows) (map[string]any, error) {
 		CreatedAt   string
 		Termination string
 		Observed    bool
+		Requested   sql.NullString
+		Selected    sql.NullString
+		Cost        float64
 	}
-	if err := rows.Scan(&item.ID, &item.RequestID, &item.Provider, &item.Model, &item.Connection, &item.APIKey, &item.Status, &item.Input, &item.Output, &item.CacheRead, &item.CacheWrite, &item.Duration, &item.TTFT, &item.CreatedAt, &item.Termination, &item.Observed); err != nil {
+	if err := rows.Scan(&item.ID, &item.RequestID, &item.Provider, &item.Model, &item.Connection, &item.APIKey, &item.Status, &item.Input, &item.Output, &item.CacheRead, &item.CacheWrite, &item.Duration, &item.TTFT, &item.CreatedAt, &item.Termination, &item.Observed, &item.Requested, &item.Selected, &item.Cost); err != nil {
 		return nil, err
 	}
 	result := map[string]any{"id": item.ID, "requestId": item.RequestID, "status": item.Status, "inputTokens": item.Input, "outputTokens": item.Output, "cacheReadTokens": item.CacheRead, "cacheWriteTokens": item.CacheWrite, "createdAt": item.CreatedAt}
@@ -750,14 +753,26 @@ func scanUsageEvent(rows *sql.Rows) (map[string]any, error) {
 	putNull(result, "modelId", item.Model)
 	putNull(result, "connectionId", item.Connection)
 	putNull(result, "apiKeyId", item.APIKey)
+	putNull(result, "requestedModel", item.Requested)
+	putNull(result, "selectedModel", item.Selected)
+	if item.Observed {
+		// A request whose usage was never reported has no tokens to price.
+		result["cost"] = item.Cost
+	}
 	putNullInt(result, "durationMs", item.Duration)
 	putNullInt(result, "ttftMs", item.TTFT)
 	return result, nil
 }
 
 func (h *Handler) requests(w http.ResponseWriter, r *http.Request) error {
-	return h.sqlList(w, r, "SELECT request_id,route_mode,detail,created_at FROM request_details ORDER BY created_at DESC,request_id", "SELECT COUNT(*) FROM request_details", func(rows *sql.Rows) (any, error) {
-		var id, mode, raw, created string
+	where, args, err := detailFilter(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_filter", err.Error())
+		return nil
+	}
+	return h.sqlList(w, r, "SELECT request_id,route_mode,detail,created_at FROM request_details"+where+" ORDER BY created_at DESC,request_id", "SELECT COUNT(*) FROM request_details"+where, func(rows *sql.Rows) (any, error) {
+		var id, raw, created string
+		var mode sql.NullString
 		if err := rows.Scan(&id, &mode, &raw, &created); err != nil {
 			return nil, err
 		}
@@ -765,9 +780,11 @@ func (h *Handler) requests(w http.ResponseWriter, r *http.Request) error {
 		if json.Unmarshal([]byte(raw), &detail) != nil {
 			detail = map[string]string{"omitted": "invalid stored detail"}
 		}
-		detail = telemetry.Redact(detail)
-		return map[string]any{"requestId": id, "routeMode": mode, "detail": detail, "createdAt": created}, nil
-	})
+		detail = telemetry.DetailRedactor{}.Redact(detail)
+		item := map[string]any{"requestId": id, "detail": detail, "createdAt": created}
+		putNull(item, "routeMode", mode)
+		return item, nil
+	}, args...)
 }
 
 func (h *Handler) tokenSaver(w http.ResponseWriter, _ *http.Request) error {

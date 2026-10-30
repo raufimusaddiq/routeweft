@@ -54,7 +54,7 @@ Only one stored unit differs; the rest were verified identical against the pin.
 | Value | v1 | Routeweft | Handling |
 |---|---|---|---|
 | `observabilityMaxJsonSize` | KiB (`requestDetailsRepo.js:27,44` ×1024) | bytes | ×1024 (library mapping; fixed in #158) |
-| `observabilityMaxRecords`, `observabilityBatchSize`, `observabilityFlushIntervalMs` | count / count / ms; `0` → default (`requestDetailsRepo.js:24-26`) | same | carried; `0` kept as the Routeweft default with a note |
+| `observabilityMaxRecords`, `observabilityBatchSize`, `observabilityFlushIntervalMs` | count / count / ms; `0` → default (`requestDetailsRepo.js:24-26`) | same | carried; `0` kept as the Routeweft default with a note. The oracle uses `observabilityMaxRecords` as its durable detail count; here it stays the queue bound and the durable count is `observabilityMaxDetailRecords`, which the importer does not set (D17) |
 | `headroomTimeoutMs`, `pxpipeTimeoutMs`, `pxpipeMinChars` | ms / ms / chars | same | carried; Routeweft rejects ≤ 0, which is then refused by name (v1's UI clamp is not applied) |
 | `fusionTuning.stragglerGraceMs`, `panelHardTimeoutMs` | ms | ms | carried; grace > 10 min or hard timeout ≤ 0 / > 10 min refused by name (`routing.FusionTuning.Validate`) |
 | `fusionTuning.minPanel` | count; < 2 behaves as 2 (`combo.js:562`) | count | stored as `max(v, 2)` |

@@ -25,28 +25,41 @@ const (
 
 // Event is one usage/accounting record.
 type Event struct {
-	Class        Class
-	RequestID    string
-	ProviderID   string
-	ModelID      string
-	ConnectionID string
-	APIKeyID     string
-	Status       int
-	InputTokens  int64
-	OutputTokens int64
-	CacheRead    int64
-	CacheWrite   int64
-	DurationMS   int64
-	TTFTMS       int64
-	RouteOutcome string
+	Class      Class
+	RequestID  string
+	ProviderID string
+	// ModelID is the model the provider was called with. RequestedModel is what the
+	// client asked for and SelectedModel the provider/model the router chose; the
+	// three differ for an alias, a Combo or a rewritten model name.
+	ModelID        string
+	RequestedModel string
+	SelectedModel  string
+	ConnectionID   string
+	APIKeyID       string
+	Status         int
+	InputTokens    int64
+	OutputTokens   int64
+	CacheRead      int64
+	CacheWrite     int64
+	DurationMS     int64
+	TTFTMS         int64
+	RouteOutcome   string
 	// Termination is empty for a request that ran to its end, else why it did
 	// not. UsageUnobserved marks token counts as not measured, not as zero.
 	Termination     string
 	UsageUnobserved bool
-	CreatedAt       time.Time
+	// CacheExclusive is set when InputTokens was reported without the cache
+	// counts (the Anthropic Messages convention) rather than including them (every
+	// other family), which is what pricing needs to know (canonicalizeUsage,
+	// usageTracking.js:147-210).
+	CacheExclusive bool
+	CreatedAt      time.Time
 	// detail, when non-nil, marks the event as a request-detail diagnostic the
 	// batcher routes to the DetailSink instead of the usage sink.
 	detail *Detail
+	// buildDetail, when non-nil, makes the detail on the batcher goroutine, so the
+	// request that produced it pays for neither the JSON work nor the redaction.
+	buildDetail func() Detail
 }
 
 // Sink persists one batch of events. Implementations must tolerate an empty
@@ -142,6 +155,15 @@ func (s *Service) RecordDetail(detail Detail) {
 		detail.CreatedAt = time.Now().UTC()
 	}
 	s.Record(Event{Class: Diagnostic, RequestID: detail.RequestID, CreatedAt: detail.CreatedAt, detail: &detail})
+}
+
+// RecordDetailLazy enqueues a request detail that is built when the batcher
+// reaches it. The build function must not touch the request or its writer.
+func (s *Service) RecordDetailLazy(requestID string, build func() Detail) {
+	if !s.Enabled() || s.closed.Load() || s.details == nil || build == nil {
+		return
+	}
+	s.Record(Event{Class: Diagnostic, RequestID: requestID, CreatedAt: time.Now().UTC(), buildDetail: build})
 }
 
 // Record enqueues one event. Critical events are never silently dropped:
@@ -294,6 +316,10 @@ func (s *Service) flush(events []Event) {
 	failed := false
 	usage := make([]Event, 0, len(events))
 	for _, event := range events {
+		if event.buildDetail != nil {
+			built := event.buildDetail()
+			event.detail = &built
+		}
 		if event.detail != nil {
 			if s.details != nil {
 				if err := s.details.WriteRequestDetail(ctx, *event.detail); err != nil {

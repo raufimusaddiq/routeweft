@@ -114,8 +114,15 @@ func (b *LogBuffer) list(p page, level, query string) ([]ConsoleLog, int64) {
 // escapeLogControl strips CR/LF so a log message cannot break the JSON/SSE
 // framing it is embedded in.
 func escapeLogControl(message string) string {
-	return strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(message)
+	return logControlReplacer.Replace(message)
 }
+
+// The replacers are built once: every request now writes a log line, and a
+// Replacer builds its tables on first use.
+var (
+	logControlReplacer = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ")
+	logKeyReplacer     = strings.NewReplacer("_", "", "-", "", ".", "")
+)
 
 func safeLogText(value string) string {
 	if logSecretMarker.MatchString(value) {
@@ -285,7 +292,7 @@ func isErrorValue(value slog.Value) bool {
 }
 
 func logKeySensitive(key string) bool {
-	normalized := strings.ToLower(strings.NewReplacer("_", "", "-", "", ".", "").Replace(key))
+	normalized := strings.ToLower(logKeyReplacer.Replace(key))
 	for _, marker := range []string{"authorization", "apikey", "token", "secret", "password", "cookie", "credential", "privatekey"} {
 		if strings.Contains(normalized, marker) {
 			return true

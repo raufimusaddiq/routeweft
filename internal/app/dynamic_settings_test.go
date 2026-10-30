@@ -43,7 +43,9 @@ func TestObservabilitySettingsApplyWithoutRestart(t *testing.T) {
 		t.Fatalf("detail=%s", body)
 	}
 	setSavers(t, a, map[string]string{"observabilityMaxJsonSize": "10"})
-	a.usage.RecordDetail(telemetry.Detail{RequestID: "detail", Payload: map[string]any{"text": strings.Repeat("x", 100)}})
+	// The setting bounds each captured field; a document may hold four of them and
+	// a little attribution, so the whole-document ceiling is 4x the limit plus 2 KiB.
+	a.usage.RecordDetail(telemetry.Detail{RequestID: "detail", Payload: map[string]any{"text": strings.Repeat("x", 3000)}})
 	flush()
 	if body := read(); !strings.Contains(body, "omitted") || strings.Contains(body, strings.Repeat("x", 100)) {
 		t.Fatalf("live size cap ignored: %s", body)

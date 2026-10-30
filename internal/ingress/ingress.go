@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/auth"
+	"github.com/raufimusaddiq/routeweft/internal/live"
 	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	geminiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/gemini"
 	kiroadapter "github.com/raufimusaddiq/routeweft/internal/protocol/kiro"
@@ -37,6 +38,12 @@ type Snapshot interface {
 
 // Options configure public ingress behavior such as limits and CORS policy.
 type Options struct {
+	// Live, when set, is told which requests are in flight and which finished.
+	Live *live.Tracker
+	// CaptureDetails lets the inference path keep the bodies of a request for its
+	// request detail while observability is enabled. The app sets it when it has a
+	// detail sink to hand them to.
+	CaptureDetails            bool
 	MaxBodyBytes              int64
 	CORSOrigins               []string
 	ProviderResolver          ProviderResolver
@@ -104,6 +111,26 @@ type RequestOutcome struct {
 	// upstream response existed, otherwise the upstream's own status. Consumers gate live "completed" signals on
 	// this flag, never on the status number.
 	Unanswered bool
+	// RequestedModel is what the client asked for, SelectedModel the provider/model
+	// the router chose for it and ModelID (above) the model the provider was called
+	// with. They differ for an alias, a Combo, a member of either, or a provider
+	// that names its models differently.
+	RequestedModel string
+	SelectedModel  string
+	// TTFT is the time from the start of the request to the first byte of the
+	// upstream answer for a stream, and the whole duration for an answer that is not
+	// streamed (the reference's convention, nonStreamingHandler.js:445-448); zero
+	// when unknown or when the request failed.
+	TTFT time.Duration
+	// CacheExclusive is true when InputTokens excludes the cache counts, which only
+	// the Anthropic Messages convention does.
+	CacheExclusive bool
+	// Capture holds the bodies of the request for its request detail. It is nil
+	// unless observability is enabled.
+	Capture *Capture
+	// DetailOnly marks a request that failed before any upstream answer: it has a
+	// request detail but is not a usage record and completes nothing.
+	DetailOnly bool
 }
 
 const (
@@ -120,6 +147,16 @@ const (
 type attribution struct {
 	keyID atomic.Pointer[string]
 	begun time.Time
+	// The names the request went by: what the client asked for, the provider/model
+	// the router selected, and the model the provider was called with. They are set
+	// by dispatchAttempts and read when the outcome is built, on the same goroutine.
+	requested, selected, upstream string
+	// probe watches the upstream body of the answer (first byte time, and the
+	// capture when details are on); capture is nil unless they are.
+	probe   *bodyProbe
+	capture *requestCapture
+	// pending ends the request's in-flight entry in the live view.
+	pending func(failed bool)
 }
 
 type attributionKey struct{}
@@ -236,6 +273,7 @@ func (h *Handler) publishOutcomeFlagged(r *http.Request, provider routing.Provid
 	// relay, dispatch): an abandoned request never completed, whichever path
 	// recorded it.
 	unanswered = unanswered || termination == TerminationClientAbandoned
+	h.finishLive(r, provider, status, usage, unobserved)
 	if h.opts.OnRequestComplete == nil {
 		return
 	}
@@ -256,7 +294,37 @@ func (h *Handler) publishOutcomeFlagged(r *http.Request, provider routing.Provid
 	if unobserved {
 		usage = promptcache.Usage{}
 	}
+	var requested, selected string
+	var ttft time.Duration
+	var capture *Capture
+	if holder := attributionFrom(r); holder != nil {
+		requested, selected = holder.requested, holder.selected
+		origin := started
+		if origin.IsZero() {
+			origin = holder.begun
+		}
+		if status >= 200 && status < 300 && !origin.IsZero() {
+			if !stream {
+				ttft = duration
+			} else if holder.probe != nil {
+				if first := holder.probe.firstByte(); !first.IsZero() {
+					ttft = first.Sub(origin)
+				}
+			}
+		}
+		if holder.capture != nil {
+			if holder.probe != nil {
+				holder.probe.publish()
+			}
+			capture = holder.capture.snapshot()
+		}
+	}
 	h.opts.OnRequestComplete(RequestOutcome{
+		RequestedModel:  requested,
+		SelectedModel:   selected,
+		TTFT:            ttft,
+		CacheExclusive:  provider.Protocol == anthropicadapter.MessagesProtocol,
+		Capture:         capture,
 		APIKeyID:        apiKeyID,
 		RequestID:       requestID,
 		ProviderID:      provider.ProviderID,
