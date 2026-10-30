@@ -13,6 +13,7 @@ import (
 
 	"github.com/raufimusaddiq/routeweft/internal/adminauth"
 	controlapi "github.com/raufimusaddiq/routeweft/internal/control/api"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	"github.com/raufimusaddiq/routeweft/internal/providers/discovery"
 	"github.com/raufimusaddiq/routeweft/internal/providers/generic"
 	"github.com/raufimusaddiq/routeweft/internal/transforms"
@@ -175,8 +176,9 @@ func TestHeadroomAndPXPIPEEndpointsUseSharedPolicy(t *testing.T) {
 		if _, err := (headroom.Transform{URL: raw}).Apply(request); err == nil {
 			t.Errorf("headroom accepted %s", raw)
 		}
-		if _, err := (pxpipe.Transform{Enabled: true, URL: raw, MinChars: 1}).Apply(request); err == nil {
-			t.Errorf("pxpipe accepted %s", raw)
+		body := []byte(`{"model":"m","messages":[{"role":"user","content":"secret"}]}`)
+		if _, summary := (pxpipe.Transform{Enabled: true, URL: raw, MinChars: 1}).Compress(context.Background(), anthropic.MessagesProtocol, "m", body); summary.Applied || summary.Reason != "transform_error" {
+			t.Errorf("pxpipe accepted %s: %+v", raw, summary)
 		}
 	}
 }

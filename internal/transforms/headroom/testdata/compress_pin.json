@@ -1,0 +1,1915 @@
+{
+ "oracle": "raufimusaddiq/literouter",
+ "sha": "fc8dd1fc4f61383e7944dd880d94b6529fe92526",
+ "cases": [
+  {
+   "name": "chat: messages go to /v1/compress and come back",
+   "format": "openai",
+   "url": "http://headroom:8787",
+   "model": "gpt-4o",
+   "compressUserMessages": false,
+   "replay": true,
+   "body": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "reply": {
+    "status": 200,
+    "json": {
+     "messages": [
+      {
+       "role": "system",
+       "content": "be brief"
+      },
+      {
+       "role": "user",
+       "content": "short"
+      },
+      {
+       "role": "assistant",
+       "content": "ok"
+      },
+      {
+       "role": "user",
+       "content": "again"
+      }
+     ],
+     "tokens_before": 100,
+     "tokens_after": 40,
+     "tokens_saved": 60
+    }
+   },
+   "calls": [
+    {
+     "url": "http://headroom:8787/v1/compress",
+     "method": "POST",
+     "headers": {
+      "Content-Type": "application/json"
+     },
+     "payload": {
+      "messages": [
+       {
+        "role": "system",
+        "content": "be brief"
+       },
+       {
+        "role": "user",
+        "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+       },
+       {
+        "role": "assistant",
+        "content": "ok"
+       },
+       {
+        "role": "user",
+        "content": "again"
+       }
+      ],
+      "model": "gpt-4o"
+     }
+    }
+   ],
+   "stats": {
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "short"
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ],
+    "tokens_before": 100,
+    "tokens_after": 40,
+    "tokens_saved": 60
+   },
+   "after": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "short"
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "diagnostics": {
+    "before": {
+     "bodyBytes": 569,
+     "messageBytes": 539,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    },
+    "endpoint": "http://headroom:8787/v1/compress",
+    "after": {
+     "bodyBytes": 174,
+     "messageBytes": 144,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    }
+   },
+   "log": "reported token delta=60 before=100 after=40 (60.0%)",
+   "sizeLog": "body=569B→174B messages=539B→144B tools=2B→2B toolHistory=2B→2B effective=69.4%",
+   "phantom": false
+  },
+  {
+   "name": "chat: trailing slash and a path prefix",
+   "format": "openai",
+   "url": "http://headroom:8787/api/",
+   "model": "gpt-4o",
+   "compressUserMessages": false,
+   "replay": true,
+   "body": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "reply": {
+    "status": 200,
+    "json": {
+     "messages": [
+      {
+       "role": "system",
+       "content": "be brief"
+      },
+      {
+       "role": "user",
+       "content": "short"
+      },
+      {
+       "role": "assistant",
+       "content": "ok"
+      },
+      {
+       "role": "user",
+       "content": "again"
+      }
+     ],
+     "tokens_before": 100,
+     "tokens_after": 40,
+     "tokens_saved": 60
+    }
+   },
+   "calls": [
+    {
+     "url": "http://headroom:8787/api/v1/compress",
+     "method": "POST",
+     "headers": {
+      "Content-Type": "application/json"
+     },
+     "payload": {
+      "messages": [
+       {
+        "role": "system",
+        "content": "be brief"
+       },
+       {
+        "role": "user",
+        "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+       },
+       {
+        "role": "assistant",
+        "content": "ok"
+       },
+       {
+        "role": "user",
+        "content": "again"
+       }
+      ],
+      "model": "gpt-4o"
+     }
+    }
+   ],
+   "stats": {
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "short"
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ],
+    "tokens_before": 100,
+    "tokens_after": 40,
+    "tokens_saved": 60
+   },
+   "after": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "short"
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "diagnostics": {
+    "before": {
+     "bodyBytes": 569,
+     "messageBytes": 539,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    },
+    "endpoint": "http://headroom:8787/api/v1/compress",
+    "after": {
+     "bodyBytes": 174,
+     "messageBytes": 144,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    }
+   },
+   "log": "reported token delta=60 before=100 after=40 (60.0%)",
+   "sizeLog": "body=569B→174B messages=539B→144B tools=2B→2B toolHistory=2B→2B effective=69.4%",
+   "phantom": false
+  },
+  {
+   "name": "chat: compressUserMessages sends config",
+   "format": "openai",
+   "url": "http://headroom:8787",
+   "model": "gpt-4o",
+   "compressUserMessages": true,
+   "replay": true,
+   "body": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "reply": {
+    "status": 200,
+    "json": {
+     "messages": [
+      {
+       "role": "system",
+       "content": "be brief"
+      },
+      {
+       "role": "user",
+       "content": "short"
+      },
+      {
+       "role": "assistant",
+       "content": "ok"
+      },
+      {
+       "role": "user",
+       "content": "again"
+      }
+     ],
+     "tokens_before": 100,
+     "tokens_after": 40,
+     "tokens_saved": 60
+    }
+   },
+   "calls": [
+    {
+     "url": "http://headroom:8787/v1/compress",
+     "method": "POST",
+     "headers": {
+      "Content-Type": "application/json"
+     },
+     "payload": {
+      "messages": [
+       {
+        "role": "system",
+        "content": "be brief"
+       },
+       {
+        "role": "user",
+        "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+       },
+       {
+        "role": "assistant",
+        "content": "ok"
+       },
+       {
+        "role": "user",
+        "content": "again"
+       }
+      ],
+      "model": "gpt-4o",
+      "config": {
+       "compress_user_messages": true
+      }
+     }
+    }
+   ],
+   "stats": {
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "short"
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ],
+    "tokens_before": 100,
+    "tokens_after": 40,
+    "tokens_saved": 60
+   },
+   "after": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "short"
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "diagnostics": {
+    "before": {
+     "bodyBytes": 569,
+     "messageBytes": 539,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    },
+    "endpoint": "http://headroom:8787/v1/compress",
+    "after": {
+     "bodyBytes": 174,
+     "messageBytes": 144,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    }
+   },
+   "log": "reported token delta=60 before=100 after=40 (60.0%)",
+   "sizeLog": "body=569B→174B messages=539B→144B tools=2B→2B toolHistory=2B→2B effective=69.4%",
+   "phantom": false
+  },
+  {
+   "name": "chat: reply without statistics",
+   "format": "openai",
+   "url": "http://headroom:8787",
+   "model": "gpt-4o",
+   "compressUserMessages": false,
+   "replay": true,
+   "body": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "reply": {
+    "status": 200,
+    "json": {
+     "messages": [
+      {
+       "role": "system",
+       "content": "be brief"
+      },
+      {
+       "role": "user",
+       "content": "short"
+      },
+      {
+       "role": "assistant",
+       "content": "ok"
+      },
+      {
+       "role": "user",
+       "content": "again"
+      }
+     ]
+    }
+   },
+   "calls": [
+    {
+     "url": "http://headroom:8787/v1/compress",
+     "method": "POST",
+     "headers": {
+      "Content-Type": "application/json"
+     },
+     "payload": {
+      "messages": [
+       {
+        "role": "system",
+        "content": "be brief"
+       },
+       {
+        "role": "user",
+        "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+       },
+       {
+        "role": "assistant",
+        "content": "ok"
+       },
+       {
+        "role": "user",
+        "content": "again"
+       }
+      ],
+      "model": "gpt-4o"
+     }
+    }
+   ],
+   "stats": {
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "short"
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "after": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "short"
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "diagnostics": {
+    "before": {
+     "bodyBytes": 569,
+     "messageBytes": 539,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    },
+    "endpoint": "http://headroom:8787/v1/compress",
+    "after": {
+     "bodyBytes": 174,
+     "messageBytes": 144,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    }
+   },
+   "log": "reported token delta=0 before=0 (0%)",
+   "sizeLog": "body=569B→174B messages=539B→144B tools=2B→2B toolHistory=2B→2B effective=69.4%",
+   "phantom": false
+  },
+  {
+   "name": "chat: reply that is not saving bytes is flagged as phantom",
+   "format": "openai",
+   "url": "http://headroom:8787",
+   "model": "gpt-4o",
+   "compressUserMessages": false,
+   "replay": true,
+   "body": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "reply": {
+    "status": 200,
+    "json": {
+     "messages": [
+      {
+       "role": "system",
+       "content": "be brief"
+      },
+      {
+       "role": "user",
+       "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long tex"
+      },
+      {
+       "role": "assistant",
+       "content": "ok"
+      },
+      {
+       "role": "user",
+       "content": "again"
+      }
+     ],
+     "tokens_before": 100,
+     "tokens_after": 40,
+     "tokens_saved": 60
+    }
+   },
+   "calls": [
+    {
+     "url": "http://headroom:8787/v1/compress",
+     "method": "POST",
+     "headers": {
+      "Content-Type": "application/json"
+     },
+     "payload": {
+      "messages": [
+       {
+        "role": "system",
+        "content": "be brief"
+       },
+       {
+        "role": "user",
+        "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+       },
+       {
+        "role": "assistant",
+        "content": "ok"
+       },
+       {
+        "role": "user",
+        "content": "again"
+       }
+      ],
+      "model": "gpt-4o"
+     }
+    }
+   ],
+   "stats": {
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long tex"
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ],
+    "tokens_before": 100,
+    "tokens_after": 40,
+    "tokens_saved": 60
+   },
+   "after": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long tex"
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "diagnostics": {
+    "before": {
+     "bodyBytes": 569,
+     "messageBytes": 539,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    },
+    "endpoint": "http://headroom:8787/v1/compress",
+    "after": {
+     "bodyBytes": 567,
+     "messageBytes": 537,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    }
+   },
+   "log": "reported token delta=60 before=100 after=40 (60.0%)",
+   "sizeLog": "body=569B→567B messages=539B→537B tools=2B→2B toolHistory=2B→2B effective=0.4%",
+   "phantom": true
+  },
+  {
+   "name": "chat: HTTP error",
+   "format": "openai",
+   "url": "http://headroom:8787",
+   "model": "gpt-4o",
+   "compressUserMessages": false,
+   "replay": true,
+   "body": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "reply": {
+    "status": 503,
+    "json": {}
+   },
+   "calls": [
+    {
+     "url": "http://headroom:8787/v1/compress",
+     "method": "POST",
+     "headers": {
+      "Content-Type": "application/json"
+     },
+     "payload": {
+      "messages": [
+       {
+        "role": "system",
+        "content": "be brief"
+       },
+       {
+        "role": "user",
+        "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+       },
+       {
+        "role": "assistant",
+        "content": "ok"
+       },
+       {
+        "role": "user",
+        "content": "again"
+       }
+      ],
+      "model": "gpt-4o"
+     }
+    }
+   ],
+   "stats": null,
+   "after": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "diagnostics": {
+    "before": {
+     "bodyBytes": 569,
+     "messageBytes": 539,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    },
+    "endpoint": "http://headroom:8787/v1/compress",
+    "reason": "proxy returned HTTP 503"
+   },
+   "log": null,
+   "sizeLog": "",
+   "phantom": false
+  },
+  {
+   "name": "chat: connection failure",
+   "format": "openai",
+   "url": "http://headroom:8787",
+   "model": "gpt-4o",
+   "compressUserMessages": false,
+   "replay": true,
+   "body": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "reply": {
+    "throws": "connect ECONNREFUSED"
+   },
+   "calls": [
+    {
+     "url": "http://headroom:8787/v1/compress",
+     "method": "POST",
+     "headers": {
+      "Content-Type": "application/json"
+     },
+     "payload": {
+      "messages": [
+       {
+        "role": "system",
+        "content": "be brief"
+       },
+       {
+        "role": "user",
+        "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+       },
+       {
+        "role": "assistant",
+        "content": "ok"
+       },
+       {
+        "role": "user",
+        "content": "again"
+       }
+      ],
+      "model": "gpt-4o"
+     }
+    }
+   ],
+   "stats": null,
+   "after": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "diagnostics": {
+    "before": {
+     "bodyBytes": 569,
+     "messageBytes": 539,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    },
+    "endpoint": "http://headroom:8787/v1/compress",
+    "reason": "request failed: ECONNREFUSED: connect ECONNREFUSED"
+   },
+   "log": null,
+   "sizeLog": "",
+   "phantom": false
+  },
+  {
+   "name": "chat: reply without messages[]",
+   "format": "openai",
+   "url": "http://headroom:8787",
+   "model": "gpt-4o",
+   "compressUserMessages": false,
+   "replay": true,
+   "body": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "reply": {
+    "status": 200,
+    "json": {
+     "ok": true
+    }
+   },
+   "calls": [
+    {
+     "url": "http://headroom:8787/v1/compress",
+     "method": "POST",
+     "headers": {
+      "Content-Type": "application/json"
+     },
+     "payload": {
+      "messages": [
+       {
+        "role": "system",
+        "content": "be brief"
+       },
+       {
+        "role": "user",
+        "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+       },
+       {
+        "role": "assistant",
+        "content": "ok"
+       },
+       {
+        "role": "user",
+        "content": "again"
+       }
+      ],
+      "model": "gpt-4o"
+     }
+    }
+   ],
+   "stats": null,
+   "after": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "diagnostics": {
+    "before": {
+     "bodyBytes": 569,
+     "messageBytes": 539,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    },
+    "endpoint": "http://headroom:8787/v1/compress",
+    "reason": "proxy response missing messages[]"
+   },
+   "log": null,
+   "sizeLog": "",
+   "phantom": false
+  },
+  {
+   "name": "chat: disabled",
+   "format": "openai",
+   "url": "http://headroom:8787",
+   "model": "gpt-4o",
+   "compressUserMessages": false,
+   "replay": true,
+   "body": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "reply": {
+    "status": 200,
+    "json": {
+     "messages": [],
+     "tokens_before": 100,
+     "tokens_after": 40,
+     "tokens_saved": 60
+    }
+   },
+   "calls": [],
+   "stats": null,
+   "after": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "diagnostics": {
+    "reason": "disabled"
+   },
+   "log": null,
+   "sizeLog": "",
+   "phantom": false
+  },
+  {
+   "name": "chat: no URL",
+   "format": "openai",
+   "url": "",
+   "model": "gpt-4o",
+   "compressUserMessages": false,
+   "replay": true,
+   "body": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "reply": {
+    "status": 200,
+    "json": {
+     "messages": [],
+     "tokens_before": 100,
+     "tokens_after": 40,
+     "tokens_saved": 60
+    }
+   },
+   "calls": [],
+   "stats": null,
+   "after": {
+    "model": "gpt-4o",
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "diagnostics": {
+    "reason": "missing proxy URL"
+   },
+   "log": null,
+   "sizeLog": "",
+   "phantom": false
+  },
+  {
+   "name": "gemini body is not a supported shape",
+   "format": "gemini",
+   "url": "http://headroom:8787",
+   "model": "gemini-2.5-pro",
+   "compressUserMessages": false,
+   "replay": true,
+   "body": {
+    "contents": [
+     {
+      "role": "user",
+      "parts": [
+       {
+        "text": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+       }
+      ]
+     }
+    ]
+   },
+   "reply": {
+    "status": 200,
+    "json": {
+     "messages": [],
+     "tokens_before": 100,
+     "tokens_after": 40,
+     "tokens_saved": 60
+    }
+   },
+   "calls": [],
+   "stats": null,
+   "after": {
+    "contents": [
+     {
+      "role": "user",
+      "parts": [
+       {
+        "text": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+       }
+      ]
+     }
+    ]
+   },
+   "diagnostics": {
+    "before": {
+     "bodyBytes": 452,
+     "messageBytes": 0,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    },
+    "reason": "unsupported gemini request shape"
+   },
+   "log": null,
+   "sizeLog": "",
+   "phantom": false
+  },
+  {
+   "name": "responses: message items",
+   "format": "openai-responses",
+   "url": "http://headroom:8787",
+   "model": "gpt-5",
+   "compressUserMessages": false,
+   "replay": true,
+   "body": {
+    "model": "gpt-5",
+    "input": [
+     {
+      "type": "message",
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "type": "message",
+      "role": "assistant",
+      "content": "ok"
+     }
+    ]
+   },
+   "reply": {
+    "status": 200,
+    "json": {
+     "messages": [
+      {
+       "role": "user",
+       "content": "short"
+      },
+      {
+       "role": "assistant",
+       "content": "ok"
+      }
+     ],
+     "tokens_before": 100,
+     "tokens_after": 40,
+     "tokens_saved": 60
+    }
+   },
+   "calls": [
+    {
+     "url": "http://headroom:8787/v1/compress",
+     "method": "POST",
+     "headers": {
+      "Content-Type": "application/json"
+     },
+     "payload": {
+      "messages": [
+       {
+        "role": "user",
+        "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+       },
+       {
+        "role": "assistant",
+        "content": "ok"
+       }
+      ],
+      "model": "gpt-5"
+     }
+    }
+   ],
+   "stats": {
+    "messages": [
+     {
+      "role": "user",
+      "content": "short"
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     }
+    ],
+    "tokens_before": 100,
+    "tokens_after": 40,
+    "tokens_saved": 60
+   },
+   "after": {
+    "model": "gpt-5",
+    "input": [
+     {
+      "type": "message",
+      "role": "user",
+      "content": [
+       {
+        "type": "input_text",
+        "text": "short"
+       }
+      ]
+     },
+     {
+      "type": "message",
+      "role": "assistant",
+      "content": [
+       {
+        "type": "output_text",
+        "text": "ok"
+       }
+      ]
+     }
+    ]
+   },
+   "diagnostics": {
+    "before": {
+     "bodyBytes": 526,
+     "messageBytes": 500,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    },
+    "endpoint": "http://headroom:8787/v1/compress",
+    "after": {
+     "bodyBytes": 194,
+     "messageBytes": 168,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    }
+   },
+   "log": "reported token delta=60 before=100 after=40 (60.0%)",
+   "sizeLog": "body=526B→194B messages=500B→168B tools=2B→2B toolHistory=2B→2B effective=63.1%",
+   "phantom": false
+  },
+  {
+   "name": "responses: a tool item is not safe to compress",
+   "format": "openai-responses",
+   "url": "http://headroom:8787",
+   "model": "gpt-5",
+   "compressUserMessages": false,
+   "replay": true,
+   "body": {
+    "model": "gpt-5",
+    "input": [
+     {
+      "type": "message",
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "type": "function_call",
+      "call_id": "c",
+      "name": "f",
+      "arguments": "{}"
+     }
+    ]
+   },
+   "reply": {
+    "status": 200,
+    "json": {
+     "messages": [],
+     "tokens_before": 100,
+     "tokens_after": 40,
+     "tokens_saved": 60
+    }
+   },
+   "calls": [],
+   "stats": null,
+   "after": {
+    "model": "gpt-5",
+    "input": [
+     {
+      "type": "message",
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "type": "function_call",
+      "call_id": "c",
+      "name": "f",
+      "arguments": "{}"
+     }
+    ]
+   },
+   "diagnostics": {
+    "before": {
+     "bodyBytes": 540,
+     "messageBytes": 514,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    },
+    "reason": "skipped: openai-responses tool/reasoning input is not safe to compress"
+   },
+   "log": null,
+   "sizeLog": "",
+   "phantom": false
+  },
+  {
+   "name": "claude: system string and messages",
+   "format": "claude",
+   "url": "http://headroom:8787",
+   "model": "claude-sonnet-4-5",
+   "compressUserMessages": false,
+   "replay": true,
+   "body": {
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 100,
+    "system": "be brief",
+    "messages": [
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ]
+   },
+   "reply": {
+    "status": 200,
+    "json": {
+     "messages": [
+      {
+       "role": "system",
+       "content": "be brief"
+      },
+      {
+       "role": "user",
+       "content": "short"
+      },
+      {
+       "role": "assistant",
+       "content": "ok"
+      },
+      {
+       "role": "user",
+       "content": "again"
+      }
+     ],
+     "tokens_before": 100,
+     "tokens_after": 40,
+     "tokens_saved": 60
+    }
+   },
+   "calls": [
+    {
+     "url": "http://headroom:8787/v1/compress",
+     "method": "POST",
+     "headers": {
+      "Content-Type": "application/json"
+     },
+     "payload": {
+      "messages": [
+       {
+        "role": "system",
+        "content": "be brief"
+       },
+       {
+        "role": "user",
+        "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+       },
+       {
+        "role": "assistant",
+        "content": "ok"
+       },
+       {
+        "role": "user",
+        "content": "again"
+       }
+      ],
+      "model": "claude-sonnet-4-5"
+     }
+    }
+   ],
+   "stats": {
+    "messages": [
+     {
+      "role": "system",
+      "content": "be brief"
+     },
+     {
+      "role": "user",
+      "content": "short"
+     },
+     {
+      "role": "assistant",
+      "content": "ok"
+     },
+     {
+      "role": "user",
+      "content": "again"
+     }
+    ],
+    "tokens_before": 100,
+    "tokens_after": 40,
+    "tokens_saved": 60
+   },
+   "after": {
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 100,
+    "system": [
+     {
+      "type": "text",
+      "text": "You are Claude Code, Anthropic's official CLI for Claude."
+     },
+     {
+      "type": "text",
+      "text": "be brief",
+      "cache_control": {
+       "type": "ephemeral",
+       "ttl": "1h"
+      }
+     }
+    ],
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "short"
+       }
+      ]
+     },
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "text",
+        "text": "ok",
+        "cache_control": {
+         "type": "ephemeral"
+        }
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "again"
+       }
+      ]
+     }
+    ]
+   },
+   "diagnostics": {
+    "before": {
+     "bodyBytes": 578,
+     "messageBytes": 500,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    },
+    "endpoint": "http://headroom:8787/v1/compress",
+    "after": {
+     "bodyBytes": 451,
+     "messageBytes": 217,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    }
+   },
+   "log": "reported token delta=60 before=100 after=40 (60.0%)",
+   "sizeLog": "body=578B→451B messages=500B→217B tools=2B→2B toolHistory=2B→2B effective=22.0%",
+   "phantom": false
+  },
+  {
+   "name": "claude: system blocks",
+   "format": "claude",
+   "url": "http://headroom:8787",
+   "model": "claude-sonnet-4-5",
+   "compressUserMessages": false,
+   "replay": false,
+   "body": {
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 100,
+    "system": [
+     {
+      "type": "text",
+      "text": "rule one"
+     },
+     {
+      "type": "text",
+      "text": "rule two"
+     }
+    ],
+    "messages": [
+     {
+      "role": "user",
+      "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+     }
+    ]
+   },
+   "reply": {
+    "status": 200,
+    "json": {
+     "messages": [
+      {
+       "role": "system",
+       "content": "rule one\n\nrule two"
+      },
+      {
+       "role": "user",
+       "content": "short"
+      }
+     ],
+     "tokens_before": 100,
+     "tokens_after": 40,
+     "tokens_saved": 60
+    }
+   },
+   "calls": [
+    {
+     "url": "http://headroom:8787/v1/compress",
+     "method": "POST",
+     "headers": {
+      "Content-Type": "application/json"
+     },
+     "payload": {
+      "messages": [
+       {
+        "role": "system",
+        "content": "rule one\nrule two"
+       },
+       {
+        "role": "user",
+        "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+       }
+      ],
+      "model": "claude-sonnet-4-5"
+     }
+    }
+   ],
+   "stats": {
+    "messages": [
+     {
+      "role": "system",
+      "content": "rule one\n\nrule two"
+     },
+     {
+      "role": "user",
+      "content": "short"
+     }
+    ],
+    "tokens_before": 100,
+    "tokens_after": 40,
+    "tokens_saved": 60
+   },
+   "after": {
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 100,
+    "system": [
+     {
+      "type": "text",
+      "text": "You are Claude Code, Anthropic's official CLI for Claude."
+     },
+     {
+      "type": "text",
+      "text": "rule one\n\nrule two",
+      "cache_control": {
+       "type": "ephemeral",
+       "ttl": "1h"
+      }
+     }
+    ],
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "short"
+       }
+      ]
+     }
+    ]
+   },
+   "diagnostics": {
+    "before": {
+     "bodyBytes": 567,
+     "messageBytes": 430,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    },
+    "endpoint": "http://headroom:8787/v1/compress",
+    "after": {
+     "bodyBytes": 306,
+     "messageBytes": 60,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 2
+    }
+   },
+   "log": "reported token delta=60 before=100 after=40 (60.0%)",
+   "sizeLog": "body=567B→306B messages=430B→60B tools=2B→2B toolHistory=2B→2B effective=46.0%",
+   "phantom": false
+  },
+  {
+   "name": "claude: tool use and tool result are translated to tool_calls and a tool message",
+   "format": "claude",
+   "url": "http://headroom:8787",
+   "model": "claude-sonnet-4-5",
+   "compressUserMessages": false,
+   "replay": false,
+   "body": {
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 100,
+    "messages": [
+     {
+      "role": "user",
+      "content": "run it"
+     },
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "tool_use",
+        "id": "t1",
+        "name": "sh",
+        "input": {
+         "cmd": "ls"
+        }
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "tool_result",
+        "tool_use_id": "t1",
+        "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+       }
+      ]
+     }
+    ]
+   },
+   "reply": {
+    "status": 200,
+    "json": {
+     "messages": [
+      {
+       "role": "user",
+       "content": "run it"
+      },
+      {
+       "role": "assistant",
+       "content": "",
+       "tool_calls": [
+        {
+         "id": "t1",
+         "type": "function",
+         "function": {
+          "name": "sh",
+          "arguments": "{\"cmd\":\"ls\"}"
+         }
+        }
+       ]
+      },
+      {
+       "role": "tool",
+       "tool_call_id": "t1",
+       "content": "short"
+      }
+     ],
+     "tokens_before": 100,
+     "tokens_after": 40,
+     "tokens_saved": 60
+    }
+   },
+   "calls": [
+    {
+     "url": "http://headroom:8787/v1/compress",
+     "method": "POST",
+     "headers": {
+      "Content-Type": "application/json"
+     },
+     "payload": {
+      "messages": [
+       {
+        "role": "user",
+        "content": "run it"
+       },
+       {
+        "role": "assistant",
+        "tool_calls": [
+         {
+          "id": "t1",
+          "type": "function",
+          "function": {
+           "name": "sh",
+           "arguments": "{\"cmd\":\"ls\"}"
+          }
+         }
+        ]
+       },
+       {
+        "role": "tool",
+        "tool_call_id": "t1",
+        "content": "long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text long text "
+       }
+      ],
+      "model": "claude-sonnet-4-5"
+     }
+    }
+   ],
+   "stats": {
+    "messages": [
+     {
+      "role": "user",
+      "content": "run it"
+     },
+     {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+       {
+        "id": "t1",
+        "type": "function",
+        "function": {
+         "name": "sh",
+         "arguments": "{\"cmd\":\"ls\"}"
+        }
+       }
+      ]
+     },
+     {
+      "role": "tool",
+      "tool_call_id": "t1",
+      "content": "short"
+     }
+    ],
+    "tokens_before": 100,
+    "tokens_after": 40,
+    "tokens_saved": 60
+   },
+   "after": {
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 100,
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "run it"
+       }
+      ]
+     },
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "tool_use",
+        "id": "t1",
+        "name": "sh",
+        "input": {
+         "cmd": "ls"
+        },
+        "cache_control": {
+         "type": "ephemeral"
+        }
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "tool_result",
+        "tool_use_id": "t1",
+        "content": "short"
+       }
+      ]
+     }
+    ],
+    "system": [
+     {
+      "type": "text",
+      "text": "You are Claude Code, Anthropic's official CLI for Claude."
+     }
+    ]
+   },
+   "diagnostics": {
+    "before": {
+     "bodyBytes": 673,
+     "messageBytes": 615,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 580
+    },
+    "endpoint": "http://headroom:8787/v1/compress",
+    "after": {
+     "bodyBytes": 434,
+     "messageBytes": 282,
+     "toolSchemaBytes": 2,
+     "toolHistoryBytes": 222
+    }
+   },
+   "log": "reported token delta=60 before=100 after=40 (60.0%)",
+   "sizeLog": "body=673B→434B messages=615B→282B tools=2B→2B toolHistory=580B→222B effective=35.5%",
+   "phantom": false
+  }
+ ]
+}

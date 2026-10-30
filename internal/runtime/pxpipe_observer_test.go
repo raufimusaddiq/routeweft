@@ -40,21 +40,21 @@ func TestPXPIPEObserverSurvivesSnapshotPublication(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		body := `{"messages":[{"role":"user","content":"` + content + `"}]}`
-		if _, err := snapshot.TransformBody(ctx, "openai-chat", []byte(body), false); err != nil {
+		body := `{"model":"m","messages":[{"role":"user","content":"` + content + `"}]}`
+		if _, err := snapshot.TransformBody(ctx, "anthropic-messages", []byte(body), false); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := manager.SetSettings(ctx, map[string]string{"pxpipeEnabled": "true", "pxpipeMinChars": "20"}, nil); err != nil {
+	if _, err := manager.SetSettings(ctx, map[string]string{"pxpipeEnabled": "true", "pxpipeMinChars": "100", "pxpipeUrl": "http://127.0.0.1:9"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	run("short")
-	run(strings.Repeat("x", 40))
+	run(strings.Repeat("x", 100)) // over the threshold; the loopback helper is refused: an attempt that failed
 	// A later publication must keep reporting into the same sink.
-	if _, err := manager.SetSettings(ctx, map[string]string{"pxpipeMinChars": "30"}, nil); err != nil {
+	if _, err := manager.SetSettings(ctx, map[string]string{"pxpipeMinChars": "120"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	run(strings.Repeat("y", 40))
+	run(strings.Repeat("y", 100))
 
 	mu.Lock()
 	defer mu.Unlock()

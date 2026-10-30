@@ -63,9 +63,12 @@ jobs:
       - run: node compat/parity/generate-combo-routing.mjs --check
       # The oracle's default price catalog and cost arithmetic, replayed by internal/pricing (#273).
       - run: node compat/parity/generate-pricing.mjs --check
+      # The Headroom /v1/compress wire and PXPIPE's host contract, replayed by internal/transforms (#271).
+      - run: node compat/parity/generate-headroom.mjs --check
+      - run: node compat/parity/generate-pxpipe.mjs --check
       - run: go test -race ./internal/app -run TestPinnedSystemOneDifferential -count=1
       - run: go test -race ./internal/security ./internal/ingress ./internal/providers/shared ./internal/providers/wire ./internal/protocol/concerns
-      - run: go test -race ./internal/parity ./internal/protocol/hub ./internal/pricing -count=1
+      - run: go test -race ./internal/parity ./internal/protocol/hub ./internal/pricing ./internal/transforms/... -count=1
       # Provider catalog, model seeds, quota readers and onboarding flows are
       # compared against the oracle: no hand-kept provider list can drift.
       - run: go test -tags oracle ./internal/providers/parity -count=1

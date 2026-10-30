@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,12 +16,72 @@ import (
 	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
-	"github.com/raufimusaddiq/routeweft/internal/transforms"
 )
 
-type saverPayload struct {
-	System   []string             `json:"system"`
-	Messages []transforms.Message `json:"messages"`
+// compressRequest and compressReply are Headroom's /v1/compress wire.
+type compressRequest struct {
+	Messages []map[string]any `json:"messages"`
+	Model    string           `json:"model"`
+	Config   map[string]any   `json:"config"`
+}
+
+// compressHandler answers /v1/compress: edit rewrites the messages it was sent,
+// and what it was sent is recorded.
+func compressHandler(t *testing.T, calls *atomic.Int32, seen func(compressRequest), edit func([]map[string]any)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		var request compressRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		if r.URL.Path != "/headroom/v1/compress" && r.URL.Path != "/v1/compress" {
+			t.Errorf("Headroom called at %s", r.URL.Path)
+		}
+		if seen != nil {
+			recorded, _ := json.Marshal(request) // before edit rewrites the messages in place
+			var copied compressRequest
+			_ = json.Unmarshal(recorded, &copied)
+			seen(copied)
+		}
+		if edit != nil {
+			edit(request.Messages)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"messages": request.Messages, "tokens_before": 10, "tokens_after": 5, "tokens_saved": 5})
+	}
+}
+
+// imageHandler answers the PXPIPE helper contract: edit rewrites the whole Claude
+// body it was handed; a nil edit declines.
+func imageHandler(t *testing.T, calls *atomic.Int32, edit func(map[string]any)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		var request struct {
+			Body    string `json:"body"`
+			Model   string `json:"model"`
+			Options struct {
+				MinCompressChars int `json:"minCompressChars"`
+			} `json:"options"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		raw, err := base64.StdEncoding.DecodeString(request.Body)
+		if err != nil || request.Options.MinCompressChars != 1 {
+			t.Errorf("PXPIPE request: %v %+v", err, request)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Error(err)
+		}
+		if edit == nil {
+			fmt.Fprint(w, `{"applied":false,"reason":"not_profitable"}`)
+			return
+		}
+		edit(body)
+		rewritten, _ := json.Marshal(body)
+		json.NewEncoder(w).Encode(map[string]any{"applied": true, "reason": "applied", "body": base64.StdEncoding.EncodeToString(rewritten),
+			"info": map[string]any{"compressedChars": 5000, "imageCount": 1, "imagePixels": 750}, "cache": map[string]any{"ownsCacheControl": false}})
+	}
 }
 
 func setSavers(t *testing.T, a *App, settings map[string]string) {
@@ -47,28 +108,39 @@ func TestConfiguredSaverOrderRetryFallbackAndFinalCache(t *testing.T) {
 		t.Run(fmt.Sprint(failure), func(t *testing.T) {
 			var mu sync.Mutex
 			var order []string
-			helper := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var payload saverPayload
-				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-					t.Error(err)
-				}
+			var headroomCalls, pxpipeCalls atomic.Int32
+			mux := http.NewServeMux()
+			mux.HandleFunc("/headroom/v1/compress", func(w http.ResponseWriter, r *http.Request) {
 				mu.Lock()
 				order = append(order, r.URL.Path)
 				mu.Unlock()
-				if r.URL.Path == "/headroom" {
-					if len(payload.System) != 0 || len(payload.Messages) != 2 || payload.Messages[1].Content != `{"x":1}` {
-						t.Errorf("RTK must precede Headroom; policies must follow: %+v", payload)
+				compressHandler(t, &headroomCalls, func(request compressRequest) {
+					if len(request.Messages) != 2 || request.Messages[1]["role"] != "tool" || request.Messages[1]["content"] != `{"x":1}` {
+						t.Errorf("RTK must precede Headroom, and policies must follow it: %+v", request)
 					}
-					payload.Messages[1].Content = "headroom result"
-				} else {
-					if len(payload.System) != 2 || !strings.HasPrefix(payload.System[0], "[routeweft:caveman]") || !strings.HasPrefix(payload.System[1], "[routeweft:ponytail]") || payload.Messages[1].Content != "headroom result" {
-						t.Errorf("PXPIPE must follow all four savers: %+v", payload)
+				}, func(messages []map[string]any) { messages[1]["content"] = "headroom result" })(w, r)
+			})
+			mux.HandleFunc("/pxpipe", func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				order = append(order, r.URL.Path)
+				mu.Unlock()
+				imageHandler(t, &pxpipeCalls, func(body map[string]any) {
+					system, _ := body["system"].([]any)
+					messages, _ := body["messages"].([]any)
+					if len(system) != 2 || len(messages) != 2 {
+						t.Fatalf("PXPIPE must be handed the whole body after all four savers: %+v", body)
 					}
-					payload.System[1] += " final-pxpipe"
-					payload.Messages[1].Content = "pxpipe result"
-				}
-				json.NewEncoder(w).Encode(payload)
-			}))
+					first, _ := system[0].(map[string]any)
+					last, _ := system[1].(map[string]any)
+					result := messages[1].(map[string]any)["content"].([]any)[0].(map[string]any)
+					if !strings.HasPrefix(first["text"].(string), "[routeweft:caveman]") || !strings.HasPrefix(last["text"].(string), "[routeweft:ponytail]") || result["content"] != "headroom result" {
+						t.Errorf("PXPIPE must follow all four savers: %+v", body)
+					}
+					last["text"] = last["text"].(string) + " final-pxpipe"
+					result["content"] = "pxpipe result"
+				})(w, r)
+			})
+			helper := httptest.NewServer(mux)
 			defer helper.Close()
 			var calls atomic.Int32
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +173,7 @@ func TestConfiguredSaverOrderRetryFallbackAndFinalCache(t *testing.T) {
 			w := serveRequest(a.Handler(), key, "/v1/messages", `{"model":"fast","messages":[{"role":"user","content":"hi"},{"role":"user","content":[{"type":"tool_result","tool_use_id":"c","content":"{ \"x\" : 1 }"}]}]}`)
 			mu.Lock()
 			defer mu.Unlock()
-			if w.Code != 200 || calls.Load() != 2 || !reflect.DeepEqual(order, []string{"/headroom", "/pxpipe", "/headroom", "/pxpipe"}) {
+			if w.Code != 200 || calls.Load() != 2 || !reflect.DeepEqual(order, []string{"/headroom/v1/compress", "/pxpipe", "/headroom/v1/compress", "/pxpipe"}) {
 				t.Fatalf("status=%d calls=%d order=%v body=%s", w.Code, calls.Load(), order, w.Body)
 			}
 		})
@@ -119,22 +191,30 @@ func TestConfiguredSaversEveryNativePathAndFallback(t *testing.T) {
 		{"ollama", "/v1/api/chat", `{"model":"fast","messages":[{"role":"user","content":"hello"}],"future":true}`},
 		{"systemone", "/v1/systemone", `{"model":"fast","state":{"opaque":"hello"},"questions":{"answer":"string"},"future":true}`},
 	} {
+		// Headroom speaks OpenAI-shaped messages: it skips a Gemini body. PXPIPE
+		// images Claude-format bodies only (PARITY 6.37).
+		wantText, headroomRuns, pxpipeRuns := "headroom", int32(2), int32(0)
+		switch tc.protocol {
+		case "gemini":
+			wantText, headroomRuns = "hello", 0
+		case "anthropic-messages":
+			wantText, pxpipeRuns = "pxpipe", 2
+		case "systemone":
+			headroomRuns = 0
+		}
 		t.Run(tc.path, func(t *testing.T) {
-			var helperCalls, upstreamCalls atomic.Int32
-			helper := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				helperCalls.Add(1)
-				var payload saverPayload
-				json.NewDecoder(r.Body).Decode(&payload)
-				if r.URL.Path == "/headroom" {
-					payload.Messages[0].Content = "headroom"
-				} else {
-					if payload.Messages[0].Content != "headroom" || len(payload.System) != 2 {
-						t.Errorf("wrong saver order: %+v", payload)
-					}
-					payload.Messages[0].Content = "pxpipe"
+			var headroomCalls, pxpipeCalls, upstreamCalls atomic.Int32
+			mux := http.NewServeMux()
+			mux.HandleFunc("/headroom/v1/compress", compressHandler(t, &headroomCalls, nil, func(messages []map[string]any) { messages[len(messages)-1]["content"] = "headroom" }))
+			mux.HandleFunc("/pxpipe", imageHandler(t, &pxpipeCalls, func(body map[string]any) {
+				system, _ := body["system"].([]any)
+				messages, _ := body["messages"].([]any)
+				if len(system) != 2 || len(messages) != 1 || messages[0].(map[string]any)["content"] != "headroom" {
+					t.Errorf("wrong saver order: %+v", body)
 				}
-				json.NewEncoder(w).Encode(payload)
+				messages[0].(map[string]any)["content"] = "pxpipe"
 			}))
+			helper := httptest.NewServer(mux)
 			defer helper.Close()
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				body, _ := io.ReadAll(r.Body)
@@ -145,7 +225,7 @@ func TestConfiguredSaversEveryNativePathAndFallback(t *testing.T) {
 					if !strings.Contains(string(body), `"state":{"opaque":"hello"}`) || strings.Contains(string(body), "[routeweft:") {
 						t.Errorf("typed state corrupted: %s", body)
 					}
-				} else if !strings.Contains(string(body), "pxpipe") || strings.Count(string(body), "[routeweft:caveman]") != 1 || strings.Count(string(body), "[routeweft:ponytail]") != 1 {
+				} else if !strings.Contains(string(body), wantText) || strings.Count(string(body), "[routeweft:caveman]") != 1 || strings.Count(string(body), "[routeweft:ponytail]") != 1 {
 					t.Errorf("savers skipped/duplicated: %s", body)
 				}
 				if upstreamCalls.Add(1) == 1 {
@@ -160,12 +240,8 @@ func TestConfiguredSaversEveryNativePathAndFallback(t *testing.T) {
 			setSavers(t, a, map[string]string{"headroomEnabled": "true", "headroomCompressUserMessages": "true", "headroomUrl": helper.URL + "/headroom", "cavemanEnabled": "true", "ponytailEnabled": "true", "pxpipeEnabled": "true", "pxpipeUrl": helper.URL + "/pxpipe", "pxpipeMinChars": "1"})
 			a.store.Close()
 			w := serveRequest(a.Handler(), key, tc.path, tc.body)
-			wantHelpers := int32(4)
-			if tc.protocol == "systemone" {
-				wantHelpers = 0
-			}
-			if w.Code != 200 || upstreamCalls.Load() != 2 || helperCalls.Load() != wantHelpers {
-				t.Fatalf("status=%d upstream=%d helpers=%d body=%s", w.Code, upstreamCalls.Load(), helperCalls.Load(), w.Body)
+			if w.Code != 200 || upstreamCalls.Load() != 2 || headroomCalls.Load() != headroomRuns || pxpipeCalls.Load() != pxpipeRuns {
+				t.Fatalf("status=%d upstream=%d headroom=%d pxpipe=%d body=%s", w.Code, upstreamCalls.Load(), headroomCalls.Load(), pxpipeCalls.Load(), w.Body)
 			}
 		})
 	}
@@ -233,12 +309,9 @@ func TestConfiguredSaversAfterTranslationWithFallback(t *testing.T) {
 					target, path, endpoint = openai.ResponsesProtocol, "/v1/chat/completions", "/responses"
 				}
 				var calls, helpers atomic.Int32
-				helper := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					helpers.Add(1)
-					var payload saverPayload
-					json.NewDecoder(r.Body).Decode(&payload)
-					json.NewEncoder(w).Encode(payload)
-				}))
+				// An echo: Headroom gets its messages back unchanged. PXPIPE never runs
+				// here, because the translated body is not Claude-format.
+				helper := httptest.NewServer(compressHandler(t, &helpers, nil, nil))
 				defer helper.Close()
 				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					body, _ := io.ReadAll(r.Body)
@@ -266,7 +339,13 @@ func TestConfiguredSaversAfterTranslationWithFallback(t *testing.T) {
 				request["stream"] = stream
 				body, _ := json.Marshal(request)
 				w := serveRequest(a.Handler(), key, path, string(body))
-				if w.Code != 200 || calls.Load() != 2 || helpers.Load() != 4 {
+				// The Responses body this fixture translates to holds function-call items,
+				// which Headroom is never given (hasUnsafeResponsesInputForCompression).
+				wantHelpers := int32(2)
+				if target == openai.ResponsesProtocol {
+					wantHelpers = 0
+				}
+				if w.Code != 200 || calls.Load() != 2 || helpers.Load() != wantHelpers {
 					t.Fatalf("status=%d calls=%d helpers=%d body=%s", w.Code, calls.Load(), helpers.Load(), w.Body)
 				}
 			})

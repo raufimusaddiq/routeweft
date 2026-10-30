@@ -14,10 +14,10 @@ No setting is assumed functional merely because it appears in the settings API.
 | `observabilityMaxJsonSize` | `internal/app/app.go:107,201`, `internal/telemetry/detail.go:70` | Restart; byte cap replaces oversized detail with omission attribution | Wire next detail write |
 | Recording / sampling / retention | `internal/app/app.go:265`, `internal/telemetry/detail.go:16,108` | Completion accounting only; no sampling setting; detail retention fixed at seven days | Keep policy; complete inference diagnostic capture remains R10 |
 | Transforms: `rtkEnabled` | `internal/transforms/body/body.go:49` | Next request after compile/commit/publish | Already live |
-| `headroomEnabled`, `headroomUrl`, `headroomTimeoutMs`, `headroomCompressUserMessages` | `internal/transforms/body/body.go:52-53` | Next request | Already live |
+| `headroomEnabled`, `headroomUrl`, `headroomTimeoutMs`, `headroomCompressUserMessages` | `internal/transforms/body/body.go` (`headroom.Transform`; `headroomUrl` is a base URL, `/v1/compress` is appended, #271) | Next request | Already live |
 | `cavemanEnabled`, `cavemanLevel` | `internal/transforms/body/body.go:55-56` | Next request | Already live |
 | `ponytailEnabled`, `ponytailLevel` | `internal/transforms/body/body.go:58-59` | Next request | Already live |
-| `pxpipeEnabled`, `pxpipeUrl`, `pxpipeMinChars`, `pxpipeTimeoutMs` | `internal/transforms/body/body.go:61-63` | Next request | Already live |
+| `pxpipeEnabled`, `pxpipeUrl`, `pxpipeMinChars`, `pxpipeTimeoutMs` | `internal/transforms/body/body.go` (`pxpipe.Transform.Compress`, a body-level step after the text savers, #271) | Next request | Already live |
 | `pxpipeAutoInstall` | None; allowlist/default only | Stored only, including after restart | Explicit storage-only: no managed installer/lifecycle subsystem (R09) |
 | Prompt cache | `internal/ingress/transforms.go:30` | Always anchors final Messages body, including saver bypass | No writable cache toggle exists; do not invent one |
 | Proxy: `outboundProxyEnabled`, `outboundProxyUrl`, `noProxy` | `internal/runtime/compiler.go:196-198`, `internal/proxy/binder.go:54,140` | URL/no-proxy are live, but `internal/proxy/policy.go:44-47` enables proxying from a saved URL even when the toggle is false | Fix shared policy to honor the global toggle; bound pools remain independent. Does not configure helper/quota/OAuth transports |

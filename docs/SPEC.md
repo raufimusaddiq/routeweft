@@ -876,14 +876,11 @@ Optional helper failures preserve the pre-step content and allow later savers
 to run. Helper work inherits the client context and uses pooled, SSRF-guarded
 clients; no credentials or client headers are forwarded to compression helpers.
 
-Implementation status, not a helper-parity contract change: the initial R03
-wiring uses the existing Routeweft Headroom/PXPIPE HTTP helper
-interfaces, not a claim of pinned helper-wire parity. `headroomUrl` is the full
-Routeweft compression endpoint. `pxpipeUrl` is an optional full helper endpoint,
-empty by default; an enabled but unconfigured PXPIPE fails open. Both URL
-settings use the common outbound policy; local endpoints require the explicit
-trusted-local deployment option. Native Headroom `/v1/compress` compatibility
-and PXPIPE image-rendering integration belong to R09, not System One R04.
+`headroomUrl` is the Headroom helper's base URL; `/v1/compress` is appended to it
+(17.2). `pxpipeUrl` is the PXPIPE helper's endpoint, empty by default: an enabled
+but unconfigured PXPIPE reports `not_installed` and changes nothing (17.4). Both URL
+settings use the common outbound policy and may carry neither user info nor a
+query; local endpoints require the explicit trusted-local deployment option.
 
 ### 17.1 RTK
 
@@ -901,6 +898,29 @@ Requirements:
 - fail-open when configured semantics say compression is optional;
 - diagnostics exposed in request detail;
 - managed health/start-stop behavior when Routeweft owns the process integration.
+
+Wire (PARITY 6.37). The helper is called with
+
+```text
+POST <headroomUrl>/v1/compress        Content-Type: application/json
+{"messages": [{"role": "...", "content": "..."}, ...],
+ "model": "<model the request is addressed to>",          (omitted when unknown)
+ "config": {"compress_user_messages": true}}              (only when enabled)
+```
+
+and answers `{"messages": [...], "tokens_before": n, "tokens_after": n,
+"tokens_saved": n}`; the statistics are optional. `messages` is the conversation's
+text slots in OpenAI Chat shape: the system slots first as `system` turns, then each
+turn with its role, a tool result as a `tool` turn. A reply is used only when it has
+the same number of turns with the same roles and a text for each (a string, or an
+array of strings and `{text}` parts joined by newlines). Unless
+`headroomCompressUserMessages` is on, what the helper did to a user turn is
+discarded. Headroom is not asked about a Gemini body, or about a Responses input
+that holds anything but plain `message` items (tool calls and results, reasoning).
+Any other outcome (no URL, a failed or slow call, an HTTP error, a reply without
+`messages[]`, one that changes the shape) leaves the request as it was and is
+recorded with the oracle's reason; a reply that reports tokens saved while the
+messages shrank by under 5% is logged as such.
 
 ### 17.3 Caveman / Ponytail
 
@@ -920,6 +940,31 @@ Requirements:
 - fail-open behavior;
 - request diagnostics;
 - health/log/stats control API.
+
+Host contract (PARITY 6.37). PXPIPE acts on the whole final body, after the text
+savers, and only on an Anthropic Messages body (any other protocol reports
+`unsupported_format`). In order: not enabled, no `pxpipeUrl` (`not_installed`), an
+empty body, another protocol, a body shorter than `pxpipeMinChars` (default 25000,
+counted in UTF-16 units of the compact JSON; `below_threshold`). Otherwise the
+helper is called at `pxpipeUrl`:
+
+```text
+POST <pxpipeUrl>
+{"body": "<base64 of the Anthropic body>", "model": "...", "options": {"minCompressChars": N}}
+-> {"applied": bool, "reason": "...", "detail": ..., "body": "<base64 of a JSON object>",
+    "info": {"compressedChars", "imageCount", "imageBytes", "imagePixels", "imageTokens", "baselineTokens"},
+    "cache": {"ownsCacheControl": bool}}
+```
+
+`applied: false` leaves the body (reason `passthrough` when none is given); a call
+over `pxpipeTimeoutMs` (default 15000) is `timeout`; a failed call, an unreadable or
+oversize answer, or a body that is not a JSON object is `transform_error`. Applied,
+the helper's body replaces the request body and the attempt reports the figures the
+reference reports: characters before and after, characters imaged, image count and
+bytes, estimated tokens before and after (the text left plus the images' own token
+cost: from `imageTokens`, else `imagePixels / 750`, else 4761 per image), tokens and
+percent saved. The prompt-cache anchors are placed after this step (18). The client's
+token-saver opt-out skips PXPIPE with the other savers.
 
 ## 18. Prompt-cache preservation
 
@@ -1624,7 +1669,7 @@ followed. A connectivity failure is a 200 with `ok:false` and a `class`
 `unreachable`); raw transport errors are never returned.
 
 Headroom and PXPIPE are external HTTP helpers reached only at the configured
-`headroomUrl`/`pxpipeUrl` (§17). Routeweft owns no helper process, so the control
+`headroomUrl` (+ `/v1/compress`) and `pxpipeUrl` (§17). Routeweft owns no helper process, so the control
 API is read-only diagnostics; every route is session-gated and probes use the
 shared SSRF-guarded client (trusted-local only when the deployment allows it)
 and forward no credentials or client headers:

@@ -258,15 +258,16 @@ func TestEveryInferenceBodyPostGoesThroughFinalizeBody(t *testing.T) {
 // place cannot start building an endpoint without being listed with the reason it
 // does not.
 var urlAssemblers = map[string]string{
-	"control/api/providers.go:testProviderModel":  "model probe: adds alt=sse to the URL Target.URL returned (Gemini)",
-	"control/api/settings.go:safeSettings":        "redacts a stored URL for display; never dials",
-	"control/api/read_models.go:safeURL":          "redacts a stored URL for display; never dials",
-	"ingress/catalog.go:handleModelKind":          "rewrites the inbound request's own query",
-	"providers/generic/generic.go:Endpoint":       "generic node's own endpoint; no caller outside its package",
-	"providers/generic/generic.go:DiscoverModels": "generic node; no caller outside its package",
-	"providers/onboarding/flow.go:appendQuery":    "OAuth URL query, not an inference upstream",
-	"transforms/headroom/headroom.go:Health":      "transform sidecar health probe, not a provider",
-	"transforms/pxpipe/pxpipe.go:Health":          "transform sidecar health probe, not a provider",
+	"control/api/providers.go:testProviderModel":   "model probe: adds alt=sse to the URL Target.URL returned (Gemini)",
+	"control/api/settings.go:safeSettings":         "redacts a stored URL for display; never dials",
+	"control/api/read_models.go:safeURL":           "redacts a stored URL for display; never dials",
+	"ingress/catalog.go:handleModelKind":           "rewrites the inbound request's own query",
+	"providers/generic/generic.go:Endpoint":        "generic node's own endpoint; no caller outside its package",
+	"providers/generic/generic.go:DiscoverModels":  "generic node; no caller outside its package",
+	"providers/onboarding/flow.go:appendQuery":     "OAuth URL query, not an inference upstream",
+	"transforms/headroom/headroom.go:ApplyContext": "appends /v1/compress to the Headroom helper's own base URL; a transform sidecar, not a provider",
+	"transforms/headroom/headroom.go:Health":       "transform sidecar health probe, not a provider",
+	"transforms/pxpipe/pxpipe.go:Health":           "transform sidecar health probe, not a provider",
 }
 
 func TestUpstreamURLsAreAssembledOnlyInTheSeam(t *testing.T) {

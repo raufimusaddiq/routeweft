@@ -28,20 +28,20 @@ func TestHeadroomCompressesWithBoundedRequestAndDiagnostic(t *testing.T) {
 	input := transforms.Request{System: []string{"system"}, Messages: []transforms.Message{{Role: "user", Content: "user text"}}}
 	var got payload
 	var diagnostic Diagnostic
-	transform := Transform{URL: "https://headroom.example/api/compress", Timeout: time.Second, CompressUserMessages: true, Client: fakeClient{do: func(request *http.Request) (*http.Response, error) {
-		if request.URL.String() != "https://headroom.example/api/compress" || request.Method != http.MethodPost {
+	transform := Transform{URL: "https://headroom.example/api", Timeout: time.Second, CompressUserMessages: true, Client: fakeClient{do: func(request *http.Request) (*http.Response, error) {
+		if request.URL.String() != "https://headroom.example/api/v1/compress" || request.Method != http.MethodPost {
 			t.Fatalf("request=%s %s", request.Method, request.URL)
 		}
 		if err := json.NewDecoder(request.Body).Decode(&got); err != nil {
 			t.Fatal(err)
 		}
-		return jsonResponse(http.StatusOK, "{\"system\":[\"compressed system\"],\"messages\":[{\"role\":\"user\",\"content\":\"compressed user\"}]}"), nil
+		return jsonResponse(http.StatusOK, "{\"messages\":[{\"role\":\"system\",\"content\":\"compressed system\"},{\"role\":\"user\",\"content\":\"compressed user\"}],\"tokens_before\":10,\"tokens_after\":4,\"tokens_saved\":6}"), nil
 	}}, Diagnostics: func(value Diagnostic) { diagnostic = value }}
 	updated, err := transform.Apply(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.CompressUserMessages || got.Messages[0].Content != "user text" {
+	if got.Config == nil || !got.Config.CompressUserMessages || got.Messages[0].Role != "system" || got.Messages[1].Content != "user text" {
 		t.Fatalf("payload=%+v", got)
 	}
 	if updated.System[0] != "compressed system" || updated.Messages[0].Content != "compressed user" {
@@ -50,7 +50,7 @@ func TestHeadroomCompressesWithBoundedRequestAndDiagnostic(t *testing.T) {
 	if input.System[0] != "system" || input.Messages[0].Content != "user text" {
 		t.Fatal("input mutated")
 	}
-	if !diagnostic.Attempted || !diagnostic.Succeeded || diagnostic.Error != "" {
+	if !diagnostic.Attempted || !diagnostic.Succeeded || diagnostic.Error != "" || diagnostic.TokensSaved != 6 || diagnostic.Endpoint != "https://headroom.example/api/v1/compress" {
 		t.Fatalf("diagnostic=%+v", diagnostic)
 	}
 }
@@ -109,8 +109,8 @@ func TestHeadroomTimeoutDiagnosticsRedactContentAndHealth(t *testing.T) {
 func TestHeadroomTransportErrorDiagnostic(t *testing.T) {
 	var diagnostic Diagnostic
 	transform := Transform{URL: "https://headroom.example", Diagnostics: func(value Diagnostic) { diagnostic = value }, Client: fakeClient{do: func(*http.Request) (*http.Response, error) { return nil, errors.New("offline") }}}
-	_, err := transform.Apply(transforms.Request{System: []string{"secret"}})
-	if err == nil || diagnostic.Error != "offline" || strings.Contains(diagnostic.Error, "secret") {
+	_, err := transform.Apply(transforms.Request{System: []string{"secret"}, Messages: []transforms.Message{{Role: "user", Content: "secret"}}})
+	if err == nil || diagnostic.Error != "request failed: offline" || strings.Contains(diagnostic.Error, "secret") {
 		t.Fatalf("err=%v diagnostic=%+v", err, diagnostic)
 	}
 }

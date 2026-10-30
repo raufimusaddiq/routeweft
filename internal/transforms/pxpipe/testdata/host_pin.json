@@ -1,0 +1,1097 @@
+{
+ "oracle": "raufimusaddiq/literouter",
+ "sha": "fc8dd1fc4f61383e7944dd880d94b6529fe92526",
+ "cases": [
+  {
+   "name": "disabled",
+   "spec": {
+    "unit": "x",
+    "times": 30000
+   },
+   "options": {
+    "enabled": false,
+    "format": "claude"
+   },
+   "script": "applied",
+   "calls": [],
+   "body": null,
+   "summary": {
+    "applied": false,
+    "reason": "disabled"
+   },
+   "hasDuration": false,
+   "log": null
+  },
+  {
+   "name": "transform unavailable (not installed)",
+   "spec": {
+    "unit": "x",
+    "times": 30000
+   },
+   "options": {
+    "enabled": true,
+    "format": "claude"
+   },
+   "script": "none",
+   "calls": [],
+   "body": null,
+   "summary": {
+    "applied": false,
+    "reason": "not_installed"
+   },
+   "hasDuration": false,
+   "log": null
+  },
+  {
+   "name": "only Claude-format bodies",
+   "spec": {
+    "unit": "x",
+    "times": 30000
+   },
+   "options": {
+    "enabled": true,
+    "format": "openai"
+   },
+   "script": "applied",
+   "result": {
+    "applied": true,
+    "reason": "applied",
+    "body": {
+     "model": "claude-fable-5",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "image",
+         "source": {
+          "type": "base64",
+          "media_type": "image/png",
+          "data": "AAAA"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "info": {},
+    "cache": {
+     "ownsCacheControl": true,
+     "markerCount": 1
+    }
+   },
+   "calls": [],
+   "body": null,
+   "summary": {
+    "applied": false,
+    "reason": "unsupported_format",
+    "detail": "openai"
+   },
+   "hasDuration": false,
+   "log": null
+  },
+  {
+   "name": "below the default threshold",
+   "spec": {
+    "unit": "x",
+    "times": 200
+   },
+   "options": {
+    "enabled": true,
+    "format": "claude"
+   },
+   "script": "applied",
+   "result": {
+    "applied": true,
+    "reason": "applied",
+    "body": {
+     "model": "claude-fable-5",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "image",
+         "source": {
+          "type": "base64",
+          "media_type": "image/png",
+          "data": "AAAA"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "info": {},
+    "cache": {
+     "ownsCacheControl": true,
+     "markerCount": 1
+    }
+   },
+   "calls": [],
+   "body": null,
+   "summary": {
+    "applied": false,
+    "reason": "below_threshold",
+    "originalChars": 285,
+    "threshold": 25000
+   },
+   "hasDuration": false,
+   "log": null
+  },
+  {
+   "name": "below a configured threshold",
+   "spec": {
+    "unit": "x",
+    "times": 30000
+   },
+   "options": {
+    "enabled": true,
+    "format": "claude",
+    "minChars": 40000
+   },
+   "script": "applied",
+   "result": {
+    "applied": true,
+    "reason": "applied",
+    "body": {
+     "model": "claude-fable-5",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "image",
+         "source": {
+          "type": "base64",
+          "media_type": "image/png",
+          "data": "AAAA"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "info": {},
+    "cache": {
+     "ownsCacheControl": true,
+     "markerCount": 1
+    }
+   },
+   "calls": [],
+   "body": null,
+   "summary": {
+    "applied": false,
+    "reason": "below_threshold",
+    "originalChars": 30085,
+    "threshold": 40000
+   },
+   "hasDuration": false,
+   "log": null
+  },
+  {
+   "name": "a threshold of zero or less means the default",
+   "spec": {
+    "unit": "x",
+    "times": 30000
+   },
+   "options": {
+    "enabled": true,
+    "format": "claude",
+    "minChars": 0
+   },
+   "script": "applied",
+   "result": {
+    "applied": true,
+    "reason": "applied",
+    "body": {
+     "model": "claude-fable-5",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "image",
+         "source": {
+          "type": "base64",
+          "media_type": "image/png",
+          "data": "AAAA"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "info": {
+     "compressedChars": 25000,
+     "imageCount": 2,
+     "imageBytes": 5000,
+     "imagePixels": 1500000
+    },
+    "cache": {
+     "ownsCacheControl": true,
+     "markerCount": 1
+    }
+   },
+   "calls": [
+    {
+     "bodyChars": 30085,
+     "options": {
+      "minCompressChars": 25000
+     }
+    }
+   ],
+   "body": {
+    "model": "claude-fable-5",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "image",
+        "source": {
+         "type": "base64",
+         "media_type": "image/png",
+         "data": "AAAA"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "summary": {
+    "applied": true,
+    "reason": "applied",
+    "originalChars": 30085,
+    "compressedBodyChars": 150,
+    "imagedChars": 25000,
+    "imageCount": 2,
+    "imageBytes": 5000,
+    "tokensBeforeEst": 7521,
+    "tokensAfterEst": 3271,
+    "cacheOwnsControl": true,
+    "tokensSavedEst": 4250,
+    "savedPct": 56.51
+   },
+   "hasDuration": true,
+   "log": "imaged 25000ch → 2 image(s) | est 7521→3271 tokens (-56.51%) | 7ms"
+  },
+  {
+   "name": "applied: pixels give the image tokens",
+   "spec": {
+    "unit": "x",
+    "times": 30000
+   },
+   "options": {
+    "enabled": true,
+    "format": "claude",
+    "minChars": 1000,
+    "model": "claude-fable-5"
+   },
+   "script": "applied",
+   "result": {
+    "applied": true,
+    "reason": "applied",
+    "body": {
+     "model": "claude-fable-5",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "image",
+         "source": {
+          "type": "base64",
+          "media_type": "image/png",
+          "data": "AAAA"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "info": {
+     "compressedChars": 25000,
+     "imageCount": 2,
+     "imageBytes": 5000,
+     "imagePixels": 1500000
+    },
+    "cache": {
+     "ownsCacheControl": true,
+     "markerCount": 1
+    }
+   },
+   "calls": [
+    {
+     "bodyChars": 30085,
+     "model": "claude-fable-5",
+     "options": {
+      "minCompressChars": 1000
+     }
+    }
+   ],
+   "body": {
+    "model": "claude-fable-5",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "image",
+        "source": {
+         "type": "base64",
+         "media_type": "image/png",
+         "data": "AAAA"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "summary": {
+    "applied": true,
+    "reason": "applied",
+    "originalChars": 30085,
+    "compressedBodyChars": 150,
+    "imagedChars": 25000,
+    "imageCount": 2,
+    "imageBytes": 5000,
+    "tokensBeforeEst": 7521,
+    "tokensAfterEst": 3271,
+    "cacheOwnsControl": true,
+    "tokensSavedEst": 4250,
+    "savedPct": 56.51
+   },
+   "hasDuration": true,
+   "log": "imaged 25000ch → 2 image(s) | est 7521→3271 tokens (-56.51%) | 7ms"
+  },
+  {
+   "name": "applied: reported image tokens and baseline win",
+   "spec": {
+    "unit": "x",
+    "times": 30000
+   },
+   "options": {
+    "enabled": true,
+    "format": "claude",
+    "minChars": 1000
+   },
+   "script": "applied",
+   "result": {
+    "applied": true,
+    "reason": "applied",
+    "body": {
+     "model": "claude-fable-5",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "image",
+         "source": {
+          "type": "base64",
+          "media_type": "image/png",
+          "data": "AAAA"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "info": {
+     "compressedChars": 25000,
+     "imageCount": 3,
+     "imageBytes": 9000,
+     "imageTokens": 1234,
+     "baselineTokens": 9999
+    },
+    "cache": {
+     "ownsCacheControl": true,
+     "markerCount": 1
+    }
+   },
+   "calls": [
+    {
+     "bodyChars": 30085,
+     "options": {
+      "minCompressChars": 1000
+     }
+    }
+   ],
+   "body": {
+    "model": "claude-fable-5",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "image",
+        "source": {
+         "type": "base64",
+         "media_type": "image/png",
+         "data": "AAAA"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "summary": {
+    "applied": true,
+    "reason": "applied",
+    "originalChars": 30085,
+    "compressedBodyChars": 150,
+    "imagedChars": 25000,
+    "imageCount": 3,
+    "imageBytes": 9000,
+    "tokensBeforeEst": 9999,
+    "tokensAfterEst": 2505,
+    "cacheOwnsControl": true,
+    "tokensSavedEst": 7494,
+    "savedPct": 74.95
+   },
+   "hasDuration": true,
+   "log": "imaged 25000ch → 3 image(s) | est 9999→2505 tokens (-74.95%) | 7ms"
+  },
+  {
+   "name": "applied: no pixels or tokens, 4761 per image",
+   "spec": {
+    "unit": "x",
+    "times": 30000
+   },
+   "options": {
+    "enabled": true,
+    "format": "claude",
+    "minChars": 1000
+   },
+   "script": "applied",
+   "result": {
+    "applied": true,
+    "reason": "applied",
+    "body": {
+     "model": "claude-fable-5",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "image",
+         "source": {
+          "type": "base64",
+          "media_type": "image/png",
+          "data": "AAAA"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "info": {
+     "compressedChars": 20000,
+     "imageCount": 2
+    },
+    "cache": {
+     "ownsCacheControl": true,
+     "markerCount": 1
+    }
+   },
+   "calls": [
+    {
+     "bodyChars": 30085,
+     "options": {
+      "minCompressChars": 1000
+     }
+    }
+   ],
+   "body": {
+    "model": "claude-fable-5",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "image",
+        "source": {
+         "type": "base64",
+         "media_type": "image/png",
+         "data": "AAAA"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "summary": {
+    "applied": true,
+    "reason": "applied",
+    "originalChars": 30085,
+    "compressedBodyChars": 150,
+    "imagedChars": 20000,
+    "imageCount": 2,
+    "imageBytes": 0,
+    "tokensBeforeEst": 7521,
+    "tokensAfterEst": 12043,
+    "cacheOwnsControl": true,
+    "tokensSavedEst": 0,
+    "savedPct": 0
+   },
+   "hasDuration": true,
+   "log": "imaged 20000ch → 2 image(s) | est 7521→12043 tokens (-0%) | 7ms"
+  },
+  {
+   "name": "applied: no info at all",
+   "spec": {
+    "unit": "x",
+    "times": 30000
+   },
+   "options": {
+    "enabled": true,
+    "format": "claude",
+    "minChars": 1000
+   },
+   "script": "applied",
+   "result": {
+    "applied": true,
+    "reason": "applied",
+    "body": {
+     "model": "claude-fable-5",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "image",
+         "source": {
+          "type": "base64",
+          "media_type": "image/png",
+          "data": "AAAA"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "cache": {
+     "ownsCacheControl": true,
+     "markerCount": 1
+    }
+   },
+   "calls": [
+    {
+     "bodyChars": 30085,
+     "options": {
+      "minCompressChars": 1000
+     }
+    }
+   ],
+   "body": {
+    "model": "claude-fable-5",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "image",
+        "source": {
+         "type": "base64",
+         "media_type": "image/png",
+         "data": "AAAA"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "summary": {
+    "applied": true,
+    "reason": "applied",
+    "originalChars": 30085,
+    "compressedBodyChars": 150,
+    "imagedChars": 0,
+    "imageCount": 0,
+    "imageBytes": 0,
+    "tokensBeforeEst": 7521,
+    "tokensAfterEst": 7521,
+    "cacheOwnsControl": true,
+    "tokensSavedEst": 0,
+    "savedPct": 0
+   },
+   "hasDuration": true,
+   "log": "imaged 0ch → 0 image(s) | est 7521→7521 tokens (-0%) | 7ms"
+  },
+  {
+   "name": "applied: the helper does not own cache control",
+   "spec": {
+    "unit": "x",
+    "times": 30000
+   },
+   "options": {
+    "enabled": true,
+    "format": "claude",
+    "minChars": 1000
+   },
+   "script": "applied",
+   "result": {
+    "applied": true,
+    "reason": "applied",
+    "body": {
+     "model": "claude-fable-5",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "image",
+         "source": {
+          "type": "base64",
+          "media_type": "image/png",
+          "data": "AAAA"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "info": {
+     "compressedChars": 25000,
+     "imageCount": 2,
+     "imagePixels": 1500000
+    },
+    "cache": {
+     "ownsCacheControl": false
+    }
+   },
+   "calls": [
+    {
+     "bodyChars": 30085,
+     "options": {
+      "minCompressChars": 1000
+     }
+    }
+   ],
+   "body": {
+    "model": "claude-fable-5",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "image",
+        "source": {
+         "type": "base64",
+         "media_type": "image/png",
+         "data": "AAAA"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "summary": {
+    "applied": true,
+    "reason": "applied",
+    "originalChars": 30085,
+    "compressedBodyChars": 150,
+    "imagedChars": 25000,
+    "imageCount": 2,
+    "imageBytes": 0,
+    "tokensBeforeEst": 7521,
+    "tokensAfterEst": 3271,
+    "cacheOwnsControl": false,
+    "tokensSavedEst": 4250,
+    "savedPct": 56.51
+   },
+   "hasDuration": true,
+   "log": "imaged 25000ch → 2 image(s) | est 7521→3271 tokens (-56.51%) | 7ms"
+  },
+  {
+   "name": "applied: savings cannot be negative",
+   "spec": {
+    "unit": "x",
+    "times": 30000
+   },
+   "options": {
+    "enabled": true,
+    "format": "claude",
+    "minChars": 1000
+   },
+   "script": "applied",
+   "result": {
+    "applied": true,
+    "reason": "applied",
+    "body": {
+     "model": "claude-fable-5",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "image",
+         "source": {
+          "type": "base64",
+          "media_type": "image/png",
+          "data": "AAAA"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "info": {
+     "compressedChars": 100,
+     "imageCount": 40,
+     "imagePixels": 90000000
+    },
+    "cache": {
+     "ownsCacheControl": true,
+     "markerCount": 1
+    }
+   },
+   "calls": [
+    {
+     "bodyChars": 30085,
+     "options": {
+      "minCompressChars": 1000
+     }
+    }
+   ],
+   "body": {
+    "model": "claude-fable-5",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "image",
+        "source": {
+         "type": "base64",
+         "media_type": "image/png",
+         "data": "AAAA"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "summary": {
+    "applied": true,
+    "reason": "applied",
+    "originalChars": 30085,
+    "compressedBodyChars": 150,
+    "imagedChars": 100,
+    "imageCount": 40,
+    "imageBytes": 0,
+    "tokensBeforeEst": 7521,
+    "tokensAfterEst": 127496,
+    "cacheOwnsControl": true,
+    "tokensSavedEst": 0,
+    "savedPct": 0
+   },
+   "hasDuration": true,
+   "log": "imaged 100ch → 40 image(s) | est 7521→127496 tokens (-0%) | 7ms"
+  },
+  {
+   "name": "applied: a percentage that needs rounding",
+   "spec": {
+    "unit": "x",
+    "times": 30001
+   },
+   "options": {
+    "enabled": true,
+    "format": "claude",
+    "minChars": 1000
+   },
+   "script": "applied",
+   "result": {
+    "applied": true,
+    "reason": "applied",
+    "body": {
+     "model": "claude-fable-5",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "image",
+         "source": {
+          "type": "base64",
+          "media_type": "image/png",
+          "data": "AAAA"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "info": {
+     "compressedChars": 17777,
+     "imageCount": 1,
+     "imagePixels": 777777
+    },
+    "cache": {
+     "ownsCacheControl": true,
+     "markerCount": 1
+    }
+   },
+   "calls": [
+    {
+     "bodyChars": 30086,
+     "options": {
+      "minCompressChars": 1000
+     }
+    }
+   ],
+   "body": {
+    "model": "claude-fable-5",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "image",
+        "source": {
+         "type": "base64",
+         "media_type": "image/png",
+         "data": "AAAA"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "summary": {
+    "applied": true,
+    "reason": "applied",
+    "originalChars": 30086,
+    "compressedBodyChars": 150,
+    "imagedChars": 17777,
+    "imageCount": 1,
+    "imageBytes": 0,
+    "tokensBeforeEst": 7522,
+    "tokensAfterEst": 4114,
+    "cacheOwnsControl": true,
+    "tokensSavedEst": 3408,
+    "savedPct": 45.31
+   },
+   "hasDuration": true,
+   "log": "imaged 17777ch → 1 image(s) | est 7522→4114 tokens (-45.31%) | 7ms"
+  },
+  {
+   "name": "the threshold counts UTF-16 units, not characters or bytes",
+   "spec": {
+    "unit": "😀",
+    "times": 13000
+   },
+   "options": {
+    "enabled": true,
+    "format": "claude"
+   },
+   "script": "applied",
+   "result": {
+    "applied": true,
+    "reason": "applied",
+    "body": {
+     "model": "claude-fable-5",
+     "messages": [
+      {
+       "role": "user",
+       "content": [
+        {
+         "type": "image",
+         "source": {
+          "type": "base64",
+          "media_type": "image/png",
+          "data": "AAAA"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "info": {
+     "compressedChars": 20000,
+     "imageCount": 2,
+     "imagePixels": 1000000
+    },
+    "cache": {
+     "ownsCacheControl": true,
+     "markerCount": 1
+    }
+   },
+   "calls": [
+    {
+     "bodyChars": 26085,
+     "options": {
+      "minCompressChars": 25000
+     }
+    }
+   ],
+   "body": {
+    "model": "claude-fable-5",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "image",
+        "source": {
+         "type": "base64",
+         "media_type": "image/png",
+         "data": "AAAA"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "summary": {
+    "applied": true,
+    "reason": "applied",
+    "originalChars": 26085,
+    "compressedBodyChars": 150,
+    "imagedChars": 20000,
+    "imageCount": 2,
+    "imageBytes": 0,
+    "tokensBeforeEst": 6521,
+    "tokensAfterEst": 2854,
+    "cacheOwnsControl": true,
+    "tokensSavedEst": 3667,
+    "savedPct": 56.23
+   },
+   "hasDuration": true,
+   "log": "imaged 20000ch → 2 image(s) | est 6521→2854 tokens (-56.23%) | 7ms"
+  },
+  {
+   "name": "the helper declines: not profitable",
+   "spec": {
+    "unit": "x",
+    "times": 30000
+   },
+   "options": {
+    "enabled": true,
+    "format": "claude",
+    "minChars": 1000
+   },
+   "script": "applied",
+   "result": {
+    "applied": false,
+    "reason": "not_profitable",
+    "body": {},
+    "info": {}
+   },
+   "calls": [
+    {
+     "bodyChars": 30085,
+     "options": {
+      "minCompressChars": 1000
+     }
+    }
+   ],
+   "body": null,
+   "summary": {
+    "applied": false,
+    "reason": "not_profitable",
+    "originalChars": 30085
+   },
+   "hasDuration": true,
+   "log": null
+  },
+  {
+   "name": "the helper declines without a reason",
+   "spec": {
+    "unit": "x",
+    "times": 30000
+   },
+   "options": {
+    "enabled": true,
+    "format": "claude",
+    "minChars": 1000
+   },
+   "script": "applied",
+   "result": {
+    "applied": false,
+    "detail": "no images",
+    "body": {},
+    "info": {}
+   },
+   "calls": [
+    {
+     "bodyChars": 30085,
+     "options": {
+      "minCompressChars": 1000
+     }
+    }
+   ],
+   "body": null,
+   "summary": {
+    "applied": false,
+    "reason": "passthrough",
+    "detail": "no images",
+    "originalChars": 30085
+   },
+   "hasDuration": true,
+   "log": null
+  },
+  {
+   "name": "the helper throws",
+   "spec": {
+    "unit": "x",
+    "times": 30000
+   },
+   "options": {
+    "enabled": true,
+    "format": "claude",
+    "minChars": 1000
+   },
+   "script": "throws",
+   "error": "boom",
+   "calls": [
+    {
+     "bodyChars": 30085,
+     "options": {
+      "minCompressChars": 1000
+     }
+    }
+   ],
+   "body": null,
+   "summary": {
+    "applied": false,
+    "reason": "transform_error",
+    "detail": "boom",
+    "originalChars": 30085
+   },
+   "hasDuration": true,
+   "log": null
+  },
+  {
+   "name": "the helper never answers",
+   "spec": {
+    "unit": "x",
+    "times": 30000
+   },
+   "options": {
+    "enabled": true,
+    "format": "claude",
+    "minChars": 1000,
+    "timeoutMs": 50
+   },
+   "script": "never",
+   "calls": [
+    {
+     "bodyChars": 30085,
+     "options": {
+      "minCompressChars": 1000
+     }
+    }
+   ],
+   "body": null,
+   "summary": {
+    "applied": false,
+    "reason": "timeout",
+    "originalChars": 30085
+   },
+   "hasDuration": true,
+   "log": null
+  }
+ ]
+}
