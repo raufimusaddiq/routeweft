@@ -155,7 +155,6 @@ jobs:
         working-directory: ui
     env:
       PLAYWRIGHT_CORE_VERSION: 1.49.1
-      ROUTEWEFT_SMOKE_ARTIFACTS: ${{ runner.temp }}/routeweft-ui-evidence
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -184,8 +183,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ui-smoke-evidence
+          # The smoke writes its screenshots and report to /tmp/routeweft-ui-evidence
+          # unless ROUTEWEFT_SMOKE_ARTIFACTS says otherwise.
           path: |
-            ${{ runner.temp }}/routeweft-ui-evidence
+            /tmp/routeweft-ui-evidence
             /tmp/routeweft-ui-preview.log
           if-no-files-found: ignore
 
