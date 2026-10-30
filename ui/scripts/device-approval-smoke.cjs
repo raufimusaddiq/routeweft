@@ -24,7 +24,7 @@ const PROVIDERS = {
 };
 
 (async () => {
-  const chrome = await chromium.launch({ executablePath: process.env.ROUTEWEFT_SMOKE_CHROME || '/root/.cache/ms-playwright/chromium-1148/chrome-linux/chrome', args: ['--no-sandbox'] });
+  const chrome = await chromium.launch({ executablePath: process.env.ROUTEWEFT_SMOKE_CHROME || chromium.executablePath(), args: ['--no-sandbox'] });
   const context = await chrome.newContext({ viewport: { width: 1440, height: 900 } });
   await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:4173' });
   const page = await context.newPage();

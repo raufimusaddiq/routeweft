@@ -20,7 +20,7 @@ const LOGIN = 'https://prod.us-east-1.auth.desktop.kiro.dev/login';
 const paste = (state, extra = 'code=kiro-code-sentinel') => `kiro://kiro.kiroAgent/authenticate-success?${extra}&state=${state}`;
 
 (async () => {
-  const chrome = await chromium.launch({ executablePath: process.env.ROUTEWEFT_SMOKE_CHROME || '/root/.cache/ms-playwright/chromium-1148/chrome-linux/chrome', args: ['--no-sandbox'] });
+  const chrome = await chromium.launch({ executablePath: process.env.ROUTEWEFT_SMOKE_CHROME || chromium.executablePath(), args: ['--no-sandbox'] });
   const page = await chrome.newPage({ viewport: { width: 1440, height: 900 } });
   const errors = [];
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));

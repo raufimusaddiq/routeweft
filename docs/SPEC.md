@@ -2174,6 +2174,7 @@ Once code exists, pull requests should run:
 - UI typecheck;
 - UI unit tests;
 - UI production build;
+- browser smoke and accessibility checks (`npm run smoke`), in the `ui-smoke` job, against a fresh preview stopped by PID;
 - protocol fixture suite;
 - pinned differential and divergence ledger (28.6), in the `parity` job;
 - container build;

@@ -1235,6 +1235,48 @@ Before the fixes the full run had `internal/app` at 1030 s and
 `internal/control/api` at 872 s (both past the timeout) and `internal/ingress` at
 829 s alone.
 
+### 29.1 CI jobs and required checks (#280)
+
+`.github/workflows/ci.yml` runs on every push and pull request: `parity`, `go`, `race`
+(section 29), `ui` (typecheck, unit tests, build), `ui-smoke` and `container`.
+
+`ui-smoke` runs `npm run smoke` in `ui/` (`make ui-smoke` locally): the shell smoke
+with its accessibility checks (semantic labels, contrast, landmarks, heading order,
+focus and skip link, reduced motion, 390px and 320px overflow) and the OAuth,
+device, import-masking, connection-status, Kiro, quota-actions and quota-warming
+scripts. `smoke.sh` builds, starts `vite preview` in its own process group and stops
+it by PID on every exit path; the job then checks the port is free and runs
+`smoke-cleanup-check.sh fail interrupt term` to show the failing, interrupted and
+terminated paths stop it as well. Waits are on page conditions, never sleeps.
+Playwright is pinned to `playwright-core` 1.49.1, installed with
+`npm install --no-save --no-package-lock` (the manifest is untouched); Chromium and
+Firefox are cached under `~/.cache/ms-playwright` by that version and the system
+libraries are installed with `playwright-core install-deps`. The scripts launch the
+full Chromium that install provides (`chromium.executablePath()`), not Playwright's
+headless-shell default, because the OAuth journeys script asserts there are no console
+errors and the headless shell reports a blocked popup navigation the full browser does
+not; `ROUTEWEFT_SMOKE_CHROME` still overrides the binary. The evidence directory and
+the preview log are uploaded as the `ui-smoke-evidence` artifact.
+
+**Required checks are branch-protection settings, not repository code.** When #280 was
+written, `main` required `Hermes Review` and `parity` only (`strict`, administrators
+included); `go`, `race`, `ui`, `ui-smoke` and `container` were not required. List them
+with:
+
+```bash
+gh api repos/raufimusaddiq/routeweft/branches/main/protection/required_status_checks --jq '.contexts'
+```
+
+To require the smoke, add its check name (`ui-smoke`, the job id, which is what GitHub
+reports) without touching the others:
+
+```bash
+echo '["ui-smoke"]' | gh api -X POST repos/raufimusaddiq/routeweft/branches/main/protection/required_status_checks/contexts --input -
+```
+
+Only do this after `ui-smoke` has passed on the PRs that carry it: a required check
+that never reports blocks every merge.
+
 ## 30. Quota credits and opt-in warming
 
 Use session-gated GET `/admin/v1/quota/{connection-id}/codex-reset-credits` to

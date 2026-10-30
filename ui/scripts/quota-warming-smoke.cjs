@@ -11,7 +11,7 @@ const { chromium } = require('playwright-core');
 const assert = require('node:assert/strict');
 
 (async () => {
-  const browser = await chromium.launch({ executablePath: process.env.ROUTEWEFT_SMOKE_CHROME || undefined, args: ['--no-sandbox'] });
+  const browser = await chromium.launch({ executablePath: process.env.ROUTEWEFT_SMOKE_CHROME || chromium.executablePath(), args: ['--no-sandbox'] });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const errors = [];
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));

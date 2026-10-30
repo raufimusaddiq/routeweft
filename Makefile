@@ -1,4 +1,4 @@
-.PHONY: test build run ui-install ui-test ui-typecheck ui-build compat-test parity-test bench-router race check
+.PHONY: test build run ui-install ui-test ui-typecheck ui-build ui-smoke compat-test parity-test bench-router race check
 
 test:
 	go test ./...
@@ -20,6 +20,11 @@ ui-typecheck:
 
 ui-build:
 	cd ui && npm run build
+
+# The browser smoke and a11y checks, as the `ui-smoke` CI job runs them. Needs
+# playwright-core and Chromium/Firefox: see ui/scripts/smoke.sh.
+ui-smoke:
+	cd ui && npm run smoke
 
 compat-test:
 	go test ./compat/...

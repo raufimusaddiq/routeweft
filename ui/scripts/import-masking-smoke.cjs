@@ -95,6 +95,6 @@ async function run(name, launcher, executablePath) {
 (async () => {
   const done = [];
   done.push(await run('firefox', firefox, process.env.ROUTEWEFT_SMOKE_FIREFOX || undefined));
-  done.push(await run('chromium', chromium, process.env.ROUTEWEFT_SMOKE_CHROME || '/root/.cache/ms-playwright/chromium-1148/chrome-linux/chrome'));
+  done.push(await run('chromium', chromium, process.env.ROUTEWEFT_SMOKE_CHROME || chromium.executablePath()));
   console.log(`import masking: ${done.join(', ')}`);
 })().catch(e => { console.error('FAIL', e); process.exit(1); });

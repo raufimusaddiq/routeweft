@@ -292,7 +292,11 @@ No API paths, state logic, workflows or nav definitions change for visual work.
 `ROUTEWEFT_SMOKE_ARTIFACTS` selects the screenshot/report directory (default
 `/tmp/routeweft-ui-evidence`). Smoke reuses existing control-API fixtures;
 Chromium and `playwright-core` are required, as documented in
-`ui/scripts/smoke.sh`.
+`ui/scripts/smoke.sh`. CI runs the whole of it as the `ui-smoke` job on every push
+and pull request (Playwright pinned to 1.49.1, installed outside the manifest, its
+browsers cached by version; the evidence directory is uploaded as an artifact), so
+the contrast, focus, overflow, drawer and workflow assertions above are checked
+before merge; `make ui-smoke` runs the same locally.
 
 Acceptance sentence: the page is recognisably Routeweft from the weave mark, the
 black rail and the mono figures; one pink slab per page carries the live thing;
