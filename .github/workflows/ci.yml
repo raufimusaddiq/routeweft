@@ -140,6 +140,55 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  # The browser smoke and its accessibility checks (ui/scripts/shell-smoke.cjs and
+  # the other scripts `npm run smoke` runs) against a fresh Vite preview that
+  # smoke.sh starts in its own process group and stops by PID on every exit path
+  # (#280, #238). A separate job so the quick `ui` job above stays quick and this
+  # check has a stable name to require in branch protection (`ui-smoke`).
+  # Playwright is pinned and installed outside the committed manifest, as smoke.sh
+  # documents; its browsers are cached by that version.
+  ui-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ui
+    env:
+      PLAYWRIGHT_CORE_VERSION: 1.49.1
+      ROUTEWEFT_SMOKE_ARTIFACTS: ${{ runner.temp }}/routeweft-ui-evidence
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+      - run: npm install --no-save --no-package-lock playwright-core@${{ env.PLAYWRIGHT_CORE_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ env.PLAYWRIGHT_CORE_VERSION }}-chromium-firefox
+      # A cache hit makes the download a no-op; the system libraries are not cached.
+      - run: npx playwright-core install chromium firefox
+      - run: npx playwright-core install-deps chromium firefox
+      - run: npm run smoke
+      # smoke.sh stops its preview by PID on every exit path; this proves the pass
+      # path left nothing on the port and the next step proves the failing ones.
+      - name: Preview is gone after the smoke
+        run: '! ss -Hltn "sport = :4173" | grep -q .'
+      - name: Preview is stopped on the failing, interrupted and terminated paths (#238)
+        run: bash scripts/smoke-cleanup-check.sh fail interrupt term
+      - name: Keep the smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-smoke-evidence
+          path: |
+            ${{ runner.temp }}/routeweft-ui-evidence
+            /tmp/routeweft-ui-preview.log
+          if-no-files-found: ignore
+
   container:
     runs-on: ubuntu-latest
     steps:
