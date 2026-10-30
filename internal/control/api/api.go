@@ -7,8 +7,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -19,6 +19,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/auth"
 	"github.com/raufimusaddiq/routeweft/internal/backup"
 	"github.com/raufimusaddiq/routeweft/internal/buildinfo"
+	"github.com/raufimusaddiq/routeweft/internal/clientip"
 	controlevents "github.com/raufimusaddiq/routeweft/internal/control/events"
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/providers/discovery"
@@ -88,7 +89,11 @@ type Options struct {
 	// caller could otherwise steer a sign-in callback. Empty fails those flows with
 	// oauth_redirect_unconfigured; flows that pin or never use a redirect start
 	// without it.
-	PublicOrigin   string
+	PublicOrigin string
+	// TrustedProxies are the peers allowed to vouch for a client address in
+	// X-Forwarded-For / X-Real-IP (ROUTEWEFT_TRUSTED_PROXIES, SPEC 12.3). Empty
+	// trusts no peer: the login throttle keys on the socket host alone.
+	TrustedProxies []netip.Prefix
 	Providers      []registry.Spec
 	Telemetry      TelemetryReader
 	Events         *controlevents.Bus
@@ -148,6 +153,7 @@ const sessionCookieName = "routeweft_admin_session"
 type Handler struct {
 	opts           Options
 	throttler      *throttler
+	clientIP       clientip.Resolver
 	workflowMu     sync.Mutex
 	batchBusy      bool
 	syncState      catalogSyncState
@@ -195,7 +201,7 @@ func New(opts Options) *Handler {
 	if opts.OAuthClient == nil {
 		opts.OAuthClient = client
 	}
-	h := &Handler{opts: opts, throttler: newThrottler(), probeTransport: client.Transport, proxyClients: transport.NewPooledClients(), proxyTestTarget: defaultProxyTestTarget, saverClient: client, oauth: newOAuthFlows(), oauthFlows: onboarding.NewRegistry(), manualFlows: onboarding.ManualFlows(), mimoDesktop: onboarding.HostMimoDesktop()}
+	h := &Handler{opts: opts, throttler: newThrottler(), clientIP: clientip.New(opts.TrustedProxies), probeTransport: client.Transport, proxyClients: transport.NewPooledClients(), proxyTestTarget: defaultProxyTestTarget, saverClient: client, oauth: newOAuthFlows(), oauthFlows: onboarding.NewRegistry(), manualFlows: onboarding.ManualFlows(), mimoDesktop: onboarding.HostMimoDesktop()}
 	if strings.TrimSpace(opts.ProxyTestURL) != "" {
 		h.proxyTestTarget = strings.TrimSpace(opts.ProxyTestURL)
 	}
@@ -380,7 +386,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "login body is not valid JSON")
 		return
 	}
-	throttleKey := clientKey(r)
+	throttleKey := h.clientIP.Key(r)
 	if retry := h.throttler.retryAfter(throttleKey); retry > 0 {
 		w.Header().Set("Retry-After", strconv.Itoa(retry))
 		writeError(w, http.StatusTooManyRequests, "too_many_attempts", "too many failed login attempts; try again later")
@@ -419,17 +425,6 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Expires: session.ExpiresAt,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"username": session.Username, "expiresAt": session.ExpiresAt})
-}
-
-// clientKey identifies the throttle bucket for a request. Forwarded-IP headers
-// are not trusted (PRD-SEC-002), so the socket's host is used. The port is
-// dropped: it is ephemeral, and keying on it would give every new connection its
-// own attempt window.
-func clientKey(r *http.Request) string {
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
-	}
-	return r.RemoteAddr
 }
 
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {

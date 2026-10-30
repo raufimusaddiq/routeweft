@@ -635,10 +635,12 @@ What Routeweft does, exhaustively:
 | CLI token, reset-password, auth-status, require-login, setup/bootstrap endpoints | n/a | Do not exist. |
 | `routeweft migrate/backup/restore` | filesystem access to the data dir | Local commands, not network listeners. Their trust boundary is host file permissions (RUNBOOK 3). |
 
-Trusted-peer logic does not exist: no code path reads `X-Forwarded-For`,
-`X-Real-Ip`, `Host` or `Origin` to grant access. The host part of `RemoteAddr` is used only as the
-login throttle bucket, so behind a reverse proxy every client shares one bucket;
-that can lock operators out for the window but never grants access.
+Trusted-peer logic for **access** does not exist: no code path reads `X-Forwarded-For`,
+`X-Real-Ip`, `Host` or `Origin` to grant access. Forwarded headers are read in one
+place only, `internal/clientip`, to key the login throttle, and only from a peer
+listed in `ROUTEWEFT_TRUSTED_PROXIES` (default none; 12.3). Behind an unlisted
+reverse proxy every client still shares the proxy's bucket; that can lock operators
+out for the window but never grants access.
 
 `requireLogin` is in the defaults and in `GET /admin/v1/settings` as `true` for
 shape compatibility only. It is not in the writable allowlist, nothing reads it
@@ -697,6 +699,83 @@ every admin pattern, bypass headers, closed recovery/status routes, fresh-instal
 lockout, stored `requireLogin=false`, health-only unauthenticated surface,
 recovery path) and `TestStoredRequireLoginFalseCompilesToTrue` /
 `TestSetSettingsRejectsNonWritableKeys` in `internal/runtime`.
+
+### 12.3 Trusted proxies, client address and the login throttle (#283 C10, #281 C03)
+
+Oracle: LiteRouter `refs/heads/main` at `4279093457458e168a2431604935f0145f2e76ec`
+(paths below are relative to it; `9router-go` `internal/auth/session.go:453-494`
+was read as a supplementary reference only).
+
+**What the oracle does.** `custom-server.js:57-77` replaces the request's address
+with one derived from the TCP socket: when the peer is loopback (`127.0.0.1`, `::1`,
+`::ffff:127.0.0.1`, `:62`) and the request carries `X-Real-IP` or
+`X-Forwarded-For`, the client is `x-real-ip` else the **leftmost** XFF entry
+(`:65-66`); every other peer is keyed on its socket address. It deletes
+client-supplied `x-9r-real-ip`, `x-forwarded-for`, `x-9r-via-proxy` and
+`x-9r-peer-token` (`:67-70`) and stamps its own, with a per-process token proving
+the stamp (`:14-15,75`; `src/lib/auth/trustedPeer.js:4-7`). The login throttle
+(`src/lib/auth/loginLimiter.js:49-64`) uses that stamped address; only without the
+wrapper does `TRUST_PROXY=true` make it read the leftmost XFF entry from any peer
+(`:57-60`), and otherwise it uses one global `unknown` bucket (`:63`). The bucket
+policy is five failures, then 30 s / 2 m / 10 m / 30 m locks, reset after an idle
+hour (`:4-6`). Password policy: the server tests only that `newPassword` is
+non-empty and, once a password exists, that the current one verifies
+(`src/app/api/settings/route.js:45-62`); the profile page checks the confirmation
+matches (`src/app/(dashboard)/dashboard/profile/page.js:169`). There is no minimum
+length or complexity rule anywhere in the server or the UI.
+
+**Routeweft contract.**
+
+1. `ROUTEWEFT_TRUSTED_PROXIES` (flag `--trusted-proxies`, the flag wins) is a list of
+   IP addresses and CIDR prefixes separated by commas or whitespace. It is empty by
+   default: no peer is trusted (PRD-SEC-002). Startup fails before the data
+   directory is touched when an entry is not an address or prefix, and for any `/0`
+   prefix (it would trust every peer, which is what the setting exists to prevent).
+   IPv4-mapped IPv6 is normalised so a peer matches either way. There is no
+   `TRUST_PROXY=true` equivalent that trusts every peer.
+2. The setting changes one thing: the key of the admin **login and password-change
+   throttle** (`internal/clientip`). It does not exempt any request from
+   authentication, is not read by inference or key authorization, and no client
+   address is stored or logged.
+3. The key is the normalised socket peer unless the peer is a trusted proxy. For a
+   trusted peer, `X-Forwarded-For` (all header lines, comma-joined) is walked from
+   the **right**: hops that are themselves trusted proxies are skipped and the first
+   other hop is the client. If every hop is a trusted proxy the leftmost is used.
+   A hop that is not an IP address (a port, a hostname, an empty entry) makes the
+   request fall back to the proxy's own address. `X-Real-IP` is consulted only when
+   the request has no `X-Forwarded-For` and carries exactly one valid value.
+   `Forwarded` (RFC 7239) is never read. Entries to the left of the first
+   untrusted hop are never read, so a client cannot forge its way into another
+   bucket by prepending identities.
+4. A peer that is not a trusted proxy is keyed on its own address whatever headers
+   it sends, so it can neither escape its own lockout by rotating forwarded values
+   nor charge failures to another client by naming it.
+5. The bucket policy is unchanged by this section: eight failures in a fixed
+   five-minute window, `429` with `Retry-After` (RUNBOOK 7).
+6. Password policy matches the oracle: any non-empty new password is accepted, an
+   empty one is refused (`invalid_password`), the current password is required, and
+   the stored form is always the salted PBKDF2 hash of 12.2. There is no minimum
+   length; a stricter rule would be a divergence needing its own D row (see D48-D50
+   for the ones recorded here).
+7. Logging. `ROUTEWEFT_LOG_LEVEL` (flag `--log-level`, the flag wins) takes `debug`,
+   `info`, `warn` or `error`, case-insensitively; anything else stops startup before
+   data is opened. The oracle reads `LOG_LEVEL` the same four levels
+   (`src/sse/utils/logger.js:3-10`) and gates its console lines on them
+   (`:37,69-93`), falling back to `INFO` for an unknown value (`:10`). Its
+   `LOG_USAGE_VERBOSE=1` only adds a per-usage console line
+   (`open-sse/utils/usageTracking.js:8,414`); the authoritative per-request line,
+   with the token counts, is printed at `INFO` whether or not that toggle is set
+   (`open-sse/handlers/chatCore/streamingHandler.js:165`).
+   Routeweft has no separate verbose toggle because its `request completed` record
+   (`internal/app/request_log.go:17-45`) always carries tokens, cache tokens, status,
+   account and client ids at `info` (`warn` for status >= 400), and the console log
+   redacts credential-like keys. No level logs a credential.
+
+Evidence: `internal/clientip` (unit table, including spoofing, chains, malformed
+input, IPv6), `internal/control/api/trusted_proxy_test.go` and
+`c09_trusted_peer_test.go` (handler level), `internal/app/c10_trusted_proxy_test.go`
+(real listener, injected upstream), `cmd/routeweft/main_test.go` (env/flag mapping,
+failure before data).
 
 ## 13. Account selection
 
@@ -2002,15 +2081,15 @@ The public request-body limit defaults to 128 MiB. Cross-origin requests are
 denied unless an explicit comma-separated origin allowlist is configured.
 Preflight requests do not require an API key.
 
-`ROUTEWEFT_LOG_LEVEL` controls the JSON service logger through Go `slog`
-level parsing (default `info`; `debug`, `warn`, and `error` are supported).
-Invalid levels fail before opening the data directory. There is no log-level
-CLI flag.
+`ROUTEWEFT_LOG_LEVEL` (or `--log-level`) controls the JSON service logger through
+Go `slog` level parsing (default `info`; `debug`, `warn`, and `error` are
+supported). Invalid levels fail before opening the data directory.
 
-`ROUTEWEFT_TRUSTED_PROXIES` is not implemented and is not a deployment setting.
-Forwarded-IP headers are ignored for all peers; login throttling uses the socket
-remote address. Configurable proxy trust remains unimplemented. This preserves
-the default-deny rule in PRD-SEC-002 without trusting client-supplied headers.
+`ROUTEWEFT_TRUSTED_PROXIES` (or `--trusted-proxies`) lists the reverse-proxy peers
+whose `X-Forwarded-For` / `X-Real-IP` may name the client for the admin login
+throttle; it is empty by default and is specified in 12.3. Without it, forwarded-IP
+headers are ignored for all peers and login throttling uses the socket remote
+address, which preserves the default-deny rule in PRD-SEC-002.
 
 Provider secrets are configured through the admin/control plane or import tooling, not committed config files.
 

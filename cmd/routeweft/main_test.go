@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/raufimusaddiq/routeweft/internal/store/migrations"
@@ -69,5 +71,65 @@ func TestRestoreCheckRejectsMismatchedMetadata(t *testing.T) {
 	}
 	if err := run([]string{"restore", "--input", path, "--data-dir", dir, "--check"}); err == nil {
 		t.Fatal("expected mismatched metadata to be rejected")
+	}
+}
+
+// #283 / SPEC 12.3: ROUTEWEFT_TRUSTED_PROXIES and --trusted-proxies, and the
+// ROUTEWEFT_LOG_LEVEL / --log-level pair, map to the same settings; a flag wins
+// over the environment; nothing is accepted that would silently change trust.
+func TestServeSettingsMapEnvironmentAndFlags(t *testing.T) {
+	t.Setenv("ROUTEWEFT_TRUSTED_PROXIES", "10.0.0.0/8, ::1")
+	t.Setenv("ROUTEWEFT_LOG_LEVEL", "warn")
+	fromEnv, err := parseServe([]string{"--data-dir", t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(fromEnv.config.TrustedProxies); got != 2 || fromEnv.level != slog.LevelWarn {
+		t.Fatalf("environment: %d trusted proxies, level %v", got, fromEnv.level)
+	}
+	fromFlags, err := parseServe([]string{"--data-dir", t.TempDir(), "--trusted-proxies", "192.0.2.1", "--log-level", "DEBUG"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fromFlags.config.TrustedProxies; len(got) != 1 || got[0].String() != "192.0.2.1/32" || fromFlags.level != slog.LevelDebug {
+		t.Fatalf("flags did not override the environment: %v level %v", got, fromFlags.level)
+	}
+	t.Setenv("ROUTEWEFT_TRUSTED_PROXIES", "")
+	t.Setenv("ROUTEWEFT_LOG_LEVEL", "")
+	defaults, err := parseServe([]string{"--data-dir", t.TempDir()})
+	if err != nil || len(defaults.config.TrustedProxies) != 0 || defaults.level != slog.LevelInfo {
+		t.Fatalf("defaults: %v %v level %v", err, defaults.config.TrustedProxies, defaults.level)
+	}
+}
+
+func TestInvalidTrustedProxiesFailBeforeOpeningData(t *testing.T) {
+	for _, bad := range []string{"0.0.0.0/0", "::/0", "proxy.example", "10.0.0.0/33", "true"} {
+		for name, run := range map[string]func(dir string) error{
+			"environment": func(dir string) error {
+				t.Setenv("ROUTEWEFT_TRUSTED_PROXIES", bad)
+				return serve([]string{"--data-dir", dir})
+			},
+			"flag": func(dir string) error {
+				t.Setenv("ROUTEWEFT_TRUSTED_PROXIES", "")
+				return serve([]string{"--data-dir", dir, "--trusted-proxies", bad})
+			},
+		} {
+			dir := filepath.Join(t.TempDir(), "unopened")
+			err := run(dir)
+			want := "invalid ROUTEWEFT_TRUSTED_PROXIES"
+			if name == "flag" {
+				want = "invalid --trusted-proxies"
+			}
+			if err == nil || !strings.HasPrefix(err.Error(), want+": invalid trusted proxy") {
+				t.Fatalf("%s %q: %v", name, bad, err)
+			}
+			if _, statErr := os.Stat(dir); !os.IsNotExist(statErr) {
+				t.Fatalf("%s %q touched data: %v", name, bad, statErr)
+			}
+		}
+	}
+	t.Setenv("ROUTEWEFT_LOG_LEVEL", "")
+	if err := serve([]string{"--data-dir", filepath.Join(t.TempDir(), "unopened"), "--log-level", "verbose"}); err == nil || err.Error() != "invalid --log-level" {
+		t.Fatalf("invalid flag level: %v", err)
 	}
 }

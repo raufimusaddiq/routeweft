@@ -9,8 +9,9 @@ import (
 	"time"
 )
 
-// TestForwardedHeadersNeverChangeTheThrottleBucket pins PRD-SEC-002 / SPEC §12:
-// forwarded-IP headers are ignored for every peer, so the login throttle keys on
+// TestForwardedHeadersNeverChangeTheThrottleBucket pins PRD-SEC-002 / SPEC §12.3
+// for the default (no trusted proxy configured): forwarded-IP headers are ignored
+// for every peer, so the login throttle keys on
 // the socket host alone. Rotating X-Forwarded-For, X-Real-Ip or Forwarded cannot
 // escape a full bucket, and a spoofed value naming another host cannot push the
 // attacker's failures into that host's bucket.
@@ -31,10 +32,10 @@ func TestForwardedHeadersNeverChangeTheThrottleBucket(t *testing.T) {
 		return recorder
 	}
 
-	if got := clientKey(&http.Request{RemoteAddr: "203.0.113.7:4444", Header: http.Header{"X-Forwarded-For": {"198.51.100.9"}}}); got != "203.0.113.7" {
+	if got := handler.clientIP.Key(&http.Request{RemoteAddr: "203.0.113.7:4444", Header: http.Header{"X-Forwarded-For": {"198.51.100.9"}}}); got != "203.0.113.7" {
 		t.Fatalf("client key=%q want the socket host", got)
 	}
-	if got := clientKey(&http.Request{RemoteAddr: "[2001:db8::1]:4444"}); got != "2001:db8::1" {
+	if got := handler.clientIP.Key(&http.Request{RemoteAddr: "[2001:db8::1]:4444"}); got != "2001:db8::1" {
 		t.Fatalf("ipv6 client key=%q", got)
 	}
 

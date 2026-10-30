@@ -19,6 +19,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/app"
 	"github.com/raufimusaddiq/routeweft/internal/backup"
 	"github.com/raufimusaddiq/routeweft/internal/buildinfo"
+	"github.com/raufimusaddiq/routeweft/internal/clientip"
 	"github.com/raufimusaddiq/routeweft/internal/ingress"
 	storemigrations "github.com/raufimusaddiq/routeweft/internal/store/migrations"
 	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
@@ -145,7 +146,14 @@ func openStore(ctx context.Context, dataDir string) (*sqlite.Store, error) {
 	return store, nil
 }
 
-func serve(args []string) error {
+// serveSettings is everything `routeweft serve` reads from flags and the
+// environment, parsed and validated before any data directory is touched.
+type serveSettings struct {
+	config app.Config
+	level  slog.Level
+}
+
+func parseServe(args []string) (serveSettings, error) {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	listen := flags.String("listen", envOr("ROUTEWEFT_LISTEN", ":21128"), "HTTP listen address")
 	dataDir := flags.String("data-dir", envOr("ROUTEWEFT_DATA_DIR", "/var/lib/routeweft"), "Routeweft data directory")
@@ -156,24 +164,35 @@ func serve(args []string) error {
 	allowHostDiscovery := flags.Bool("allow-host-credential-discovery", envBool("ROUTEWEFT_ALLOW_HOST_CREDENTIAL_DISCOVERY", false), "let an admin, with consent per request, import MiMo Desktop credentials from this server user's home directory")
 	uiDir := flags.String("ui-dir", envOr("ROUTEWEFT_UI_DIR", ""), "directory of the built UI served at / (empty serves API only)")
 	publicOrigin := flags.String("public-origin", envOr("ROUTEWEFT_PUBLIC_ORIGIN", ""), "operator-facing origin used as the provider sign-in callback (required for providers without a pinned loopback port)")
+	trustedProxies := flags.String("trusted-proxies", envOr("ROUTEWEFT_TRUSTED_PROXIES", ""), "comma-separated IPs/CIDRs of reverse proxies allowed to vouch for a client address in X-Forwarded-For/X-Real-IP (empty trusts none)")
+	logLevel := flags.String("log-level", envOr("ROUTEWEFT_LOG_LEVEL", "info"), "log level: debug, info, warn or error")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return serveSettings{}, err
 	}
 	if flags.NArg() != 0 {
-		return fmt.Errorf("unexpected arguments: %v", flags.Args())
+		return serveSettings{}, fmt.Errorf("unexpected arguments: %v", flags.Args())
+	}
+	given := map[string]bool{}
+	flags.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	source := func(flagName, envName string) string {
+		if given[flagName] {
+			return "--" + flagName
+		}
+		return envName
 	}
 	var level slog.Level
-	if err := level.UnmarshalText([]byte(envOr("ROUTEWEFT_LOG_LEVEL", "info"))); err != nil {
-		return errors.New("invalid ROUTEWEFT_LOG_LEVEL")
+	if err := level.UnmarshalText([]byte(*logLevel)); err != nil {
+		return serveSettings{}, errors.New("invalid " + source("log-level", "ROUTEWEFT_LOG_LEVEL"))
 	}
-	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	proxies, err := clientip.ParseTrusted(*trustedProxies)
+	if err != nil {
+		return serveSettings{}, fmt.Errorf("invalid %s: %w", source("trusted-proxies", "ROUTEWEFT_TRUSTED_PROXIES"), err)
+	}
 	var key []byte
 	if trimmed := strings.TrimSpace(*credentialKey); trimmed != "" {
 		decoded, err := base64.StdEncoding.DecodeString(trimmed)
 		if err != nil {
-			return fmt.Errorf("decode credential key: %w", err)
+			return serveSettings{}, fmt.Errorf("decode credential key: %w", err)
 		}
 		key = decoded
 	}
@@ -182,7 +201,18 @@ func serve(args []string) error {
 	if adminPassword != "" && adminUsername == "" {
 		adminUsername = "admin"
 	}
-	return app.New(app.Config{Listen: *listen, DataDir: *dataDir, MaxBodyBytes: *maxBody, CORSOrigins: splitList(*corsOrigins), CredentialKey: key, AllowPrivateUpstreams: *allowPrivate, AllowHostCredentialDiscovery: *allowHostDiscovery, AdminBootstrapUsername: adminUsername, AdminBootstrapPassword: adminPassword, UIDir: *uiDir, PublicOrigin: *publicOrigin}, log).Serve(ctx)
+	return serveSettings{level: level, config: app.Config{Listen: *listen, DataDir: *dataDir, MaxBodyBytes: *maxBody, CORSOrigins: splitList(*corsOrigins), CredentialKey: key, AllowPrivateUpstreams: *allowPrivate, AllowHostCredentialDiscovery: *allowHostDiscovery, AdminBootstrapUsername: adminUsername, AdminBootstrapPassword: adminPassword, UIDir: *uiDir, PublicOrigin: *publicOrigin, TrustedProxies: proxies}}, nil
+}
+
+func serve(args []string) error {
+	settings, err := parseServe(args)
+	if err != nil {
+		return err
+	}
+	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: settings.level}))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return app.New(settings.config, log).Serve(ctx)
 }
 
 func envBool(key string, fallback bool) bool {

@@ -8,9 +8,9 @@ Oracle for the protocol-leg differential: LiteRouter `main` `4279093457458e168a2
 
 | | |
 |---|---|
-| D rows (PARITY 6.1) | 47 |
+| D rows (PARITY 6.1) | 50 |
 | approved | 15 |
-| **decision required** | **32** |
+| **decision required** | **35** |
 | protocol-leg differences recorded | 171 (134 request, 25 response) over 28 legs |
 | accounted for by a D row | 57 |
 | accounted for by an earlier register item or section (PARITY 6.3-6.12) | 114 |
@@ -56,6 +56,9 @@ Each is a difference the owner has not yet approved. Approving one means replaci
 | D45 | a name made only of spaces. The oracle accepts it as a key name and an alias (`keys/route.js:27`, `models/alias/route.js:27`: only an empty value i... | 3 |
 | D46 | an alias for a model nothing provides. The oracle stores any model string (`models/alias/route.js:29`); Routeweft refuses unless the target is a co... | 2 |
 | D47 | routes with no counterpart. Routeweft has no read of one combo or one key by id (the lists carry them) and no alias delete without an alias (it is ... | 3 |
+| D48 | the trusted-proxy defaults. The oracle trusts a loopback peer by default and keys the client on `x-real-ip` else the leftmost `X-Forwarded-For` ent... | 0 |
+| D49 | the login lock schedule. The oracle locks after five failures for 30 s, then 2 m, 10 m and 30 m, and forgets a client after an idle hour (`loginLim... | 0 |
+| D50 | log-level values. The oracle treats an unrecognized `LOG_LEVEL` as `INFO` (`src/sse/utils/logger.js:10`); Routeweft refuses to start on one (before... | 0 |
 
 ## Approved
 
