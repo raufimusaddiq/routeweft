@@ -206,6 +206,8 @@ func (a *App) initialize(ctx context.Context) error {
 	a.usage = usage
 	a.usageStarted = false
 	a.events = controlevents.New()
+	// Console records and clears ride the same channel as every other live update (SPEC 22.1).
+	a.logs.PublishTo(a.events)
 	a.live = newLiveView(a.events, func() *credentials.Store { return a.creds })
 	a.feed = controlevents.NewUsageFeed()
 	binder := proxy.NewBinder(loadSnapshot(manager))

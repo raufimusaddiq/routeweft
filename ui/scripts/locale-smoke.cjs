@@ -35,6 +35,8 @@ const ORIGIN = 'http://127.0.0.1:4173';
       const path = url.pathname.replace('/admin/v1', '');
       if (path === '/auth/session') return signedIn ? json(route, 200, { username: 'operator', expiresAt: '2026-12-01T00:00:00Z' }) : json(route, 401, { error: { code: 'unauthenticated', message: 'admin session is required' } });
       if (path === '/overview') return json(route, 200, { runtime: { health: 'ready', version: '0.1.0', commit: 'deadbeef', configRevision: 1, snapshotVersion: 1 }, providers: { catalog: 2, nodes: 2, enabledConnections: 2 }, apiKeys: { active: 0 }, traffic: { active: 0, requests: 0, errors: 0 }, telemetry: { enabled: true, written: 0, lost: 0, lostDiagnostics: 0, degraded: false } });
+      // The dashboard's live channel (#277). A finite stream with a long retry: it opens, then the page falls back quietly.
+      if (path === '/events') return route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'retry: 600000\n: connected\n\n' });
       if (path === '/usage/summary') return json(route, 200, { period: url.searchParams.get('period'), since: '', totals: { requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, errors: 0 }, series: [], providers: [], models: [], statuses: [] });
       if (path === '/settings') return json(route, 200, { settings: {}, writable: [] });
       return json(route, 200, { items: [], page: 1, pageSize: 100, total: 0 });

@@ -112,6 +112,11 @@ the assets but not that path leaves the dashboard in English. The language is th
 it. A directory without
 `index.html` logs an error and disables the UI; the API keeps running.
 
+The dashboard keeps one Server-Sent Events connection open on `/admin/v1/events` (SPEC 22.1). A reverse
+proxy in front must pass it through unbuffered and must not close it for being idle sooner than the 15 s
+heartbeat. When it cannot, the pages say "Live updates unavailable · refreshing every 15 s" and re-read on a
+timer, so nothing is lost, only delayed.
+
 The default request-body limit is 128 MiB. Cross-origin requests are denied
 unless `ROUTEWEFT_CORS_ORIGINS` has a comma-separated allowlist. Routeweft does
 not enable credentialed CORS cookies.

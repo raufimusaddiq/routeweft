@@ -7,6 +7,22 @@ const { join } = require('node:path');
   const browser = await chromium.launch({ executablePath: process.env.ROUTEWEFT_SMOKE_CHROME || chromium.executablePath(), args: ['--no-sandbox'] });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:4173' });
+  // The dashboard's one live channel (#277) is /admin/v1/events. This long run does not exercise it (live-events-smoke.cjs does), so
+  // it gets a stand-in that opens and stays open: no polling fallback ticks, and no reload, mid-run. Other EventSources are untouched.
+  await page.addInitScript(() => {
+    const Native = window.EventSource;
+    window.EventSource = class extends Native {
+      constructor(url, options) {
+        if (String(url).endsWith('/admin/v1/events')) {
+          const target = new EventTarget();
+          Object.assign(target, { url, readyState: 1, withCredentials: false, onopen: null, onerror: null, onmessage: null, close() { this.readyState = 2 } });
+          setTimeout(() => target.onopen && target.onopen(new Event('open')), 0);
+          return target;
+        }
+        super(url, options);
+      }
+    };
+  });
   const errors = [];
   const report = {};
   const artifacts = process.env.ROUTEWEFT_SMOKE_ARTIFACTS || '/tmp/routeweft-ui-evidence';
@@ -1437,7 +1453,7 @@ const { join } = require('node:path');
   report.logFilteredMessage = await page.locator('.console-log-row p').textContent();
   await page.locator('.console-log-row summary').click();
   report.logDetails = await page.locator('.console-log-row pre').textContent();
-  await page.locator('.console-log-toolbar button[type="button"]').click();
+  await page.locator('.console-log-toolbar').getByRole('button', { name: 'Refresh', exact: true }).click();
   await page.fill('#console-log-query', 'not-found');
   await page.locator('.console-log-toolbar button[type="submit"]').click();
   await page.waitForSelector('.console-log-content .empty-keys');

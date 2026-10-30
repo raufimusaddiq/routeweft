@@ -1961,6 +1961,39 @@ List APIs have bounded pagination and stable sort.
 
 Live events use SSE initially.
 
+### 22.1 Live event channel
+
+`GET /admin/v1/events` is the one live channel of the dashboard (PRD-OBS-003). It is session-gated SSE. Every
+frame is `id: N`, `event: <type>`, `data: {id,type,createdAt,data}`; `id` is a single increasing sequence over the
+whole bus, and nothing is filtered per subscriber. A subscriber that falls behind loses events rather than slowing
+anyone (per-subscriber buffer 16), so a jump in `id` means at least one event was shed. Payloads pass through
+`telemetry.Redact`; no credential, Authorization value or cookie is published.
+
+| `type` | Published when | `data` |
+| --- | --- | --- |
+| `config.updated` | a configuration mutation (settings, provider, combo, proxy pool, capability adapter) is committed | `resource` plus the changed identity or `configRevision` |
+| `quota.refresh` | a quota refresh job changes state | the refresh job |
+| `usage.pending` | in-flight request counts change; coalesced to one event per 150 ms | pending counts |
+| `request.completed` | a request that delivered a response finishes (not a client abandon before any response) | `requestId`, `providerId`, `modelId`, `requestedModel`, `selectedModel`, `connectionId`, `status`, `durationMs`, `ttftMs` |
+| `console.log` | log lines were appended; coalesced per 150 ms, at most 100 lines per event | `{"lines":[{id,time,level,message,attributes?}],"truncated":bool}`; `truncated` means lines beyond the cap were left out and the reader re-reads `GET /admin/v1/logs` |
+| `console.cleared` | `DELETE /admin/v1/logs` emptied the buffer | `{"cleared":n}` |
+
+A `console.log` batch is never published after the `console.cleared` that follows it in time, and log ids are not
+reused after a clear, so a page can drop lines it already shows by id.
+
+The browser opens exactly one `EventSource` on this URL for all pages and keeps it across page changes (it closes
+about 1 s after the last page that wants live data leaves). Pages react to the event types they target by updating
+or re-reading the matching state. The channel also tells every page to re-read what it shows when it cannot trust
+that nothing was missed: an `id` gap, a reconnect after an error, or, while the stream is down, every 15 s. While the
+stream is down the status reads "Live updates unavailable · refreshing every 15 s"; a stream the browser gave up on
+is reopened with backoff 1, 2, 5, 10, 30 s. Without `EventSource` the polling fallback is the channel.
+
+The Overview re-reads its data on `config.updated` and `request.completed`, at most once per 3 s; `console.log`,
+`usage.pending` and `quota.refresh` do not reload it. The Console Log page prepends `console.log` lines to page 1
+(subject to its level and text filter, deduplicated by id, bounded at the page size), counts them instead while the
+view is paused or on another page, and empties on `console.cleared`; its **Clear logs** button confirms first and
+empties the whole buffer. The Usage requests tab keeps its own usage-only stream (`/admin/v1/usage/stream`, D09).
+
 ## 23. UI architecture
 
 Frontend:

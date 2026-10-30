@@ -1,5 +1,6 @@
 import { BarChart, EditorialSkeleton, ErrorNotice, StackedBar } from './kit'
 import { useOverviewData } from './data'
+import { channelLabel } from './liveEvents'
 import { Caption, Dot, ErrCell, Fact, Main, Margin, Row, Statement, Status } from './editorial'
 import { ago, badRate, clock, isWeekend, num, numOrDash, outlier, pct, failureStatuses, latestWeekTotal, largest, observeSeries, observedAverage, sameDayLastWeek, weekOverWeek, providerTone, rate, share, statusTone, utcDay, weekendLighter } from './format'
 
@@ -72,7 +73,7 @@ export function Overview({ onUnauthorized }: Props) {
           <h3 className="ed-label"><Dot tone={ready ? 'good' : 'bad'} /> {ready ? 'Live' : 'Not ready'}</h3>
           <p className="ed-now-value">{ago(overview.traffic.lastRequestAt)}</p>
           <p className="ed-now-note">since the last request. {num(overview.providers.enabledConnections)} connections enabled, {num(overview.apiKeys.active)} API keys, {num(overview.traffic.active)} active now.</p>
-          <p className="ed-now-foot"><span className="updated-at" aria-live="polite">Updated {data.updatedAt}</span><button className="button-secondary refresh-button" type="button" disabled={data.loading} onClick={data.reload}>Refresh</button></p>
+          <p className="ed-now-foot"><span className="updated-at" aria-live="polite">Updated {data.updatedAt}</span><span className="updated-at live-state" data-live-state={data.live}> · {channelLabel[data.live]}</span><button className="button-secondary refresh-button" type="button" disabled={data.loading} onClick={data.reload}>Refresh</button></p>
         </section>
       </Margin>
     </Row>
