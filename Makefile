@@ -29,9 +29,10 @@ parity-test:
 	node --test compat/parity/resolve-oracle.test.mjs compat/parity/report-changes.test.mjs
 	node compat/parity/inventory.mjs
 	node compat/parity/generate-combo-routing.mjs --check
+	node compat/parity/generate-pricing.mjs --check
 	go test -race ./internal/app -run TestPinnedSystemOneDifferential -count=1
 	go test -race ./internal/security ./internal/ingress ./internal/providers/shared ./internal/providers/wire ./internal/protocol/concerns
-	go test -race ./internal/parity ./internal/protocol/hub -count=1
+	go test -race ./internal/parity ./internal/protocol/hub ./internal/pricing -count=1
 
 race:
 	# 10m is also go test's default per-package timeout; it is spelled out so the

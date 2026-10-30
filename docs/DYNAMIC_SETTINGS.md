@@ -8,6 +8,7 @@ No setting is assumed functional merely because it appears in the settings API.
 | --- | --- | --- | --- |
 | Observability: `enableObservability` | `internal/app/app.go:91,200,730` | Restart; disabled startup prevents worker launch | Wire live acceptance and always launch worker |
 | `observabilityMaxRecords` | `internal/app/app.go:92`, `internal/telemetry/telemetry.go:127,184` | Restart; queue capacity only, not durable detail retention | Wire live queue admission; preserve accepted events when shrinking |
+| `observabilityMaxDetailRecords` (#273, D17) | `internal/app/app.go` (`details.MaxRows`), `internal/telemetry/detail.go` | Live; read on each detail write | Newest N request details kept, pruned in the write transaction |
 | `observabilityBatchSize` | `internal/app/app.go:95`, `internal/telemetry/telemetry.go:247,263` | Restart; batch upper bound, every enqueue flushes immediately | Wire live threshold and batch bound |
 | `observabilityFlushIntervalMs` | `internal/app/app.go:98`, `internal/telemetry/telemetry.go:241` | Restart; ticker, immediate enqueue flush masks partial-batch delay | Wire interval on next accepted event |
 | `observabilityMaxJsonSize` | `internal/app/app.go:107,201`, `internal/telemetry/detail.go:70` | Restart; byte cap replaces oversized detail with omission attribution | Wire next detail write |

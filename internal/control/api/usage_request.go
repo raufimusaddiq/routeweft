@@ -57,7 +57,7 @@ func (h *Handler) handleUsageRequest(w http.ResponseWriter, r *http.Request) {
 		if json.Unmarshal([]byte(raw), &payload) != nil {
 			payload = map[string]string{"omitted": "invalid stored detail"}
 		}
-		item := map[string]any{"detail": telemetry.Redact(payload), "createdAt": created}
+		item := map[string]any{"detail": telemetry.DetailRedactor{}.Redact(payload), "createdAt": created}
 		putNull(item, "routeMode", mode)
 		detail = item
 	}
@@ -66,4 +66,16 @@ func (h *Handler) handleUsageRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"requestId": requestID, "events": events, "detail": detail})
+}
+
+// handleUsageActive is the live view the provider topology and the activity strip
+// read: what is in flight per account and model, the latest finished requests, and
+// the provider that failed in the last few seconds (usageRepo.js getActiveRequests).
+// It is process memory only and carries no request content.
+func (h *Handler) handleUsageActive(w http.ResponseWriter, r *http.Request) {
+	if h.opts.Live == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"activeRequests": []any{}, "recentRequests": []any{}, "errorProvider": ""})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.opts.Live())
 }

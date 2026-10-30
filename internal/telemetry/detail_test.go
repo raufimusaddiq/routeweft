@@ -54,8 +54,8 @@ func TestDetailStoreDropsOversizedPayloadSafely(t *testing.T) {
 	ctx := context.Background()
 	store, sqlStore := newDetailStore(t, 64)
 	defer sqlStore.Close()
-	big := make([]any, 0, 100)
-	for i := 0; i < 100; i++ {
+	big := make([]any, 0, 1000)
+	for i := 0; i < 1000; i++ {
 		big = append(big, "filler-value")
 	}
 	if err := store.WriteRequestDetail(ctx, Detail{RequestID: "req_big", Payload: map[string]any{"blob": big, "authorization": "Bearer leak"}}); err != nil {

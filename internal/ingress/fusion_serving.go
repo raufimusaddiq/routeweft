@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -28,6 +29,9 @@ import (
 type internalCall struct {
 	target string
 	depth  int
+	// requested is the model the client asked for, which the request's legs report
+	// as theirs while serving target.
+	requested string
 }
 
 type internalCallKey struct{}
@@ -130,8 +134,24 @@ func (h *Handler) readFusionBody(w http.ResponseWriter, r *http.Request) ([]byte
 
 // subRequest is the request the gateway makes to serve model with body: the
 // client's request, with its credentials, path and headers, and another body.
-func subRequest(ctx context.Context, r *http.Request, body []byte, target string, depth int, geminiMethod string) *http.Request {
-	sub := r.Clone(context.WithValue(ctx, internalCallKey{}, &internalCall{target: target, depth: depth + 1}))
+//
+// Each leg is its own request for accounting: its id is the client request's id with
+// a suffix naming the leg (so the legs of one request sort together), its holder is
+// its own, and it reports the model the client asked for as the one requested.
+func subRequest(ctx context.Context, r *http.Request, body []byte, target, requested, label string, depth int, geminiMethod string) *http.Request {
+	if call := internalCallOf(r); call != nil && call.requested != "" {
+		requested = call.requested
+	}
+	holder := &attribution{begun: time.Now()}
+	if parent := attributionFrom(r); parent != nil {
+		holder.keyID.Store(parent.keyID.Load())
+	}
+	ctx = context.WithValue(ctx, attributionKey{}, holder)
+	sub := r.Clone(context.WithValue(ctx, internalCallKey{}, &internalCall{target: target, depth: depth + 1, requested: requested}))
+	if id := r.Header.Get("X-Request-Id"); id != "" {
+		sub.Header = r.Header.Clone()
+		sub.Header.Set("X-Request-Id", id+"."+label)
+	}
 	sub.Body = io.NopCloser(bytes.NewReader(body))
 	sub.ContentLength = int64(len(body))
 	sub.Header = sub.Header.Clone()
@@ -157,7 +177,7 @@ func (h *Handler) serveFusion(w http.ResponseWriter, r *http.Request, serve http
 	}
 	// A single-model Fusion has nothing to fuse (combo.js:556-559).
 	if len(panel) == 1 {
-		serve(w, subRequest(r.Context(), r, body, panel[0], depth, ""))
+		serve(w, subRequest(r.Context(), r, body, panel[0], combo.Name, "single", depth, ""))
 		return
 	}
 	defaults := routing.DefaultFusionConfig()
@@ -189,7 +209,7 @@ func (h *Handler) serveFusion(w http.ResponseWriter, r *http.Request, serve http
 	}
 
 	panelCtx, cancel := context.WithCancel(r.Context())
-	results := h.collectPanel(panelCtx, r, serve, panel, panelJSON, method, depth, config)
+	results := h.collectPanel(panelCtx, r, serve, panel, combo.Name, panelJSON, method, depth, config)
 	cancel()
 
 	var answers []fusionAnswer
@@ -211,7 +231,7 @@ func (h *Handler) serveFusion(w http.ResponseWriter, r *http.Request, serve http
 	case 1:
 		// Only one panel model answered: the client gets that model's own answer,
 		// streamed if it asked (combo.js:616-619).
-		serve(w, subRequest(r.Context(), r, body, answers[0].model, depth, ""))
+		serve(w, subRequest(r.Context(), r, body, answers[0].model, combo.Name, "single", depth, ""))
 	default:
 		judgeBody, ok := appendUserTurn(body, buildJudgePrompt(answers))
 		if !ok {
@@ -222,7 +242,7 @@ func (h *Handler) serveFusion(w http.ResponseWriter, r *http.Request, serve http
 		if judge == "" {
 			judge = panel[0]
 		}
-		serve(w, subRequest(r.Context(), r, judgeBody, judge, depth, ""))
+		serve(w, subRequest(r.Context(), r, judgeBody, judge, combo.Name, "judge", depth, ""))
 	}
 }
 
@@ -266,7 +286,7 @@ func (b *bufferedResponse) ok() bool { return !b.over && b.status >= 200 && b.st
 // returns, in panel order, what had settled when the collection ended: all of them
 // settled, or the grace window after minPanel successes ran out, or the hard
 // timeout. A call still running then is cancelled and its slot is nil.
-func (h *Handler) collectPanel(ctx context.Context, r *http.Request, serve http.HandlerFunc, panel []string, panelJSON []byte, method string, depth int, config routing.FusionConfig) []*bufferedResponse {
+func (h *Handler) collectPanel(ctx context.Context, r *http.Request, serve http.HandlerFunc, panel []string, requestedName string, panelJSON []byte, method string, depth int, config routing.FusionConfig) []*bufferedResponse {
 	type settled struct {
 		index    int
 		response *bufferedResponse
@@ -284,7 +304,7 @@ func (h *Handler) collectPanel(ctx context.Context, r *http.Request, serve http.
 						recorder.status = http.StatusInternalServerError
 					}
 				}()
-				serve(recorder, subRequest(callCtx, r, panelJSON, target, depth, method))
+				serve(recorder, subRequest(callCtx, r, panelJSON, target, requestedName, fmt.Sprintf("panel-%d", index+1), depth, method))
 			}()
 			arrived <- settled{index, recorder}
 		}()

@@ -1024,7 +1024,12 @@ one immutable snapshot. No separate reload command is needed.
   persistence setting.
 - `observabilityMaxRecords` bounds new queue admission, not durable row count.
   Shrinking preserves accepted events; admission resumes when the queue drains
-  below the new bound. Details retain the fixed seven-day pruning policy.
+  below the new bound.
+- Request details are kept by count and by age: `observabilityMaxDetailRecords`
+  (default 1000, at least 1) is how many of the newest details stay; older ones
+  are deleted in the same transaction that writes a new one, on the next write
+  after the setting changes. Details older than seven days are always pruned.
+  Usage rows and the daily rollup are not pruned by either.
 - Batch size applies on the next worker wake. Its effective value is capped at
   the queue admission limit when settings compile, so a full queue can flush
   even if the saved batch size is larger. Full batches flush immediately;
@@ -1033,8 +1038,17 @@ one immutable snapshot. No separate reload command is needed.
   still wait for the previous interval. Shutdown drains accepted events.
 - `observabilityMaxJsonSize` is bytes for the entire detail document and applies
   on the next detail write, including queued details. Oversized documents keep
-  attribution with an omission marker. Normal inference diagnostic capture is
-  still incomplete (R10); changing the cap cannot create missing diagnostics.
+  attribution with an omission marker, and each of the four captured fields
+  (request, provider request, provider response, response) is cut to a
+  `{_truncated,_originalSize,_preview}` marker (first 200 characters) at the cap.
+  Capture happens on the normal inference path while observability is enabled,
+  held in memory at a few times the cap per in-flight request; credentials are
+  redacted before anything is stored. Changing the cap applies to the next request.
+- The live view is `GET /admin/v1/usage/active` (in-flight per account and model,
+  the last 20 finished requests, the provider that last failed for ten seconds)
+  and the `usage.pending` event on `/admin/v1/events`; it is memory only and empty
+  after a restart. The `request completed` console log line carries the requested,
+  selected and upstream model of every request.
 
 `quotaVisibility`, `providerCompatibility`, `dnsToolEnabled`, and
 `pxpipeAutoInstall` are explicitly storage-only. No restart activates them.

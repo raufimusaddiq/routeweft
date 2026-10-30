@@ -66,3 +66,46 @@ func usageFilter(query url.Values) (string, []any, error) {
 	}
 	return " WHERE " + strings.Join(clauses, " AND "), args, nil
 }
+
+// detailFilter builds the WHERE clause of the request-detail list: provider, model,
+// account, outcome ("success" or "error") and a time range, the filters the
+// reference's detail list has (requestDetailsRepo.js:209-219). Values are bound.
+func detailFilter(query url.Values) (string, []any, error) {
+	var clauses []string
+	var args []any
+	for _, f := range []struct{ param, column string }{{"providerId", "provider_id"}, {"modelId", "model_id"}, {"connectionId", "connection_id"}} {
+		value := strings.TrimSpace(query.Get(f.param))
+		if value == "" {
+			continue
+		}
+		if len(value) > maxFilterLength {
+			return "", nil, errors.New(f.param + " is too long")
+		}
+		clauses = append(clauses, f.column+" = ?")
+		args = append(args, value)
+	}
+	switch status := strings.TrimSpace(query.Get("status")); status {
+	case "":
+	case "success", "error":
+		clauses = append(clauses, "status = ?")
+		args = append(args, status)
+	default:
+		return "", nil, errors.New("status must be success or error")
+	}
+	for _, f := range []struct{ param, op string }{{"startDate", ">="}, {"endDate", "<="}} {
+		raw := strings.TrimSpace(query.Get(f.param))
+		if raw == "" {
+			continue
+		}
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return "", nil, errors.New(f.param + " must be an RFC 3339 timestamp")
+		}
+		clauses = append(clauses, "created_at "+f.op+" ?")
+		args = append(args, parsed.UTC().Format(usageStoredTime))
+	}
+	if len(clauses) == 0 {
+		return "", nil, nil
+	}
+	return " WHERE " + strings.Join(clauses, " AND "), args, nil
+}

@@ -146,6 +146,13 @@ dispatch of `chat.js:177-229`, which cannot be executed here. It writes
 replays; `--check` re-runs the oracle and fails if its answers (not its commit) differ from the file. It
 needs `ORACLE_DIR` and `ORACLE_SHA`.
 
+`compat/parity/generate-pricing.mjs` loads the pinned `open-sse/providers/pricing.js` and writes
+`internal/pricing/data_gen.go` (the default price catalog: `MODEL_PRICING`, `PROVIDER_PRICING`,
+`PATTERN_PRICING`) plus `internal/pricing/testdata/pricing_pin.json` (the oracle's own
+`getPricingForModel` over every catalog key and probe, and `calculateCostFromTokens` over 32 token
+mixes), which `internal/pricing` replays (PARITY 6.35). `--check` fails when the oracle's answers differ
+from the files. It needs `ORACLE_DIR` and `ORACLE_SHA`.
+
 CI runs this as the `parity` PR job, alongside existing Go/UI/container jobs.
 No test may update golden files from its actual output or turn a missing oracle
 into a passing dedicated gate. Ordinary unit tests remain usable without v1.

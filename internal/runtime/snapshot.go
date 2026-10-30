@@ -18,6 +18,7 @@ type RuntimeSnapshot struct {
 	modelCapabilities   *capabilities.Catalog
 	telemetryOptions    telemetry.Options
 	detailSizeLimit     int
+	detailMaxRecords    int
 	savers              *transformbody.Pipeline
 	providerConfig      credentials.Configuration
 	providers           map[string]servingProvider

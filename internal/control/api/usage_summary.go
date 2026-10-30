@@ -63,15 +63,17 @@ func (h *Handler) handleUsageSummary(w http.ResponseWriter, r *http.Request) {
 		args = append(args, since)
 	}
 	totals := map[string]any{"requests": int64(0), "inputTokens": int64(0), "outputTokens": int64(0), "cacheReadTokens": int64(0), "cacheWriteTokens": int64(0), "errors": int64(0)}
-	row := h.opts.DB.QueryRowContext(ctx, "SELECT COALESCE(SUM(CASE WHEN termination = '' THEN 1 ELSE 0 END),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cache_read_tokens),0),COALESCE(SUM(cache_write_tokens),0),COALESCE(SUM(CASE WHEN termination = '' AND (status < 200 OR status >= 300) THEN 1 ELSE 0 END),0),COALESCE(SUM(duration_ms),0),COALESCE(SUM(ttft_ms),0),COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN ttft_ms IS NOT NULL THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN termination <> '' THEN 1 ELSE 0 END),0) FROM usage_events"+where, args...)
+	row := h.opts.DB.QueryRowContext(ctx, "SELECT COALESCE(SUM(CASE WHEN termination = '' THEN 1 ELSE 0 END),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cache_read_tokens),0),COALESCE(SUM(cache_write_tokens),0),COALESCE(SUM(CASE WHEN termination = '' AND (status < 200 OR status >= 300) THEN 1 ELSE 0 END),0),COALESCE(SUM(duration_ms),0),COALESCE(SUM(ttft_ms),0),COALESCE(SUM(CASE WHEN duration_ms IS NOT NULL THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN ttft_ms IS NOT NULL THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN termination <> '' THEN 1 ELSE 0 END),0),COALESCE(SUM(cost),0) FROM usage_events"+where, args...)
 	var requests, input, output, cacheRead, cacheWrite, errors, durationSum, ttftSum, timed, ttftCount, terminated int64
-	if err := row.Scan(&requests, &input, &output, &cacheRead, &cacheWrite, &errors, &durationSum, &ttftSum, &timed, &ttftCount, &terminated); err != nil {
+	var cost float64
+	if err := row.Scan(&requests, &input, &output, &cacheRead, &cacheWrite, &errors, &durationSum, &ttftSum, &timed, &ttftCount, &terminated, &cost); err != nil {
 		writeError(w, http.StatusInternalServerError, "read_failed", "could not load usage totals")
 		return
 	}
 	totals["requests"], totals["inputTokens"], totals["outputTokens"] = requests, input, output
 	totals["cacheReadTokens"], totals["cacheWriteTokens"], totals["errors"] = cacheRead, cacheWrite, errors
 	totals["terminated"] = terminated
+	totals["cost"] = cost
 	if timed > 0 {
 		totals["avgDurationMs"] = durationSum / timed
 	}
@@ -116,7 +118,7 @@ func periodOrDefault(period string) string {
 // day *before* the LIMIT bounds days; the newest days are then presented
 // oldest-first for charting.
 func (h *Handler) usageDailySeries(ctx context.Context, since string) ([]map[string]any, error) {
-	query := "SELECT day,COALESCE(SUM(requests),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cache_read_tokens),0),COALESCE(SUM(cache_write_tokens),0) FROM (SELECT day,SUM(requests) AS requests,SUM(input_tokens) AS input_tokens,SUM(output_tokens) AS output_tokens,SUM(cache_read_tokens) AS cache_read_tokens,SUM(cache_write_tokens) AS cache_write_tokens FROM usage_daily"
+	query := "SELECT day,COALESCE(SUM(requests),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cache_read_tokens),0),COALESCE(SUM(cache_write_tokens),0),COALESCE(SUM(cost),0) FROM (SELECT day,SUM(requests) AS requests,SUM(input_tokens) AS input_tokens,SUM(output_tokens) AS output_tokens,SUM(cache_read_tokens) AS cache_read_tokens,SUM(cache_write_tokens) AS cache_write_tokens,SUM(cost) AS cost FROM usage_daily"
 	var args []any
 	if since != "" {
 		query += " WHERE day >= ?"
@@ -132,10 +134,11 @@ func (h *Handler) usageDailySeries(ctx context.Context, since string) ([]map[str
 	for rows.Next() {
 		var day string
 		var requests, input, output, cacheRead, cacheWrite int64
-		if err := rows.Scan(&day, &requests, &input, &output, &cacheRead, &cacheWrite); err != nil {
+		var cost float64
+		if err := rows.Scan(&day, &requests, &input, &output, &cacheRead, &cacheWrite, &cost); err != nil {
 			return nil, err
 		}
-		series = append(series, map[string]any{"day": day, "requests": requests, "inputTokens": input, "outputTokens": output, "cacheReadTokens": cacheRead, "cacheWriteTokens": cacheWrite})
+		series = append(series, map[string]any{"day": day, "requests": requests, "inputTokens": input, "outputTokens": output, "cacheReadTokens": cacheRead, "cacheWriteTokens": cacheWrite, "cost": cost})
 	}
 	return series, rows.Err()
 }
@@ -143,7 +146,7 @@ func (h *Handler) usageDailySeries(ctx context.Context, since string) ([]map[str
 // usageBreakdown groups by one expression. Null/empty keys are labelled so the
 // UI can show unattributed requests without hiding them.
 func (h *Handler) usageBreakdown(ctx context.Context, expression, where string, args []any) ([]map[string]any, error) {
-	query := "SELECT COALESCE(NULLIF(" + expression + ",''),'(unattributed)') AS k,COALESCE(SUM(CASE WHEN termination = '' THEN 1 ELSE 0 END),0) AS n,COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(CASE WHEN termination = '' AND (status < 200 OR status >= 300) THEN 1 ELSE 0 END),0) FROM usage_events" + where + " GROUP BY k ORDER BY n DESC, k LIMIT 50"
+	query := "SELECT COALESCE(NULLIF(" + expression + ",''),'(unattributed)') AS k,COALESCE(SUM(CASE WHEN termination = '' THEN 1 ELSE 0 END),0) AS n,COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(CASE WHEN termination = '' AND (status < 200 OR status >= 300) THEN 1 ELSE 0 END),0),COALESCE(SUM(cost),0) FROM usage_events" + where + " GROUP BY k ORDER BY n DESC, k LIMIT 50"
 	rows, err := h.opts.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -153,10 +156,11 @@ func (h *Handler) usageBreakdown(ctx context.Context, expression, where string, 
 	for rows.Next() {
 		var key string
 		var count, input, output, errors int64
-		if err := rows.Scan(&key, &count, &input, &output, &errors); err != nil {
+		var cost float64
+		if err := rows.Scan(&key, &count, &input, &output, &errors, &cost); err != nil {
 			return nil, err
 		}
-		items = append(items, map[string]any{"key": key, "requests": count, "inputTokens": input, "outputTokens": output, "errors": errors})
+		items = append(items, map[string]any{"key": key, "requests": count, "inputTokens": input, "outputTokens": output, "errors": errors, "cost": cost})
 	}
 	return items, rows.Err()
 }

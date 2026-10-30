@@ -668,6 +668,7 @@ Initial Routeweft defaults should intentionally mirror proven daily-driver behav
 | capacityAdapter vision/pdf/audioInput/videoInput | disabled, empty pools |
 | enableObservability | false |
 | observabilityMaxRecords | 1000 |
+| observabilityMaxDetailRecords | 1000 |
 | observabilityBatchSize | 20 |
 | observabilityFlushIntervalMs | 5000 |
 | observabilityMaxJsonSize | 5 MB |

@@ -21,7 +21,8 @@ func multiProviderApp(t *testing.T, upstream *upstreamLog, models []string) (*Ap
 	t.Helper()
 	server := httptest.NewServer(upstream.handler())
 	t.Cleanup(server.Close)
-	a := New(Config{DataDir: t.TempDir(), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true}, nil)
+	upstream.stop = server.Close
+	a := New(Config{DataDir: t.TempDir(), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true, AdminBootstrapUsername: "operator", AdminBootstrapPassword: c03Password}, nil)
 	ctx := context.Background()
 	if err := a.Initialize(ctx); err != nil {
 		t.Fatal(err)

@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -36,7 +37,7 @@ func (h *Handler) walkCombo(w http.ResponseWriter, r *http.Request, serve http.H
 			memberBody = stripHistoryForContext(body, member.ContextWindow)
 		}
 		probe := &probeWriter{w: w, header: http.Header{}}
-		serve(probe, subRequest(r.Context(), r, memberBody, target, depth, ""))
+		serve(probe, subRequest(r.Context(), r, memberBody, target, name, fmt.Sprintf("member-%d", index+1), depth, ""))
 		if r.Context().Err() != nil {
 			return
 		}
