@@ -20,8 +20,7 @@ const legsPin = JSON.parse(readFileSync(new URL('internal/parity/testdata/legs_p
 // ---- D rows: "| D<n> | text | refs | position |" ------------------------------
 const rows = [...parity.matchAll(/\n\| (D\d+) \| (.*?) \| ([^|\n]*) \| ([^\n]*) \|/g)].map(([, id, text, refs, position]) => {
   const pending = /Decision required/i.test(text);
-  const approved = /\*\*Approved\*\*|^Approved\b/i.test(text) || !pending;
-  return { id, text: text.replace(/\s+/g, ' '), refs: refs.trim(), position: position.trim(), state: pending && !/\*\*Approved\*\*/.test(text) ? 'decision required' : 'approved', approved };
+  return { id, text: text.replace(/\s+/g, ' '), refs: refs.trim(), position: position.trim(), state: pending && !/\*\*Approved\*\*/.test(text) ? 'decision required' : 'approved' };
 });
 assert.ok(rows.length >= 30, 'no D rows were read from docs/PARITY.md');
 const byId = new Map();
