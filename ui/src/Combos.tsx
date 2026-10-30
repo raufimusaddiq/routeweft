@@ -1,9 +1,10 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { fetchAll } from './ProviderPaging'
 import { buildChoices, describeFailure, keysAllowingCombo, memberFromInput, memberIsKnown, memberIsReachable, type AccessState, type CatalogInput, type Choice } from './keyAccess'
+import { BLANK_TUNING, FUSION_DEFAULTS, aggregateCapabilities, isNestedMember, memberLabel, nestedCandidates, nestedRefusal, tuningBody, tuningInput, type CapabilityCatalog, type FusionTuning, type FusionTuningInput } from './comboMembers'
 
 type Member = { providerId: string; modelId: string; position: number; selected: boolean }
-type Combo = { id: string; name: string; strategy: string; stickyLimit: number; judgeModel: string; fusionEnabled: boolean; members: Member[] }
+type Combo = { id: string; name: string; strategy: string; stickyLimit: number; judgeModel: string; fusionEnabled: boolean; fusionTuning?: FusionTuning; members: Member[] }
 type StoredKey = { id: string; name: string; access?: AccessState }
 type Adapter = { capability: string; enabled: boolean; roundRobin?: boolean; pool: { providerId: string; modelId: string }[] }
 type Props = { onUnauthorized: () => void }
@@ -14,7 +15,7 @@ type Props = { onUnauthorized: () => void }
 const visibleCapabilities = ['vision', 'audio-input']
 const strategies = [['fallback', 'Ordered fallback'], ['round-robin', 'Round-robin'], ['sticky-round-robin', 'Sticky round-robin']]
 
-const blankCombo = { id: '', name: '', strategy: 'fallback', stickyLimit: 0, judgeModel: '', fusionEnabled: false, members: [] as Member[] }
+const blankCombo = { id: '', name: '', strategy: 'fallback', stickyLimit: 0, judgeModel: '', fusionEnabled: false, tuning: BLANK_TUNING as FusionTuningInput, members: [] as Member[] }
 
 async function responseError(response: Response, fallback: string) {
   try {
@@ -43,6 +44,7 @@ export function Combos({ onUnauthorized }: Props) {
   const [memberPick, setMemberPick] = useState('')
   const [memberError, setMemberError] = useState('')
   const [adapterPick, setAdapterPick] = useState<Record<string, string>>({})
+  const [capabilityCatalog, setCapabilityCatalog] = useState<CapabilityCatalog>({ models: new Map(), aliases: new Map(), combos: new Map() })
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -64,6 +66,11 @@ export function Combos({ onUnauthorized }: Props) {
       if (!loadedCombos || !models || !aliases || !disabled || !providers || !connections || !loadedKeys) return
       const adapterData = await adapterResponse.json() as { items: Adapter[] }
       setCombos(loadedCombos)
+      setCapabilityCatalog({
+        models: new Map(models.map(model => [`${model.providerId}/${model.id}`, (model as { capabilities?: string[] }).capabilities ?? []])),
+        aliases: new Map(aliases.map(alias => [alias.alias, { providerId: alias.providerId, modelId: alias.modelId }])),
+        combos: new Map(loadedCombos.map(combo => [combo.name, { name: combo.name, members: combo.members }])),
+      })
       setChoices(buildChoices({ providers, connections, models, disabled, aliases, combos: [] }, { all: true }).filter(choice => choice.kind !== 'combo'))
       setKeys(loadedKeys)
       setAdapters(adapterData.items)
@@ -101,13 +108,21 @@ export function Combos({ onUnauthorized }: Props) {
   }
 
   function startEdit(combo: Combo) {
-    setDraft({ id: combo.id, name: combo.name, strategy: combo.strategy || 'fallback', stickyLimit: combo.stickyLimit || 0, judgeModel: combo.judgeModel, fusionEnabled: combo.fusionEnabled, members: combo.members.map(member => ({ ...member })) })
+    setDraft({ id: combo.id, name: combo.name, strategy: combo.strategy || 'fallback', stickyLimit: combo.stickyLimit || 0, judgeModel: combo.judgeModel, fusionEnabled: combo.fusionEnabled, tuning: tuningInput(combo.fusionTuning), members: combo.members.map(member => ({ ...member })) })
     setEditing(true)
   }
 
+  // The Combos that can be nested under the one being edited, judged on the draft (not the saved copy).
+  const comboRefs = useMemo(() => combos.map(combo => ({ name: combo.name, members: combo.members })), [combos])
+  const nestedChoices = useMemo(() => nestedCandidates(draft.name, draft.members, comboRefs), [draft.name, draft.members, comboRefs])
+
   function addMember() {
-    const member = memberFromInput(memberPick, choices)
-    if (!member) { setMemberError(`“${memberPick.trim()}” is not a known model or alias. Pick one from the list.`); return }
+    const typed = memberPick.trim()
+    const member = memberFromInput(memberPick, choices) ?? (nestedChoices.includes(typed) ? { providerId: '', modelId: typed } : undefined)
+    if (!member) {
+      setMemberError(combos.some(combo => combo.name === typed) ? nestedRefusal(typed, draft.name, draft.members, comboRefs) : `“${typed}” is not a known model, alias or Combo. Pick one from the list.`)
+      return
+    }
     setMemberError('')
     if (draft.members.some(item => item.providerId === member.providerId && item.modelId === member.modelId)) { setMemberError('That member is already in this Combo.'); return }
     setDraft({ ...draft, members: [...draft.members, { ...member, position: draft.members.length, selected: true }] })
@@ -136,9 +151,11 @@ export function Combos({ onUnauthorized }: Props) {
     const original = combos.find(combo => combo.id === draft.id)
     const renamedFrom = original && original.name !== draft.name.trim() ? keysAllowingCombo(original.name, keys) : []
     if (original && renamedFrom.length > 0 && !window.confirm(`Renaming “${original.name}” to “${draft.name.trim()}”: these restricted keys list the old name and will lose access: ${renamedFrom.join(', ')}. Their allowlists are not edited. Rename anyway?`)) return
-    const unknown = draft.members.filter(member => !memberIsKnown(member, choices))
+    const tuned = tuningBody(draft.tuning)
+    if (tuned.problem) { setError(tuned.problem); setNotice(''); return }
+    const unknown = draft.members.filter(member => !isNestedMember(member) && !memberIsKnown(member, choices))
     if (unknown.length > 0 && !window.confirm(`Not a known, enabled model or alias: ${unknown.map(member => `${member.providerId}/${member.modelId}`).join(', ')}. The server may reject this Combo. Save anyway?`)) return
-    const body = { name: draft.name.trim(), strategy: draft.strategy, stickyLimit: Number(draft.stickyLimit) || 0, judgeModel: draft.judgeModel.trim(), fusionEnabled: draft.fusionEnabled, members: draft.members.map((member, order) => ({ providerId: member.providerId, modelId: member.modelId, position: order, selected: member.selected })) }
+    const body = { name: draft.name.trim(), strategy: draft.strategy, stickyLimit: Number(draft.stickyLimit) || 0, judgeModel: draft.judgeModel.trim(), fusionEnabled: draft.fusionEnabled, ...(tuned.tuning ? { fusionTuning: tuned.tuning } : {}), members: draft.members.map((member, order) => ({ providerId: member.providerId, modelId: member.modelId, position: order, selected: member.selected })) }
     await action('combo', draft.id ? 'Combo updated.' : 'Combo created.', async () => {
       await send(draft.id ? `/combos/${encodeURIComponent(draft.id)}` : '/combos', draft.id ? 'PUT' : 'POST', body)
       setEditing(false); setDraft(blankCombo)
@@ -161,7 +178,7 @@ export function Combos({ onUnauthorized }: Props) {
   }
 
   return <div className="combos-content" aria-busy={loading}>
-    <datalist id="combo-member-choices">{choices.slice(0, 500).map(choice => <option key={`${choice.kind}-${choice.id}`} value={choice.id}>{choice.detail}</option>)}</datalist>
+    <datalist id="combo-member-choices">{choices.slice(0, 500).map(choice => <option key={`${choice.kind}-${choice.id}`} value={choice.id}>{choice.detail}</option>)}{nestedChoices.map(name => <option key={`combo-${name}`} value={name}>Combo</option>)}</datalist>
     <datalist id="combo-model-choices">{choices.filter(choice => choice.kind === 'model').slice(0, 500).map(choice => <option key={choice.id} value={choice.id} />)}</datalist>
     <div className="combos-toolbar accent-surface"><span className="count-label">{loading ? 'Loading…' : `${combos.length} Combo${combos.length === 1 ? '' : 's'}`}</span><button className="button-primary" type="button" onClick={startCreate}>New Combo</button><button className="button-secondary" type="button" disabled={loading} onClick={() => void load()}>Refresh</button></div>
     {error && <p className="auth-error" role="alert">{error}</p>}{notice && <p className="inline-notice" role="status">{notice}</p>}
@@ -169,9 +186,11 @@ export function Combos({ onUnauthorized }: Props) {
     <div className="combos-layout">
       <section className="detail-panel combo-list-panel" aria-label="Combo list">
         {combos.length === 0 && !loading ? <p className="empty-keys">No Combos yet.</p> : <div className="combo-list">{combos.map(combo => <article className={`combo-row${draft.id === combo.id ? ' combo-row-selected' : ''}`} key={combo.id}>
-          <div className="combo-main"><strong>{combo.name}</strong><small>{combo.members.filter(member => member.selected).length} selected · {combo.members.length} member{combo.members.length === 1 ? '' : 's'}</small></div>
+          <div className="combo-main"><strong>{combo.name}</strong><small>{combo.members.filter(member => member.selected).length} selected · {combo.members.length} member{combo.members.length === 1 ? '' : 's'}{combo.members.some(isNestedMember) ? ` · ${combo.members.filter(isNestedMember).length} nested` : ''}</small></div>
           <span className="state-tag">{combo.strategy || 'fallback'}</span>
           {combo.fusionEnabled && <span className="state-tag state-good">Fusion</span>}
+          {combo.fusionEnabled && combo.fusionTuning && <span className="state-tag" title="This Combo overrides the Fusion panel timing">Custom timing</span>}
+          {aggregateCapabilities({ name: combo.name, members: combo.members }, capabilityCatalog).map(capability => <span className="state-tag combo-capability" key={capability} title={`A member of this Combo supports ${capability}`}>{capability}</span>)}
           {(() => { const users = keysAllowingCombo(combo.name, keys); return users.length > 0 ? <span className="state-tag combo-inuse" title={users.join(', ')}>Allowed by {users.length} key{users.length === 1 ? '' : 's'}</span> : null })()}
           <div className="combo-actions"><button className="button-secondary" type="button" onClick={() => startEdit(combo)}>Edit</button><button className="button-danger" type="button" disabled={busy !== ''} onClick={() => void deleteCombo(combo)}>Delete</button></div>
         </article>)}</div>}
@@ -188,13 +207,23 @@ export function Combos({ onUnauthorized }: Props) {
             <label>Judge model<input placeholder="Defaults to first member" value={draft.judgeModel} onChange={event => setDraft({ ...draft, judgeModel: event.target.value })} /></label>
             <label className="combo-toggle"><input type="checkbox" checked={draft.fusionEnabled} onChange={event => setDraft({ ...draft, fusionEnabled: event.target.checked })} />Enable Fusion</label>
           </div>
-          <div className="member-picker"><input aria-label="Add Combo member" list="combo-member-choices" autoComplete="off" placeholder="provider/model or alias name" value={memberPick} onChange={event => { setMemberPick(event.target.value); setMemberError('') }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addMember() } }} /><button className="button-secondary" type="button" disabled={!memberPick.trim()} onClick={addMember}>Add member</button></div>
+          {draft.fusionEnabled && <fieldset className="combo-tuning">
+            <legend>Fusion panel timing (optional)</legend>
+            <p className="count-label">Leave a field blank to keep the default. The panel answers once the minimum have replied, waits the grace for the rest, and stops at the hard timeout. A minimum below 2 still means 2, and never more than the panel.</p>
+            <div className="combo-form-grid">
+              <label>Minimum panel<input type="number" step="1" inputMode="numeric" placeholder={`${FUSION_DEFAULTS.minPanel} (default)`} value={draft.tuning.minPanel} onChange={event => setDraft({ ...draft, tuning: { ...draft.tuning, minPanel: event.target.value } })} /></label>
+              <label>Straggler grace (ms)<input type="number" step="1" inputMode="numeric" placeholder={`${FUSION_DEFAULTS.stragglerGraceMs} (default)`} value={draft.tuning.stragglerGraceMs} onChange={event => setDraft({ ...draft, tuning: { ...draft.tuning, stragglerGraceMs: event.target.value } })} /></label>
+              <label>Panel hard timeout (ms)<input type="number" step="1" inputMode="numeric" placeholder={`${FUSION_DEFAULTS.panelHardTimeoutMs} (default)`} value={draft.tuning.panelHardTimeoutMs} onChange={event => setDraft({ ...draft, tuning: { ...draft.tuning, panelHardTimeoutMs: event.target.value } })} /></label>
+            </div>
+          </fieldset>}
+          <div className="member-picker"><input aria-label="Add Combo member" list="combo-member-choices" autoComplete="off" placeholder="provider/model, alias or Combo name" value={memberPick} onChange={event => { setMemberPick(event.target.value); setMemberError('') }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addMember() } }} /><button className="button-secondary" type="button" disabled={!memberPick.trim()} onClick={addMember}>Add member</button></div>
           {memberError && <p className="auth-error" role="alert">{memberError}</p>}
           <ol className="member-list">{draft.members.map((member, index) => <li className={`member-row${member.selected ? '' : ' member-row-deselected'}`} key={`${member.providerId}/${member.modelId}`}>
             <span className="member-order">{index + 1}</span>
-            <code>{member.providerId} / {member.modelId}</code>
+            <code>{memberLabel(member)}</code>
+            {isNestedMember(member) && <span className="state-tag">Nested Combo</span>}
             <span className={`state-tag${member.selected ? ' state-good' : ' state-warn'}`}>{member.selected ? 'Selected' : 'Deselected'}</span>
-            {!memberIsKnown(member, choices) ? <span className="state-tag state-warn">Unknown or disabled</span> : !memberIsReachable(member, choices) ? <span className="state-tag state-warn">No enabled connection</span> : null}
+            {isNestedMember(member) ? (!combos.some(combo => combo.name === member.modelId) ? <span className="state-tag state-warn">Unknown Combo</span> : null) : !memberIsKnown(member, choices) ? <span className="state-tag state-warn">Unknown or disabled</span> : !memberIsReachable(member, choices) ? <span className="state-tag state-warn">No enabled connection</span> : null}
             <div className="member-actions"><button className="button-secondary" type="button" disabled={index === 0} onClick={() => reorder(index, -1)} aria-label={`Move ${member.modelId} up`} title="Move up">↑</button><button className="button-secondary" type="button" disabled={index === draft.members.length - 1} onClick={() => reorder(index, 1)} aria-label={`Move ${member.modelId} down`} title="Move down">↓</button><button className="button-secondary" type="button" onClick={() => toggleMember(index)}>{member.selected ? 'Deselect' : 'Select'}</button><button className="button-danger" type="button" onClick={() => removeMember(index)}>Remove</button></div>
           </li>)}{draft.members.length === 0 && <li className="empty-keys">Add at least one member.</li>}</ol>
           <button className="button-primary" type="submit" disabled={busy === 'combo' || !draft.name.trim() || draft.members.length === 0}>{busy === 'combo' ? 'Saving…' : draft.id ? 'Save Combo' : 'Create Combo'}</button>

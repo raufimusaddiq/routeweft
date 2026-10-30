@@ -125,6 +125,15 @@ func (h *Handler) handlePutProviderNode(w http.ResponseWriter, r *http.Request) 
 		}
 		body.Prefix = strings.TrimSpace(body.Prefix)
 		body.ProviderID = body.Prefix
+		// Every built-in provider id is reserved as the prefix of a new System One node, so a custom
+		// endpoint can never shadow a built-in route (oracle src/app/api/provider-nodes/route.js:9-14,95).
+		// The oracle applies this to System One nodes only, and so does this; other generic nodes are unchanged.
+		if r.Method == http.MethodPost && len(body.Transports) == 1 && body.Transports[0] == "systemone" {
+			if _, builtin := h.providerSpec(body.Prefix); builtin {
+				writeError(w, http.StatusBadRequest, "reserved_prefix", "that prefix belongs to a built-in provider; choose another")
+				return
+			}
+		}
 	} else if kind == credentials.NodeBuiltin {
 		spec, ok := h.providerSpec(body.ProviderID)
 		if !ok {

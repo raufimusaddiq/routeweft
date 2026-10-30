@@ -1990,6 +1990,15 @@ Oracle: LiteRouter `4279093457458e168a2431604935f0145f2e76ec`, `src/i18n/*`, `pu
 - The control is a button showing the current language (flag and its own name, never translated) that opens a dialog of every language; it is keyboard operable, traps and returns focus, states the current language in text, has 44px targets and does not overflow at 320px.
 - The `requireLogin` login preference and password recovery are not offered (D14, 12.2).
 
+### 23.2 System One and Combo pages (#278, U09)
+
+Oracle: LiteRouter `4279093457458e168a2431604935f0145f2e76ec` (file:line in PARITY 6.41).
+
+- The System One page reads every page of models, provider nodes and connections (a bounded admin list is read to its last page, never only the first 100) and shows models and accounts 25 at a time. A provider is any provider with a System One model or a node with the `systemone` transport.
+- A custom System One provider is a generic node whose only transport is `systemone`, a prefix that is not a built-in provider id and not already in use, and an endpoint that passes the outbound policy; its models are added one request each (at most 64 from the form). An account is a connection with an identity and an API key; a provider that serves System One under an account (Cloudflare) also takes an account ID, validated as one path segment. The API key is write-only: it is cleared from the form after saving and no read returns it.
+- The typed request button runs the bounded probe; a free-form request editor is not offered (D53).
+- A Combo member with no provider and a model id is a nested Combo. The Combos page offers only Combos that can be nested without a cycle or beyond `MaxComboDepth` (8), shows the capabilities (vision, pdf, audio-input, video-input) its selected members supply through nested Combos, and edits the Fusion timing overrides (`minPanel`, `stragglerGraceMs`, `panelHardTimeoutMs`, blank = default). Saving a Combo from the page sends the timing it already has.
+
 ## 24. Health and shutdown
 
 Endpoints:

@@ -950,3 +950,14 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
 .language-option-active { border: 2px solid var(--outline); font-weight: 700; }
 .language-name { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; }
 .language-check { margin-left: auto; }
+
+/* System One accounts (#278): one row per connection, like a model row. */
+.systemone-accounts { margin: 0; padding: 0; list-style: none; }
+.systemone-account { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; border-top: 1px solid var(--border-subtle); padding: 9px 0; font-size: var(--t-body); }
+.systemone-account code { min-width: 0; overflow-wrap: anywhere; color: var(--text-muted); }
+.systemone-account .state-tag { margin-left: auto; }
+
+/* Combo Fusion timing (#278). */
+.combo-tuning { display: grid; gap: 8px; min-width: 0; margin: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); padding: 10px 12px; }
+.combo-tuning legend { padding: 0 6px; color: var(--text-muted); font-size: var(--t-body); font-weight: 600; }
+.combo-tuning p { margin: 0; }
