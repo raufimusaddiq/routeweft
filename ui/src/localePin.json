@@ -1,0 +1,557 @@
+{
+  "about": "Pinned from LiteRouter by compat/parity/generate-locales.mjs (#279). src/i18n/config.js, src/shared/components/LanguageSwitcher.js (names), src/shared/constants/locales.js (flags), public/i18n/literals/*.json. Do not edit.",
+  "oracle": "4279093457458e168a2431604935f0145f2e76ec",
+  "defaultLocale": "en",
+  "cookie": "locale",
+  "locales": [
+    "en",
+    "vi",
+    "zh-CN",
+    "zh-TW",
+    "ja",
+    "pt-BR",
+    "pt-PT",
+    "ko",
+    "es",
+    "de",
+    "fr",
+    "he",
+    "ar",
+    "ru",
+    "pl",
+    "cs",
+    "nl",
+    "tr",
+    "uk",
+    "tl",
+    "id",
+    "km",
+    "th",
+    "hi",
+    "bn",
+    "ur",
+    "ro",
+    "sv",
+    "it",
+    "el",
+    "hu",
+    "fi",
+    "da",
+    "no",
+    "fa"
+  ],
+  "info": {
+    "en": {
+      "name": "English",
+      "flag": "🇺🇸"
+    },
+    "vi": {
+      "name": "Tiếng Việt",
+      "flag": "🇻🇳"
+    },
+    "zh-CN": {
+      "name": "简体中文",
+      "flag": "🇨🇳"
+    },
+    "zh-TW": {
+      "name": "繁體中文",
+      "flag": "🇹🇼"
+    },
+    "ja": {
+      "name": "日本語",
+      "flag": "🇯🇵"
+    },
+    "pt-BR": {
+      "name": "Português (Brasil)",
+      "flag": "🇧🇷"
+    },
+    "pt-PT": {
+      "name": "Português (Portugal)",
+      "flag": "🇵🇹"
+    },
+    "ko": {
+      "name": "한국어",
+      "flag": "🇰🇷"
+    },
+    "es": {
+      "name": "Español",
+      "flag": "🇪🇸"
+    },
+    "de": {
+      "name": "Deutsch",
+      "flag": "🇩🇪"
+    },
+    "fr": {
+      "name": "Français",
+      "flag": "🇫🇷"
+    },
+    "he": {
+      "name": "עברית",
+      "flag": "🇮🇱"
+    },
+    "ar": {
+      "name": "العربية",
+      "flag": "🇸🇦"
+    },
+    "ru": {
+      "name": "Русский",
+      "flag": "🇷🇺"
+    },
+    "pl": {
+      "name": "Polski",
+      "flag": "🇵🇱"
+    },
+    "cs": {
+      "name": "Čeština",
+      "flag": "🇨🇿"
+    },
+    "nl": {
+      "name": "Nederlands",
+      "flag": "🇳🇱"
+    },
+    "tr": {
+      "name": "Türkçe",
+      "flag": "🇹🇷"
+    },
+    "uk": {
+      "name": "Українська",
+      "flag": "🇺🇦"
+    },
+    "tl": {
+      "name": "Tagalog",
+      "flag": "🇵🇭"
+    },
+    "id": {
+      "name": "Indonesia",
+      "flag": "🇮🇩"
+    },
+    "km": {
+      "name": "ខ្មែរ",
+      "flag": "🇰🇭"
+    },
+    "th": {
+      "name": "ไทย",
+      "flag": "🇹🇭"
+    },
+    "hi": {
+      "name": "हिन्दी",
+      "flag": "🇮🇳"
+    },
+    "bn": {
+      "name": "বাংলা",
+      "flag": "🇧🇩"
+    },
+    "ur": {
+      "name": "اردو",
+      "flag": "🇵🇰"
+    },
+    "ro": {
+      "name": "Română",
+      "flag": "🇷🇴"
+    },
+    "sv": {
+      "name": "Svenska",
+      "flag": "🇸🇪"
+    },
+    "it": {
+      "name": "Italiano",
+      "flag": "🇮🇹"
+    },
+    "el": {
+      "name": "Ελληνικά",
+      "flag": "🇬🇷"
+    },
+    "hu": {
+      "name": "Magyar",
+      "flag": "🇭🇺"
+    },
+    "fi": {
+      "name": "Suomi",
+      "flag": "🇫🇮"
+    },
+    "da": {
+      "name": "Dansk",
+      "flag": "🇩🇰"
+    },
+    "no": {
+      "name": "Norsk",
+      "flag": "🇳🇴"
+    },
+    "fa": {
+      "name": "فارسی",
+      "flag": "🇮🇷"
+    }
+  },
+  "normalize": [
+    {
+      "input": "en",
+      "normalized": "en",
+      "supported": true
+    },
+    {
+      "input": "vi",
+      "normalized": "vi",
+      "supported": true
+    },
+    {
+      "input": "zh-CN",
+      "normalized": "zh-CN",
+      "supported": true
+    },
+    {
+      "input": "zh-TW",
+      "normalized": "zh-TW",
+      "supported": true
+    },
+    {
+      "input": "ja",
+      "normalized": "ja",
+      "supported": true
+    },
+    {
+      "input": "pt-BR",
+      "normalized": "pt-BR",
+      "supported": true
+    },
+    {
+      "input": "pt-PT",
+      "normalized": "pt-PT",
+      "supported": true
+    },
+    {
+      "input": "ko",
+      "normalized": "ko",
+      "supported": true
+    },
+    {
+      "input": "es",
+      "normalized": "es",
+      "supported": true
+    },
+    {
+      "input": "de",
+      "normalized": "de",
+      "supported": true
+    },
+    {
+      "input": "fr",
+      "normalized": "fr",
+      "supported": true
+    },
+    {
+      "input": "he",
+      "normalized": "he",
+      "supported": true
+    },
+    {
+      "input": "ar",
+      "normalized": "ar",
+      "supported": true
+    },
+    {
+      "input": "ru",
+      "normalized": "ru",
+      "supported": true
+    },
+    {
+      "input": "pl",
+      "normalized": "pl",
+      "supported": true
+    },
+    {
+      "input": "cs",
+      "normalized": "cs",
+      "supported": true
+    },
+    {
+      "input": "nl",
+      "normalized": "nl",
+      "supported": true
+    },
+    {
+      "input": "tr",
+      "normalized": "tr",
+      "supported": true
+    },
+    {
+      "input": "uk",
+      "normalized": "uk",
+      "supported": true
+    },
+    {
+      "input": "tl",
+      "normalized": "tl",
+      "supported": true
+    },
+    {
+      "input": "id",
+      "normalized": "id",
+      "supported": true
+    },
+    {
+      "input": "km",
+      "normalized": "km",
+      "supported": true
+    },
+    {
+      "input": "th",
+      "normalized": "th",
+      "supported": true
+    },
+    {
+      "input": "hi",
+      "normalized": "hi",
+      "supported": true
+    },
+    {
+      "input": "bn",
+      "normalized": "bn",
+      "supported": true
+    },
+    {
+      "input": "ur",
+      "normalized": "ur",
+      "supported": true
+    },
+    {
+      "input": "ro",
+      "normalized": "ro",
+      "supported": true
+    },
+    {
+      "input": "sv",
+      "normalized": "sv",
+      "supported": true
+    },
+    {
+      "input": "it",
+      "normalized": "it",
+      "supported": true
+    },
+    {
+      "input": "el",
+      "normalized": "el",
+      "supported": true
+    },
+    {
+      "input": "hu",
+      "normalized": "hu",
+      "supported": true
+    },
+    {
+      "input": "fi",
+      "normalized": "fi",
+      "supported": true
+    },
+    {
+      "input": "da",
+      "normalized": "da",
+      "supported": true
+    },
+    {
+      "input": "no",
+      "normalized": "no",
+      "supported": true
+    },
+    {
+      "input": "fa",
+      "normalized": "fa",
+      "supported": true
+    },
+    {
+      "input": "zh",
+      "normalized": "zh-CN",
+      "supported": false
+    },
+    {
+      "input": "ZH",
+      "normalized": "en",
+      "supported": false
+    },
+    {
+      "input": "en-US",
+      "normalized": "en",
+      "supported": false
+    },
+    {
+      "input": "pt",
+      "normalized": "en",
+      "supported": false
+    },
+    {
+      "input": "xx",
+      "normalized": "en",
+      "supported": false
+    },
+    {
+      "input": "",
+      "normalized": "en",
+      "supported": false
+    },
+    {
+      "input": " en",
+      "normalized": "en",
+      "supported": false
+    },
+    {
+      "input": "EN",
+      "normalized": "en",
+      "supported": false
+    },
+    {
+      "input": null,
+      "normalized": "en",
+      "supported": false
+    },
+    {
+      "input": {
+        "undefined": true
+      },
+      "normalized": "en",
+      "supported": false
+    },
+    {
+      "input": "zh-cn",
+      "normalized": "en",
+      "supported": false
+    }
+  ],
+  "catalogs": {
+    "ar": {
+      "sha256": "5e04cffb7f7bf3207795b4cd557cbd74588ae5655b7a41c5d286a69ca0d31fda",
+      "entries": 195
+    },
+    "bn": {
+      "sha256": "c26f788b8c80ec2eb0cf439ab5a52fb15efe5c1f500b3a63282ddada3c429117",
+      "entries": 195
+    },
+    "cs": {
+      "sha256": "cd5848a2e2ec0c20aed55a495f3e339b158a5f43746b284c68752040d6a311ca",
+      "entries": 195
+    },
+    "da": {
+      "sha256": "708eaebf9ab1e9ff679f08611d5c259c21c0a7f540396f270df109e4031200e5",
+      "entries": 195
+    },
+    "de": {
+      "sha256": "912ebcd6de7c5e15ad38cbca6bf46fc25b24c11b6369ebd93feed9300d38bfb6",
+      "entries": 195
+    },
+    "el": {
+      "sha256": "57dd30382c9075ea2fcb93e8b088afa259376d5001e27488f5e350ed95437d5d",
+      "entries": 195
+    },
+    "es": {
+      "sha256": "6e14bce7603cb32fc44fd0478fc952595d7dc12e31ac0c0cba3a1b2ddab4b22e",
+      "entries": 195
+    },
+    "fa": {
+      "sha256": "ae3857758b93d169d9e8d6fa03a797bd6734555e6a5e33391d8aed9dc1614510",
+      "entries": 1404
+    },
+    "fi": {
+      "sha256": "411d1e97491b3724036584a9ebe0eb6f3908e3d994200cf929deccfd3f09ff1e",
+      "entries": 195
+    },
+    "fr": {
+      "sha256": "98e2d18cdd0e8d4cbc42fdaa0c23006487e95d3ed383b9b6b63ac8a93a66fde0",
+      "entries": 195
+    },
+    "he": {
+      "sha256": "b9c880c02c8cf2a20e37eb95d1ea71646cdd359b455672e9eb7fb57cae76401e",
+      "entries": 195
+    },
+    "hi": {
+      "sha256": "4bd13ee8756f9fc9b5bacd2dcc9f33ab1fc19da130bfbabff6130e32e0c59f4c",
+      "entries": 195
+    },
+    "hu": {
+      "sha256": "61335db029732fe803cb7eabfc5d7e6802bda59fda72e90ddc0b8d844e70a806",
+      "entries": 195
+    },
+    "id": {
+      "sha256": "cfc0adca9ecb5c816e80fec9e943bac33f00cba30dc080765378a76243abedab",
+      "entries": 1388
+    },
+    "it": {
+      "sha256": "71b62c7603d57bbb7b79755bad2f13cda406aaf4b2401e36851f5cbfbf4c467c",
+      "entries": 195
+    },
+    "ja": {
+      "sha256": "83f1a836dc5a7db9d705b1123bd831613a01199be674ea2350a90c2dc40a8636",
+      "entries": 195
+    },
+    "km": {
+      "sha256": "c9bc903ec8433bcf1d5d9b9a77a6a22fc88c1ff99824832383572522b63041f5",
+      "entries": 1393
+    },
+    "ko": {
+      "sha256": "e75dd6435dabf7d8c3e5339dd51bf9215dd6b8ea89d3a0bda77bb816033e83cb",
+      "entries": 195
+    },
+    "nl": {
+      "sha256": "5741356bc8ef3947ebab386e142e565d6b147e89939beb889e9cc826c9cf5f59",
+      "entries": 195
+    },
+    "no": {
+      "sha256": "7e030687359333cf0a41e4825a542a22a7e14f6df56f09be014aefc23c0e70c2",
+      "entries": 195
+    },
+    "pl": {
+      "sha256": "bbcbcb44f2dba322f9c49d51f30685459347c6b62a52ca28a0c7000b28b4315f",
+      "entries": 195
+    },
+    "pt-BR": {
+      "sha256": "3b4cfe8f764b2834fe239c3461e46463ab75f04b3a6a018cfd20d4b10b3c04d2",
+      "entries": 1127
+    },
+    "pt-PT": {
+      "sha256": "0771f48a55b6b23042c451471ba0e41771a928f48281c82936a8a96b66972e4e",
+      "entries": 195
+    },
+    "ro": {
+      "sha256": "bbe49aedab8d0e7c54abf60cfa30729ce9945484c23c0c5fcd102fb6fb749577",
+      "entries": 195
+    },
+    "ru": {
+      "sha256": "aad451c4b60b01b5c8ce750ad2cd2a403bc566aaf6c3fd053572243ae901d5d5",
+      "entries": 195
+    },
+    "sv": {
+      "sha256": "30c7bf326582938bce5b54d61ba6e3c22aedf90eb41ceb2356c5989b483362e2",
+      "entries": 195
+    },
+    "th": {
+      "sha256": "74d2803245809875e80257bf0aa9c4053f015cc6edbdd75478f89065801e1dd5",
+      "entries": 1388
+    },
+    "tl": {
+      "sha256": "165f5fa21e8c074f483d3f766f939c997e03d31172d59ab70779bdad4cb9e896",
+      "entries": 195
+    },
+    "tr": {
+      "sha256": "1224eb8e751f452e4b43cbd6a6deeaf5cdddc48c5f8d58d99508617e2703084b",
+      "entries": 195
+    },
+    "uk": {
+      "sha256": "72d4e5403cc5d7480f9839f58df7896366fa9edda1684fc8ffd8b9a28938c23a",
+      "entries": 195
+    },
+    "ur": {
+      "sha256": "792f1ae85bf0956a3e19c5c20a00e5d4f6c7afadd08087c1bee559fad93fc40d",
+      "entries": 195
+    },
+    "vi": {
+      "sha256": "ddfe98b578a6cb03caa037f9a7e27d11e6cb57d71f1cd83b4251f57be5355ddc",
+      "entries": 195
+    },
+    "zh-CN": {
+      "sha256": "5eb1b90b911f25379d29e7323baa43f669b1fb58c8cbb9f05ad926aef1a72e7f",
+      "entries": 1389
+    },
+    "zh-TW": {
+      "sha256": "5ad36ca2d4dee07e803a1f763eaf68e1eaab84d84bc9f2fca679b932b3f8da89",
+      "entries": 195
+    }
+  }
+}

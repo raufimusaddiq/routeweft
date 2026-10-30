@@ -8,9 +8,9 @@ Oracle for the protocol-leg differential: LiteRouter `main` `4279093457458e168a2
 
 | | |
 |---|---|
-| D rows (PARITY 6.1) | 50 |
+| D rows (PARITY 6.1) | 52 |
 | approved | 15 |
-| **decision required** | **35** |
+| **decision required** | **37** |
 | protocol-leg differences recorded | 171 (134 request, 25 response) over 28 legs |
 | accounted for by a D row | 57 |
 | accounted for by an earlier register item or section (PARITY 6.3-6.12) | 114 |
@@ -59,6 +59,8 @@ Each is a difference the owner has not yet approved. Approving one means replaci
 | D48 | the trusted-proxy defaults. The oracle trusts a loopback peer by default and keys the client on `x-real-ip` else the leftmost `X-Forwarded-For` ent... | 0 |
 | D49 | the login lock schedule. The oracle locks after five failures for 30 s, then 2 m, 10 m and 30 m, and forgets a client after an idle hour (`loginLim... | 0 |
 | D50 | log-level values. The oracle treats an unrecognized `LOG_LEVEL` as `INFO` (`src/sse/utils/logger.js:10`); Routeweft refuses to start on one (before... | 0 |
+| D51 | no public `POST /api/locale`. The oracle's route is unauthenticated (`src/dashboardGuard.js:25`), validates the value (a missing or unsupported one... | 0 |
+| D52 | translation coverage. Routeweft ships the oracle's 34 catalogs unchanged. They are keyed by LiteRouter's exact English wording, so only text Routew... | 0 |
 
 ## Approved
 

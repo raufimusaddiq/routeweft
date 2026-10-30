@@ -1979,6 +1979,17 @@ Initial page data should come from purpose-built read models; the browser should
 
 Live SSE invalidates/updates targeted query keys.
 
+### 23.1 Display language (#279, U10)
+
+Oracle: LiteRouter `4279093457458e168a2431604935f0145f2e76ec`, `src/i18n/*`, `public/i18n/literals/*`, `components/LanguageSwitcher.js` (file:line in PARITY 6.40).
+
+- The dashboard offers the 35 languages of `ui/src/locale.ts` (the oracle's list and order); English is the default and needs no catalog.
+- The choice is the `locale` cookie: path `/`, one year, `SameSite=Lax`, `Secure` over https. The page writes it; no server code reads it, and no unauthenticated route is added for it (D51). A missing, unknown or malformed value is English; `zh` is Simplified Chinese.
+- Every language but English has a catalog served from the UI directory at `/i18n/literals/<locale>.json`, byte-identical to the oracle's. The page translates its own text nodes in place from the catalog, keyed by the exact trimmed English; a text with no entry stays English. Text under `script`, `style`, `code`, `pre`, table structure, `select`, `datalist`, `optgroup` and any `data-i18n-skip` ancestor is not translated. New and changed text is translated as it appears; the sign-in page is translated like any other.
+- A language is saved only once its catalog has loaded; if it cannot be loaded the previous language stays, nothing is saved and the dialog says so. `<html lang>` follows the choice; `dir` is not set.
+- The control is a button showing the current language (flag and its own name, never translated) that opens a dialog of every language; it is keyboard operable, traps and returns focus, states the current language in text, has 44px targets and does not overflow at 320px.
+- The `requireLogin` login preference and password recovery are not offered (D14, 12.2).
+
 ## 24. Health and shutdown
 
 Endpoints:

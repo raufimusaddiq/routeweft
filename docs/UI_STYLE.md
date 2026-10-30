@@ -260,6 +260,15 @@ state colours require WCAG AA 4.5:1; control boundaries, the frameless menu
 button's bars, the rail and header edges and focus require 3:1 against what is
 behind them.
 
+### Display language control (#279)
+
+The language button (sidebar footer and the Settings page) is a 44px control with the language's
+flag and its own name, outlined like a select; its dialog is a 3px-outlined slab with `--hard`, a
+plain `rgba` scrim (no blur) and a grid of 44px options. The current language is stated in text
+("(current language)") and by a heavier outline, not by colour alone. The names are not translated
+(`data-i18n-skip`). Focus is trapped in the dialog, Escape and the scrim close it, and focus returns
+to the button. See SPEC 23.1.
+
 ## 9. Themes and Motion
 
 Ship light, dark and system. Preserve the pre-paint theme resolver and persisted
