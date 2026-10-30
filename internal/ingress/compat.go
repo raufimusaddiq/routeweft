@@ -43,6 +43,9 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, source, model
 			return ChatTranslation{}, fmt.Errorf("no %s translator registered for target protocol %q", source, plan.TargetProtocol)
 		}
 		endpoint := native.endpoint
+		if native.endpointFor != nil && provider.UpstreamModel != "" {
+			endpoint = native.endpointFor(provider.UpstreamModel)
+		}
 		if provider.Endpoint != "" {
 			endpoint = provider.Endpoint
 		}
@@ -106,8 +109,11 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, source, model
 // provider-credential headers.
 type nativeSpec struct {
 	endpoint string
-	body     func(upstreamModel string) ([]byte, error)
-	headers  func(routing.ProviderRef) http.Header
+	// endpointFor, when set, names the endpoint after the model the provider
+	// serves, which differs from the requested one for an alias or a Combo member.
+	endpointFor func(upstreamModel string) string
+	body        func(upstreamModel string) ([]byte, error)
+	headers     func(routing.ProviderRef) http.Header
 }
 
 // translateHook adapts one protocol's translator to the shared dispatcher.
@@ -191,8 +197,11 @@ func (h *Handler) handleGeminiRoute(w http.ResponseWriter, r *http.Request) {
 	})
 	native := nativeSpec{
 		endpoint: "v1beta/models/" + model + ":" + method,
-		body:     func(string) ([]byte, error) { return request.MarshalBody("") },
-		headers:  geminiHeaders,
+		endpointFor: func(upstreamModel string) string {
+			return "v1beta/models/" + upstreamModel + ":" + method
+		},
+		body:    func(string) ([]byte, error) { return request.MarshalBody("") },
+		headers: geminiHeaders,
 	}
 	h.dispatch(w, r, geminiadapter.Protocol, request.Model, native, geminiTranslate(h.opts.TranslateGemini, request), stream)
 }

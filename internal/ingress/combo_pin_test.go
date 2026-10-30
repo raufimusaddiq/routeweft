@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/auth"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
@@ -151,18 +152,20 @@ type comboPinPart2 struct {
 		Result json.RawMessage `json:"result"`
 	} `json:"strip"`
 	Outcomes []struct {
-		Name     string `json:"name"`
-		Terminal bool   `json:"terminal"`
-		Success  bool   `json:"success"`
-		Members  []struct {
+		Name       string `json:"name"`
+		Terminal   bool   `json:"terminal"`
+		Success    bool   `json:"success"`
+		Divergence string `json:"divergence"`
+		Members    []struct {
 			Status     int    `json:"status"`
 			Body       string `json:"body"`
 			StatusText string `json:"statusText"`
 		} `json:"members"`
-		Tried   int    `json:"tried"`
-		Status  int    `json:"status"`
-		Message string `json:"message"`
-		Waits   []int  `json:"waits"`
+		Tried            int    `json:"tried"`
+		Status           int    `json:"status"`
+		Message          string `json:"message"`
+		RetryAfterHeader string `json:"retryAfterHeader"`
+		Waits            []int  `json:"waits"`
 	} `json:"outcomes"`
 	NestedTable    map[string][]string `json:"nestedTable"`
 	NestedStrategy map[string]string   `json:"nestedStrategy"`
@@ -170,9 +173,9 @@ type comboPinPart2 struct {
 		Name  string `json:"name"`
 		Root  string `json:"root"`
 		Calls []struct {
-			Results map[string]int `json:"results"`
-			Tried   []string       `json:"tried"`
-			Status  int            `json:"status"`
+			Results map[string]json.RawMessage `json:"results"`
+			Tried   []string                   `json:"tried"`
+			Status  int                        `json:"status"`
 		} `json:"calls"`
 	} `json:"nested"`
 }
@@ -214,27 +217,29 @@ func TestStripHistoryForContextMatchesTheOracle(t *testing.T) {
 	}
 }
 
-// What the oracle answers when its models fail, and how long it waits first.
-// The fallback decision itself is the attempt loop's (the app-level tests); this
-// pins the pieces that turn failures into the answer.
+// oracleNow is the instant the generator fixes the oracle's clock at, so a retry
+// time recorded as an offset from it means the same here.
+var oracleNow = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+
+// What the oracle answers when its models fail, and how long it waits first. The
+// fallback decision itself is the attempt loop's (the app-level tests); this pins
+// the pieces that turn failures into the answer: the message each failure gives,
+// the retry time it carries, the pause before the next model and the answer.
 func TestComboFailureAnswerAndWaitsMatchTheOracle(t *testing.T) {
 	pin := loadComboPinPart2(t)
 	for _, c := range pin.Outcomes {
 		t.Run(c.Name, func(t *testing.T) {
 			var waits []int
-			firstStatus, lastText := 0, ""
+			trace := newComboTrace()
+			trace.now = func() time.Time { return oracleNow }
 			failed := c.Tried
 			if c.Success || c.Terminal {
 				failed-- // the model that served, or ended the walk, did not fall through
 			}
 			for i := 0; i < failed; i++ {
 				member := c.Members[i]
-				text := failureText(member.Status, member.StatusText, []byte(member.Body))
-				if firstStatus == 0 {
-					firstStatus = member.Status
-				}
-				lastText = text
-				if wait := transientWait(member.Status, text); wait > 0 {
+				trace.noteBody(i, member.Status, member.StatusText, []byte(member.Body))
+				if wait := transientWait(member.Status, trace.failures[i].text); wait > 0 {
 					waits = append(waits, int(wait.Milliseconds()))
 				}
 			}
@@ -244,9 +249,21 @@ func TestComboFailureAnswerAndWaitsMatchTheOracle(t *testing.T) {
 			if c.Success || c.Terminal {
 				return
 			}
-			answer := comboExhausted(firstStatus, lastText)
-			if answer.status != c.Status || answer.message != c.Message {
-				t.Fatalf("answer %d %q, oracle %d %q", answer.status, answer.message, c.Status, c.Message)
+			answer := trace.exhausted()
+			if c.Divergence == "D16" {
+				// The oracle answers a Retry-After of NaN and "reset after NaNs"; a retry time
+				// that is not a date is ignored here (PARITY D16).
+				if answer.status != c.Status || answer.message != "soon" || answer.seconds != 0 {
+					t.Fatalf("a retry time that is not a date must be ignored: %d %q %d", answer.status, answer.message, answer.seconds)
+				}
+				return
+			}
+			header := ""
+			if answer.seconds > 0 {
+				header = strconv.Itoa(answer.seconds)
+			}
+			if answer.status != c.Status || answer.message != c.Message || header != c.RetryAfterHeader {
+				t.Fatalf("answer %d %q retry-after %q, oracle %d %q retry-after %q", answer.status, answer.message, header, c.Status, c.Message, c.RetryAfterHeader)
 			}
 		})
 	}

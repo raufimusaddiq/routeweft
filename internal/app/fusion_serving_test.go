@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -447,23 +448,115 @@ func TestFusionNestsInsideFusion(t *testing.T) {
 	}
 }
 
-// A Fusion Combo that is a member of an ordered Combo is not served from inside the
-// attempt loop; it answers 501 rather than being treated as an ordered Combo.
-func TestFusionNestedInAnOrderedComboIsRefusedExplicitly(t *testing.T) {
-	upstream := &upstreamLog{script: answers(0)}
-	a, key := multiProviderApp(t, upstream, []string{"a", "b", "c"})
-	ctx := context.Background()
-	if _, err := a.runtime.SetCombos(ctx, []runtime.Combo{
-		{ID: "o", Name: "ordered", Members: []runtime.ComboMember{{ModelID: "panel", Position: 0, Selected: true}}},
-		{ID: "p", Name: "panel", Members: []runtime.ComboMember{{ProviderID: "pa", ModelID: "a", Position: 0, Selected: true}, {ProviderID: "pb", ModelID: "b", Position: 1, Selected: true}}},
-	}); err != nil {
+// A Fusion Combo as a member of an ordered Combo answers as Fusion when the walk
+// reaches it, and a Fusion member that fails is fallen past like any other
+// (chat.js:196-213 reaches handleFusionChat from handleSingleModelChat). The runs
+// are the oracle's own handleComboChat and handleFusionChat, recorded.
+func TestFusionAsAMemberOfAnOrderedComboMatchesTheOracle(t *testing.T) {
+	raw, err := os.ReadFile("../ingress/testdata/combo_routing_pin.json")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.runtime.SetSettings(ctx, map[string]string{"comboStrategies": `{"panel":{"fallbackStrategy":"fusion"}}`}, nil); err != nil {
+	var pin struct {
+		OrderedFusion []struct {
+			Name    string `json:"name"`
+			Members map[string]struct {
+				Delay  int    `json:"delay"`
+				Status int    `json:"status"`
+				Body   string `json:"body"`
+			} `json:"members"`
+			Tail struct {
+				Status int    `json:"status"`
+				Body   string `json:"body"`
+			} `json:"tail"`
+			Judge *struct {
+				Status int    `json:"status"`
+				Body   string `json:"body"`
+			} `json:"judge"`
+			Calls []struct {
+				Model string `json:"model"`
+				Panel bool   `json:"panel"`
+			} `json:"calls"`
+			Final struct {
+				Status  int     `json:"status"`
+				Message *string `json:"message"`
+			} `json:"final"`
+		} `json:"orderedFusion"`
+	}
+	if err := json.Unmarshal(raw, &pin); err != nil {
 		t.Fatal(err)
 	}
-	if w := post(a, key, fusionBody("ordered", "")); w.Code != http.StatusNotImplemented || upstream.seen() != "" {
-		t.Fatalf("status=%d seen=%q body=%s", w.Code, upstream.seen(), w.Body)
+	if len(pin.OrderedFusion) < 5 {
+		t.Fatalf("pin has %d scenarios", len(pin.OrderedFusion))
+	}
+	for _, scenario := range pin.OrderedFusion {
+		t.Run(scenario.Name, func(t *testing.T) {
+			upstream := &upstreamLog{}
+			upstream.script = func(model string, call int) (time.Duration, int, string) {
+				switch {
+				case model == "c":
+					return 0, scenario.Tail.Status, scenario.Tail.Body
+				case model == "j" && scenario.Judge != nil:
+					return 0, scenario.Judge.Status, scenario.Judge.Body
+				case model == "j" || call > 0:
+					return 0, 200, finalAnswer
+				}
+				member := scenario.Members["p"+model+"/"+model]
+				return time.Duration(member.Delay*timeScale) * time.Millisecond, member.Status, member.Body
+			}
+			a, key := multiProviderApp(t, upstream, []string{"a", "b", "c", "j"})
+			ctx := context.Background()
+			if _, err := a.runtime.SetCombos(ctx, []runtime.Combo{
+				{ID: "o", Name: "ordered", Members: []runtime.ComboMember{{ModelID: "fz", Position: 0, Selected: true}, {ProviderID: "pc", ModelID: "c", Position: 1, Selected: true}}},
+				{ID: "f", Name: "fz", Members: []runtime.ComboMember{{ProviderID: "pa", ModelID: "a", Position: 0, Selected: true}, {ProviderID: "pb", ModelID: "b", Position: 1, Selected: true}}},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := a.runtime.SetSettings(ctx, map[string]string{"comboStrategies": fmt.Sprintf(`{"fz":{"fallbackStrategy":"fusion","judgeModel":"pj/j","fusionTuning":{"stragglerGraceMs":%d,"panelHardTimeoutMs":%d}}}`, 100*timeScale, 2000*timeScale)}, nil); err != nil {
+				t.Fatal(err)
+			}
+			w := post(a, key, fusionBody("ordered", ""))
+			if w.Code != scenario.Final.Status {
+				t.Fatalf("status %d, oracle %d (body %s)", w.Code, scenario.Final.Status, w.Body)
+			}
+			if scenario.Final.Message != nil {
+				var body struct {
+					Error struct {
+						Message string `json:"message"`
+					} `json:"error"`
+				}
+				_ = json.Unmarshal(w.Body.Bytes(), &body)
+				if body.Error.Message != *scenario.Final.Message {
+					t.Fatalf("message %q, oracle %q", body.Error.Message, *scenario.Final.Message)
+				}
+			}
+			upstream.mu.Lock()
+			defer upstream.mu.Unlock()
+			var panelCalls, afterPanel []string
+			for _, want := range scenario.Calls {
+				if want.Panel {
+					panelCalls = append(panelCalls, modelID(want.Model))
+				} else {
+					afterPanel = append(afterPanel, modelID(want.Model))
+				}
+			}
+			if len(upstream.calls) != len(scenario.Calls) {
+				t.Fatalf("%d upstream calls %v, oracle made %d", len(upstream.calls), callNames(upstream.calls), len(scenario.Calls))
+			}
+			var gotPanel, gotAfter []string
+			for index, call := range upstream.calls {
+				if index < len(panelCalls) {
+					gotPanel = append(gotPanel, call.model)
+				} else {
+					gotAfter = append(gotAfter, call.model)
+				}
+			}
+			sort.Strings(panelCalls)
+			sort.Strings(gotPanel)
+			if !reflect.DeepEqual(gotPanel, panelCalls) || !reflect.DeepEqual(gotAfter, afterPanel) {
+				t.Fatalf("calls %v then %v, oracle %v then %v", gotPanel, gotAfter, panelCalls, afterPanel)
+			}
+		})
 	}
 }
 

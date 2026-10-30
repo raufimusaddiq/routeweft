@@ -44,7 +44,7 @@ func (h *Handler) fused(next http.HandlerFunc) http.HandlerFunc {
 	var gated http.HandlerFunc
 	gated = func(w http.ResponseWriter, r *http.Request) {
 		snapshot, err := h.snapshot.Load()
-		if err != nil || !snapshot.HasFusion() {
+		if err != nil || !snapshot.NeedsComboWalk() {
 			next(w, r)
 			return
 		}
@@ -72,7 +72,8 @@ func (h *Handler) fused(next http.HandlerFunc) http.HandlerFunc {
 			}
 		}
 		combo, isFusion := snapshot.FusionCombo(target)
-		if !isFusion {
+		walked := !isFusion && !strings.Contains(target, "/") && snapshot.NestedCombo(target)
+		if !isFusion && !walked {
 			if body != nil {
 				r.Body = io.NopCloser(bytes.NewReader(body))
 			}
@@ -102,6 +103,10 @@ func (h *Handler) fused(next http.HandlerFunc) http.HandlerFunc {
 		}
 		if depth >= runtime.MaxComboDepth {
 			h.writeError(w, http.StatusBadGateway, "combo_too_deep", "Fusion Combos nest too deeply")
+			return
+		}
+		if walked {
+			h.walkCombo(w, r, gated, snapshot, target, body, depth)
 			return
 		}
 		h.serveFusion(w, r, gated, combo, body, gemini, depth)

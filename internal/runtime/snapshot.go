@@ -40,6 +40,7 @@ type RuntimeSnapshot struct {
 	capacityAdapters    map[string]CapacityAdapterConfig
 	adaptersActive      bool
 	fusion              map[string]Combo
+	nested              map[string]bool
 	poolBindings        map[string]string
 	poolPools           map[string]proxyPoolEntry
 	connectionProxies   map[string]ConnectionProxy

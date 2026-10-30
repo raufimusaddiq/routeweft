@@ -33,6 +33,8 @@ type upstreamLog struct {
 	script func(model string, call int) (time.Duration, int, string)
 	count  map[string]int
 	calls  []upstreamCall
+	// paths holds the request path of every call, in arrival order.
+	paths []string
 	// cancelled counts calls the client abandoned while the upstream held them.
 	cancelled int
 	started   int
@@ -52,8 +54,15 @@ func (u *upstreamLog) handler() http.Handler {
 			Model string `json:"model"`
 		}
 		_ = json.Unmarshal(raw, &body)
+		if body.Model == "" {
+			// Gemini names the model in the path: .../models/{model}:generateContent.
+			if _, after, ok := strings.Cut(r.URL.Path, "/models/"); ok {
+				body.Model, _, _ = strings.Cut(after, ":")
+			}
+		}
 		u.mu.Lock()
 		u.models = append(u.models, body.Model)
+		u.paths = append(u.paths, r.URL.Path)
 		if u.bodies == nil {
 			u.bodies = map[string][]string{}
 		}
