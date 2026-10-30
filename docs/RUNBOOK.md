@@ -1050,6 +1050,21 @@ one immutable snapshot. No separate reload command is needed.
   after a restart. The `request completed` console log line carries the requested,
   selected and upstream model of every request.
 
+- `headroomUrl` is the Headroom helper's **base** URL: Routeweft calls
+  `<headroomUrl>/v1/compress` and `<headroomUrl>/health`. A value that was a full
+  endpoint under an earlier build (one that ends in `/compress`) must be reduced to
+  the base, or the call goes to `.../compress/v1/compress` and fails open, which the
+  request log shows as `headroom skipped ... proxy returned HTTP 404`. It cannot carry
+  user info or a query. Headroom is skipped for Gemini requests and for Responses
+  input that holds tool or reasoning items; this is the reference's behavior.
+- PXPIPE needs a helper that implements the contract in SPEC 17.4 at `pxpipeUrl`;
+  Routeweft does not install, start or supervise one, and does not render images
+  itself. With no `pxpipeUrl`, every attempt is `not_installed`. It images Anthropic
+  Messages bodies only. `GET /admin/v1/pxpipe/logs` and `/stats` carry the reference's
+  summary for each attempt (reason, characters, images, estimated tokens saved).
+  The helper's answer is bounded to 32 MiB; a slow helper costs at most
+  `pxpipeTimeoutMs` per attempt, once per provider/account attempt.
+
 `quotaVisibility`, `providerCompatibility`, `dnsToolEnabled`, and
 `pxpipeAutoInstall` are explicitly storage-only. No restart activates them.
 Named-window visibility, a compatibility flag dispatcher, DNS tools, and managed

@@ -153,6 +153,24 @@ needs `ORACLE_DIR` and `ORACLE_SHA`.
 mixes), which `internal/pricing` replays (PARITY 6.35). `--check` fails when the oracle's answers differ
 from the files. It needs `ORACLE_DIR` and `ORACLE_SHA`.
 
+`compat/parity/generate-headroom.mjs` runs the pinned `open-sse/rtk/headroom.js` (`compressWithHeadroom`) and the
+request translators it calls, loaded from the same commit by `loadTree` in `oracle.mjs`, against a scripted
+`fetch`: 16 cases (Chat, Responses, Claude, an unsupported shape, a Responses input with tool items, trailing
+slashes and path prefixes, `compress_user_messages`, HTTP and connection failures, a reply without
+`messages[]`, a reply that saves no bytes). It writes `internal/transforms/headroom/testdata/compress_pin.json`
+(the calls made with their payloads, the body afterwards, the diagnostic reason, the log lines and the
+phantom-savings flag), which `internal/transforms/headroom/pin_test.go` replays through the serving pipeline
+(PARITY 6.37).
+
+`compat/parity/generate-pxpipe.mjs` runs the pinned `open-sse/rtk/pxpipe.js` (`compressWithPxpipe`) with scripted
+transform results, as the oracle's own tests do: the transform itself, `pxpipe-proxy`'s
+`transformAnthropicMessages`, is an installed npm package and not oracle source. 18 cases cover each gate, the
+savings estimate (pixels, reported image tokens, the 4761-per-image fallback, UTF-16 lengths) and every
+fail-open path. It writes `internal/transforms/pxpipe/testdata/host_pin.json`, replayed by
+`internal/transforms/pxpipe/pxpipe_test.go`.
+
+Both support `--check` and need `ORACLE_DIR` and `ORACLE_SHA`.
+
 CI runs this as the `parity` PR job, alongside existing Go/UI/container jobs.
 No test may update golden files from its actual output or turn a missing oracle
 into a passing dedicated gate. Ordinary unit tests remain usable without v1.

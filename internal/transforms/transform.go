@@ -15,6 +15,14 @@ type Request struct {
 	Messages []Message
 	// Bypass is the client per-request opt-out for token savers.
 	Bypass bool
+	// Model is the model the request is addressed to, for helpers that report it.
+	Model string
+	// Protocol names the wire protocol the view was read from.
+	Protocol string
+	// Unsafe, when set, is why a helper must not be given this conversation (a
+	// Responses input that holds tool or reasoning items, a protocol the helper does
+	// not speak). Helpers that cannot honor it leave the request unchanged.
+	Unsafe string
 }
 
 // Message is one conversation turn with an opaque role and content.

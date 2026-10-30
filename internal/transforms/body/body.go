@@ -29,6 +29,9 @@ var localClient = transport.NewTrustedLocalSSRFProtectedClient()
 
 type Pipeline struct {
 	public, local transforms.Pipeline
+	// pxpipe images bulky context in the final Anthropic body, after the text
+	// savers; nil when PXPIPE is off. One per client trust level, like the steps.
+	pxpublic, pxlocal *pxpipe.Transform
 }
 
 // Compile freezes saver settings with the routing snapshot, not per attempt.
@@ -58,13 +61,16 @@ func Compile(settings map[string]string, observePXPIPE ...func(pxpipe.Diagnostic
 		if settings["ponytailEnabled"] == "true" {
 			steps = append(steps, ponytail.Transform{Enabled: true, Level: settings["ponytailLevel"]})
 		}
-		if settings["pxpipeEnabled"] == "true" {
-			min, _ := strconv.Atoi(settings["pxpipeMinChars"])
-			steps = append(steps, pxpipe.Transform{Enabled: true, URL: settings["pxpipeUrl"], MinChars: min, Timeout: milliseconds(settings["pxpipeTimeoutMs"]), Client: client, AllowPrivate: local, Diagnostics: observer})
-		}
 		return transforms.Pipeline{Steps: steps}
 	}
-	return &Pipeline{public: build(false), local: build(true)}
+	pipeline := &Pipeline{public: build(false), local: build(true)}
+	if settings["pxpipeEnabled"] == "true" {
+		min, _ := strconv.Atoi(settings["pxpipeMinChars"])
+		timeout := milliseconds(settings["pxpipeTimeoutMs"])
+		pipeline.pxpublic = &pxpipe.Transform{Enabled: true, URL: settings["pxpipeUrl"], MinChars: min, Timeout: timeout, Client: publicClient, Diagnostics: observer}
+		pipeline.pxlocal = &pxpipe.Transform{Enabled: true, URL: settings["pxpipeUrl"], MinChars: min, Timeout: timeout, Client: localClient, AllowPrivate: true, Diagnostics: observer}
+	}
+	return pipeline
 }
 
 func milliseconds(raw string) time.Duration {
@@ -79,14 +85,32 @@ func (p *Pipeline) Run(ctx context.Context, protocol string, raw []byte, allowPr
 	if p == nil {
 		return raw, nil
 	}
-	pipeline := p.public
+	pipeline, image := p.public, p.pxpublic
 	if allowPrivate {
-		pipeline = p.local
+		pipeline, image = p.local, p.pxlocal
 	}
-	if len(pipeline.Steps) == 0 {
-		return raw, nil
+	out := raw
+	if len(pipeline.Steps) > 0 {
+		var err error
+		if out, err = Run(ctx, protocol, raw, pipeline); err != nil {
+			return out, err
+		}
 	}
-	return Run(ctx, protocol, raw, pipeline)
+	if image == nil || protocol == systemone.Protocol || ctx.Err() != nil {
+		return out, nil
+	}
+	// PXPIPE is the last saver (SPEC 17): it sees what the others left. It fails
+	// open, so whatever it reports, the body it returns is always usable.
+	imaged, _ := image.Compress(ctx, protocol, modelOf(out), out)
+	return imaged, nil
+}
+
+func modelOf(raw []byte) string {
+	var head struct {
+		Model string `json:"model"`
+	}
+	_ = json.Unmarshal(raw, &head)
+	return head.Model
 }
 
 // Run edits known text slots only; media, tools, thinking and unknown fields stay opaque.
@@ -101,7 +125,10 @@ func Run(ctx context.Context, protocol string, raw []byte, pipeline transforms.P
 	if err := decoder.Decode(&fields); err != nil || fields == nil {
 		return raw, errors.New("transform body must be a JSON object")
 	}
-	v := view{request: transforms.Request{System: []string{}, Messages: []transforms.Message{}}}
+	v := view{request: transforms.Request{System: []string{}, Messages: []transforms.Message{}, Protocol: protocol}}
+	if model, ok := fields["model"].(string); ok {
+		v.request.Model = model
+	}
 	var inject func([]string)
 	switch protocol {
 	case openai.ChatProtocol, ollama.Protocol:
@@ -121,6 +148,9 @@ func Run(ctx context.Context, protocol string, raw []byte, pipeline transforms.P
 			v.text(fields, "input", "user", false)
 		} else {
 			v.messages(fields["input"], "content")
+			if unsafeResponsesInput(fields["input"]) {
+				v.request.Unsafe = "skipped: openai-responses tool/reasoning input is not safe to compress"
+			}
 		}
 		inject = func(policies []string) {
 			text, _ := fields["instructions"].(string)
@@ -163,6 +193,9 @@ func Run(ctx context.Context, protocol string, raw []byte, pipeline transforms.P
 			return raw, nil
 		}
 		v.messages(fields["contents"], "parts")
+		// Headroom's /v1/compress understands OpenAI-shaped messages; the reference
+		// skips a Gemini body ("unsupported gemini request shape").
+		v.request.Unsafe = "unsupported gemini request shape"
 		inject = func(policies []string) {
 			system, _ := fields[key].(map[string]any)
 			if system == nil {
@@ -206,6 +239,22 @@ func Run(ctx context.Context, protocol string, raw []byte, pipeline transforms.P
 		inject(policies)
 	}
 	return json.Marshal(fields)
+}
+
+// unsafeResponsesInput reports an input array holding an item that is not a plain
+// message (a function call, its output, reasoning): hasUnsafeResponsesInputForCompression.
+func unsafeResponsesInput(input any) bool {
+	items, _ := input.([]any)
+	for _, item := range items {
+		object, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if kind, ok := object["type"].(string); ok && kind != "message" {
+			return true
+		}
+	}
+	return false
 }
 
 func joinPolicy(policies []string, text string) string {
