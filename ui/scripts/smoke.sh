@@ -45,4 +45,5 @@ node scripts/import-masking-smoke.cjs
 node scripts/connection-status-smoke.cjs
 node scripts/kiro-social-smoke.cjs
 node scripts/quota-actions-smoke.cjs
+node scripts/quota-warming-smoke.cjs
 

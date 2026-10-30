@@ -66,7 +66,7 @@ func (h *Handler) quota(w http.ResponseWriter, r *http.Request) error {
 	providerFilter := strings.TrimSpace(query.Get("provider"))
 	search := strings.ToLower(strings.TrimSpace(query.Get("q")))
 
-	rows, err := h.opts.DB.QueryContext(r.Context(), `SELECT c.id,n.provider_id,c.name,c.enabled FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id ORDER BY n.provider_id,c.priority,c.name,c.id`)
+	rows, err := h.opts.DB.QueryContext(r.Context(), `SELECT c.id,n.provider_id,c.name,c.enabled,c.auth_kind FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id ORDER BY n.provider_id,c.priority,c.name,c.id`)
 	if err != nil {
 		return err
 	}
@@ -79,9 +79,9 @@ func (h *Handler) quota(w http.ResponseWriter, r *http.Request) error {
 	providerSet := map[string]bool{}
 	var matched []quotaRow
 	for rows.Next() {
-		var id, provider, name string
+		var id, provider, name, authKind string
 		var enabled int
-		if err := rows.Scan(&id, &provider, &name, &enabled); err != nil {
+		if err := rows.Scan(&id, &provider, &name, &enabled, &authKind); err != nil {
 			return err
 		}
 		providerSet[provider] = true
@@ -91,7 +91,7 @@ func (h *Handler) quota(w http.ResponseWriter, r *http.Request) error {
 		if search != "" && !strings.Contains(strings.ToLower(name), search) && !strings.Contains(strings.ToLower(provider), search) {
 			continue
 		}
-		row := h.quotaRow(id, provider, name, enabled != 0, now, staleAfter)
+		row := h.quotaRow(id, provider, name, authKind, enabled != 0, now, staleAfter)
 		row.index = len(matched)
 		matched = append(matched, row)
 	}
@@ -117,8 +117,10 @@ func (h *Handler) quota(w http.ResponseWriter, r *http.Request) error {
 
 // quotaRow builds one account's read model from the cached named windows and
 // the routing observation. The provider error text is never serialized.
-func (h *Handler) quotaRow(id, provider, name string, enabled bool, now time.Time, staleAfter time.Duration) quotaRow {
-	item := map[string]any{"connectionId": id, "providerId": provider, "name": name, "enabled": enabled}
+// authKind is the connection's credential kind; the page offers warming only for
+// OAuth Claude and Codex accounts, as the pin does (usage view index.js:1193).
+func (h *Handler) quotaRow(id, provider, name, authKind string, enabled bool, now time.Time, staleAfter time.Duration) quotaRow {
+	item := map[string]any{"connectionId": id, "providerId": provider, "name": name, "authKind": authKind, "enabled": enabled}
 	row := quotaRow{item: item, status: quotaNotReported}
 	var windows []quota.Window
 	observed := false

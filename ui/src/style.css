@@ -431,6 +431,10 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .quota-window-name { min-width: 120px; color: var(--text-main); }
 .quota-window-note { color: var(--text-muted); }
 .quota-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.quota-warming { display: flex; flex: 1 1 100%; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; }
+.quota-warming-switch { min-height: 44px; min-width: 44px; cursor: pointer; }
+.quota-warming-switch input { cursor: pointer; }
+.quota-warming small { min-width: 0; flex: 1 1 200px; overflow-wrap: anywhere; }
 .quota-credits { flex: 1 1 100%; margin: 0; }
 
 .token-saver-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }

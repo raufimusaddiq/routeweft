@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { QUOTA_PAGE_SIZE, QUOTA_SORTS, REFRESH_POLL_LIMIT, REFRESH_POLL_MS, cachedAt, canSpendResetCredit, creditsByExpiry, notUpdatedBy, quotaQuery, refreshTerminal, refreshText, remainingText, freshCreditCheck, spendConfirmation, spendOutcome, statusLabel, statusTone, until, windowLabel, windowValue, zoned, type QuotaItem, type RefreshJob, type ResetCredits, type SpendOutcome } from './quotaView'
+import { QUOTA_PAGE_SIZE, QUOTA_SORTS, REFRESH_POLL_LIMIT, REFRESH_POLL_MS, WARMING_DESCRIPTIONS, cachedAt, canSpendResetCredit, creditsByExpiry, notUpdatedBy, parseWarming, quotaQuery, refreshTerminal, refreshText, remainingText, freshCreditCheck, spendConfirmation, spendOutcome, statusLabel, statusTone, until, warmingPatch, warmingProvider, warmingStatusText, windowLabel, windowValue, withWarming, zoned, type QuotaItem, type RefreshJob, type ResetCredits, type SpendOutcome, type WarmingMaps } from './quotaView'
 
 type Props = { onUnauthorized: () => void }
 type QuotaPage = { items: QuotaItem[]; page: number; total: number; providers?: string[] }
@@ -52,7 +52,27 @@ export function Quota({ onUnauthorized }: Props) {
   // 'check' while a spend reads the credit list, 'spend' once it is confirmed.
   const [spendPhase, setSpendPhase] = useState<'check' | 'spend'>('check')
 
+  // Per-account warming opt-ins (#297). null until the settings are read: a
+  // switch is never drawn from a guess, so an unreadable setting shows no switch
+  // rather than a false "off".
+  const [warming, setWarming] = useState<WarmingMaps | null>(null)
+  const [warmingError, setWarmingError] = useState('')
+  const [warmingBusy, setWarmingBusy] = useState('')
+
   useEffect(() => () => following.current?.abort(), [])
+
+  const loadWarming = useCallback(async (signal: AbortSignal) => {
+    try {
+      const response = await fetch('/admin/v1/settings', { credentials: 'same-origin', cache: 'no-store', signal })
+      if (response.status === 401) { if (!signal.aborted) onUnauthorized(); return }
+      if (!response.ok) throw new Error(await responseError(response, 'Could not read the quota warming settings.'))
+      const data = await response.json() as { settings?: Record<string, string> }
+      if (signal.aborted) return
+      setWarming(parseWarming(data.settings)); setWarmingError('')
+    } catch (cause) {
+      if (!signal.aborted) { setWarming(null); setWarmingError(cause instanceof Error ? cause.message : 'Could not read the quota warming settings.') }
+    }
+  }, [onUnauthorized])
 
   const load = useCallback(async (signal: AbortSignal) => {
     setLoading(true)
@@ -74,8 +94,34 @@ export function Quota({ onUnauthorized }: Props) {
   useEffect(() => {
     const controller = new AbortController()
     void load(controller.signal)
+    void loadWarming(controller.signal)
     return () => controller.abort()
-  }, [load, reload])
+  }, [load, loadWarming, reload])
+
+  // Warming is usage-increasing, so a change is one deliberate click and is saved
+  // at once. The latest stored map is read first and only this account's entry is
+  // changed in it, as the pin does (index.js:557-577), so an opt-in made elsewhere
+  // is not undone. A failed save leaves the switch as it was and says so; the pin
+  // reverts on a network error only and ignores an HTTP error, which this does not.
+  async function toggleWarming(item: QuotaItem, on: boolean) {
+    const provider = warmingProvider(item)
+    if (!provider || warmingBusy) return
+    setWarmingBusy(item.connectionId); setError(''); setNotice('')
+    try {
+      const current = await fetch('/admin/v1/settings', { credentials: 'same-origin', cache: 'no-store' })
+      if (current.status === 401) { onUnauthorized(); return }
+      if (!current.ok) throw new Error(await responseError(current, 'Could not read the quota warming settings.'))
+      const stored = parseWarming(((await current.json()) as { settings?: Record<string, string> }).settings)
+      const next = withWarming(stored[provider], item.connectionId, on)
+      const response = await fetch('/admin/v1/settings', { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(warmingPatch(provider, next)) })
+      if (response.status === 401) { onUnauthorized(); return }
+      if (!response.ok) throw new Error(await responseError(response, 'Could not save the quota warming setting.'))
+      setWarming({ ...stored, [provider]: next })
+      setNotice(on ? `Quota warming is on for ${item.name}. It sends a small request after each reset.` : `Quota warming is off for ${item.name}.`)
+    } catch (cause) {
+      setError(`${cause instanceof Error ? cause.message : 'Could not save the quota warming setting.'} Warming for ${item.name} was not changed.`)
+    } finally { setWarmingBusy('') }
+  }
 
   // A 202 only accepts the refresh. The page follows the job and reloads the
   // rows when it ends; until then they keep their previous observations (#226).
@@ -195,6 +241,7 @@ export function Quota({ onUnauthorized }: Props) {
       <label htmlFor="quota-sort">Sort</label>
       <select id="quota-sort" value={sort} onChange={event => { setPage(1); setSort(event.target.value) }}>{QUOTA_SORTS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
     </form>
+    {warmingError && <p className="auth-error" role="alert">{warmingError} Warming switches are hidden until the settings can be read.</p>}
     {error && <p className="auth-error" role="alert">{error}</p>}{notice && <p className="inline-notice" role="status">{notice}</p>}
     {job && <p className={job.status === 'failed' ? 'auth-error quota-refresh-state' : 'inline-notice quota-refresh-state'} role="status" data-refresh-status={job.status}>{refreshText(job, jobGaveUp)}</p>}
 
@@ -211,6 +258,16 @@ export function Quota({ onUnauthorized }: Props) {
         {!item.enabled && <span className="state-tag state-warn">disabled</span>}
         {item.creditAvailable === false && <span className="state-tag state-warn">provider reports no usable balance</span>}
         {typeof item.availableResetCredits === 'number' && <span className="count-label">{item.availableResetCredits} reset credit{item.availableResetCredits === 1 ? '' : 's'}</span>}
+        {warming && warmingProvider(item) && (() => {
+          const provider = warmingProvider(item) as 'claude' | 'codex'
+          const on = warming[provider][item.connectionId] === true
+          const saving = warmingBusy === item.connectionId
+          const helpId = `warming-help-${item.connectionId.replace(/\s/g, '_')}`
+          return <div className="quota-warming">
+            <label className="switch-control quota-warming-switch"><span className="switch-label" role="status">{warmingStatusText(on, saving)}</span><input type="checkbox" role="switch" checked={on} disabled={warmingBusy !== ''} aria-label={`Quota warming for ${item.name}`} aria-describedby={helpId} onChange={event => void toggleWarming(item, event.target.checked)} /></label>
+            <small id={helpId} className="count-label">{WARMING_DESCRIPTIONS[provider]} Off unless you turn it on.</small>
+          </div>
+        })()}
         {item.providerId === 'codex' && <span className="quota-actions">
           <button className="button-secondary" type="button" aria-expanded={Boolean(credits[item.connectionId])} disabled={credits[item.connectionId]?.loading} onClick={() => void showCredits(item)}>Credit expiry</button>
           <button className="button-danger" type="button" disabled={spending !== '' || Boolean(credits[item.connectionId]?.loading) || !canSpendResetCredit(withFreshCount(item))} title={canSpendResetCredit(withFreshCount(item)) ? 'Reads the credit list from Codex first, then asks before spending one credit.' : 'No reset credit reported for this account'} onClick={() => void spendCredit(item)}>{spending === item.connectionId ? (spendPhase === 'check' ? 'Reading credits…' : 'Using 1 credit…') : 'Use 1 reset credit'}</button>

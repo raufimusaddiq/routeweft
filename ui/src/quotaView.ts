@@ -6,7 +6,7 @@ export type Credit = { currency: string; state: 'positive' | 'zero' | 'negative'
 export type QuotaWindow = { name: string; displayName?: string; remaining?: number; resetAt?: string; unlimited: boolean; credit?: Credit; observedAt?: string }
 export type QuotaStatus = 'available' | 'exhausted' | 'cooldown' | 'error' | 'unknown' | 'unlimited' | 'not-reported'
 export type QuotaItem = {
-  connectionId: string; providerId: string; name: string; enabled: boolean; status: QuotaStatus | string
+  connectionId: string; providerId: string; name: string; authKind?: string; enabled: boolean; status: QuotaStatus | string
   remaining?: number; resetAt?: string; nextResetAt?: string; observedAt?: string; stale?: boolean; cooldownUntil?: string
   plan?: string; windows?: QuotaWindow[]; windowsObservedAt?: string; availableResetCredits?: number; creditAvailable?: boolean; error?: boolean
 }
@@ -206,4 +206,62 @@ export function spendOutcome(status: number, body: { windowsReset?: number; erro
   if (status === 400 && body?.error?.code === 'confirmation_required') return { tone: 'error', text: 'The reset was not confirmed; nothing was spent.', reload: false }
   if (status >= 400 && status < 500) return { tone: 'error', text: `Codex refused the reset (HTTP ${status}); nothing was spent.`, reload: false }
   return { tone: 'error', text: body?.error?.message || `The reset could not be requested (HTTP ${status}).`, reload: false }
+}
+
+// ---- Quota warming opt-in (#297) --------------------------------------------
+// The pin shows a per-account toggle in its usage view for OAuth Claude and Codex
+// accounts (ProviderLimits/index.js:1193-1200) and keeps the opt-ins in the
+// claudeAutoPing / codexAutoPing settings as { connections: { <id>: true } }
+// (:57-60,543-555,557-577). Warming is usage-increasing, so it is off for every
+// account until someone turns it on (default {"connections":{}}).
+
+export type WarmingProvider = 'claude' | 'codex'
+export type WarmingMaps = Record<WarmingProvider, Record<string, boolean>>
+
+export const WARMING_SETTINGS: Record<WarmingProvider, string> = { claude: 'claudeAutoPing', codex: 'codexAutoPing' }
+
+/** The pin's tooltips (index.js:62-65), shown as visible text rather than on hover only. */
+export const WARMING_DESCRIPTIONS: Record<WarmingProvider, string> = {
+  claude: 'When your 5h quota runs out, auto-sends a request the moment it resets so a new window starts right away.',
+  codex: 'Auto-starts the next 5h Codex window after reset by sending a tiny gpt-5.6-terra request. Consumes a small amount of quota.',
+}
+
+/** Warming applies to OAuth Claude and Codex accounts only (index.js:1193). */
+export function warmingProvider(item: Pick<QuotaItem, 'providerId' | 'authKind'>): WarmingProvider | null {
+  return (item.providerId === 'claude' || item.providerId === 'codex') && item.authKind === 'oauth' ? item.providerId : null
+}
+
+function connectionsOf(raw: string | undefined): Record<string, boolean> {
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw) as { connections?: unknown }
+    const map = parsed?.connections
+    if (!map || typeof map !== 'object' || Array.isArray(map)) return {}
+    const out: Record<string, boolean> = {}
+    for (const [id, on] of Object.entries(map as Record<string, unknown>)) if (on === true) out[id] = true
+    return out
+  } catch { return {} }
+}
+
+/** The opt-in maps out of GET /admin/v1/settings, whose object values are JSON text. Anything unreadable is off. */
+export function parseWarming(settings: Record<string, string> | undefined): WarmingMaps {
+  return { claude: connectionsOf(settings?.claudeAutoPing), codex: connectionsOf(settings?.codexAutoPing) }
+}
+
+/** Turning an account on adds it; turning it off removes the entry, so the stored map holds only opted-in accounts. */
+export function withWarming(map: Record<string, boolean>, connectionId: string, on: boolean): Record<string, boolean> {
+  const next = { ...map }
+  if (on) next[connectionId] = true
+  else delete next[connectionId]
+  return next
+}
+
+/** The PATCH /admin/v1/settings body that stores one provider's opt-ins. */
+export function warmingPatch(provider: WarmingProvider, map: Record<string, boolean>): { set: Record<string, string> } {
+  return { set: { [WARMING_SETTINGS[provider]]: JSON.stringify({ connections: map }) } }
+}
+
+/** Status in words, so it never rides on colour alone. */
+export function warmingStatusText(on: boolean, saving: boolean): string {
+  return saving ? 'Saving…' : on ? 'Warming on' : 'Warming off'
 }

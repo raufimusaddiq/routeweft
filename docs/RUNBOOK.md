@@ -330,6 +330,13 @@ right that is not itself a listed proxy, so a client cannot choose its bucket by
 prepending identities. Do not list a network that clients can reach directly: a
 listed peer can name any client.
 
+`X-Real-IP` is read only from a listed proxy and only when the request carries no
+`X-Forwarded-For` at all; it then must hold exactly one valid address. That is safe
+only if the proxy overwrites `X-Real-IP` with the connecting address (nginx
+`proxy_set_header X-Real-IP $remote_addr` does; Caddy's `reverse_proxy` does not set
+it, so a client-supplied value would pass through). Prefer a proxy that appends to
+`X-Forwarded-For`, which always wins over `X-Real-IP`.
+
 Consequence without the setting: every client behind one reverse proxy is one socket
 peer and shares one admin-login throttle bucket (8 failures per 5 minutes). One
 client's failed logins can lock all operators out of the login route for up to 5
@@ -1262,5 +1269,16 @@ changes. Set an empty connections object or remove the setting to disable it.
 Warming sends a tiny generation request and can consume provider quota. Reset
 suppression persists in the existing settings table and survives restarts.
 A crash between accepted generation and local persistence can repeat a ping.
-The UI controls and provider-specific remaining gaps are listed in
-`P05_QUOTA_AUDIT.md`; background quota polling alone does not enable warming.
+Background quota polling alone does not enable warming. Provider-specific
+remaining gaps are listed in `P05_QUOTA_AUDIT.md`.
+
+On the Quota page every enabled-or-not OAuth Claude and Codex account row has a
+**Quota warming** switch (#297); API-key accounts and other providers have none. It
+reads "Warming off" or "Warming on" in words, shows the provider's explanation
+beside it (Codex's says it consumes a small amount of quota), and every account
+starts off. A click saves at once through the settings call above: the page reads the
+stored map first and changes only that account's entry, so an opt-in made elsewhere
+is kept, and a refused or failed save leaves the switch as it was with an error
+shown. If the settings cannot be read the switches are hidden rather than shown as
+off. The switch can be operated with the keyboard (Tab, then Space), is a 44px target
+and does not scroll sideways at 320px. The next minute tick sees the change.

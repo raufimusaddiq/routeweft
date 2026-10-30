@@ -18,6 +18,7 @@ type quotaPage struct {
 		ConnectionID      string         `json:"connectionId"`
 		ProviderID        string         `json:"providerId"`
 		Name              string         `json:"name"`
+		AuthKind          string         `json:"authKind"`
 		Status            string         `json:"status"`
 		Remaining         *float64       `json:"remaining"`
 		Stale             *bool          `json:"stale"`
@@ -211,5 +212,26 @@ func TestQuotaReadSortsByResetExhaustedAndError(t *testing.T) {
 		if got := fmt.Sprint(order(query)); got != "["+want+"]" {
 			t.Errorf("%q order=%s want [%s]", query, got, want)
 		}
+	}
+}
+
+// The page offers warming only for OAuth accounts (the pin gates its toggle on
+// authType === "oauth", usage view index.js:1193), so the read model carries each
+// connection's credential kind and never anything secret.
+func TestQuotaReadCarriesTheCredentialKind(t *testing.T) {
+	handler, read := quotaFixture(t, map[string]int{"claude": 2})
+	if _, err := handler.opts.DB.Exec("UPDATE provider_connections SET auth_kind='oauth' WHERE id='c000'"); err != nil {
+		t.Fatal(err)
+	}
+	code, page := read("")
+	if code != http.StatusOK || len(page.Items) != 2 {
+		t.Fatalf("status %d items %d", code, len(page.Items))
+	}
+	kinds := map[string]string{}
+	for _, item := range page.Items {
+		kinds[item.ConnectionID] = item.AuthKind
+	}
+	if kinds["c000"] != "oauth" || kinds["c001"] != "api-key" {
+		t.Fatalf("auth kinds %v", kinds)
 	}
 }
