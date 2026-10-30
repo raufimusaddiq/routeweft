@@ -8,6 +8,7 @@ import (
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/quota"
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
 type quotaFixture struct{ reset time.Time }
@@ -20,7 +21,7 @@ func (f quotaFixture) Usage(context.Context, quota.Credential) (quota.State, err
 func TestQuotaAutoPingProductionPersistence(t *testing.T) {
 	ctx := context.Background()
 	key := make([]byte, 32)
-	app := New(Config{Listen: ":0", DataDir: t.TempDir(), CredentialKey: key}, nil)
+	app := New(Config{Listen: ":0", DataDir: storetest.DataDir(t), CredentialKey: key}, nil)
 	if err := app.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}

@@ -129,6 +129,18 @@ carries the same hash). Login cannot be disabled; `requireApiKey=false` is the
 only supported open mode and covers inference, never `/admin`. Policy and
 rationale: SPEC 12.2.
 
+Evidence (#282, C09): concurrent first boots create exactly one admin
+(`TestConcurrentBootstrapProvisionsExactlyOneAdmin`); the password exists only as
+a salted PBKDF2-SHA256 hash at 600000 iterations and is absent from log output,
+the console-log API, the login response and the SQLite and WAL bytes
+(`TestC09BootstrapPasswordNeverLeavesTheHash`); a later boot with different
+bootstrap values neither adds an admin nor changes the password, and a boot with
+none still logs in (`TestC09BootstrapActsOnlyWhileNoAdminExists`); a
+whitespace-only username fails startup before readiness while surrounding
+whitespace is trimmed (`TestC09BootstrapRefusalLeavesTheInstallLockedAndNotReady`);
+a fresh data directory is created `0700` with the database `0600`
+(`TestC09FreshDataDirectoryIsCreatedPrivate`).
+
 ## 4. Git worktree operating model
 
 Routeweft development uses one dedicated worktree per feature/PR.
@@ -1155,23 +1167,49 @@ Not covered: SIGKILL or power loss lose events still in the in-memory queue
 
 ## 29. Race suite and CI budget
 
-`go test -race ./...` is the gate. Measured on a loaded 2-core host after the
-fix below, the whole suite completes in roughly 8 minutes wall clock (slowest
-packages: `internal/app` 433 s, `internal/control/api` 194 s (post-fix, inside the loaded full run; about 90 s alone), `internal/runtime`
-58 s, `internal/security` 59 s), each package inside Go's ten minute timeout. It
-is not fast: `internal/app` is the next package to approach the budget.
-`internal/control/api` previously exceeded Go's
-ten minute package timeout under `-race` because every fixture that provisioned
-an admin ran the production PBKDF2 work factor (600000 iterations, about 0.45 s
-natively and 5-7 s under the race detector) once to create the account and again
-per login. Run alone, the package finishes in about 90 s under `-race` (`-v` per-test timings; before the fix it was killed past ten minutes). Fixtures
-provision the operator with a precomputed low-iteration hash
-(inserted directly into `admin_users` by the test fixture; no production API accepts a caller-supplied hash); production paths (`Bootstrap`, `ChangePassword`,
-`HashPassword`) are unchanged and keep 600000 iterations, and no test is skipped.
-`make race` runs the full suite locally with Go's default ten minute per-package
-timeout, so a package that nears the budget fails there instead of being masked. `.github/workflows/ci.yml` still only
-races a package subset; promoting it to the full run is a workflow change tracked
-for a follow-up.
+`go test -race -count=1 -timeout 10m ./...` is the gate. It runs locally as
+`make race` and in CI as the `race` job of `.github/workflows/ci.yml` (#282),
+beside the other jobs (the parity job still races its selected packages too).
+Go's default ten minute per-package timeout is kept on purpose and spelled out:
+a package that outgrows it fails in the gate instead of being masked by a larger
+number. The job's `timeout-minutes: 45` only stops a wedged runner.
+
+Measured on a 2-core host, the whole suite takes about 12 minutes wall clock.
+Per package, under that full parallel load (alone in parentheses): `internal/app`
+398 s (233 s), `internal/ingress` 273 s (159 s), `internal/control/api` 145 s,
+`internal/runtime` 128 s, `internal/credentials` 119 s, `internal/adminauth`
+69 s; every other package is under 60 s. `internal/app` is the next package to
+approach the budget: at about two thirds of it, treat a new slow fixture there as
+a regression to fix, not a number to raise.
+
+Three costs dominated and are fixed in the test fixtures, with no production
+change and no test skipped:
+
+- **Migrating a fresh database per test.** Applying every migration made each
+  test that opened a store spend 0.3-0.5 s under `-race` (the SQLite driver's
+  pointer instrumentation makes each schema reload slow); `internal/ingress`
+  took 829 s alone and tripped the ten minute timeout on CI at
+  `TestIngressPostBurstRSS`, which was only the test running when the timer
+  fired (it had run 2 s), not a hang or a memory-measurement flaw. Fixtures now
+  copy a database migrated once per test binary (`internal/store/storetest`:
+  `Seed`, `DataDir`); the runner still runs against it and finds nothing to do.
+  Only tests that exercise migration itself (`internal/store/migrations`,
+  `internal/app` upgrade tests, `internal/backup`) start from an empty file.
+- **The production PBKDF2 work factor in fixtures.** 600000 iterations take
+  about 0.45 s natively and 5-7 s under the race detector, once per bootstrap and
+  per login. `internal/control/api` fixtures insert a precomputed 1000-iteration
+  hash for `operator`; `internal/app` convenience fixtures do the same through
+  `storetest.DataDirWithAdmin`. Production paths (`Bootstrap`, `ChangePassword`,
+  `HashPassword`) are unchanged and keep 600000 iterations, and the tests that
+  prove bootstrap (`c09_bootstrap_test.go`, `internal/adminauth`) use them.
+  `storetest` checks the fixture hash against the production verifier.
+- **Serial execution.** Nothing in `internal/ingress` is parallel; adding
+  `t.Parallel()` is the next lever if the budget tightens, but those tests share
+  helpers that have not been audited for it.
+
+Before the fixes the full run had `internal/app` at 1030 s and
+`internal/control/api` at 872 s (both past the timeout) and `internal/ingress` at
+829 s alone.
 
 ## 30. Quota credits and opt-in warming
 

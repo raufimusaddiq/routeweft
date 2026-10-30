@@ -12,6 +12,7 @@ import (
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
 // multiProviderApp is servingApp with one provider (and one account) per model,
@@ -22,7 +23,7 @@ func multiProviderApp(t *testing.T, upstream *upstreamLog, models []string) (*Ap
 	server := httptest.NewServer(upstream.handler())
 	t.Cleanup(server.Close)
 	upstream.stop = server.Close
-	a := New(Config{DataDir: t.TempDir(), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true, AdminBootstrapUsername: "operator", AdminBootstrapPassword: c03Password}, nil)
+	a := New(Config{DataDir: storetest.DataDirWithAdmin(t, "operator", c03Password), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true, AdminBootstrapUsername: "operator", AdminBootstrapPassword: c03Password}, nil)
 	ctx := context.Background()
 	if err := a.Initialize(ctx); err != nil {
 		t.Fatal(err)

@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
 func TestRequestIDGeneratedAndValidated(t *testing.T) {
@@ -54,7 +56,7 @@ func TestBodyLimitRejectsDeclaredOversizeAndCapsReads(t *testing.T) {
 }
 
 func TestHandlerBodyLimitOnlyWrapsInference(t *testing.T) {
-	app := New(Config{DataDir: t.TempDir(), MaxBodyBytes: 4}, nil)
+	app := New(Config{DataDir: storetest.DataDir(t), MaxBodyBytes: 4}, nil)
 	if err := app.Initialize(context.Background()); err != nil {
 		t.Fatal(err)
 	}

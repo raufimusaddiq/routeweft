@@ -15,6 +15,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/adminauth"
 	"github.com/raufimusaddiq/routeweft/internal/store/migrations"
 	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
 type fakeSettings struct {
@@ -47,7 +48,9 @@ func (f *fakeSettings) SetSettings(_ context.Context, values map[string]string, 
 func newAPI(t *testing.T, settings SettingsStore) (*Handler, *adminauth.Store, *sqlite.Store) {
 	t.Helper()
 	ctx := context.Background()
-	store, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "routeweft.sqlite"))
+	dbPath := filepath.Join(t.TempDir(), "routeweft.sqlite")
+	storetest.Seed(t, dbPath)
+	store, err := sqlite.Open(ctx, dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
 // Gemini and Ollama clients are served by providers that speak their own protocol
@@ -48,7 +49,7 @@ func nativeApp(t *testing.T, upstream *upstreamLog, protocol nativeProtocol, mod
 	t.Helper()
 	server := httptest.NewServer(upstream.handler())
 	t.Cleanup(server.Close)
-	a := New(Config{DataDir: t.TempDir(), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true}, nil)
+	a := New(Config{DataDir: storetest.DataDir(t), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true}, nil)
 	ctx := context.Background()
 	if err := a.Initialize(ctx); err != nil {
 		t.Fatal(err)

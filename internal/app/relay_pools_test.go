@@ -14,6 +14,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/proxy"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
 // fakeRelay is the relay function the reference deploys (netlifyRelay.js:29-99),
@@ -186,7 +187,7 @@ func forwardProxy(hits *atomic.Int32) *httptest.Server {
 
 func noAuthApp(t *testing.T, base string) (*App, string) {
 	t.Helper()
-	a := New(Config{DataDir: t.TempDir(), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true}, nil)
+	a := New(Config{DataDir: storetest.DataDir(t), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true}, nil)
 	ctx := context.Background()
 	if err := a.Initialize(ctx); err != nil {
 		t.Fatal(err)

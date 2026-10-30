@@ -108,6 +108,21 @@ jobs:
       - run: go build ./cmd/routeweft
       - run: go test ./bench/router -run '^$$' -bench . -benchmem -count=1
 
+  # The whole tree under the race detector (#282). Go's default 10m per-package
+  # timeout is kept on purpose (RUNBOOK 29): a package that outgrows it fails here
+  # instead of being masked by a larger number. The job runs beside the others, so
+  # it adds no wall clock to a PR; timeout-minutes only stops a wedged runner.
+  race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -race -count=1 -timeout 10m ./...
+
   ui:
     runs-on: ubuntu-latest
     defaults:

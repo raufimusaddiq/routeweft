@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
 // #78 C03: every assertion here backs a statement in docs/SPEC.md 12.2 and the
@@ -26,8 +28,11 @@ const (
 
 func c03App(t *testing.T, bootstrap bool) *App {
 	t.Helper()
-	cfg := Config{DataDir: t.TempDir()}
+	cfg := Config{DataDir: storetest.DataDir(t)}
 	if bootstrap {
+		// The admin pre-exists (low-iteration fixture hash), so the bootstrap pair is
+		// ignored as on any later boot; the bootstrap tests below do not use this.
+		cfg.DataDir = storetest.DataDirWithAdmin(t, "operator", c03Password)
 		cfg.AdminBootstrapUsername, cfg.AdminBootstrapPassword = "operator", c03Password
 	}
 	a := New(cfg, nil)

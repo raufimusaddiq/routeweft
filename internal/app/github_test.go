@@ -16,6 +16,7 @@ import (
 	controlapi "github.com/raufimusaddiq/routeweft/internal/control/api"
 	"github.com/raufimusaddiq/routeweft/internal/providers/oauthrefresh"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
 type githubSignInClient struct {
@@ -78,7 +79,7 @@ func TestGitHubOnboardingServesCopilotCredential(t *testing.T) {
 	}))
 	defer upstream.Close()
 	ctx := context.Background()
-	a := New(Config{DataDir: t.TempDir(), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true, AdminBootstrapUsername: "operator", AdminBootstrapPassword: "fixture-password"}, nil)
+	a := New(Config{DataDir: storetest.DataDirWithAdmin(t, "operator", "fixture-password"), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true, AdminBootstrapUsername: "operator", AdminBootstrapPassword: "fixture-password"}, nil)
 	if err := a.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}

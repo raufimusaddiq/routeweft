@@ -15,12 +15,15 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 	"github.com/raufimusaddiq/routeweft/internal/store/migrations"
 	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
 func newKeyAPI(t *testing.T) (*Handler, *http.ServeMux, *http.Cookie, *sqlite.Store) {
 	t.Helper()
 	ctx := context.Background()
-	store, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "routeweft.sqlite"))
+	dbPath := filepath.Join(t.TempDir(), "routeweft.sqlite")
+	storetest.Seed(t, dbPath)
+	store, err := sqlite.Open(ctx, dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}

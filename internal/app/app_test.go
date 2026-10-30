@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/proxy"
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
 // TestProxyBinderIsWiredIntoIngress proves the production composition exposes a
@@ -19,7 +20,7 @@ func TestProxyBinderIsWiredIntoIngress(t *testing.T) {
 	for i := range key {
 		key[i] = byte(i + 7)
 	}
-	app := New(Config{Listen: ":0", DataDir: t.TempDir(), CredentialKey: key, AllowPrivateUpstreams: true}, nil)
+	app := New(Config{Listen: ":0", DataDir: storetest.DataDir(t), CredentialKey: key, AllowPrivateUpstreams: true}, nil)
 	if err := app.Initialize(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +69,7 @@ func TestQuotaServiceIsWiredIntoTheApp(t *testing.T) {
 	for i := range key {
 		key[i] = byte(i + 1)
 	}
-	app := New(Config{Listen: ":0", DataDir: t.TempDir(), CredentialKey: key, QuotaRefreshInterval: time.Hour}, nil)
+	app := New(Config{Listen: ":0", DataDir: storetest.DataDir(t), CredentialKey: key, QuotaRefreshInterval: time.Hour}, nil)
 	if err := app.Initialize(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +85,7 @@ func TestQuotaServiceIsWiredIntoTheApp(t *testing.T) {
 // TestQuotaServiceSkippedWithoutKey documents that a keyless deployment still
 // boots, since there are then no sealed provider connections to read quota for.
 func TestTelemetryServiceIsWiredIntoTheApp(t *testing.T) {
-	application := New(Config{Listen: ":0", DataDir: t.TempDir()}, nil)
+	application := New(Config{Listen: ":0", DataDir: storetest.DataDir(t)}, nil)
 	if err := application.Initialize(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +104,7 @@ func TestTelemetryServiceIsWiredIntoTheApp(t *testing.T) {
 
 func TestAdminBootstrapProvisionOnceAndSessionGate(t *testing.T) {
 	ctx := context.Background()
-	application := New(Config{Listen: ":0", DataDir: t.TempDir(), AdminBootstrapUsername: "operator", AdminBootstrapPassword: "s3cret"}, nil)
+	application := New(Config{Listen: ":0", DataDir: storetest.DataDir(t), AdminBootstrapUsername: "operator", AdminBootstrapPassword: "s3cret"}, nil)
 	if err := application.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +132,7 @@ func TestAdminBootstrapProvisionOnceAndSessionGate(t *testing.T) {
 }
 
 func TestQuotaServiceSkippedWithoutKey(t *testing.T) {
-	app := New(Config{Listen: ":0", DataDir: t.TempDir()}, nil)
+	app := New(Config{Listen: ":0", DataDir: storetest.DataDir(t)}, nil)
 	if err := app.Initialize(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +154,7 @@ func TestLiveHealth(t *testing.T) {
 }
 
 func TestReadinessRequiresSuccessfulInitialization(t *testing.T) {
-	app := New(Config{Listen: ":0", DataDir: t.TempDir()}, nil)
+	app := New(Config{Listen: ":0", DataDir: storetest.DataDir(t)}, nil)
 	rr := httptest.NewRecorder()
 	app.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/health/ready", nil))
 	if rr.Code != http.StatusServiceUnavailable {

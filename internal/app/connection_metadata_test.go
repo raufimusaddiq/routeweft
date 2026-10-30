@@ -14,6 +14,7 @@ import (
 	controlapi "github.com/raufimusaddiq/routeweft/internal/control/api"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
+	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
 type metadataSignInClient struct {
@@ -39,7 +40,7 @@ func TestPublishedConnectionMetadataSurvivesRestartWithoutDatabase(t *testing.T)
 		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"fixture answer"},"finish_reason":"stop"}]}`)
 	}))
 	defer upstream.Close()
-	a := New(Config{DataDir: t.TempDir(), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true, AdminBootstrapUsername: "operator", AdminBootstrapPassword: "fixture-password"}, nil)
+	a := New(Config{DataDir: storetest.DataDirWithAdmin(t, "operator", "fixture-password"), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true, AdminBootstrapUsername: "operator", AdminBootstrapPassword: "fixture-password"}, nil)
 	if err := a.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
