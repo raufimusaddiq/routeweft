@@ -2074,6 +2074,16 @@ Critical workflows:
 - backup;
 - theme/mobile navigation.
 
+### 28.6 Pinned differential against the reference and the divergence ledger
+
+Three comparisons run the reference's own code, not a restatement of it, and any difference they find must be accounted for before a change merges. The reference is LiteRouter `main`, resolved once per run and frozen (PARITY 6, `compat/parity/resolve-oracle.mjs`); no provider is called.
+
+1. **Conversion legs** (`compat/parity/generate-protocol-legs.mjs`, `internal/parity/legs_test.go`). The functions each reference translator module registers are run unmodified over a corpus of synthetic requests (`legs-corpus.mjs`) and upstream streams, and Routeweft's leg is run on the same input, decoded as the request path decodes it. Requests are compared leaf by leaf as JSON, with generated ids normalised; a failure on either side is a difference. Streams are compared by what a client ends up with (`legs-fold.mjs`): text, reasoning, tool calls, finish reason, usage, or the blocks, items and parts of the target protocol. Chunk boundaries are not compared.
+2. **Control workflows** (`compat/parity/generate-control-workflows.mjs`, `internal/control/api/control_workflows_test.go`). Short ordered workflows over the reference's combo, API key and model alias routes, replayed through the admin API. A step compares by outcome (success, or the refusal status) and a workflow by the state it ends in.
+3. **The ledger** (`compat/parity/divergences.json`). Every difference is a group (direction, leg or workflow, kind, path) with a reference that resolves in `docs/PARITY.md` (a D row, a register item of 6.3-6.12, or a section) and an example (the first case, both values). A difference with no entry fails; an entry that no longer matches a difference fails; an entry whose example changed fails, so a leg that changes how it differs must update the ledger. `LEGS_LEDGER_UPDATE=1` and `CONTROL_LEDGER_UPDATE=1` rewrite the examples and mark new groups `UNTRIAGED`, which fails the reference check until an item is cited.
+
+`compat/parity/ledger.mjs` writes `docs/DIVERGENCE_LEDGER.md` from the ledger and the D rows: counts, each D row with its state (approved, or decision required), every group by leg, and a sign-off block. `--check` fails when it is stale or a reference does not resolve. The `parity` CI job runs all of it and uploads the sheet as the `divergence-ledger` artifact. A divergence is never silent: it is fixed, or it has an entry, and an entry cites a decision.
+
 ## 29. CI gates
 
 Once code exists, pull requests should run:
@@ -2086,6 +2096,7 @@ Once code exists, pull requests should run:
 - UI unit tests;
 - UI production build;
 - protocol fixture suite;
+- pinned differential and divergence ledger (28.6), in the `parity` job;
 - container build;
 - size budget;
 - security fixture suite.

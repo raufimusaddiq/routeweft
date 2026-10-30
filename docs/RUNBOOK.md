@@ -951,6 +951,13 @@ arbitrary remote command endpoint.
    evidence that those workflows passed. Record all discrepancies against the
    specific PARITY row and area issue (#75-#78).
 
+Before any workload is chosen, read `docs/DIVERGENCE_LEDGER.md`. It lists every difference
+from LiteRouter that is known to the pinned differential (conversion legs between the protocols,
+combo, key and alias workflows) and every decision the owner has not yet approved. A workload
+that depends on a behavior with a decision outstanding is not covered by this evaluation, however
+well it runs. `make parity-test` regenerates the evidence; the `parity` CI job uploads the sheet as the
+`divergence-ledger` artifact.
+
 ### Stop conditions and handoff
 
 Stop the affected evaluation workload for an auth leak, model mismatch, broken

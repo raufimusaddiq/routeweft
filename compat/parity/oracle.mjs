@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import crypto from 'node:crypto';
 import os from 'node:os';
+import nodePath from 'node:path';
 import vm from 'node:vm';
 
 // The run's oracle commit. compat/parity/resolve-oracle.mjs resolves LiteRouter
@@ -43,13 +44,21 @@ export async function loadTree(entry, { stubs = {}, globals = {} } = {}) {
   const posixJoin = (from, specifier) => new URL(specifier, `file://${from}`).pathname;
   const host = () => new Proxy({}, { get: () => () => { throw new Error('host module not available'); } });
   const names = list => list.split(',').map(x => x.trim()).filter(Boolean).map(x => x.split(/\s+as\s+/));
+  const loading = [];
   async function module(file) {
     if (stubs[file]) return stubs[file];
     if (cache.has(file)) return cache.get(file);
+    if (loading.includes(file)) throw new Error(`import cycle: ${[...loading, file].join(' > ')}`);
+    loading.push(file);
+    try { return await load(file); } finally { loading.pop(); }
+  }
+  async function load(file) {
     const code = source(file.slice(1));
     const dependencies = {};
     for (const m of code.matchAll(importPattern)) {
-      const hostModules = { os, 'node:os': os, crypto, 'node:crypto': crypto };
+      // A default import of a host module is the module itself.
+      const hostModule = module => ({ ...module, default: module });
+      const hostModules = { os: hostModule(os), 'node:os': hostModule(os), crypto: hostModule(crypto), 'node:crypto': hostModule(crypto), path: hostModule(nodePath), 'node:path': hostModule(nodePath) };
       // "@/x" is the oracle's alias for src/x; any other bare specifier is a host module.
       const imported = stubs[m[4]] ?? (m[4].startsWith('.') ? await module(resolve(file, m[4]))
         : m[4].startsWith('@/') ? await module(`/src/${m[4].slice(2)}`) : hostModules[m[4]] ?? host());

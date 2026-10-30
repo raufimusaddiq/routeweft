@@ -1,0 +1,2057 @@
+{
+ "about": "Every difference between the oracle's conversion legs and Routeweft's that the pinned differential finds (internal/parity/legs_test.go, compat/parity/generate-protocol-legs.mjs), with the PARITY item that accounts for it: a D row, a register item (V12, G2, ...) or a section (\u00a76.7). A difference not listed here fails the test; an entry that no longer matches a difference fails it too. It is the divergence ledger the sign-off report (compat/parity/ledger.mjs) summarizes.",
+ "entries": [
+  {
+   "direction": "control",
+   "example": {
+    "case": "delete with no alias named",
+    "oracle": "400 Alias required",
+    "routeweft": "no route: the alias is part of the path, so a request without one has no route"
+   },
+   "kind": "outcome",
+   "leg": "aliases",
+   "path": "delete with no alias named",
+   "ref": "D47"
+  },
+  {
+   "direction": "control",
+   "example": {
+    "case": "point an alias at a model nothing provides",
+    "oracle": "ok",
+    "routeweft": "400 alias_save_failed"
+   },
+   "kind": "outcome",
+   "leg": "aliases",
+   "path": "point an alias at a model nothing provides",
+   "ref": "D46"
+  },
+  {
+   "direction": "control",
+   "example": {
+    "case": "set an alias named with spaces only",
+    "oracle": "ok",
+    "routeweft": "400 invalid_alias"
+   },
+   "kind": "outcome",
+   "leg": "aliases",
+   "path": "set an alias named with spaces only",
+   "ref": "D45"
+  },
+  {
+   "direction": "control",
+   "example": {
+    "case": "final state",
+    "oracle": "map[aliases:[    ghost]]",
+    "routeweft": "map[aliases:[]]"
+   },
+   "kind": "state",
+   "leg": "aliases",
+   "path": "final state",
+   "ref": "D46"
+  },
+  {
+   "direction": "control",
+   "example": {
+    "case": "create a combo whose name has a space",
+    "oracle": "400 Name can only contain letters, numbers, -, _ and .",
+    "routeweft": "ok"
+   },
+   "kind": "outcome",
+   "leg": "combos",
+   "path": "create a combo whose name has a space",
+   "ref": "D43"
+  },
+  {
+   "direction": "control",
+   "example": {
+    "case": "read a combo that does not exist",
+    "oracle": "404 Combo not found",
+    "routeweft": "no route: no read-by-id route (the list carries combos)"
+   },
+   "kind": "outcome",
+   "leg": "combos",
+   "path": "read a combo that does not exist",
+   "ref": "D47"
+  },
+  {
+   "direction": "control",
+   "example": {
+    "case": "rename a combo to a name with a space",
+    "oracle": "400 Name can only contain letters, numbers, -, _ and .",
+    "routeweft": "ok"
+   },
+   "kind": "outcome",
+   "leg": "combos",
+   "path": "rename a combo to a name with a space",
+   "ref": "D43"
+  },
+  {
+   "direction": "control",
+   "example": {
+    "case": "update a combo that does not exist",
+    "oracle": "404 Combo not found",
+    "routeweft": "ok"
+   },
+   "kind": "outcome",
+   "leg": "combos",
+   "path": "update a combo that does not exist",
+   "ref": "D44"
+  },
+  {
+   "direction": "control",
+   "example": {
+    "case": "final state",
+    "oracle": "map[names:[good-name]]",
+    "routeweft": "map[names:[ghost good-name with space]]"
+   },
+   "kind": "state",
+   "leg": "combos",
+   "path": "final state",
+   "ref": "D43"
+  },
+  {
+   "direction": "control",
+   "example": {
+    "case": "create a key named with spaces only",
+    "oracle": "ok",
+    "routeweft": "400 invalid_key"
+   },
+   "kind": "outcome",
+   "leg": "keys",
+   "path": "create a key named with spaces only",
+   "ref": "D45"
+  },
+  {
+   "direction": "control",
+   "example": {
+    "case": "read a key that does not exist",
+    "oracle": "404 Key not found",
+    "routeweft": "no route: no read-by-id route (the list carries keys)"
+   },
+   "kind": "outcome",
+   "leg": "keys",
+   "path": "read a key that does not exist",
+   "ref": "D47"
+  },
+  {
+   "direction": "control",
+   "example": {
+    "case": "final state",
+    "oracle": "map[count:1]",
+    "routeweft": "map[count:0]"
+   },
+   "kind": "state",
+   "leg": "keys",
+   "path": "final state",
+   "ref": "D45"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "function call and response",
+    "oracle": "\"call_read_file\"",
+    "routeweft": "\"call_msg1_tc0_read_file\""
+   },
+   "kind": "changed",
+   "leg": "antigravity>openai",
+   "path": "$.messages[].tool_call_id",
+   "ref": "V25"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "function call and response",
+    "oracle": "\"call_read_file\"",
+    "routeweft": "\"call_msg1_tc0_read_file\""
+   },
+   "kind": "changed",
+   "leg": "antigravity>openai",
+   "path": "$.messages[].tool_calls[].id",
+   "ref": "V25"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "sampling",
+    "oracle": "30",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "antigravity>openai",
+   "path": "$.top_k",
+   "ref": "F1"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "json mime type",
+    "oracle": "null",
+    "routeweft": "{\"type\":\"json_object\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "antigravity>openai",
+   "path": "$.response_format",
+   "ref": "\u00a76.7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "sampling",
+    "oracle": "null",
+    "routeweft": "[\"END\"]"
+   },
+   "kind": "only-routeweft",
+   "leg": "antigravity>openai",
+   "path": "$.stop",
+   "ref": "\u00a76.7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "text",
+    "oracle": "\"[Context: Current time is 2023-11-14T22:13:20.000Z]\\n\\nhello\"",
+    "routeweft": "\"hello\""
+   },
+   "kind": "changed",
+   "leg": "claude>kiro",
+   "path": "$.conversationState.currentMessage.userInputMessage.content",
+   "ref": "\u00a76.8"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "tool use and result",
+    "oracle": "\"[Context: Current time is 2023-11-14T22:13:20.000Z]\\n\\nlook\"",
+    "routeweft": "\"read a\""
+   },
+   "kind": "changed",
+   "leg": "claude>kiro",
+   "path": "$.conversationState.history[].userInputMessage.content",
+   "ref": "\u00a76.8"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system string and sampling",
+    "oracle": "{\"conversationState\":{\"chatTriggerType\":\"MANUAL\",\"conversationId\":\"00000000-0000-4000-8000-0000000000011700000...",
+    "routeweft": "\"unsupported: top_k: Kiro has no top_k\""
+   },
+   "kind": "go-error",
+   "leg": "claude>kiro",
+   "path": "$",
+   "ref": "\u00a76.12"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "tools and choices",
+    "oracle": "{\"userInputMessage\":{\"content\":\"[Context: Current time is 2023-11-14T22:13:20.000Z]\\n\\nlook\",\"images\":[{\"forma...",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "claude>kiro",
+   "path": "$.conversationState.history[]",
+   "ref": "D40"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "tool use and result",
+    "oracle": "[{\"format\":\"png\",\"source\":{\"bytes\":\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60...",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "claude>kiro",
+   "path": "$.conversationState.history[].userInputMessage.images",
+   "ref": "D40"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "text",
+    "oracle": "\"arn:aws:codewhisperer:us-east-1:000000000000:profile/SYNTHETIC\"",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "claude>kiro",
+   "path": "$.profileArn",
+   "ref": "\u00a76.11"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "blocks and images",
+    "oracle": "null",
+    "routeweft": "{\"image_url\":{\"url\":\"https://example.com/b.png\"},\"type\":\"image_url\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "claude>openai",
+   "path": "$.messages[].content[]",
+   "ref": "V11"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system string and sampling",
+    "oracle": "null",
+    "routeweft": "[\"END\"]"
+   },
+   "kind": "only-routeweft",
+   "leg": "claude>openai",
+   "path": "$.stop",
+   "ref": "V12"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system string and sampling",
+    "oracle": "null",
+    "routeweft": "0.8"
+   },
+   "kind": "only-routeweft",
+   "leg": "claude>openai",
+   "path": "$.top_p",
+   "ref": "V12"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "metadata and stream",
+    "oracle": "null",
+    "routeweft": "\"user-1\""
+   },
+   "kind": "only-routeweft",
+   "leg": "claude>openai",
+   "path": "$.user",
+   "ref": "V12"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "sampling",
+    "oracle": "null",
+    "routeweft": "512"
+   },
+   "kind": "only-routeweft",
+   "leg": "gemini-cli>openai",
+   "path": "$.max_tokens",
+   "ref": "\u00a76.7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "text",
+    "oracle": "null",
+    "routeweft": "{\"content\":\"hello\",\"role\":\"user\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "gemini-cli>openai",
+   "path": "$.messages[]",
+   "ref": "C1"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "json mime type",
+    "oracle": "null",
+    "routeweft": "{\"type\":\"json_object\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "gemini-cli>openai",
+   "path": "$.response_format",
+   "ref": "\u00a76.7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "sampling",
+    "oracle": "null",
+    "routeweft": "[\"END\"]"
+   },
+   "kind": "only-routeweft",
+   "leg": "gemini-cli>openai",
+   "path": "$.stop",
+   "ref": "\u00a76.7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "sampling",
+    "oracle": "null",
+    "routeweft": "0.4"
+   },
+   "kind": "only-routeweft",
+   "leg": "gemini-cli>openai",
+   "path": "$.temperature",
+   "ref": "\u00a76.7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "function declarations",
+    "oracle": "null",
+    "routeweft": "[{\"function\":{\"description\":\"read\",\"name\":\"read_file\",\"parameters\":{\"properties\":{\"path\":{\"type\":\"string\"}},\"t..."
+   },
+   "kind": "only-routeweft",
+   "leg": "gemini-cli>openai",
+   "path": "$.tools",
+   "ref": "\u00a76.7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "sampling",
+    "oracle": "null",
+    "routeweft": "0.9"
+   },
+   "kind": "only-routeweft",
+   "leg": "gemini-cli>openai",
+   "path": "$.top_p",
+   "ref": "\u00a76.7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "function call and response",
+    "oracle": "\"call_read_file\"",
+    "routeweft": "\"call_msg1_tc0_read_file\""
+   },
+   "kind": "changed",
+   "leg": "gemini>openai",
+   "path": "$.messages[].tool_call_id",
+   "ref": "V25"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "function call and response",
+    "oracle": "\"call_read_file\"",
+    "routeweft": "\"call_msg1_tc0_read_file\""
+   },
+   "kind": "changed",
+   "leg": "gemini>openai",
+   "path": "$.messages[].tool_calls[].id",
+   "ref": "V25"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "json mime type",
+    "oracle": "null",
+    "routeweft": "{\"type\":\"json_object\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "gemini>openai",
+   "path": "$.response_format",
+   "ref": "\u00a76.7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "sampling",
+    "oracle": "null",
+    "routeweft": "[\"END\"]"
+   },
+   "kind": "only-routeweft",
+   "leg": "gemini>openai",
+   "path": "$.stop",
+   "ref": "\u00a76.7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "string input",
+    "oracle": "[{\"text\":\"hello\",\"type\":\"text\"}]",
+    "routeweft": "\"hello\""
+   },
+   "kind": "changed",
+   "leg": "openai-responses>openai",
+   "path": "$.messages[].content",
+   "ref": "D34"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "image input",
+    "oracle": "\"auto\"",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai-responses>openai",
+   "path": "$.messages[].content[].image_url.detail",
+   "ref": "D34"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "limits and format",
+    "oracle": "{\"format\":{\"name\":\"a\",\"schema\":{\"type\":\"object\"},\"type\":\"json_schema\"}}",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai-responses>openai",
+   "path": "$.text",
+   "ref": "D34"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "named tool choice",
+    "oracle": "\"read_file\"",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai-responses>openai",
+   "path": "$.tool_choice.name",
+   "ref": "D34"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "function call and output",
+    "oracle": "\"\"",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai-responses>openai",
+   "path": "$.tools[].function.description",
+   "ref": "D34"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "function call and output",
+    "oracle": "{}",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai-responses>openai",
+   "path": "$.tools[].function.parameters.properties",
+   "ref": "D34"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "limits and format",
+    "oracle": "null",
+    "routeweft": "{\"json_schema\":{\"name\":\"a\",\"schema\":{\"type\":\"object\"}},\"type\":\"json_schema\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai-responses>openai",
+   "path": "$.response_format",
+   "ref": "D34"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "string input",
+    "oracle": "null",
+    "routeweft": "false"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai-responses>openai",
+   "path": "$.stream",
+   "ref": "D34"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "stream and store",
+    "oracle": "null",
+    "routeweft": "{\"include_usage\":true}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai-responses>openai",
+   "path": "$.stream_options",
+   "ref": "D34"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "named tool choice",
+    "oracle": "null",
+    "routeweft": "{\"name\":\"read_file\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai-responses>openai",
+   "path": "$.tool_choice.function",
+   "ref": "D34"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "tool result as parts",
+    "oracle": "[{\"text\":\"part one\",\"type\":\"text\"},{\"text\":\"part two\",\"type\":\"text\"}]",
+    "routeweft": "{\"result\":\"part one\\npart two\"}"
+   },
+   "kind": "changed",
+   "leg": "openai>antigravity",
+   "path": "$.request.contents[].parts[].functionResponse.response.result",
+   "ref": "D38"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "empty and null contents",
+    "oracle": "\"\"",
+    "routeweft": "\"still here\""
+   },
+   "kind": "changed",
+   "leg": "openai>antigravity",
+   "path": "$.request.contents[].parts[].text",
+   "ref": "D37"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "parallel calls and results",
+    "oracle": "\"CiQBjz1rX/AlslZWMe5RgBt4Tv9j4+YNZTTez+JH2/+5oAlICygKXgGPPWtf7/Sux9eLYap/bmYAdPqFThLXj+l7o0DLu/hdgU98MA9ZrlRDN...",
+    "routeweft": "\"skip_thought_signature_validator\""
+   },
+   "kind": "changed",
+   "leg": "openai>antigravity",
+   "path": "$.request.contents[].parts[].thoughtSignature",
+   "ref": "G2"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system as parts",
+    "oracle": "\"Rule one.Rule two.\"",
+    "routeweft": "\"Rule one.\\nRule two.\""
+   },
+   "kind": "changed",
+   "leg": "openai>antigravity",
+   "path": "$.request.systemInstruction.parts[].text",
+   "ref": "\u00a76.7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "required and named tool choice",
+    "oracle": "\"VALIDATED\"",
+    "routeweft": "\"ANY\""
+   },
+   "kind": "changed",
+   "leg": "openai>antigravity",
+   "path": "$.request.toolConfig.functionCallingConfig.mode",
+   "ref": "A7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "images by url and data uri",
+    "oracle": "{\"model\":\"x\",\"project\":\"proj-1\",\"request\":{\"contents\":[{\"parts\":[{\"text\":\"compare\"},{\"fileData\":{\"fileUri\":\"ht...",
+    "routeweft": "\"unsupported: image_url that is a remote URL: fetching it is out of leg scope, send a base64 data URI\""
+   },
+   "kind": "go-error",
+   "leg": "openai>antigravity",
+   "path": "$",
+   "ref": "G7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "empty and null contents",
+    "oracle": "{\"text\":\"still here\"}",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>antigravity",
+   "path": "$.request.contents[].parts[]",
+   "ref": "D37"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "reasoning effort",
+    "oracle": "null",
+    "routeweft": "4096"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>antigravity",
+   "path": "$.request.generationConfig.maxOutputTokens",
+   "ref": "V22"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "json object response format",
+    "oracle": "null",
+    "routeweft": "\"application/json\""
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>antigravity",
+   "path": "$.request.generationConfig.responseMimeType",
+   "ref": "V22"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "json schema response format",
+    "oracle": "null",
+    "routeweft": "{\"properties\":{\"ok\":{\"type\":\"boolean\"}},\"type\":\"object\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>antigravity",
+   "path": "$.request.generationConfig.responseSchema",
+   "ref": "V22"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system and turns with sampling",
+    "oracle": "null",
+    "routeweft": "[\"END\",\"STOP\"]"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>antigravity",
+   "path": "$.request.generationConfig.stopSequences",
+   "ref": "V22"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "developer role",
+    "oracle": "null",
+    "routeweft": "{\"parts\":[{\"text\":\"Follow the style guide.\"}],\"role\":\"user\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>antigravity",
+   "path": "$.request.systemInstruction",
+   "ref": "V12"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "required and named tool choice",
+    "oracle": "null",
+    "routeweft": "[\"read_file\"]"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>antigravity",
+   "path": "$.request.toolConfig.functionCallingConfig.allowedFunctionNames",
+   "ref": "A7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "reasoning effort",
+    "oracle": "64000",
+    "routeweft": "4096"
+   },
+   "kind": "changed",
+   "leg": "openai>claude",
+   "path": "$.max_tokens",
+   "ref": "D39"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system and turns with sampling",
+    "oracle": "\"You are Claude Code, Anthropic's official CLI for Claude.\"",
+    "routeweft": "\"Be terse.\""
+   },
+   "kind": "changed",
+   "leg": "openai>claude",
+   "path": "$.system[].text",
+   "ref": "V14"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "parallel calls and results",
+    "oracle": "{\"content\":[{\"content\":\"BBB\",\"tool_use_id\":\"call_2\",\"type\":\"tool_result\"}],\"role\":\"user\"}",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>claude",
+   "path": "$.messages[]",
+   "ref": "D36"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "text",
+    "oracle": "[{\"text\":\"You are Claude Code, Anthropic's official CLI for Claude.\",\"type\":\"text\"}]",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>claude",
+   "path": "$.system",
+   "ref": "V14"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system and turns with sampling",
+    "oracle": "{\"cache_control\":{\"ttl\":\"1h\",\"type\":\"ephemeral\"},\"text\":\"Be terse.\",\"type\":\"text\"}",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>claude",
+   "path": "$.system[]",
+   "ref": "V14"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "tools with auto choice",
+    "oracle": "\"1h\"",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>claude",
+   "path": "$.tools[].cache_control.ttl",
+   "ref": "V13"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "parallel calls and results",
+    "oracle": "null",
+    "routeweft": "{\"content\":\"BBB\",\"tool_use_id\":\"call_2\",\"type\":\"tool_result\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>claude",
+   "path": "$.messages[].content[]",
+   "ref": "D36"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system and turns with sampling",
+    "oracle": "null",
+    "routeweft": "{\"user_id\":\"u-1\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>claude",
+   "path": "$.metadata",
+   "ref": "V12"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system and turns with sampling",
+    "oracle": "null",
+    "routeweft": "[\"END\",\"STOP\"]"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>claude",
+   "path": "$.stop_sequences",
+   "ref": "V12"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system and turns with sampling",
+    "oracle": "null",
+    "routeweft": "{\"type\":\"ephemeral\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>claude",
+   "path": "$.system[].cache_control",
+   "ref": "V13"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "text",
+    "oracle": "\"2023-11-14\"",
+    "routeweft": "\"2026-10-30\""
+   },
+   "kind": "changed",
+   "leg": "openai>commandcode",
+   "path": "$.config.date",
+   "ref": "V35"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "text",
+    "oracle": "\"/work\"",
+    "routeweft": "\"/\""
+   },
+   "kind": "changed",
+   "leg": "openai>commandcode",
+   "path": "$.config.workingDir",
+   "ref": "V35"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "developer role",
+    "oracle": "\"Follow the style guide.\"",
+    "routeweft": "\"Write code\""
+   },
+   "kind": "changed",
+   "leg": "openai>commandcode",
+   "path": "$.params.messages[].content[].text",
+   "ref": "\u00a76.5"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "parallel calls and results",
+    "oracle": "\"\"",
+    "routeweft": "\"read_file\""
+   },
+   "kind": "changed",
+   "leg": "openai>commandcode",
+   "path": "$.params.messages[].content[].toolName",
+   "ref": "\u00a76.5"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system and turns with sampling",
+    "oracle": "{\"config\":{\"currentBranch\":\"\",\"date\":\"2023-11-14\",\"environment\":\"linux\",\"gitStatus\":\"\",\"isGitRepo\":false,\"main...",
+    "routeweft": "\"unsupported: stop: not verifiable offline for CommandCode\""
+   },
+   "kind": "go-error",
+   "leg": "openai>commandcode",
+   "path": "$",
+   "ref": "\u00a76.5"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "developer role",
+    "oracle": "{\"content\":[{\"text\":\"Write code\",\"type\":\"text\"}],\"role\":\"user\"}",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>commandcode",
+   "path": "$.params.messages[]",
+   "ref": "\u00a76.5"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "text",
+    "oracle": "0.3",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>commandcode",
+   "path": "$.params.temperature",
+   "ref": "V34"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "tool choice none",
+    "oracle": "[{\"description\":\"read_file tool\",\"input_schema\":{\"properties\":{\"depth\":{\"type\":\"integer\"},\"path\":{\"type\":\"stri...",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>commandcode",
+   "path": "$.params.tools",
+   "ref": "\u00a76.5"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "developer role",
+    "oracle": "null",
+    "routeweft": "\"Follow the style guide.\""
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>commandcode",
+   "path": "$.params.system",
+   "ref": "\u00a76.5"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "developer role",
+    "oracle": "\"Write code\"",
+    "routeweft": "\"[System Instructions]\\nFollow the style guide.\""
+   },
+   "kind": "changed",
+   "leg": "openai>cursor",
+   "path": "$.messages[].content",
+   "ref": "\u00a76.5"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system and turns with sampling",
+    "oracle": "{\"max_tokens\":32000,\"messages\":[{\"content\":\"[System Instructions]\\nBe terse.\",\"role\":\"user\"},{\"content\":\"Hi\",\"...",
+    "routeweft": "\"unsupported: temperature: not verifiable offline for Cursor\""
+   },
+   "kind": "go-error",
+   "leg": "openai>cursor",
+   "path": "$",
+   "ref": "\u00a76.5"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "reasoning effort",
+    "oracle": "4096",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>cursor",
+   "path": "$.max_completion_tokens",
+   "ref": "V31"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "text",
+    "oracle": "32000",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>cursor",
+   "path": "$.max_tokens",
+   "ref": "V31"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "stream options and n",
+    "oracle": "1",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>cursor",
+   "path": "$.n",
+   "ref": "\u00a76.5"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "thinking budget",
+    "oracle": "{\"budget_tokens\":2048,\"type\":\"enabled\"}",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>cursor",
+   "path": "$.thinking",
+   "ref": "\u00a76.5"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "tool choice none",
+    "oracle": "[{\"function\":{\"description\":\"read_file tool\",\"name\":\"read_file\",\"parameters\":{\"properties\":{\"depth\":{\"type\":\"i...",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>cursor",
+   "path": "$.tools",
+   "ref": "\u00a76.5"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "developer role",
+    "oracle": "null",
+    "routeweft": "{\"content\":\"Write code\",\"role\":\"user\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>cursor",
+   "path": "$.messages[]",
+   "ref": "\u00a76.5"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "text",
+    "oracle": "null",
+    "routeweft": "false"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>cursor",
+   "path": "$.stream",
+   "ref": "\u00a76.5"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "tool result as parts",
+    "oracle": "[{\"text\":\"part one\",\"type\":\"text\"},{\"text\":\"part two\",\"type\":\"text\"}]",
+    "routeweft": "{\"result\":\"part one\\npart two\"}"
+   },
+   "kind": "changed",
+   "leg": "openai>gemini-cli",
+   "path": "$.request.contents[].parts[].functionResponse.response.result",
+   "ref": "D38"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "empty and null contents",
+    "oracle": "\"\"",
+    "routeweft": "\"still here\""
+   },
+   "kind": "changed",
+   "leg": "openai>gemini-cli",
+   "path": "$.request.contents[].parts[].text",
+   "ref": "D37"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "parallel calls and results",
+    "oracle": "\"CiQBjz1rX/AlslZWMe5RgBt4Tv9j4+YNZTTez+JH2/+5oAlICygKXgGPPWtf7/Sux9eLYap/bmYAdPqFThLXj+l7o0DLu/hdgU98MA9ZrlRDN...",
+    "routeweft": "\"skip_thought_signature_validator\""
+   },
+   "kind": "changed",
+   "leg": "openai>gemini-cli",
+   "path": "$.request.contents[].parts[].thoughtSignature",
+   "ref": "G2"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system as parts",
+    "oracle": "\"Rule one.Rule two.\"",
+    "routeweft": "\"Rule one.\\nRule two.\""
+   },
+   "kind": "changed",
+   "leg": "openai>gemini-cli",
+   "path": "$.request.systemInstruction.parts[].text",
+   "ref": "\u00a76.7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "required and named tool choice",
+    "oracle": "\"VALIDATED\"",
+    "routeweft": "\"ANY\""
+   },
+   "kind": "changed",
+   "leg": "openai>gemini-cli",
+   "path": "$.request.toolConfig.functionCallingConfig.mode",
+   "ref": "A7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "images by url and data uri",
+    "oracle": "{\"model\":\"x\",\"project\":\"proj-1\",\"request\":{\"contents\":[{\"parts\":[{\"text\":\"compare\"},{\"fileData\":{\"fileUri\":\"ht...",
+    "routeweft": "\"unsupported: image_url that is a remote URL: fetching it is out of leg scope, send a base64 data URI\""
+   },
+   "kind": "go-error",
+   "leg": "openai>gemini-cli",
+   "path": "$",
+   "ref": "G7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "empty and null contents",
+    "oracle": "{\"text\":\"still here\"}",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>gemini-cli",
+   "path": "$.request.contents[].parts[]",
+   "ref": "D37"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "reasoning effort",
+    "oracle": "null",
+    "routeweft": "4096"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>gemini-cli",
+   "path": "$.request.generationConfig.maxOutputTokens",
+   "ref": "V22"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "json object response format",
+    "oracle": "null",
+    "routeweft": "\"application/json\""
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>gemini-cli",
+   "path": "$.request.generationConfig.responseMimeType",
+   "ref": "V22"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "json schema response format",
+    "oracle": "null",
+    "routeweft": "{\"properties\":{\"ok\":{\"type\":\"boolean\"}},\"type\":\"object\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>gemini-cli",
+   "path": "$.request.generationConfig.responseSchema",
+   "ref": "V22"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system and turns with sampling",
+    "oracle": "null",
+    "routeweft": "[\"END\",\"STOP\"]"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>gemini-cli",
+   "path": "$.request.generationConfig.stopSequences",
+   "ref": "V22"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "developer role",
+    "oracle": "null",
+    "routeweft": "{\"parts\":[{\"text\":\"Follow the style guide.\"}],\"role\":\"user\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>gemini-cli",
+   "path": "$.request.systemInstruction",
+   "ref": "V12"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "required and named tool choice",
+    "oracle": "null",
+    "routeweft": "[\"read_file\"]"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>gemini-cli",
+   "path": "$.request.toolConfig.functionCallingConfig.allowedFunctionNames",
+   "ref": "A7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "tool result as parts",
+    "oracle": "[{\"text\":\"part one\",\"type\":\"text\"},{\"text\":\"part two\",\"type\":\"text\"}]",
+    "routeweft": "{\"result\":\"part one\\npart two\"}"
+   },
+   "kind": "changed",
+   "leg": "openai>gemini",
+   "path": "$.contents[].parts[].functionResponse.response.result",
+   "ref": "D38"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "empty and null contents",
+    "oracle": "\"\"",
+    "routeweft": "\"still here\""
+   },
+   "kind": "changed",
+   "leg": "openai>gemini",
+   "path": "$.contents[].parts[].text",
+   "ref": "D37"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "parallel calls and results",
+    "oracle": "\"EuwGCukGAXLI2nxwZIq54WWSoL/YN0P3TsDZ7zRnLi8g0S4aVr2HUGxvaHKySuY6HAVzcE0GPGjXrytLIldxthSvfxgUlJh6Qa9Z+Oj5QZBlY...",
+    "routeweft": "\"skip_thought_signature_validator\""
+   },
+   "kind": "changed",
+   "leg": "openai>gemini",
+   "path": "$.contents[].parts[].thoughtSignature",
+   "ref": "G2"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system as parts",
+    "oracle": "\"Rule one.Rule two.\"",
+    "routeweft": "\"Rule one.\\nRule two.\""
+   },
+   "kind": "changed",
+   "leg": "openai>gemini",
+   "path": "$.systemInstruction.parts[].text",
+   "ref": "\u00a76.7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "images by url and data uri",
+    "oracle": "{\"contents\":[{\"parts\":[{\"text\":\"compare\"},{\"fileData\":{\"fileUri\":\"https://example.com/a.png\",\"mimeType\":\"image...",
+    "routeweft": "\"unsupported: image_url that is a remote URL: fetching it is out of leg scope, send a base64 data URI\""
+   },
+   "kind": "go-error",
+   "leg": "openai>gemini",
+   "path": "$",
+   "ref": "G7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "empty and null contents",
+    "oracle": "{\"text\":\"still here\"}",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>gemini",
+   "path": "$.contents[].parts[]",
+   "ref": "D37"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "reasoning effort",
+    "oracle": "null",
+    "routeweft": "4096"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>gemini",
+   "path": "$.generationConfig.maxOutputTokens",
+   "ref": "V22"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "json object response format",
+    "oracle": "null",
+    "routeweft": "\"application/json\""
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>gemini",
+   "path": "$.generationConfig.responseMimeType",
+   "ref": "V22"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "json schema response format",
+    "oracle": "null",
+    "routeweft": "{\"properties\":{\"ok\":{\"type\":\"boolean\"}},\"type\":\"object\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>gemini",
+   "path": "$.generationConfig.responseSchema",
+   "ref": "V22"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system and turns with sampling",
+    "oracle": "null",
+    "routeweft": "[\"END\",\"STOP\"]"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>gemini",
+   "path": "$.generationConfig.stopSequences",
+   "ref": "V22"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "developer role",
+    "oracle": "null",
+    "routeweft": "{\"parts\":[{\"text\":\"Follow the style guide.\"}],\"role\":\"user\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>gemini",
+   "path": "$.systemInstruction",
+   "ref": "V12"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "required and named tool choice",
+    "oracle": "null",
+    "routeweft": "{\"functionCallingConfig\":{\"allowedFunctionNames\":[\"read_file\"],\"mode\":\"ANY\"}}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>gemini",
+   "path": "$.toolConfig",
+   "ref": "V19"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "text",
+    "oracle": "\"[Context: Current time is 2023-11-14T22:13:20.000Z]\\n\\nhello\"",
+    "routeweft": "\"hello\""
+   },
+   "kind": "changed",
+   "leg": "openai>kiro",
+   "path": "$.conversationState.currentMessage.userInputMessage.content",
+   "ref": "\u00a76.8"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "tool result as parts",
+    "oracle": "\"\"",
+    "routeweft": "\"part one\\npart two\""
+   },
+   "kind": "changed",
+   "leg": "openai>kiro",
+   "path": "$.conversationState.currentMessage.userInputMessage.userInputMessageContext.toolResults[].content[].text",
+   "ref": "D38"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "parallel calls and results",
+    "oracle": "\"[Context: Current time is 2023-11-14T22:13:20.000Z]\\n\\nhello\"",
+    "routeweft": "\"read both\""
+   },
+   "kind": "changed",
+   "leg": "openai>kiro",
+   "path": "$.conversationState.history[].userInputMessage.content",
+   "ref": "\u00a76.8"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "reasoning effort",
+    "oracle": "32000",
+    "routeweft": "4096"
+   },
+   "kind": "changed",
+   "leg": "openai>kiro",
+   "path": "$.inferenceConfig.maxTokens",
+   "ref": "\u00a76.8"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system and turns with sampling",
+    "oracle": "{\"conversationState\":{\"chatTriggerType\":\"MANUAL\",\"conversationId\":\"00000000-0000-4000-8000-0000000000011700000...",
+    "routeweft": "\"unsupported: request field \\\"stop\\\": Kiro has no equivalent\""
+   },
+   "kind": "go-error",
+   "leg": "openai>kiro",
+   "path": "$",
+   "ref": "\u00a76.8"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "developer role",
+    "oracle": "{\"userInputMessage\":{\"content\":\"[Context: Current time is 2023-11-14T22:13:20.000Z]\\n\\nhello\",\"modelId\":\"x\"}}",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>kiro",
+   "path": "$.conversationState.history[]",
+   "ref": "D40"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "text",
+    "oracle": "{\"maxTokens\":32000}",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>kiro",
+   "path": "$.inferenceConfig",
+   "ref": "\u00a76.8"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "text",
+    "oracle": "\"arn:aws:codewhisperer:us-east-1:000000000000:profile/SYNTHETIC\"",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>kiro",
+   "path": "$.profileArn",
+   "ref": "\u00a76.11"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "developer role",
+    "oracle": "\"developer\"",
+    "routeweft": "\"system\""
+   },
+   "kind": "changed",
+   "leg": "openai>ollama",
+   "path": "$.messages[].role",
+   "ref": "V21"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "parallel calls and results",
+    "oracle": "0",
+    "routeweft": "1"
+   },
+   "kind": "changed",
+   "leg": "openai>ollama",
+   "path": "$.messages[].tool_calls[].function.index",
+   "ref": "V24"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "images by url and data uri",
+    "oracle": "{\"messages\":[{\"content\":\"compare\",\"images\":[\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfD...",
+    "routeweft": "\"unsupported: image_url that is not a base64 data URI\""
+   },
+   "kind": "go-error",
+   "leg": "openai>ollama",
+   "path": "$",
+   "ref": "V23"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "tools with auto choice",
+    "oracle": "\"auto\"",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>ollama",
+   "path": "$.tool_choice",
+   "ref": "V30"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "tool choice none",
+    "oracle": "[{\"function\":{\"description\":\"read_file tool\",\"name\":\"read_file\",\"parameters\":{\"properties\":{\"depth\":{\"type\":\"i...",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>ollama",
+   "path": "$.tools",
+   "ref": "V30"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "json object response format",
+    "oracle": "null",
+    "routeweft": "\"json\""
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>ollama",
+   "path": "$.format",
+   "ref": "V29"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "reasoning effort",
+    "oracle": "null",
+    "routeweft": "{\"num_predict\":4096}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>ollama",
+   "path": "$.options",
+   "ref": "V29"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system and turns with sampling",
+    "oracle": "null",
+    "routeweft": "[\"END\",\"STOP\"]"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>ollama",
+   "path": "$.options.stop",
+   "ref": "V29"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "tool result as parts",
+    "oracle": "\"part onepart two\"",
+    "routeweft": "\"[{\\\"text\\\":\\\"part one\\\",\\\"type\\\":\\\"text\\\"},{\\\"text\\\":\\\"part two\\\",\\\"type\\\":\\\"text\\\"}]\""
+   },
+   "kind": "changed",
+   "leg": "openai>openai-responses",
+   "path": "$.input[].output",
+   "ref": "D38"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "images by url and data uri",
+    "oracle": "\"auto\"",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>openai-responses",
+   "path": "$.input[].content[].detail",
+   "ref": "D35"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "cache control on content",
+    "oracle": "null",
+    "routeweft": "{\"type\":\"ephemeral\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>openai-responses",
+   "path": "$.input[].content[].cache_control",
+   "ref": "D35"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "json object response format",
+    "oracle": "null",
+    "routeweft": "{\"format\":{\"type\":\"json_object\"}}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>openai-responses",
+   "path": "$.text",
+   "ref": "D35"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "tool result as parts",
+    "oracle": "[{\"text\":\"part one\",\"type\":\"text\"},{\"text\":\"part two\",\"type\":\"text\"}]",
+    "routeweft": "{\"result\":\"part one\\npart two\"}"
+   },
+   "kind": "changed",
+   "leg": "openai>vertex",
+   "path": "$.contents[].parts[].functionResponse.response.result",
+   "ref": "D38"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "empty and null contents",
+    "oracle": "\"\"",
+    "routeweft": "\"still here\""
+   },
+   "kind": "changed",
+   "leg": "openai>vertex",
+   "path": "$.contents[].parts[].text",
+   "ref": "D37"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "parallel calls and results",
+    "oracle": "\"CloBjz1rX5+yg1ILh/Ag+suum5k1f/9m/hI0XDQ33lsQIYnOHLn9KZwN0C7E4jgep5MzZvz5Se1Z1xxYrA1+Iz0Il4tabBhaDfMKNa5dGdEA3...",
+    "routeweft": "\"skip_thought_signature_validator\""
+   },
+   "kind": "changed",
+   "leg": "openai>vertex",
+   "path": "$.contents[].parts[].thoughtSignature",
+   "ref": "G2"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system as parts",
+    "oracle": "\"Rule one.Rule two.\"",
+    "routeweft": "\"Rule one.\\nRule two.\""
+   },
+   "kind": "changed",
+   "leg": "openai>vertex",
+   "path": "$.systemInstruction.parts[].text",
+   "ref": "\u00a76.7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "images by url and data uri",
+    "oracle": "{\"contents\":[{\"parts\":[{\"text\":\"compare\"},{\"fileData\":{\"fileUri\":\"https://example.com/a.png\",\"mimeType\":\"image...",
+    "routeweft": "\"unsupported: image_url that is a remote URL: fetching it is out of leg scope, send a base64 data URI\""
+   },
+   "kind": "go-error",
+   "leg": "openai>vertex",
+   "path": "$",
+   "ref": "G7"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "empty and null contents",
+    "oracle": "{\"text\":\"still here\"}",
+    "routeweft": "null"
+   },
+   "kind": "only-oracle",
+   "leg": "openai>vertex",
+   "path": "$.contents[].parts[]",
+   "ref": "D37"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "reasoning effort",
+    "oracle": "null",
+    "routeweft": "4096"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>vertex",
+   "path": "$.generationConfig.maxOutputTokens",
+   "ref": "V22"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "json object response format",
+    "oracle": "null",
+    "routeweft": "\"application/json\""
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>vertex",
+   "path": "$.generationConfig.responseMimeType",
+   "ref": "V22"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "json schema response format",
+    "oracle": "null",
+    "routeweft": "{\"properties\":{\"ok\":{\"type\":\"boolean\"}},\"type\":\"object\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>vertex",
+   "path": "$.generationConfig.responseSchema",
+   "ref": "V22"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "system and turns with sampling",
+    "oracle": "null",
+    "routeweft": "[\"END\",\"STOP\"]"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>vertex",
+   "path": "$.generationConfig.stopSequences",
+   "ref": "V22"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "developer role",
+    "oracle": "null",
+    "routeweft": "{\"parts\":[{\"text\":\"Follow the style guide.\"}],\"role\":\"user\"}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>vertex",
+   "path": "$.systemInstruction",
+   "ref": "V12"
+  },
+  {
+   "direction": "request",
+   "example": {
+    "case": "required and named tool choice",
+    "oracle": "null",
+    "routeweft": "{\"functionCallingConfig\":{\"allowedFunctionNames\":[\"read_file\"],\"mode\":\"ANY\"}}"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>vertex",
+   "path": "$.toolConfig",
+   "ref": "V19"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "function call",
+    "oracle": "\"read_file-1700000000000-0\"",
+    "routeweft": "\"call_msg0_tc0_read_file\""
+   },
+   "kind": "changed",
+   "leg": "antigravity>openai",
+   "path": "$.toolCalls[].id",
+   "ref": "V25"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "function call",
+    "oracle": "\"read_file-1700000000000-0\"",
+    "routeweft": "\"call_msg0_tc0_read_file\""
+   },
+   "kind": "changed",
+   "leg": "gemini-cli>openai",
+   "path": "$.toolCalls[].id",
+   "ref": "V25"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "function call",
+    "oracle": "\"read_file-1700000000000-0\"",
+    "routeweft": "\"call_msg0_tc0_read_file\""
+   },
+   "kind": "changed",
+   "leg": "gemini>openai",
+   "path": "$.toolCalls[].id",
+   "ref": "V25"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "tool call",
+    "oracle": "\"call_0_1700000000000\"",
+    "routeweft": "\"call_msg0_tc0_read_file\""
+   },
+   "kind": "changed",
+   "leg": "ollama>openai",
+   "path": "$.toolCalls[].id",
+   "ref": "V25"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "incomplete by the token limit",
+    "oracle": "\"\"",
+    "routeweft": "\"length\""
+   },
+   "kind": "changed",
+   "leg": "openai-responses>openai",
+   "path": "$.finish",
+   "ref": "D41"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "incomplete by the token limit",
+    "oracle": "null",
+    "routeweft": "100"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai-responses>openai",
+   "path": "$.usage.completion",
+   "ref": "D41"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "incomplete by the token limit",
+    "oracle": "null",
+    "routeweft": "10"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai-responses>openai",
+   "path": "$.usage.prompt",
+   "ref": "D41"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "reasoning then text",
+    "oracle": "null",
+    "routeweft": "3"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai-responses>openai",
+   "path": "$.usage.reasoning",
+   "ref": "D41"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "incomplete by the token limit",
+    "oracle": "null",
+    "routeweft": "110"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai-responses>openai",
+   "path": "$.usage.total",
+   "ref": "D41"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "cached tokens",
+    "oracle": "null",
+    "routeweft": "300"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>antigravity",
+   "path": "$.usage.cached",
+   "ref": "R4"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "text",
+    "oracle": "null",
+    "routeweft": "5"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>antigravity",
+   "path": "$.usage.candidates",
+   "ref": "R4"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "text",
+    "oracle": "null",
+    "routeweft": "10"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>antigravity",
+   "path": "$.usage.prompt",
+   "ref": "R4"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "reasoning then text",
+    "oracle": "null",
+    "routeweft": "3"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>antigravity",
+   "path": "$.usage.thoughts",
+   "ref": "R4"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "text",
+    "oracle": "null",
+    "routeweft": "15"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>antigravity",
+   "path": "$.usage.total",
+   "ref": "R4"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "cached tokens",
+    "oracle": "null",
+    "routeweft": "300"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>claude",
+   "path": "$.usage.cacheRead",
+   "ref": "V6"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "text",
+    "oracle": "null",
+    "routeweft": "10"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>claude",
+   "path": "$.usage.input",
+   "ref": "V6"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "text",
+    "oracle": "null",
+    "routeweft": "5"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>claude",
+   "path": "$.usage.output",
+   "ref": "V6"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "stopped by the length limit",
+    "oracle": "\"completed\"",
+    "routeweft": "\"incomplete\""
+   },
+   "kind": "changed",
+   "leg": "openai>openai-responses",
+   "path": "$.status",
+   "ref": "D42"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "stopped by the length limit",
+    "oracle": "null",
+    "routeweft": "\"max_output_tokens\""
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>openai-responses",
+   "path": "$.incomplete",
+   "ref": "D42"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "cached tokens",
+    "oracle": "null",
+    "routeweft": "300"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>openai-responses",
+   "path": "$.usage.cached",
+   "ref": "D42"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "text",
+    "oracle": "null",
+    "routeweft": "10"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>openai-responses",
+   "path": "$.usage.input",
+   "ref": "D42"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "text",
+    "oracle": "null",
+    "routeweft": "5"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>openai-responses",
+   "path": "$.usage.output",
+   "ref": "D42"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "reasoning then text",
+    "oracle": "null",
+    "routeweft": "3"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>openai-responses",
+   "path": "$.usage.reasoning",
+   "ref": "D42"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "text",
+    "oracle": "null",
+    "routeweft": "15"
+   },
+   "kind": "only-routeweft",
+   "leg": "openai>openai-responses",
+   "path": "$.usage.total",
+   "ref": "D42"
+  },
+  {
+   "direction": "response",
+   "example": {
+    "case": "function call",
+    "oracle": "\"read_file-1700000000000-0\"",
+    "routeweft": "\"call_msg0_tc0_read_file\""
+   },
+   "kind": "changed",
+   "leg": "vertex>openai",
+   "path": "$.toolCalls[].id",
+   "ref": "V25"
+  }
+ ]
+}
