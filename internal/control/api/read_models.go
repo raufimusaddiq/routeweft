@@ -599,14 +599,23 @@ func (h *Handler) proxyPools(w http.ResponseWriter, r *http.Request) error {
 		writeError(w, http.StatusBadRequest, "invalid_page", err.Error())
 		return nil
 	}
+	// isActive filters by enabled, and only "true" or "false" count (route.js:4-8,47-
+	// 56); includeUsage adds how many connections are bound to each pool.
+	filter := poolFilter{usage: r.URL.Query().Get("includeUsage") == "true"}
+	switch r.URL.Query().Get("isActive") {
+	case "true":
+		filter.where, filter.args = " WHERE enabled=?", []any{1}
+	case "false":
+		filter.where, filter.args = " WHERE enabled=?", []any{0}
+	}
 	var total int64
-	if err := h.opts.DB.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM proxy_pools").Scan(&total); err != nil {
+	if err := h.opts.DB.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM proxy_pools"+filter.where, filter.args...).Scan(&total); err != nil {
 		return err
 	}
 	// Read pool rows and members in separate statements: fetching members while
 	// the pool rows are still open would hold a second pooled connection and can
 	// self-deadlock against SQLite's bounded pool.
-	items, err := collectProxyPools(r.Context(), h.opts.DB, p)
+	items, err := collectProxyPools(r.Context(), h.opts.DB, p, filter)
 	if err != nil {
 		return err
 	}
@@ -622,17 +631,34 @@ func (h *Handler) proxyPools(w http.ResponseWriter, r *http.Request) error {
 }
 
 type proxyPoolReadModel struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Enabled   bool   `json:"enabled"`
-	Strategy  string `json:"strategy"`
-	Members   []any  `json:"members"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Enabled     bool   `json:"enabled"`
+	Strategy    string `json:"strategy"`
+	Type        string `json:"type"`
+	StrictProxy bool   `json:"strictProxy"`
+	NoProxy     string `json:"noProxy"`
+	TestStatus  string `json:"testStatus"`
+	LastTested  string `json:"lastTestedAt,omitempty"`
+	LastError   string `json:"lastError,omitempty"`
+	Members     []any  `json:"members"`
+	// BoundConnectionCount is set only when the list was asked for usage.
+	BoundConnectionCount *int   `json:"boundConnectionCount,omitempty"`
+	CreatedAt            string `json:"createdAt"`
+	UpdatedAt            string `json:"updatedAt"`
 }
 
-func collectProxyPools(ctx context.Context, db *sql.DB, p page) ([]proxyPoolReadModel, error) {
-	rows, err := db.QueryContext(ctx, "SELECT id,name,enabled,strategy,created_at,updated_at FROM proxy_pools ORDER BY name,id LIMIT ? OFFSET ?", p.Size, p.Offset)
+// poolFilter is the list query's isActive condition and whether to count bindings.
+type poolFilter struct {
+	where string
+	args  []any
+	usage bool
+}
+
+func collectProxyPools(ctx context.Context, db *sql.DB, p page, filter poolFilter) ([]proxyPoolReadModel, error) {
+	query := "SELECT id,name,enabled,strategy,kind,strict,no_proxy,test_status,COALESCE(last_tested_at,''),COALESCE(last_error,''),created_at,updated_at," +
+		"(SELECT COUNT(*) FROM provider_connections c WHERE c.proxy_pool_id=proxy_pools.id) FROM proxy_pools" + filter.where + " ORDER BY name,id LIMIT ? OFFSET ?"
+	rows, err := db.QueryContext(ctx, query, append(append([]any(nil), filter.args...), p.Size, p.Offset)...)
 	if err != nil {
 		return nil, err
 	}
@@ -640,11 +666,15 @@ func collectProxyPools(ctx context.Context, db *sql.DB, p page) ([]proxyPoolRead
 	items := make([]proxyPoolReadModel, 0, p.Size)
 	for rows.Next() {
 		var item proxyPoolReadModel
-		var enabled int
-		if err := rows.Scan(&item.ID, &item.Name, &enabled, &item.Strategy, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		var enabled, strict, bound int
+		if err := rows.Scan(&item.ID, &item.Name, &enabled, &item.Strategy, &item.Type, &strict, &item.NoProxy, &item.TestStatus, &item.LastTested, &item.LastError, &item.CreatedAt, &item.UpdatedAt, &bound); err != nil {
 			return nil, err
 		}
-		item.Enabled = enabled != 0
+		item.Enabled, item.StrictProxy = enabled != 0, strict != 0
+		if filter.usage {
+			count := bound
+			item.BoundConnectionCount = &count
+		}
 		items = append(items, item)
 	}
 	return items, rows.Err()

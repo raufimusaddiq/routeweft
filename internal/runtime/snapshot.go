@@ -48,6 +48,9 @@ type RuntimeSnapshot struct {
 	proxyEnabled        bool
 	proxyURL            string
 	noProxy             []string
+	// rotationPools and noAuthProxies serve no-auth proxy rotation (PARITY 6.38).
+	rotationPools []string
+	noAuthProxies map[string]NoAuthProxy
 }
 
 func (s *RuntimeSnapshot) TransformBody(ctx context.Context, protocol string, body []byte, allowPrivate bool) ([]byte, error) {
@@ -59,9 +62,65 @@ func (s *RuntimeSnapshot) OutboundProxy() (bool, string, []string) {
 }
 
 type proxyPoolEntry struct {
-	enabled  bool
-	strategy string
-	members  []ProxyMember
+	enabled   bool
+	strategy  string
+	members   []ProxyMember
+	kind      string
+	strict    bool
+	noProxy   string
+	updatedAt string
+}
+
+// PoolView is a compiled pool as proxy selection reads it, disabled pools
+// included: a strict pool that is switched off still has to refuse a connection
+// that names it (src/lib/network/connectionProxy.js:80-85).
+type PoolView struct {
+	Enabled  bool
+	Strategy string
+	Kind     string
+	Strict   bool
+	NoProxy  string
+	Members  []ProxyMember
+}
+
+// PoolView returns the compiled pool for an id, whether or not it is enabled.
+func (s *RuntimeSnapshot) PoolView(poolID string) (PoolView, bool) {
+	if s == nil {
+		return PoolView{}, false
+	}
+	entry, ok := s.poolPools[poolID]
+	if !ok {
+		return PoolView{}, false
+	}
+	return PoolView{Enabled: entry.enabled, Strategy: entry.strategy, Kind: entry.kind, Strict: entry.strict, NoProxy: entry.noProxy, Members: append([]ProxyMember(nil), entry.members...)}, true
+}
+
+// RotationPools lists the pools a no-auth provider may rotate over: enabled and
+// holding a usable member, newest first (src/sse/services/auth.js:84-87 lists the
+// active pools that have a URL, in the order the pool repository returns them).
+func (s *RuntimeSnapshot) RotationPools() []string {
+	if s == nil {
+		return nil
+	}
+	return append([]string(nil), s.rotationPools...)
+}
+
+// NoAuthProxy is the proxy choice a providerStrategies entry makes for a no-auth
+// provider: a fixed pool, or a rotation over every active pool.
+type NoAuthProxy struct {
+	ProviderID string
+	PoolID     string
+	Rotate     string
+}
+
+// NoAuthProxy returns the choice that applies to one connection, if its provider
+// is a no-auth provider with a proxyPoolId or rotateStrategy set.
+func (s *RuntimeSnapshot) NoAuthProxy(connectionID string) (NoAuthProxy, bool) {
+	if s == nil {
+		return NoAuthProxy{}, false
+	}
+	choice, ok := s.noAuthProxies[connectionID]
+	return choice, ok
 }
 
 // ConnectionPool returns the proxy pool bound to one connection, or "" when the
@@ -123,7 +182,8 @@ func (s *RuntimeSnapshot) ProxyPools() []ProxyPool {
 	}
 	pools := make([]ProxyPool, 0, len(s.poolPools))
 	for id, entry := range s.poolPools {
-		pools = append(pools, ProxyPool{ID: id, Enabled: entry.enabled, Strategy: entry.strategy, Members: append([]ProxyMember(nil), entry.members...)})
+		pools = append(pools, ProxyPool{ID: id, Enabled: entry.enabled, Strategy: entry.strategy, Members: append([]ProxyMember(nil), entry.members...),
+			Kind: entry.kind, Strict: entry.strict, NoProxy: entry.noProxy, UpdatedAt: entry.updatedAt})
 	}
 	return pools
 }

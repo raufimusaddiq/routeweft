@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/raufimusaddiq/routeweft/internal/live"
 )
 
 // c09Observability turns usage accounting on with a flush interval far longer
@@ -334,6 +336,11 @@ func TestClientDisconnectKeepsExactlyOneUsageRecordWithoutLeaks(t *testing.T) {
 				for {
 					select {
 					case event := <-liveEvents:
+						// The live view counts requests in flight (usage.pending) and
+						// may say so for this one; it must not list it as finished.
+						if snapshot, ok := event.Data.(live.Snapshot); ok && event.Type == "usage.pending" && len(snapshot.Recent) == 0 {
+							continue
+						}
 						t.Fatalf("abandoned request announced on the live event bus: %+v", event)
 					case event := <-feed.C():
 						t.Fatalf("abandoned request announced on the usage feed: %+v", event)

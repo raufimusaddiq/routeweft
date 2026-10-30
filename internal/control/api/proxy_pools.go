@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -32,6 +33,25 @@ type proxyPoolRequest struct {
 	Enabled  *bool              `json:"enabled"`
 	Strategy string             `json:"strategy"`
 	Members  []proxyMemberInput `json:"members"`
+	// Type, StrictProxy and NoProxy are read loosely, as the reference reads them
+	// (src/app/api/proxy-pools/route.js:12-29, [id]/route.js:9-46): an unknown type
+	// is "http", only the boolean true makes a pool strict, and a bypass list that
+	// is not a string is empty. Absent on an update, each keeps its stored value.
+	Type        json.RawMessage `json:"type"`
+	StrictProxy json.RawMessage `json:"strictProxy"`
+	NoProxy     json.RawMessage `json:"noProxy"`
+}
+
+// poolKind reads a pool type the way the reference does: one of the five known
+// names, exactly, else a plain forward proxy.
+func poolKind(raw json.RawMessage) proxy.Kind {
+	var name string
+	if json.Unmarshal(raw, &name) == nil {
+		if kind := proxy.Kind(name); kind.Valid() {
+			return kind
+		}
+	}
+	return proxy.KindHTTP
 }
 
 // proxyMemberInput identifies a member either by a new url or, on update, by the
@@ -71,6 +91,7 @@ func (h *Handler) handlePutProxyPool(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		pool.Enabled = existing.Enabled
+		pool.Kind, pool.Strict, pool.NoProxy = existing.Kind, existing.Strict, existing.NoProxy
 		if pool.Strategy == "" {
 			pool.Strategy = existing.Strategy
 		}
@@ -80,6 +101,20 @@ func (h *Handler) handlePutProxyPool(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Enabled != nil {
 		pool.Enabled = *body.Enabled
+	}
+	if len(body.Type) > 0 {
+		pool.Kind = poolKind(body.Type)
+	}
+	if len(body.StrictProxy) > 0 {
+		pool.Strict = string(bytes.TrimSpace(body.StrictProxy)) == "true"
+	}
+	if len(body.NoProxy) > 0 {
+		var list string
+		_ = json.Unmarshal(body.NoProxy, &list)
+		pool.NoProxy = strings.TrimSpace(list)
+	}
+	if pool.Kind == "" {
+		pool.Kind = proxy.KindHTTP
 	}
 	seenIDs := map[string]bool{}
 	for position, input := range body.Members {
@@ -100,7 +135,11 @@ func (h *Handler) handlePutProxyPool(w http.ResponseWriter, r *http.Request) {
 		if input.Enabled != nil {
 			member.Enabled = *input.Enabled
 		}
-		normalized, err := proxy.ValidateURL(member.URL)
+		validate := proxy.ValidateURL
+		if pool.Kind.Relay() {
+			validate = proxy.ValidateRelayURL
+		}
+		normalized, err := validate(member.URL)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_proxy_pool", err.Error())
 			return
@@ -161,7 +200,7 @@ func (h *Handler) handleDeleteProxyPool(w http.ResponseWriter, r *http.Request) 
 	// the global proxy), so the store refuses atomically until they are rebound.
 	switch bound, err := h.proxyStore.DeletePoolIfUnbound(r.Context(), id); {
 	case errors.Is(err, proxy.ErrInUse):
-		writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]any{"code": "proxy_pool_in_use", "message": "proxy pool is bound to provider connections; rebind them first", "connections": bound}})
+		writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]any{"code": "proxy_pool_in_use", "message": "proxy pool is bound to provider connections or named by a providerStrategies entry; rebind them first", "connections": bound, "boundConnectionCount": bound}})
 		return
 	case errors.Is(err, proxy.ErrNotFound):
 		writeError(w, http.StatusNotFound, "proxy_pool_not_found", "proxy pool was not found")
@@ -203,7 +242,14 @@ func (h *Handler) proxyPoolResponse(ctx context.Context, pool proxy.Pool, revisi
 	for _, member := range pool.Members {
 		members = append(members, map[string]any{"id": member.ID, "position": member.Position, "url": safeURL(member.URL), "enabled": member.Enabled})
 	}
-	response := map[string]any{"id": pool.ID, "name": pool.Name, "enabled": pool.Enabled, "strategy": string(pool.Strategy), "members": members}
+	response := map[string]any{"id": pool.ID, "name": pool.Name, "enabled": pool.Enabled, "strategy": string(pool.Strategy), "members": members,
+		"type": string(poolKindOrDefault(pool.Kind)), "strictProxy": pool.Strict, "noProxy": pool.NoProxy, "testStatus": firstText(pool.TestStatus, "unknown")}
+	if pool.LastTestedAt != "" {
+		response["lastTestedAt"] = pool.LastTestedAt
+	}
+	if pool.LastError != "" {
+		response["lastError"] = pool.LastError
+	}
 	if h.opts.DB != nil {
 		var createdAt, updatedAt string
 		if err := h.opts.DB.QueryRowContext(ctx, "SELECT created_at,updated_at FROM proxy_pools WHERE id=?", pool.ID).Scan(&createdAt, &updatedAt); err == nil {
@@ -295,6 +341,10 @@ func (h *Handler) handleTestProxyPool(w http.ResponseWriter, r *http.Request) {
 		go func(i int, member proxy.Member) {
 			defer wg.Done()
 			defer func() { <-slots }()
+			if pool.Kind.Relay() {
+				results[i].proxyTestResult = h.testRelay(ctx, member.URL)
+				return
+			}
 			results[i].proxyTestResult = h.testProxy(ctx, member.URL)
 		}(i, member)
 	}
@@ -308,7 +358,68 @@ func (h *Handler) handleTestProxyPool(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"poolId": pool.ID, "ok": enabled > 0 && healthy == enabled, "members": results})
+	passed := enabled > 0 && healthy == enabled
+	response := map[string]any{"poolId": pool.ID, "ok": passed, "members": results}
+	// A test of the whole pool is recorded and, as in the reference, enables a pool
+	// that passed and disables one that failed (proxy-pools/[id]/test/route.js:49-56).
+	// A test of one member says little about the pool and records nothing.
+	if body.MemberID == "" && enabled > 0 {
+		failure := ""
+		for _, result := range results {
+			if result.Enabled && !result.OK {
+				failure = firstText(result.Message, "pool test failed")
+				break
+			}
+		}
+		testedAt := time.Now().UTC()
+		if err := h.proxyStore.RecordTest(r.Context(), pool.ID, passed, testedAt, failure); err != nil {
+			writeError(w, http.StatusInternalServerError, "proxy_pool_save_failed", "the test result could not be recorded")
+			return
+		}
+		if _, ok := h.publishProxyPools(w, r.Context(), "pool test recorded but the runtime snapshot could not be refreshed"); !ok {
+			return
+		}
+		response["testedAt"] = testedAt.Format(time.RFC3339Nano)
+		response["testStatus"] = map[bool]string{true: "active", false: "error"}[passed]
+		response["enabled"] = passed
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+// testRelay sends one GET through a relay to the test target, the way the pool
+// would carry a provider request. The reference asks the relay for
+// https://httpbin.org/get; the default test target is used instead, so the check
+// does not depend on a third-party service (PARITY 6.38, D29).
+func (h *Handler) testRelay(ctx context.Context, relayURL string) proxyTestResult {
+	if err := h.checkProxyHost(relayURL); err != nil {
+		return failedProxyTest("blocked", 0)
+	}
+	policy := transport.ProxyPolicy{RelayURL: relayURL, AllowPrivate: h.opts.AllowPrivateUpstreams}
+	client, err := h.proxyClients.Client(policy)
+	if err != nil {
+		return failedProxyTest("unreachable", 0)
+	}
+	defer h.proxyClients.Release(policy)
+	ctx, cancel := context.WithTimeout(ctx, proxyTestTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, h.proxyTestTarget, nil)
+	if err != nil {
+		return failedProxyTest("unreachable", 0)
+	}
+	started := time.Now()
+	response, err := client.Do(request)
+	elapsed := time.Since(started).Milliseconds()
+	if err != nil {
+		return failedProxyTest(classifyProxyError(err), elapsed)
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+	if response.StatusCode >= 400 {
+		result := failedProxyTest("proxy_error", elapsed)
+		result.StatusCode = response.StatusCode
+		return result
+	}
+	return proxyTestResult{OK: true, StatusCode: response.StatusCode, LatencyMs: elapsed}
 }
 
 // handleProxyTest tests one proxy: the url in the body, or the configured global
@@ -494,4 +605,20 @@ func decodeOptionalJSON(w http.ResponseWriter, r *http.Request, target any) erro
 		return nil
 	}
 	return err
+}
+
+func poolKindOrDefault(kind proxy.Kind) proxy.Kind {
+	if kind == "" {
+		return proxy.KindHTTP
+	}
+	return kind
+}
+
+func firstText(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

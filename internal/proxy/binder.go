@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"math/rand/v2"
 	"net/http"
 	"strings"
 	"sync"
@@ -27,6 +28,9 @@ type Binder struct {
 	// reach a LAN proxy during validation.
 	AllowLocal bool
 
+	// Rotation spreads a no-auth provider over the active pools.
+	Rotation Rotation
+
 	mu sync.Mutex
 	// cursors are memory-first round-robin positions per pool (SPEC §13).
 	cursors map[string]uint64
@@ -41,18 +45,32 @@ func NewBinder(snapshot SnapshotSource) *Binder {
 // policy, or nil when no proxy applies so ingress keeps its default client. A
 // per-connection proxy whose stored URL is unusable yields a client that fails
 // every request: dialing directly instead would leave over the address the
-// operator configured the proxy to hide.
+// operator configured the proxy to hide. So does a strict pool that cannot supply
+// a proxy (PARITY 6.38).
 func (b *Binder) ClientFor(_ context.Context, connectionID string) *http.Client {
 	if b == nil || b.Clients == nil {
 		return nil
 	}
 	policy, ok := b.Policy(connectionID)
-	if !ok || !policy.Enabled || (policy.GlobalProxyURL == "" && policy.ConnectionProxyURL == "") {
+	if !ok {
+		return nil
+	}
+	if policy.RelayURL != "" {
+		client, err := b.Clients.Client(policy)
+		if err != nil {
+			return refusingClient
+		}
+		return client
+	}
+	if policy.Strict && policy.Intended && !policy.Enabled {
+		return refusingClient
+	}
+	if !policy.Enabled || (policy.GlobalProxyURL == "" && policy.ConnectionProxyURL == "") {
 		return nil
 	}
 	client, err := b.Clients.Client(policy)
 	if err != nil {
-		if policy.ConnectionOwnsNoProxy {
+		if policy.ConnectionOwnsNoProxy || (policy.Strict && policy.Intended) {
 			return refusingClient
 		}
 		return nil
@@ -101,33 +119,65 @@ func (b *Binder) binding(snapshot *runtime.RuntimeSnapshot, connectionID string)
 	if connectionID == "" {
 		return Binding{}
 	}
-	if binding, ok := b.poolBinding(snapshot, connectionID); ok {
-		return binding
+	input := ConnectionInput{PoolID: strings.TrimSpace(snapshot.ConnectionPool(connectionID))}
+	if choice, ok := snapshot.NoAuthProxy(connectionID); ok {
+		// A no-auth provider's providerStrategies entry names the proxy; the
+		// reference's virtual account for it has no pool binding or proxy of its own.
+		input.PoolID = b.noAuthPool(snapshot, choice)
+	} else if legacy, ok := snapshot.LegacyConnectionProxy(connectionID); ok {
+		input.LegacyEnabled, input.LegacyURL = true, legacy.URL
+		input.LegacyNoProxy = strings.Join(legacy.NoProxy, ",")
 	}
-	// A missing, disabled or empty pool is not a hard failure; the connection
-	// falls back to its own proxy, then to the global proxy setting, the pin's
-	// order (connectionProxy.js:92-165).
-	if legacy, ok := snapshot.LegacyConnectionProxy(connectionID); ok {
-		return Binding{ConnectionProxyURL: legacy.URL, ConnectionNoProxy: legacy.NoProxy}
+	// A missing, disabled or empty pool is not a hard failure unless it is strict;
+	// the connection falls back to its own proxy, then to the global proxy setting,
+	// the pin's order (connectionProxy.js:92-165).
+	var rotationUsed bool
+	if poolID := strings.TrimSpace(input.PoolID); poolID != "" && poolID != NoPool {
+		if view, found := snapshot.PoolView(poolID); found {
+			input.Pool = PoolInfo{Found: true, Enabled: view.Enabled, Kind: Kind(view.Kind), Strict: view.Strict, NoProxy: view.NoProxy}
+			if view.Enabled {
+				if member, ok := selectMember(view.Members, b.nextCursor(poolID), Strategy(view.Strategy)); ok {
+					input.Pool.URL = member.URL
+					rotationUsed = len(view.Members) > 1
+				}
+			}
+		}
 	}
-	return Binding{}
+	resolution := Resolve(input)
+	binding := Binding{PoolID: resolution.PoolID, RotationUsed: rotationUsed, Strict: resolution.Strict, Intended: resolution.PoolID != ""}
+	switch resolution.Source {
+	case "pool":
+		binding.MemberURL = resolution.ProxyURL
+		binding.PoolNoProxy = splitList(resolution.NoProxy)
+	case "legacy":
+		binding.ConnectionProxyURL = resolution.ProxyURL
+		binding.ConnectionNoProxy = splitList(resolution.NoProxy)
+	default:
+		if resolution.RelayURL != "" {
+			binding.RelayURL = resolution.RelayURL
+		}
+	}
+	return binding
 }
 
-func (b *Binder) poolBinding(snapshot *runtime.RuntimeSnapshot, connectionID string) (Binding, bool) {
-	poolID := strings.TrimSpace(snapshot.ConnectionPool(connectionID))
-	if poolID == "" {
-		return Binding{}, false
+// noAuthPool turns a no-auth provider's proxy choice into the pool id to bind: a
+// rotation picks among the active pools (and finds none when there are none), else
+// the entry's fixed pool stands.
+func (b *Binder) noAuthPool(snapshot *runtime.RuntimeSnapshot, choice runtime.NoAuthProxy) string {
+	if choice.Rotate == "" || choice.Rotate == "none" {
+		return choice.PoolID
 	}
-	strategy, members, ok := snapshot.ProxyPool(poolID)
-	if !ok {
-		return Binding{}, false
+	return b.Rotation.Pick(snapshot.RotationPools(), choice.Rotate, choice.ProviderID, rand.IntN)
+}
+
+func splitList(text string) []string {
+	var out []string
+	for _, part := range strings.Split(text, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
 	}
-	cursor := b.nextCursor(poolID)
-	member, ok := selectMember(members, cursor, Strategy(strategy))
-	if !ok {
-		return Binding{}, false
-	}
-	return Binding{PoolID: poolID, MemberURL: member.URL, RotationUsed: len(members) > 1}, true
+	return out
 }
 
 // selectMember chooses from compiled snapshot members. It mirrors SelectMember

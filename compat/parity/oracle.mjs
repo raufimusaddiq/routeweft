@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import vm from 'node:vm';
 
@@ -48,7 +49,10 @@ export async function loadTree(entry, { stubs = {}, globals = {} } = {}) {
     const code = source(file.slice(1));
     const dependencies = {};
     for (const m of code.matchAll(importPattern)) {
-      const imported = m[4].startsWith('.') ? await module(resolve(file, m[4])) : ['os', 'node:os'].includes(m[4]) ? os : host();
+      const hostModules = { os, 'node:os': os, crypto, 'node:crypto': crypto };
+      // "@/x" is the oracle's alias for src/x; any other bare specifier is a host module.
+      const imported = stubs[m[4]] ?? (m[4].startsWith('.') ? await module(resolve(file, m[4]))
+        : m[4].startsWith('@/') ? await module(`/src/${m[4].slice(2)}`) : hostModules[m[4]] ?? host());
       if (m[1]) for (const [a, b] of names(m[1])) dependencies[b || a] = imported[a];
       else if (m[2]) dependencies[m[2]] = imported;
       else dependencies[m[3]] = imported.default;
