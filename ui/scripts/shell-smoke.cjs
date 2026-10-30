@@ -1756,7 +1756,7 @@ const { join } = require('node:path');
   assert.equal(report.memberLabel, 'openai / gpt-5');
   assert.equal(report.memberDeselected, 'Deselected');
   assert.equal(report.comboRowName, 'daily');
-  assert.match(report.memberUnknownError, /not a known model or alias/);
+  assert.match(report.memberUnknownError, /not a known model, alias or Combo/);
   assert.equal(report.memberRowsAfterUnknown, 0);
   assert.ok(report.memberChoices.includes('openai/gpt-5'));
   assert.equal(report.comboInUse, 'Allowed by 1 key');
