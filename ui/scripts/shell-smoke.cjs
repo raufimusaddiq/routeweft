@@ -285,6 +285,7 @@ const { join } = require('node:path');
     ...Array.from({ length: 124 }, (_, i) => ({ connectionId: `fill-${i}`, providerId: 'openai', name: `bulk-${String(i).padStart(3, '0')}`, enabled: true, status: 'available', remaining: 1, observedAt: '2026-09-25T23:30:00Z', stale: false })),
   ];
   let usageGate = null;
+  let systemOneGate = null;
   // History length of the usage fixture: 2 days by default (the original fixture); a steady 100 a day with the latest 7 days at 140 otherwise.
   let historyDays = 2;
   const windowedHistory = () => { const all = historySeries(); return all && (usagePeriod === '7d' ? all.slice(-7) : usagePeriod === '24h' ? all.slice(-1) : all); };
@@ -451,6 +452,7 @@ const { join } = require('node:path');
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 'conn-1', nodeId: 'node-openai', providerId: 'openai', name: 'primary', authKind: 'api-key', identity: 'acct-1', enabled: providerPatches === 0, priority: 0, credentialConfigured: true, connectionProxy: { url: 'http://proxy.example.test:3128', noProxy: 'localhost' } }, { id: 'conn-jev', nodeId: 'node-jev', providerId: 'typesafe', name: 'jev', authKind: 'api-key', identity: 'acct-jev', enabled: true, priority: 0, credentialConfigured: true }, ...(signInProviders ? [{ id: 'conn-codex-a', nodeId: 'node-codex', providerId: 'codex', name: 'Work A', authKind: 'oauth', identity: 'a@example.test', enabled: true, priority: 0, credentialConfigured: true }] : []), ...(hostDiscoveries.length ? [{ id: 'conn-mimo', nodeId: 'node-mimo', providerId: 'xiaomi-mimo', name: '7@xiaomi', authKind: 'api-key', identity: '7@xiaomi', enabled: true, priority: 0, credentialConfigured: true, desktopSessionRenewal: mimoRenewal, ...(mimoRenewal ? { desktopSessionReadAt: '2026-09-25T19:50:00Z' } : {}) }] : [])], page: 1, pageSize: 100, total: 2 + (signInProviders ? 1 : 0) + (hostDiscoveries.length ? 1 : 0) }) });
   }
   if (url.pathname === '/admin/v1/systemone' && method === 'GET') {
+    if (systemOneGate) await systemOneGate;
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: systemOneModelAdded ? [{ providerId: 'typesafe', id: 'jev', name: 'jev', capabilities: [], disabled: false }, { providerId: 'typesafe', id: 'jev-mini', name: 'jev-mini', capabilities: [], disabled: false }] : [{ providerId: 'typesafe', id: 'jev', name: 'jev', capabilities: [], disabled: false }], page: 1, pageSize: 100, total: 1 }) });
   }
   if (url.pathname === '/admin/v1/usage/summary' && method === 'GET') {
@@ -1224,8 +1226,22 @@ const { join } = require('node:path');
   report.adapterAfterEnable = await page.locator('.adapter-section').first().locator('small').textContent();
   report.adapterEnabled = adapterEnabled;
   // System One typed request workflow (PRD 11, PRD-API-001).
+  // The provider list comes from the first /systemone read, and until it arrives
+  // the select holds only the "No System One provider configured" placeholder
+  // (#246). Hold that read so the loading page is seen on every run, then wait on
+  // the page's own signal that loading ended (aria-busy="false", set after the
+  // providers are) before reading the options. Nothing here sleeps.
+  let releaseSystemOne;
+  systemOneGate = new Promise(resolve => { releaseSystemOne = resolve; });
   await page.click('a[href="#system-one"]');
   await page.waitForSelector('.systemone-content');
+  report.systemOneLoading = await page.evaluate(() => ({
+    busy: document.querySelector('.systemone-content').getAttribute('aria-busy'),
+    options: Array.from(document.querySelectorAll('#systemone-provider option'), option => option.textContent),
+  }));
+  systemOneGate = null;
+  releaseSystemOne();
+  await page.waitForSelector('.systemone-content[aria-busy="false"]');
   report.systemOneProviders = await page.locator('#systemone-provider option').allTextContents();
   await page.waitForSelector('.systemone-layout');
   report.systemOneModels = await page.locator('.systemone-layout .model-row code').allTextContents();
@@ -1755,6 +1771,8 @@ const { join } = require('node:path');
   assert.match(report.adapterInitial, /Disabled/);
   assert.match(report.adapterAfterEnable, /empty pool is a no-op/);
   assert.equal(report.adapterEnabled, true);
+  assert.equal(report.systemOneLoading.busy, 'true', 'System One reports it is loading until its providers arrive');
+  assert.deepEqual(report.systemOneLoading.options, ['No System One provider configured'], 'the placeholder is what a read before loading sees');
   assert.deepEqual(report.systemOneProviders, ['typesafe']);
   assert.deepEqual(report.systemOneModels, ['jev']);
   assert.deepEqual(report.systemOneModelsAfterAdd, ['jev', 'jev-mini']);
