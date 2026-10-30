@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,10 +16,9 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
-// attemptSlot is one entry of the attempt loop's candidate list. Ordinarily it is
-// one account of one model. A Combo member that is itself a Combo is a slot that
-// expands when the loop reaches it, so a nested Combo's rotation only advances
-// when the outer Combo gets that far (open-sse chat.js:177-229).
+// attemptSlot is one entry of the attempt loop's candidate list: one account of
+// one model. A Combo with another Combo among its members is not walked here but
+// by walkCombo (combo_walk.go), so no slot stands for a nested Combo.
 type attemptSlot struct {
 	ref routing.ProviderRef
 	// member numbers the model within the request; accounts of one model share it.
@@ -32,8 +32,6 @@ type attemptSlot struct {
 	// unavailable is set for a model that has no account to try; reaching it
 	// counts as that model failing.
 	unavailable *dispatchError
-	// expand turns a nested Combo into its own slots.
-	expand func() ([]attemptSlot, error)
 }
 
 // modelRoute is the candidate list for one request.
@@ -89,7 +87,7 @@ func (h *Handler) planModelRoute(r *http.Request, snapshot *runtime.RuntimeSnaps
 			return modelRoute{}, false, nil
 		}
 	}
-	slots, err := plan.slots(ordered, 1)
+	slots, err := plan.slots(ordered)
 	if err != nil {
 		return modelRoute{}, true, err
 	}
@@ -109,29 +107,15 @@ type comboPlan struct {
 	nextID   int
 }
 
-// slots expands ordered models into attempt slots. A nested Combo is left as a
-// slot that plans itself, with the same required capabilities and caller key, when
-// the loop reaches it; the key is not checked again because the outer name was
-// (keyAccess.js:162-177 filters only adapter models).
-func (p *comboPlan) slots(ordered []plannedMember, depth int) ([]attemptSlot, error) {
+// slots turns ordered models into attempt slots, each model's accounts in order.
+func (p *comboPlan) slots(ordered []plannedMember) ([]attemptSlot, error) {
 	now := time.Now()
 	var slots []attemptSlot
 	for _, member := range ordered {
 		if member.IsCombo() {
-			name := member.ModelID
-			if depth >= runtime.MaxComboDepth {
-				return nil, &dispatchError{http.StatusBadGateway, "combo_too_deep", fmt.Sprintf("combo %q nests deeper than %d", name, runtime.MaxComboDepth)}
-			}
-			slots = append(slots, attemptSlot{label: name, expand: func() ([]attemptSlot, error) {
-				if _, ok := p.snapshot.ComboByName(name); !ok {
-					return nil, nil
-				}
-				if _, fusion := p.snapshot.FusionCombo(name); fusion {
-					return nil, &dispatchError{http.StatusNotImplemented, "combo_fusion_unavailable", fmt.Sprintf("combo %q is a Fusion Combo nested in an ordered Combo, which is not served", name)}
-				}
-				planned, _ := p.h.planCombo(p.snapshot, p.access, name, p.required)
-				return p.slots(planned, depth+1)
-			}})
+			// Unreachable: a Combo with a nested member is walked, not planned.
+			p.nextID++
+			slots = append(slots, attemptSlot{member: p.nextID, label: member.ModelID, unavailable: &dispatchError{http.StatusInternalServerError, "nested_combo_in_attempt_loop", "a nested Combo reached the attempt loop"}})
 			continue
 		}
 		p.nextID++
@@ -211,8 +195,10 @@ func transientWait(status int, text string) time.Duration {
 
 // comboExhausted is combo.js:363-381: when every model failed the status is the
 // first failure's (503 when the last message names missing credentials) and the
-// message is the last failure's.
-func comboExhausted(firstStatus int, lastText string) *dispatchError {
+// message is the last failure's. A model that reported when it can serve again
+// turns the answer into unavailableResponse (error.js:105-120): the earliest such
+// time is appended to the message in words and given as Retry-After in seconds.
+func comboExhausted(firstStatus int, lastText string, retry, now time.Time) *retryError {
 	status := firstStatus
 	if strings.Contains(strings.ToLower(lastText), "no credentials") || status == 0 {
 		status = http.StatusServiceUnavailable
@@ -221,7 +207,82 @@ func comboExhausted(firstStatus int, lastText string) *dispatchError {
 	if message == "" {
 		message = "All combo models unavailable"
 	}
-	return &dispatchError{status, "combo_unavailable", message}
+	answer := &retryError{dispatchError: &dispatchError{status, "combo_unavailable", message}}
+	if !retry.IsZero() {
+		answer.message = message + " (" + formatRetryAfter(retry, now) + ")"
+		answer.seconds = max(int(math.Ceil(retry.Sub(now).Seconds())), 1)
+	}
+	return answer
+}
+
+// formatRetryAfter is accountFallback.js:86-99.
+func formatRetryAfter(until, now time.Time) string {
+	difference := until.Sub(now)
+	if difference <= 0 {
+		return "reset after 0s"
+	}
+	total := int(math.Ceil(difference.Seconds()))
+	hours, minutes, seconds := total/3600, total%3600/60, total%60
+	var parts []string
+	if hours > 0 {
+		parts = append(parts, strconv.Itoa(hours)+"h")
+	}
+	if minutes > 0 {
+		parts = append(parts, strconv.Itoa(minutes)+"m")
+	}
+	if seconds > 0 || len(parts) == 0 {
+		parts = append(parts, strconv.Itoa(seconds)+"s")
+	}
+	return "reset after " + strings.Join(parts, " ")
+}
+
+// parseRetryAfter reads a member failure's top-level retryAfter the way
+// combo.js:315-327 does: a date string or a number of milliseconds since the epoch
+// (what `new Date(value)` accepts). A value that is not a date is ignored; the
+// oracle would answer a Retry-After of NaN (PARITY D16).
+func parseRetryAfter(body []byte) (time.Time, bool) {
+	var parsed struct {
+		RetryAfter any `json:"retryAfter"`
+	}
+	if json.Unmarshal(body, &parsed) != nil {
+		return time.Time{}, false
+	}
+	switch value := parsed.RetryAfter.(type) {
+	case string:
+		for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05.999Z07:00", "2006-01-02T15:04:05", "2006-01-02 15:04:05Z07:00", time.RFC1123, time.RFC1123Z} {
+			if parsedTime, err := time.Parse(layout, value); err == nil {
+				return parsedTime, true
+			}
+		}
+	case float64:
+		if value != 0 {
+			return time.UnixMilli(int64(value)), true
+		}
+	}
+	return time.Time{}, false
+}
+
+// shouldFallbackFailure is checkFallbackError's shouldFallback
+// (accountFallback.js:23-64, errorConfig.js:59-83): a message that names a known
+// condition, or 401/402/403/404/429, falls through to the next model; any other
+// 4xx is the answer; everything else falls through.
+func shouldFallbackFailure(status int, text string) bool {
+	lower := strings.ToLower(text)
+	for _, rule := range fallbackTextRules {
+		if lower != "" && strings.Contains(lower, rule) {
+			return true
+		}
+	}
+	switch status {
+	case 401, 402, 403, 404, 429:
+		return true
+	}
+	return !(status >= 400 && status < 500)
+}
+
+var fallbackTextRules = []string{
+	"context_length_exceeded", "maximum context length", "no credentials", "request not allowed", "improperly formed request",
+	"rate limit", "too many requests", "quota exceeded", "insufficient credit", "credit balance is too low", "capacity", "overloaded",
 }
 
 // jsonErrorMessage is errorBody?.error?.message || errorBody?.error ||
@@ -270,6 +331,13 @@ type comboTrace struct {
 	failures map[int]modelFailure
 	order    []int // models in the order they first failed
 	lastText string
+	// retry is the earliest time any model reported it could serve again.
+	retry time.Time
+	now   func() time.Time
+}
+
+func newComboTrace() *comboTrace {
+	return &comboTrace{failures: map[int]modelFailure{}, now: time.Now}
 }
 
 func (t *comboTrace) note(member, status int, text string) {
@@ -281,6 +349,23 @@ func (t *comboTrace) note(member, status int, text string) {
 	}
 	t.failures[member] = modelFailure{status, text}
 	t.lastText = text
+}
+
+// noteBody records a failure from the body the model answered with: its message,
+// and the retryAfter it carries, if any (combo.js:313-327).
+func (t *comboTrace) noteBody(member, status int, reason string, body []byte) {
+	if t == nil {
+		return
+	}
+	t.note(member, status, failureText(status, reason, body))
+	if when, ok := parseRetryAfter(body); ok && (t.retry.IsZero() || when.Before(t.retry)) {
+		t.retry = when
+	}
+}
+
+// exhausted is the answer when every model failed.
+func (t *comboTrace) exhausted() *retryError {
+	return comboExhausted(t.failures[t.order[0]].status, t.lastText, t.retry, t.now())
 }
 
 // wait is the pause before a Combo falls past a model that failed transiently

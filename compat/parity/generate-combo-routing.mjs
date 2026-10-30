@@ -44,6 +44,17 @@ const timers = { setTimeout: (fn, ms) => { delays.push(ms); fn(); return 0; }, c
 const errorConfig = await load('open-sse/config/errorConfig.js', {});
 const fallback = await load('open-sse/services/accountFallback.js', errorConfig);
 const combo = await load('open-sse/services/combo.js', { ...deps, checkFallbackError: fallback.checkFallbackError, formatRetryAfter: fallback.formatRetryAfter }, timers);
+// The same module again with a fixed clock and the oracle's own unavailableResponse
+// (error.js:105-120) and formatRetryAfter (accountFallback.js:86-99), for the answers
+// that carry a retry time. The date a Response is built at is the fixed NOW.
+const NOW = Date.UTC(2026, 9, 1, 12, 0, 0);
+class FixedDate extends Date {
+  constructor(...args) { super(...(args.length ? args : [NOW])); }
+  static now() { return NOW; }
+}
+const errorUtils = await load('open-sse/utils/error.js', errorConfig, { Date: FixedDate });
+const fixedFallback = await load('open-sse/services/accountFallback.js', errorConfig, { Date: FixedDate });
+const comboFixed = await load('open-sse/services/combo.js', { ...deps, checkFallbackError: fixedFallback.checkFallbackError, formatRetryAfter: fixedFallback.formatRetryAfter, unavailableResponse: errorUtils.unavailableResponse }, { ...timers, Date: FixedDate });
 const adapter = await load('open-sse/services/capacityAdapter.js', { getCapabilitiesForModel: caps });
 const log = { info() {}, warn() {} };
 
@@ -184,6 +195,12 @@ const strip = stripCases.map(c => ({ name: c.name, body: c.body, window: c.windo
 // Each member is a scripted result: a status and a body (a string is the raw
 // body, an object is JSON). Every status here is a failure.
 const json = (status, text) => ({ status, body: JSON.stringify({ error: { message: text } }) });
+// A failure that says when its model can serve again: retryAfter is NOW plus
+// offsetMs, written as an ISO date, as epoch milliseconds, or as given.
+const retrying = (status, text, offsetMs, form = 'iso') => ({
+  status, retryOffsetMs: offsetMs, retryForm: form,
+  body: JSON.stringify({ error: { message: text }, retryAfter: form === 'iso' ? new Date(NOW + offsetMs).toISOString() : form === 'number' ? NOW + offsetMs : form }),
+});
 const outcomeCases = [
   { name: 'one model fails transiently with a message that names the condition', members: [json(503, 'The model is overloaded')] },
   { name: 'a bare 503 is not waited on', members: [json(503, 'down')] },
@@ -201,6 +218,15 @@ const outcomeCases = [
   { name: 'no body and no status text falls back to the status code', members: [{ status: 502, body: '', statusText: '' }] },
   { name: 'context overflow falls through without waiting', members: [json(503, 'maximum context length exceeded'), { status: 200, body: '{"ok":true}' }] },
   { name: 'quota text on a 503 waits two seconds', members: [json(503, 'quota exceeded for today'), json(503, 'quota exceeded for today')] },
+  { name: 'a retry time turns the answer into unavailableResponse', members: [retrying(503, 'busy', 90_000)] },
+  { name: 'the earliest retry time of the failed models wins', members: [retrying(503, 'first', 300_000), retrying(500, 'second', 45_000), json(500, 'third')] },
+  { name: 'hours, minutes and seconds', members: [retrying(503, 'slow', 2 * 3600_000 + 5 * 60_000 + 3000)] },
+  { name: 'a retry time in the past answers after 0s and a header of 1', members: [retrying(503, 'late', -5000)] },
+  { name: 'a retry time as epoch milliseconds', members: [retrying(503, 'epoch', 30_000, 'number')] },
+  { name: 'an empty retry time is none', members: [retrying(503, 'empty', 0, '')] },
+  { name: 'a terminal error with a retry time is returned as it is', terminal: true, members: [retrying(400, 'bad', 60_000)] },
+  { name: 'a retry time and missing credentials', members: [retrying(404, 'No credentials for provider: x', 60_000)] },
+  { name: 'a retry time that is not a date (kept out: the oracle answers NaN)', divergence: 'D16', members: [retrying(503, 'soon', 0, 'soon')] },
 ];
 const outcomes = [];
 for (const scenario of outcomeCases) {
@@ -214,13 +240,14 @@ for (const scenario of outcomeCases) {
     return new Response(m.body, { status: m.status, statusText: m.statusText ?? 'Reason' });
   };
   combo.resetComboRotation();
-  const response = await combo.handleComboChat({ body: { messages: [] }, models, handleSingleModel, log, comboName: scenario.name, comboStrategy: 'fallback' });
+  const response = await comboFixed.handleComboChat({ body: { messages: [] }, models, handleSingleModel, log, comboName: scenario.name, comboStrategy: 'fallback' });
   let message = null;
   try { message = (await response.clone().json())?.error?.message ?? null; } catch { /* not JSON */ }
   outcomes.push({
     name: scenario.name, terminal: !!scenario.terminal, success: response.ok,
-    members: scenario.members.map(m => ({ status: m.status, body: m.body, statusText: m.statusText ?? 'Reason' })),
-    tried: order.length, status: response.status, message, waits: [...delays],
+    divergence: scenario.divergence ?? null,
+    members: scenario.members.map(m => ({ status: m.status, body: m.body, statusText: m.statusText ?? 'Reason', retryOffsetMs: m.retryOffsetMs ?? null, retryForm: m.retryForm ?? null })),
+    tried: order.length, status: response.status, message, retryAfterHeader: response.headers.get('retry-after'), waits: [...delays],
   });
 }
 
@@ -235,17 +262,24 @@ const nestedTable = {
 const nestedStrategy = { rr: 'round-robin', inner: 'round-robin' };
 async function nested(root, rootModels, results) {
   const tried = [];
-  const walk = async (name, models, body) => combo.handleComboChat({
+  delays.length = 0;
+  const walk = async (name, models, body) => comboFixed.handleComboChat({
     body, models, comboName: name, comboStrategy: nestedStrategy[name] ?? 'fallback', comboStickyLimit: 1, log,
     handleSingleModel: async (b, model) => {
       if (!model.includes('/') && nestedTable[model]) return walk(model, nestedTable[model], b);
       tried.push(model);
-      const status = results[model] ?? 200;
-      return new Response(status === 200 ? '{"ok":true}' : JSON.stringify({ error: { message: 'scripted' } }), { status });
+      const result = results[model] ?? 200;
+      const { status, text = 'scripted', retryOffsetMs } = typeof result === 'number' ? { status: result } : result;
+      if (status === 200) return new Response('{"ok":true}', { status });
+      const failure = { error: { message: text } };
+      if (retryOffsetMs !== undefined) failure.retryAfter = new Date(NOW + retryOffsetMs).toISOString();
+      return new Response(JSON.stringify(failure), { status, statusText: 'Reason' });
     },
   });
   const response = await walk(root, rootModels, { messages: [{ role: 'user', content: 'x' }] });
-  return { tried, status: response.status };
+  let message = null;
+  try { message = (await response.clone().json())?.error?.message ?? null; } catch { /* not JSON */ }
+  return { tried, status: response.status, message, retryAfterHeader: response.headers.get('retry-after'), waits: [...delays] };
 }
 const nestedScenarios = [
   { name: 'the nested Combo is the first member and serves', root: 'outer', calls: [{}, {}] },
@@ -255,10 +289,18 @@ const nestedScenarios = [
   { name: 'a Combo nested two deep', root: 'deep', calls: [{ 'p/a': 503 }, { 'p/a': 503, 'p/b': 503 }] },
   { name: 'every leaf of a nested pair fails', root: 'pair', calls: [{ 'p/a': 503, 'p/b': 503, 'p/c': 503, 'p/d': 503 }] },
   { name: 'the first nested Combo fails and the second serves', root: 'pair', calls: [{ 'p/a': 503, 'p/b': 503 }, {}] },
+  // A nested Combo that fails is one failed member of its parent, answered by its own
+  // status and message (combo.js:363-381 at every level).
+  { name: 'an exhausted nested Combo is one failed member; the last message is the outer one', root: 'outer', calls: [{ 'p/a': { status: 503, text: 'down' }, 'p/b': { status: 503, text: 'down' }, 'p/z': { status: 502, text: 'bad gateway' } }] },
+  { name: 'the nested no-credentials answer is a 503 and becomes the outer first status', root: 'outer', calls: [{ 'p/a': { status: 502, text: 'x' }, 'p/b': { status: 502, text: 'No credentials for provider: p' }, 'p/z': { status: 500, text: 'last' } }] },
+  { name: 'a nested Combo answering alone carries its retry time', root: 'inner', calls: [{ 'p/a': { status: 503, text: 'rate', retryOffsetMs: 60_000 }, 'p/b': { status: 503, text: 'rate', retryOffsetMs: 20_000 } }] },
+  { name: 'the retry time stops at the nested Combo: its answer has no retryAfter field', root: 'outer', calls: [{ 'p/a': { status: 503, text: 'rate', retryOffsetMs: 60_000 }, 'p/b': { status: 503, text: 'rate', retryOffsetMs: 60_000 }, 'p/z': { status: 502, text: 'zz' } }] },
+  { name: 'both levels wait out a transient failure', root: 'outer', calls: [{ 'p/a': { status: 503, text: 'overloaded' }, 'p/b': { status: 503, text: 'overloaded' } }] },
+  { name: 'a nested Combo answers with its first model\'s status, so a transient last message does not make the outer wait', root: 'outer', calls: [{ 'p/a': { status: 500, text: 'plain' }, 'p/b': { status: 503, text: 'request not allowed' }, 'p/z': { status: 200 } }] },
 ];
 const nestedOut = [];
 for (const scenario of nestedScenarios) {
-  combo.resetComboRotation();
+  comboFixed.resetComboRotation();
   const calls = [];
   for (const results of scenario.calls) calls.push({ results, ...await nested(scenario.root, nestedTable[scenario.root], results) });
   nestedOut.push({ name: scenario.name, root: scenario.root, calls });
@@ -373,7 +415,41 @@ for (const scenario of fusionScenarios) {
   });
 }
 
-const pinned = { oracle: 'raufimusaddiq/literouter', sha: pin, capabilities: Object.fromEntries(Object.entries(T).map(([k, v]) => [k, kebab(v)])), detect, order, strip, outcomes, nestedTable, nestedStrategy, nested: nestedOut, fusion: fusionOut };
+
+// A Fusion Combo as a member of an ordered Combo (chat.js:196-213 reaches
+// handleFusionChat from handleSingleModelChat, which handleComboChat calls for each
+// member). The ordered walk and the fusion are the oracle's own; only the dispatch
+// that sends the member named "fz" to handleFusionChat is restated.
+const orderedFusionScenarios = [
+  { name: 'the Fusion member answers and the next member is never called', members: { 'pa/a': ok(20, 'alpha'), 'pb/b': ok(40, 'beta') }, tail: ok(0, 'tail') },
+  { name: 'the Fusion member fails (no panel answer) and the next member serves', members: { 'pa/a': bad(20), 'pb/b': bad(40) }, tail: ok(0, 'tail') },
+  { name: 'the judge fails: the Fusion member fails and the next member serves', members: { 'pa/a': ok(20, 'alpha'), 'pb/b': ok(40, 'beta') }, judge: bad(0, 502), tail: ok(0, 'tail') },
+  { name: 'the Fusion member and the next member both fail', members: { 'pa/a': bad(20), 'pb/b': bad(40) }, tail: bad(0, 502) },
+  { name: 'one panel answer: that model answers the Fusion member', members: { 'pa/a': bad(20), 'pb/b': ok(40, 'beta') }, tail: ok(0, 'tail') },
+];
+const orderedFusionOut = [];
+for (const scenario of orderedFusionScenarios) {
+  const clock = virtualClock();
+  const walker = await load('open-sse/services/combo.js', { ...deps, checkFallbackError: fallback.checkFallbackError, formatRetryAfter: fallback.formatRetryAfter }, clock.globals);
+  const calls = [];
+  const leaf = (body, model, isPanel) => new Promise(resolve => {
+    calls.push({ model, panel: !!isPanel, at: clock.now(), body: JSON.parse(JSON.stringify(body)) });
+    const script = isPanel ? scenario.members[model]
+      : model === 'pc/c' ? scenario.tail
+      : model === 'pj/j' ? (scenario.judge ?? ok(0, 'FINAL'))
+      : ok(0, 'FINAL');
+    clock.globals.setTimeout(() => resolve(new Response(script.body, { status: script.status })), script.delay);
+  });
+  const dispatch = (body, model, isPanel) => model === 'fz'
+    ? walker.handleFusionChat({ body, models: ['pa/a', 'pb/b'], handleSingleModel: leaf, log, comboName: 'fz', judgeModel: 'pj/j', tuning: { stragglerGraceMs: 100, panelHardTimeoutMs: 2000 } })
+    : leaf(body, model, isPanel);
+  const response = await clock.run(walker.handleComboChat({ body: plainUser, models: ['fz', 'pc/c'], handleSingleModel: dispatch, log, comboName: 'ordered', comboStrategy: 'fallback' }));
+  let message = null;
+  try { message = (await response.clone().json())?.error?.message ?? null; } catch { /* not JSON */ }
+  orderedFusionOut.push({ name: scenario.name, members: scenario.members, tail: scenario.tail, judge: scenario.judge ?? null, calls, final: { status: response.status, message, body: await response.text() } });
+}
+
+const pinned = { oracle: 'raufimusaddiq/literouter', sha: pin, capabilities: Object.fromEntries(Object.entries(T).map(([k, v]) => [k, kebab(v)])), detect, order, strip, outcomes, nestedTable, nestedStrategy, nested: nestedOut, fusion: fusionOut, orderedFusion: orderedFusionOut };
 if (process.argv.includes('--check')) {
   // The committed file records the commit it was generated at, so a moved main is
   // not a difference; a changed answer is. A failure means the oracle's Combo

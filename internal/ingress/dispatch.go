@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,6 +40,15 @@ type dispatchError struct {
 	code, message string
 }
 
+// retryError is a dispatchError that also tells the client when to come back, in
+// seconds, as Retry-After.
+type retryError struct {
+	*dispatchError
+	seconds int
+}
+
+func (e *retryError) Unwrap() error { return e.dispatchError }
+
 func (e *dispatchError) Error() string { return e.message }
 
 func (h *Handler) dispatchError(w http.ResponseWriter, r *http.Request, err error) {
@@ -47,6 +57,10 @@ func (h *Handler) dispatchError(w http.ResponseWriter, r *http.Request, err erro
 	}
 	var failure *dispatchError
 	if errors.As(err, &failure) {
+		var retry *retryError
+		if errors.As(err, &retry) && retry.seconds > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(retry.seconds))
+		}
 		h.writeError(w, failure.status, failure.code, failure.message)
 		return
 	}
@@ -190,7 +204,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 	var trace *comboTrace
 	var restoreHistory func()
 	if comboRoute {
-		trace = &comboTrace{failures: map[int]modelFailure{}}
+		trace = newComboTrace()
 		defer func() {
 			if restoreHistory != nil {
 				restoreHistory()
@@ -211,22 +225,6 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 			slot = slots[index]
 		} else {
 			slot.ref = candidates[index]
-		}
-		if slot.expand != nil {
-			expanded, err := slot.expand()
-			if err != nil {
-				return nil, routing.ProviderRef{}, err
-			}
-			members := map[int]struct{}{}
-			for _, inner := range expanded {
-				if inner.expand == nil && inner.unavailable == nil {
-					members[inner.member] = struct{}{}
-				}
-			}
-			attemptCap += maxAccountAttempts * len(members)
-			slots = append(slots[:index:index], append(expanded, slots[index+1:]...)...)
-			index--
-			continue
 		}
 		provider := slot.ref
 		member := slot.member
@@ -485,7 +483,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 					io.Reader
 					io.Closer
 				}{io.MultiReader(bytes.NewReader(prefix), response.Body), response.Body}
-				trace.note(member, response.StatusCode, failureText(response.StatusCode, reasonPhrase(response), prefix))
+				trace.noteBody(member, response.StatusCode, reasonPhrase(response), prefix)
 				failedAttempt(nil, &kept, provider)
 				break
 			}
@@ -504,7 +502,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 	if comboRoute && len(trace.order) > 0 {
 		// Every model failed. The answer is the first failed model's status and
 		// the last failure's message, not the last upstream body (combo.js:363-381).
-		return nil, routing.ProviderRef{}, comboExhausted(trace.failures[trace.order[0]].status, trace.lastText)
+		return nil, routing.ProviderRef{}, trace.exhausted()
 	}
 	switch {
 	case attemptResponse != nil:

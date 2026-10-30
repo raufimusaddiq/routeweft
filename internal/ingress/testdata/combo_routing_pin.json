@@ -2805,16 +2805,20 @@
       "name": "one model fails transiently with a message that names the condition",
       "terminal": false,
       "success": false,
+      "divergence": null,
       "members": [
         {
           "status": 503,
           "body": "{\"error\":{\"message\":\"The model is overloaded\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         }
       ],
       "tried": 1,
       "status": 503,
       "message": "The model is overloaded",
+      "retryAfterHeader": null,
       "waits": [
         2000
       ]
@@ -2823,37 +2827,47 @@
       "name": "a bare 503 is not waited on",
       "terminal": false,
       "success": false,
+      "divergence": null,
       "members": [
         {
           "status": 503,
           "body": "{\"error\":{\"message\":\"down\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         }
       ],
       "tried": 1,
       "status": 503,
       "message": "down",
+      "retryAfterHeader": null,
       "waits": []
     },
     {
       "name": "a 502 with request not allowed waits five seconds",
       "terminal": false,
       "success": false,
+      "divergence": null,
       "members": [
         {
           "status": 502,
           "body": "{\"error\":{\"message\":\"request not allowed\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         },
         {
           "status": 500,
           "body": "{\"error\":{\"message\":\"boom\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         }
       ],
       "tried": 2,
       "status": 502,
       "message": "boom",
+      "retryAfterHeader": null,
       "waits": [
         5000
       ]
@@ -2862,21 +2876,27 @@
       "name": "a 504 with a capacity message waits two seconds",
       "terminal": false,
       "success": true,
+      "divergence": null,
       "members": [
         {
           "status": 504,
           "body": "{\"error\":{\"message\":\"out of capacity\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         },
         {
           "status": 200,
           "body": "{\"ok\":true}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         }
       ],
       "tried": 2,
       "status": 200,
       "message": null,
+      "retryAfterHeader": null,
       "waits": [
         2000
       ]
@@ -2885,236 +2905,494 @@
       "name": "a 429 is a fallback but not a transient wait",
       "terminal": false,
       "success": false,
+      "divergence": null,
       "members": [
         {
           "status": 429,
           "body": "{\"error\":{\"message\":\"Rate limit hit\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         },
         {
           "status": 500,
           "body": "{\"error\":{\"message\":\"last\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         }
       ],
       "tried": 2,
       "status": 429,
       "message": "last",
+      "retryAfterHeader": null,
       "waits": []
     },
     {
       "name": "first status wins, last message wins",
       "terminal": false,
       "success": false,
+      "divergence": null,
       "members": [
         {
           "status": 502,
           "body": "{\"error\":{\"message\":\"bad gateway\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         },
         {
           "status": 500,
           "body": "{\"error\":{\"message\":\"boom\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         },
         {
           "status": 504,
           "body": "{\"error\":{\"message\":\"timeout\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         }
       ],
       "tried": 3,
       "status": 502,
       "message": "timeout",
+      "retryAfterHeader": null,
       "waits": []
     },
     {
       "name": "missing credentials answer 503 whatever the first status",
       "terminal": false,
       "success": false,
+      "divergence": null,
       "members": [
         {
           "status": 404,
           "body": "{\"error\":{\"message\":\"a\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         },
         {
           "status": 404,
           "body": "{\"error\":{\"message\":\"No credentials for provider: x\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         }
       ],
       "tried": 2,
       "status": 503,
       "message": "No credentials for provider: x",
+      "retryAfterHeader": null,
       "waits": []
     },
     {
       "name": "a terminal client error is returned as it is",
       "terminal": true,
       "success": false,
+      "divergence": null,
       "members": [
         {
           "status": 400,
           "body": "{\"error\":{\"message\":\"bad request\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         },
         {
           "status": 200,
           "body": "{\"ok\":true}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         }
       ],
       "tried": 1,
       "status": 400,
       "message": "bad request",
+      "retryAfterHeader": null,
       "waits": []
     },
     {
       "name": "a terminal error after a fallback is returned as it is",
       "terminal": true,
       "success": false,
+      "divergence": null,
       "members": [
         {
           "status": 503,
           "body": "{\"error\":{\"message\":\"down\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         },
         {
           "status": 400,
           "body": "{\"error\":{\"message\":\"bad request\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         }
       ],
       "tried": 2,
       "status": 400,
       "message": "bad request",
+      "retryAfterHeader": null,
       "waits": []
     },
     {
       "name": "error as a plain string",
       "terminal": false,
       "success": false,
+      "divergence": null,
       "members": [
         {
           "status": 503,
           "body": "{\"error\":\"plain string\"}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         }
       ],
       "tried": 1,
       "status": 503,
       "message": "plain string",
+      "retryAfterHeader": null,
       "waits": []
     },
     {
       "name": "message at the top level",
       "terminal": false,
       "success": false,
+      "divergence": null,
       "members": [
         {
           "status": 503,
           "body": "{\"message\":\"top level\"}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         }
       ],
       "tried": 1,
       "status": 503,
       "message": "top level",
+      "retryAfterHeader": null,
       "waits": []
     },
     {
       "name": "error object without a message is written as JSON",
       "terminal": false,
       "success": false,
+      "divergence": null,
       "members": [
         {
           "status": 503,
           "body": "{\"error\":{\"code\":\"x\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         }
       ],
       "tried": 1,
       "status": 503,
       "message": "{\"code\":\"x\"}",
+      "retryAfterHeader": null,
       "waits": []
     },
     {
       "name": "unparseable body falls back to the status text",
       "terminal": false,
       "success": false,
+      "divergence": null,
       "members": [
         {
           "status": 503,
           "body": "not json",
-          "statusText": "Service Unavailable"
+          "statusText": "Service Unavailable",
+          "retryOffsetMs": null,
+          "retryForm": null
         }
       ],
       "tried": 1,
       "status": 503,
       "message": "Service Unavailable",
+      "retryAfterHeader": null,
       "waits": []
     },
     {
       "name": "no body and no status text falls back to the status code",
       "terminal": false,
       "success": false,
+      "divergence": null,
       "members": [
         {
           "status": 502,
           "body": "",
-          "statusText": ""
+          "statusText": "",
+          "retryOffsetMs": null,
+          "retryForm": null
         }
       ],
       "tried": 1,
       "status": 502,
       "message": "502",
+      "retryAfterHeader": null,
       "waits": []
     },
     {
       "name": "context overflow falls through without waiting",
       "terminal": false,
       "success": true,
+      "divergence": null,
       "members": [
         {
           "status": 503,
           "body": "{\"error\":{\"message\":\"maximum context length exceeded\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         },
         {
           "status": 200,
           "body": "{\"ok\":true}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         }
       ],
       "tried": 2,
       "status": 200,
       "message": null,
+      "retryAfterHeader": null,
       "waits": []
     },
     {
       "name": "quota text on a 503 waits two seconds",
       "terminal": false,
       "success": false,
+      "divergence": null,
       "members": [
         {
           "status": 503,
           "body": "{\"error\":{\"message\":\"quota exceeded for today\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         },
         {
           "status": 503,
           "body": "{\"error\":{\"message\":\"quota exceeded for today\"}}",
-          "statusText": "Reason"
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
         }
       ],
       "tried": 2,
       "status": 503,
       "message": "quota exceeded for today",
+      "retryAfterHeader": null,
       "waits": [
         2000,
         2000
       ]
+    },
+    {
+      "name": "a retry time turns the answer into unavailableResponse",
+      "terminal": false,
+      "success": false,
+      "divergence": null,
+      "members": [
+        {
+          "status": 503,
+          "body": "{\"error\":{\"message\":\"busy\"},\"retryAfter\":\"2026-10-01T12:01:30.000Z\"}",
+          "statusText": "Reason",
+          "retryOffsetMs": 90000,
+          "retryForm": "iso"
+        }
+      ],
+      "tried": 1,
+      "status": 503,
+      "message": "busy (reset after 1m 30s)",
+      "retryAfterHeader": "90",
+      "waits": []
+    },
+    {
+      "name": "the earliest retry time of the failed models wins",
+      "terminal": false,
+      "success": false,
+      "divergence": null,
+      "members": [
+        {
+          "status": 503,
+          "body": "{\"error\":{\"message\":\"first\"},\"retryAfter\":\"2026-10-01T12:05:00.000Z\"}",
+          "statusText": "Reason",
+          "retryOffsetMs": 300000,
+          "retryForm": "iso"
+        },
+        {
+          "status": 500,
+          "body": "{\"error\":{\"message\":\"second\"},\"retryAfter\":\"2026-10-01T12:00:45.000Z\"}",
+          "statusText": "Reason",
+          "retryOffsetMs": 45000,
+          "retryForm": "iso"
+        },
+        {
+          "status": 500,
+          "body": "{\"error\":{\"message\":\"third\"}}",
+          "statusText": "Reason",
+          "retryOffsetMs": null,
+          "retryForm": null
+        }
+      ],
+      "tried": 3,
+      "status": 503,
+      "message": "third (reset after 45s)",
+      "retryAfterHeader": "45",
+      "waits": []
+    },
+    {
+      "name": "hours, minutes and seconds",
+      "terminal": false,
+      "success": false,
+      "divergence": null,
+      "members": [
+        {
+          "status": 503,
+          "body": "{\"error\":{\"message\":\"slow\"},\"retryAfter\":\"2026-10-01T14:05:03.000Z\"}",
+          "statusText": "Reason",
+          "retryOffsetMs": 7503000,
+          "retryForm": "iso"
+        }
+      ],
+      "tried": 1,
+      "status": 503,
+      "message": "slow (reset after 2h 5m 3s)",
+      "retryAfterHeader": "7503",
+      "waits": []
+    },
+    {
+      "name": "a retry time in the past answers after 0s and a header of 1",
+      "terminal": false,
+      "success": false,
+      "divergence": null,
+      "members": [
+        {
+          "status": 503,
+          "body": "{\"error\":{\"message\":\"late\"},\"retryAfter\":\"2026-10-01T11:59:55.000Z\"}",
+          "statusText": "Reason",
+          "retryOffsetMs": -5000,
+          "retryForm": "iso"
+        }
+      ],
+      "tried": 1,
+      "status": 503,
+      "message": "late (reset after 0s)",
+      "retryAfterHeader": "1",
+      "waits": []
+    },
+    {
+      "name": "a retry time as epoch milliseconds",
+      "terminal": false,
+      "success": false,
+      "divergence": null,
+      "members": [
+        {
+          "status": 503,
+          "body": "{\"error\":{\"message\":\"epoch\"},\"retryAfter\":1790856030000}",
+          "statusText": "Reason",
+          "retryOffsetMs": 30000,
+          "retryForm": "number"
+        }
+      ],
+      "tried": 1,
+      "status": 503,
+      "message": "epoch (reset after 30s)",
+      "retryAfterHeader": "30",
+      "waits": []
+    },
+    {
+      "name": "an empty retry time is none",
+      "terminal": false,
+      "success": false,
+      "divergence": null,
+      "members": [
+        {
+          "status": 503,
+          "body": "{\"error\":{\"message\":\"empty\"},\"retryAfter\":\"\"}",
+          "statusText": "Reason",
+          "retryOffsetMs": 0,
+          "retryForm": ""
+        }
+      ],
+      "tried": 1,
+      "status": 503,
+      "message": "empty",
+      "retryAfterHeader": null,
+      "waits": []
+    },
+    {
+      "name": "a terminal error with a retry time is returned as it is",
+      "terminal": true,
+      "success": false,
+      "divergence": null,
+      "members": [
+        {
+          "status": 400,
+          "body": "{\"error\":{\"message\":\"bad\"},\"retryAfter\":\"2026-10-01T12:01:00.000Z\"}",
+          "statusText": "Reason",
+          "retryOffsetMs": 60000,
+          "retryForm": "iso"
+        }
+      ],
+      "tried": 1,
+      "status": 400,
+      "message": "bad",
+      "retryAfterHeader": null,
+      "waits": []
+    },
+    {
+      "name": "a retry time and missing credentials",
+      "terminal": false,
+      "success": false,
+      "divergence": null,
+      "members": [
+        {
+          "status": 404,
+          "body": "{\"error\":{\"message\":\"No credentials for provider: x\"},\"retryAfter\":\"2026-10-01T12:01:00.000Z\"}",
+          "statusText": "Reason",
+          "retryOffsetMs": 60000,
+          "retryForm": "iso"
+        }
+      ],
+      "tried": 1,
+      "status": 503,
+      "message": "No credentials for provider: x (reset after 1m)",
+      "retryAfterHeader": "60",
+      "waits": []
+    },
+    {
+      "name": "a retry time that is not a date (kept out: the oracle answers NaN)",
+      "terminal": false,
+      "success": false,
+      "divergence": "D16",
+      "members": [
+        {
+          "status": 503,
+          "body": "{\"error\":{\"message\":\"soon\"},\"retryAfter\":\"soon\"}",
+          "statusText": "Reason",
+          "retryOffsetMs": 0,
+          "retryForm": "soon"
+        }
+      ],
+      "tried": 1,
+      "status": 503,
+      "message": "soon (reset after NaNs)",
+      "retryAfterHeader": "NaN",
+      "waits": []
     }
   ],
   "nestedTable": {
@@ -3164,14 +3442,20 @@
           "tried": [
             "p/a"
           ],
-          "status": 200
+          "status": 200,
+          "message": null,
+          "retryAfterHeader": null,
+          "waits": []
         },
         {
           "results": {},
           "tried": [
             "p/b"
           ],
-          "status": 200
+          "status": 200,
+          "message": null,
+          "retryAfterHeader": null,
+          "waits": []
         }
       ]
     },
@@ -3189,7 +3473,10 @@
             "p/b",
             "p/z"
           ],
-          "status": 200
+          "status": 200,
+          "message": null,
+          "retryAfterHeader": null,
+          "waits": []
         }
       ]
     },
@@ -3202,21 +3489,30 @@
           "tried": [
             "p/a"
           ],
-          "status": 200
+          "status": 200,
+          "message": null,
+          "retryAfterHeader": null,
+          "waits": []
         },
         {
           "results": {},
           "tried": [
             "p/a"
           ],
-          "status": 200
+          "status": 200,
+          "message": null,
+          "retryAfterHeader": null,
+          "waits": []
         },
         {
           "results": {},
           "tried": [
             "p/a"
           ],
-          "status": 200
+          "status": 200,
+          "message": null,
+          "retryAfterHeader": null,
+          "waits": []
         }
       ]
     },
@@ -3229,7 +3525,10 @@
           "tried": [
             "p/a"
           ],
-          "status": 200
+          "status": 200,
+          "message": null,
+          "retryAfterHeader": null,
+          "waits": []
         },
         {
           "results": {
@@ -3239,21 +3538,30 @@
           "tried": [
             "p/z"
           ],
-          "status": 200
+          "status": 200,
+          "message": null,
+          "retryAfterHeader": null,
+          "waits": []
         },
         {
           "results": {},
           "tried": [
             "p/b"
           ],
-          "status": 200
+          "status": 200,
+          "message": null,
+          "retryAfterHeader": null,
+          "waits": []
         },
         {
           "results": {},
           "tried": [
             "p/z"
           ],
-          "status": 200
+          "status": 200,
+          "message": null,
+          "retryAfterHeader": null,
+          "waits": []
         }
       ]
     },
@@ -3269,7 +3577,10 @@
             "p/a",
             "p/b"
           ],
-          "status": 200
+          "status": 200,
+          "message": null,
+          "retryAfterHeader": null,
+          "waits": []
         },
         {
           "results": {
@@ -3281,7 +3592,10 @@
             "p/a",
             "p/z"
           ],
-          "status": 200
+          "status": 200,
+          "message": null,
+          "retryAfterHeader": null,
+          "waits": []
         }
       ]
     },
@@ -3302,7 +3616,10 @@
             "p/c",
             "p/d"
           ],
-          "status": 503
+          "status": 503,
+          "message": "scripted",
+          "retryAfterHeader": null,
+          "waits": []
         }
       ]
     },
@@ -3320,14 +3637,206 @@
             "p/b",
             "p/c"
           ],
-          "status": 200
+          "status": 200,
+          "message": null,
+          "retryAfterHeader": null,
+          "waits": []
         },
         {
           "results": {},
           "tried": [
             "p/a"
           ],
-          "status": 200
+          "status": 200,
+          "message": null,
+          "retryAfterHeader": null,
+          "waits": []
+        }
+      ]
+    },
+    {
+      "name": "an exhausted nested Combo is one failed member; the last message is the outer one",
+      "root": "outer",
+      "calls": [
+        {
+          "results": {
+            "p/a": {
+              "status": 503,
+              "text": "down"
+            },
+            "p/b": {
+              "status": 503,
+              "text": "down"
+            },
+            "p/z": {
+              "status": 502,
+              "text": "bad gateway"
+            }
+          },
+          "tried": [
+            "p/a",
+            "p/b",
+            "p/z"
+          ],
+          "status": 503,
+          "message": "bad gateway",
+          "retryAfterHeader": null,
+          "waits": []
+        }
+      ]
+    },
+    {
+      "name": "the nested no-credentials answer is a 503 and becomes the outer first status",
+      "root": "outer",
+      "calls": [
+        {
+          "results": {
+            "p/a": {
+              "status": 502,
+              "text": "x"
+            },
+            "p/b": {
+              "status": 502,
+              "text": "No credentials for provider: p"
+            },
+            "p/z": {
+              "status": 500,
+              "text": "last"
+            }
+          },
+          "tried": [
+            "p/a",
+            "p/b",
+            "p/z"
+          ],
+          "status": 503,
+          "message": "last",
+          "retryAfterHeader": null,
+          "waits": []
+        }
+      ]
+    },
+    {
+      "name": "a nested Combo answering alone carries its retry time",
+      "root": "inner",
+      "calls": [
+        {
+          "results": {
+            "p/a": {
+              "status": 503,
+              "text": "rate",
+              "retryOffsetMs": 60000
+            },
+            "p/b": {
+              "status": 503,
+              "text": "rate",
+              "retryOffsetMs": 20000
+            }
+          },
+          "tried": [
+            "p/a",
+            "p/b"
+          ],
+          "status": 503,
+          "message": "rate (reset after 20s)",
+          "retryAfterHeader": "20",
+          "waits": []
+        }
+      ]
+    },
+    {
+      "name": "the retry time stops at the nested Combo: its answer has no retryAfter field",
+      "root": "outer",
+      "calls": [
+        {
+          "results": {
+            "p/a": {
+              "status": 503,
+              "text": "rate",
+              "retryOffsetMs": 60000
+            },
+            "p/b": {
+              "status": 503,
+              "text": "rate",
+              "retryOffsetMs": 60000
+            },
+            "p/z": {
+              "status": 502,
+              "text": "zz"
+            }
+          },
+          "tried": [
+            "p/a",
+            "p/b",
+            "p/z"
+          ],
+          "status": 503,
+          "message": "zz",
+          "retryAfterHeader": null,
+          "waits": []
+        }
+      ]
+    },
+    {
+      "name": "both levels wait out a transient failure",
+      "root": "outer",
+      "calls": [
+        {
+          "results": {
+            "p/a": {
+              "status": 503,
+              "text": "overloaded"
+            },
+            "p/b": {
+              "status": 503,
+              "text": "overloaded"
+            }
+          },
+          "tried": [
+            "p/a",
+            "p/b",
+            "p/z"
+          ],
+          "status": 200,
+          "message": null,
+          "retryAfterHeader": null,
+          "waits": [
+            2000,
+            2000,
+            2000
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a nested Combo answers with its first model's status, so a transient last message does not make the outer wait",
+      "root": "outer",
+      "calls": [
+        {
+          "results": {
+            "p/a": {
+              "status": 500,
+              "text": "plain"
+            },
+            "p/b": {
+              "status": 503,
+              "text": "request not allowed"
+            },
+            "p/z": {
+              "status": 200
+            }
+          },
+          "tried": [
+            "p/a",
+            "p/b",
+            "p/z"
+          ],
+          "status": 200,
+          "message": null,
+          "retryAfterHeader": null,
+          "waits": [
+            5000
+          ]
         }
       ]
     }
@@ -6261,6 +6770,378 @@
         "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
       },
       "endedAt": 0
+    }
+  ],
+  "orderedFusion": [
+    {
+      "name": "the Fusion member answers and the next member is never called",
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"alpha\"}}]}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        }
+      },
+      "tail": {
+        "delay": 0,
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"tail\"}}]}"
+      },
+      "judge": null,
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pj/j",
+          "panel": false,
+          "at": 40,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              },
+              {
+                "role": "user",
+                "content": "You are the JUDGE in a model-fusion panel. 2 expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\nDo NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\nFirst, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.\n\n=== PANEL RESPONSES ===\n[Source 1]\nalpha\n\n[Source 2]\nbeta\n=== END PANEL RESPONSES ===\n\nNow write the final answer to the user's original request."
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "message": null,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      }
+    },
+    {
+      "name": "the Fusion member fails (no panel answer) and the next member serves",
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 500,
+          "body": "{\"error\":{\"message\":\"scripted\"}}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 500,
+          "body": "{\"error\":{\"message\":\"scripted\"}}"
+        }
+      },
+      "tail": {
+        "delay": 0,
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"tail\"}}]}"
+      },
+      "judge": null,
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pc/c",
+          "panel": false,
+          "at": 40,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "message": null,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"tail\"}}]}"
+      }
+    },
+    {
+      "name": "the judge fails: the Fusion member fails and the next member serves",
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"alpha\"}}]}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        }
+      },
+      "tail": {
+        "delay": 0,
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"tail\"}}]}"
+      },
+      "judge": {
+        "delay": 0,
+        "status": 502,
+        "body": "{\"error\":{\"message\":\"scripted\"}}"
+      },
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pj/j",
+          "panel": false,
+          "at": 40,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              },
+              {
+                "role": "user",
+                "content": "You are the JUDGE in a model-fusion panel. 2 expert models independently answered the user's most recent request. Their responses are below, anonymized by source.\n\nDo NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.\n\nFirst, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.\n\n=== PANEL RESPONSES ===\n[Source 1]\nalpha\n\n[Source 2]\nbeta\n=== END PANEL RESPONSES ===\n\nNow write the final answer to the user's original request."
+              }
+            ]
+          }
+        },
+        {
+          "model": "pc/c",
+          "panel": false,
+          "at": 40,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "message": null,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"tail\"}}]}"
+      }
+    },
+    {
+      "name": "the Fusion member and the next member both fail",
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 500,
+          "body": "{\"error\":{\"message\":\"scripted\"}}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 500,
+          "body": "{\"error\":{\"message\":\"scripted\"}}"
+        }
+      },
+      "tail": {
+        "delay": 0,
+        "status": 502,
+        "body": "{\"error\":{\"message\":\"scripted\"}}"
+      },
+      "judge": null,
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pc/c",
+          "panel": false,
+          "at": 40,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 503,
+        "message": "scripted",
+        "body": "{\"error\":{\"message\":\"scripted\"}}"
+      }
+    },
+    {
+      "name": "one panel answer: that model answers the Fusion member",
+      "members": {
+        "pa/a": {
+          "delay": 20,
+          "status": 500,
+          "body": "{\"error\":{\"message\":\"scripted\"}}"
+        },
+        "pb/b": {
+          "delay": 40,
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"beta\"}}]}"
+        }
+      },
+      "tail": {
+        "delay": 0,
+        "status": 200,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"tail\"}}]}"
+      },
+      "judge": null,
+      "calls": [
+        {
+          "model": "pa/a",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": true,
+          "at": 0,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "stream": false
+          }
+        },
+        {
+          "model": "pb/b",
+          "panel": false,
+          "at": 40,
+          "body": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ]
+          }
+        }
+      ],
+      "final": {
+        "status": 200,
+        "message": null,
+        "body": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"FINAL\"}}]}"
+      }
     }
   ]
 }

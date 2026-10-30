@@ -188,6 +188,33 @@ func (s *RuntimeSnapshot) FusionCombo(name string) (Combo, bool) {
 // anything else never pays to find out.
 func (s *RuntimeSnapshot) HasFusion() bool { return s != nil && len(s.fusion) > 0 }
 
+// NestedCombo reports whether the ordered Combo has another Combo among its
+// selected members. Such a Combo is walked member by member, each member served
+// as a request of its own, the way the oracle's handleComboChat calls
+// handleSingleModelChat for each (chat.js:177-229).
+func (s *RuntimeSnapshot) NestedCombo(name string) bool {
+	return s != nil && s.nested[name]
+}
+
+// NeedsComboWalk reports whether any Combo is Fusion or has nested members, so a
+// request that cannot be for one is not looked at.
+func (s *RuntimeSnapshot) NeedsComboWalk() bool {
+	return s != nil && (len(s.fusion) > 0 || len(s.nested) > 0)
+}
+
+func nestedCombos(combos map[string]Combo) map[string]bool {
+	nested := make(map[string]bool)
+	for name, combo := range combos {
+		for _, member := range combo.Resolve() {
+			if member.IsCombo() {
+				nested[name] = true
+				break
+			}
+		}
+	}
+	return nested
+}
+
 // checkNestedCombos requires every nested member to name a Combo, forbids a
 // Combo from reaching itself and bounds the nesting depth. The depth of a Combo
 // is the longest chain below it, so it does not depend on which Combo is visited

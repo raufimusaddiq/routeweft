@@ -774,7 +774,9 @@ A compiled Combo contains:
 
 A Combo member with no provider names another Combo. It is served by that Combo's own strategy, rotation and capability handling when the outer Combo reaches it (an inner rotation moves only then). The name is checked when the Combos are saved: it must be a Combo (an alias or model of that name wins), a Combo may not reach itself, and nesting is at most 8 deep (the oracle accepts a cycle and recurses until the process fails; PARITY D15).
 
-When a Combo's models have all failed, the client gets the status of the first model that failed (503 if the last message says credentials are missing) and the message of the last failure, taken from the error body (`error.message`, a string `error`, or `message`), else the status text, else the status code. A failure the loop treats as terminal is returned as it is. Before the Combo falls past a 502, 503 or 504 whose message names a short transient condition (`request not allowed`: 5 s; rate limit, quota, capacity, overloaded and similar: 2 s) it waits that long, also after the last model; a bare 5xx, or any longer cooldown, is not waited on. The wait ends with the client.
+A Combo with a nested member is walked member by member: each member, in the order the Combo plans, is served as a request of its own, so an inner Combo answers with its own strategy, rotation, waits and failure answer, and a member that is a Fusion Combo answers as Fusion (§16). A member whose failure is not one the Combo falls past is the answer, written as it came.
+
+When a Combo's models have all failed, the client gets the status of the first model that failed (503 if the last message says credentials are missing) and the message of the last failure, taken from the error body (`error.message`, a string `error`, or `message`), else the status text, else the status code. An inner Combo's exhausted answer is one failed model of its parent, read the same way. If a failed model's body carries a top-level `retryAfter` date, the earliest such time is added to the message as `(reset after 1h 2m 3s)` and sent as `Retry-After` in seconds (at least 1); a value that is not a date is ignored. A failure the loop treats as terminal is returned as it is. Before the Combo falls past a 502, 503 or 504 whose message names a short transient condition (`request not allowed`: 5 s; rate limit, quota, capacity, overloaded and similar: 2 s) it waits that long, also after the last model; a bare 5xx, or any longer cooldown, is not waited on. The wait ends with the client.
 
 ### 15.1 Ordered fallback
 
@@ -831,6 +833,8 @@ client request
 ```
 
 Default judge is first Combo model when no explicit judge is configured.
+
+Serving (PARITY 6.34, 6.35): a Fusion Combo may also be a member of an ordered Combo; it answers as Fusion when the walk reaches it, and a Fusion member that fails (no panel answer, a failed judge) is fallen past like any other.
 
 Serving (PARITY 6.34): a Combo is Fusion when its `comboStrategies[name].fallbackStrategy` is `fusion`, or when its own flag is set and the entry names no plain strategy. `judgeModel` and `fusionTuning` come from the entry, else from the Combo. The panel and the judge are in-process requests to the same handler with the caller's credentials; a member is admitted by the Combo's grant. A panel answer counts when the call returned 2xx and has non-blank assistant text; answers reach the judge in panel order, anonymised as `[Source N]`. A single answer is returned by calling that model with the original request. Calls still running when the collection ends are cancelled, and a panel larger than 8, an answer over 1 MiB, and a ninth concurrent Fusion request are refused or dropped (these caps are Routeweft's; the oracle has none).
 

@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
@@ -67,9 +68,12 @@ func TestComboServingNestedCombosMatchTheOracle(t *testing.T) {
 			Name  string `json:"name"`
 			Root  string `json:"root"`
 			Calls []struct {
-				Results map[string]int `json:"results"`
-				Tried   []string       `json:"tried"`
-				Status  int            `json:"status"`
+				Results          map[string]json.RawMessage `json:"results"`
+				Tried            []string                   `json:"tried"`
+				Status           int                        `json:"status"`
+				Message          *string                    `json:"message"`
+				RetryAfterHeader *string                    `json:"retryAfterHeader"`
+				Waits            []int                      `json:"waits"`
 			} `json:"calls"`
 		} `json:"nested"`
 	}
@@ -106,20 +110,69 @@ func TestComboServingNestedCombosMatchTheOracle(t *testing.T) {
 				upstream.reset()
 				upstream.mu.Lock()
 				upstream.fail = map[string]int{}
-				for ref, status := range call.Results {
-					upstream.fail[leaf(ref)] = status
+				upstream.count = nil
+				upstream.script = func(model string, _ int) (time.Duration, int, string) {
+					spec, ok := call.Results["p/"+model]
+					if !ok {
+						return 0, 200, `{"choices":[{"message":{"content":"ok"}}]}`
+					}
+					var status struct {
+						Status       int    `json:"status"`
+						Text         string `json:"text"`
+						RetryOffsetM *int64 `json:"retryOffsetMs"`
+					}
+					if json.Unmarshal(spec, &status.Status) != nil {
+						_ = json.Unmarshal(spec, &status)
+					}
+					if status.Status == 200 {
+						return 0, 200, `{"choices":[{"message":{"content":"ok"}}]}`
+					}
+					if status.Text == "" {
+						status.Text = "scripted"
+					}
+					failure := map[string]any{"error": map[string]any{"message": status.Text}}
+					if status.RetryOffsetM != nil {
+						failure["retryAfter"] = time.Now().Add(time.Duration(*status.RetryOffsetM) * time.Millisecond).UTC().Format(time.RFC3339Nano)
+					}
+					encoded, _ := json.Marshal(failure)
+					return 0, status.Status, string(encoded)
 				}
 				upstream.mu.Unlock()
 				for _, model := range []string{"a", "b", "c", "d", "z"} {
 					a.runtime.State().ClearCooldown("account-p" + model)
 				}
+				started := time.Now()
 				w := post(a, key, fmt.Sprintf(textRequest, scenario.Root))
+				elapsed := time.Since(started)
 				want := make([]string, 0, len(call.Tried))
 				for _, ref := range call.Tried {
 					want = append(want, leaf(ref))
 				}
 				if got := upstream.seen(); got != strings.Join(want, " ") || w.Code != call.Status {
 					t.Fatalf("call %d: tried %q status %d, oracle %q status %d (body %s)", index, got, w.Code, strings.Join(want, " "), call.Status, w.Body)
+				}
+				if call.Message != nil {
+					var body struct {
+						Error struct {
+							Message string `json:"message"`
+						} `json:"error"`
+					}
+					_ = json.Unmarshal(w.Body.Bytes(), &body)
+					if body.Error.Message != *call.Message {
+						t.Fatalf("call %d: message %q, oracle %q", index, body.Error.Message, *call.Message)
+					}
+				}
+				header := w.Header().Get("Retry-After")
+				if (call.RetryAfterHeader == nil) != (header == "") || call.RetryAfterHeader != nil && header != *call.RetryAfterHeader {
+					t.Fatalf("call %d: Retry-After %q, oracle %v", index, header, call.RetryAfterHeader)
+				}
+				// The pauses before falling past a transient failure are real time.
+				var paused time.Duration
+				for _, wait := range call.Waits {
+					paused += time.Duration(wait) * time.Millisecond
+				}
+				if elapsed < paused-100*time.Millisecond || elapsed > paused+3*time.Second {
+					t.Fatalf("call %d: took %v, the oracle's pauses add up to %v", index, elapsed, paused)
 				}
 			}
 		})
