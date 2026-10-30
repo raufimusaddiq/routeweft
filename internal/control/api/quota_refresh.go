@@ -76,6 +76,23 @@ func (q *quotaRefreshJobs) settle() {
 	q.active = false
 }
 
+// finish ends the job like update and, when the refresher has returned, frees
+// the refresh slot in the same critical section. A client that reacts to the
+// job's end with another request is therefore never told the previous refresh
+// has not stopped (409 refresh_busy): the slot is free before the end can be seen.
+func (q *quotaRefreshJobs) finish(id string, release bool, change func(*quotaRefreshJob)) (quotaRefreshJob, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if release {
+		q.active = false
+	}
+	if q.latest == nil || q.latest.ID != id || q.latest.terminal() {
+		return quotaRefreshJob{}, false
+	}
+	change(q.latest)
+	return *q.latest, true
+}
+
 // handleQuotaRefresh accepts a background provider quota refresh. The refresh
 // runs detached from the request so it can never block normal inference, and
 // its deadline ends the job whether or not the refresher returns (PRD-QUOTA-001).
@@ -131,13 +148,11 @@ func (h *Handler) runQuotaRefresh(id string, timeout time.Duration) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() {
-		// The refresher is held until it returns, however late: no other
-		// refresh starts before then.
-		defer h.quotaJobs.settle()
-		done <- h.opts.QuotaRefresher(ctx)
-	}()
+	go func() { done <- h.opts.QuotaRefresher(ctx) }()
 	var err error
+	// returned is false only when the deadline ended the job while the refresher
+	// is still running; the slot then stays held until it returns.
+	returned := true
 	select {
 	case err = <-done:
 	case <-ctx.Done():
@@ -148,10 +163,11 @@ func (h *Handler) runQuotaRefresh(id string, timeout time.Duration) {
 		case err = <-done:
 		default:
 			err = ctx.Err()
+			returned = false
 		}
 	}
 	finished := time.Now().UTC()
-	job, ok := h.quotaJobs.update(id, func(job *quotaRefreshJob) {
+	job, ok := h.quotaJobs.finish(id, returned, func(job *quotaRefreshJob) {
 		job.FinishedAt = &finished
 		switch {
 		case err == nil:
@@ -162,6 +178,11 @@ func (h *Handler) runQuotaRefresh(id string, timeout time.Duration) {
 			job.Status, job.Error = quotaRefreshFailed, "one or more accounts could not be read"
 		}
 	})
+	if !returned {
+		// The refresher is held until it returns, however late: no other
+		// refresh starts before then.
+		go func() { <-done; h.quotaJobs.settle() }()
+	}
 	if ok {
 		h.publishQuotaRefresh(job)
 	}
