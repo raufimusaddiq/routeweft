@@ -171,6 +171,16 @@ fail-open path. It writes `internal/transforms/pxpipe/testdata/host_pin.json`, r
 
 Both support `--check` and need `ORACLE_DIR` and `ORACLE_SHA`.
 
+`compat/parity/generate-proxy-pools.mjs` runs the oracle's proxy-pool code (#272): the Netlify
+digest-deploy route against a scripted Netlify API (25 scenarios, every call recorded), the pool
+list/create/update/delete routes with their query and body handling, `connectionProxy.js` (26
+resolutions of which pool a connection gets, with relay and strict flags, and 16 rotation picks)
+and the relay branch of `proxyAwareFetch` (11 fetches). It writes
+`internal/proxy/testdata/proxy_pools_pin.json` and `internal/proxy/netlify/bundle_gen.go` (the relay
+function and page, byte for byte), replayed by `internal/proxy`, `internal/proxy/netlify` and
+`internal/transport` (PARITY 6.38). `loadTree` passes the host's `Uint8Array` where an oracle module
+tests `instanceof Uint8Array`, which is otherwise false across `vm` realms.
+
 CI runs this as the `parity` PR job, alongside existing Go/UI/container jobs.
 No test may update golden files from its actual output or turn a missing oracle
 into a passing dedicated gate. Ordinary unit tests remain usable without v1.

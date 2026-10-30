@@ -1050,6 +1050,28 @@ one immutable snapshot. No separate reload command is needed.
   after a restart. The `request completed` console log line carries the requested,
   selected and upstream model of every request.
 
+- Proxy pools have a type: `http` (forward proxies) or a relay (`vercel`, `cloudflare`,
+  `deno`, `netlify`), whose members are the addresses of relay functions. A connection
+  bound to a relay pool sends its provider requests to the relay, which forwards them; the
+  relay therefore sees the request and its credential, so run it yourself. A pool marked
+  `strictProxy` never lets a bound connection leave over the server's own address: if the
+  pool is switched off or has no usable member, or its `noProxy` list excludes a host and no
+  global proxy takes over, the request fails instead (a pool that is not strict falls back
+  to the connection's own proxy, then the global one, then direct). Testing a pool records
+  the result and switches the pool on (passed) or off (failed), so a failed test takes the
+  pool out of use.
+- `POST /admin/v1/proxy-pools/netlify-deploy {netlifyToken, projectName?}` creates a Netlify
+  site, deploys the relay function and adds a `netlify` pool. It runs inside the request and
+  can take about two minutes; the token is used for that request only and is neither stored
+  nor logged. If the request is cut short the site may exist at Netlify without a pool: add
+  it by hand with the relay URL `https://<site>.netlify.app/.netlify/functions/relay`.
+  Deleting a pool is refused while a connection is bound to it or a `providerStrategies` entry
+  names it.
+- A `providerStrategies` entry for a provider that needs no credential may set `proxyPoolId`
+  and `rotateStrategy` (`none`, `round-robin`, `random`): the provider's requests then go
+  through that pool, or through the active pools in turn (the rotation position is memory and
+  starts over on restart); with no active pool they go direct. It replaces the proxy settings
+  of such a connection and does nothing for a provider that has credentials.
 - `headroomUrl` is the Headroom helper's **base** URL: Routeweft calls
   `<headroomUrl>/v1/compress` and `<headroomUrl>/health`. A value that was a full
   endpoint under an earlier build (one that ends in `/compress`) must be reduced to

@@ -29,6 +29,17 @@ type ProxyPolicy struct {
 	// leaves it false, so NoProxy bypasses the member as well.
 	ConnectionOwnsNoProxy bool
 	ConnectionNoProxy     []string
+	// PoolNoProxy lists hosts that bypass the bound pool's member, as the pool's
+	// noProxy does (connectionProxy.js:118-121); such a host takes the global proxy.
+	PoolNoProxy []string
+	// RelayURL, when set, sends every request to this relay with its destination in
+	// the relay headers, instead of through a proxy (PARITY 6.38).
+	RelayURL string
+	// Strict makes a request that no proxy applies to fail instead of dialing
+	// directly: the connection named a pool (Intended) whose proxy it could not
+	// have (open-sse/utils/proxyFetch.js:130-146).
+	Strict   bool
+	Intended bool
 }
 
 // ProxyForHost exposes the compiled precedence for tests and callers that need
@@ -47,6 +58,9 @@ func (p ProxyPolicy) proxyFor(host string) (*url.URL, error) {
 		return nil, nil
 	}
 	raw := p.ConnectionProxyURL
+	if raw != "" && !p.ConnectionOwnsNoProxy && noProxyListMatches(p.PoolNoProxy, host) {
+		raw = ""
+	}
 	if p.ConnectionOwnsNoProxy && raw != "" {
 		if !noProxyListMatches(p.ConnectionNoProxy, host) {
 			return parseProxyURL(raw)
@@ -153,7 +167,7 @@ func (p *PooledClients) Release(policy ProxyPolicy) {
 }
 
 func policyCacheKey(policy ProxyPolicy) (string, error) {
-	key := fmt.Sprintf("enabled=%t|global=%s|connection=%s|private=%t|owns=%t|", policy.Enabled, policy.GlobalProxyURL, policy.ConnectionProxyURL, policy.AllowPrivate, policy.ConnectionOwnsNoProxy)
+	key := fmt.Sprintf("enabled=%t|global=%s|connection=%s|private=%t|owns=%t|relay=%s|strict=%t|intended=%t|pool=%s|", policy.Enabled, policy.GlobalProxyURL, policy.ConnectionProxyURL, policy.AllowPrivate, policy.ConnectionOwnsNoProxy, policy.RelayURL, policy.Strict, policy.Intended, strings.Join(policy.PoolNoProxy, ","))
 	noProxy := append([]string(nil), policy.NoProxy...)
 	sort.Strings(noProxy)
 	key += strings.Join(noProxy, ",")
@@ -171,7 +185,12 @@ func policyCacheKey(policy ProxyPolicy) (string, error) {
 	return key, nil
 }
 
+var errStrictProxy = errors.New("proxy required but none applies (strict pool)")
+
 func newProxiedClient(policy ProxyPolicy) (*http.Client, error) {
+	if policy.RelayURL != "" {
+		return newRelayClient(policy)
+	}
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	httpTransport := &http.Transport{
 		ForceAttemptHTTP2:     true,
@@ -184,7 +203,11 @@ func newProxiedClient(policy ProxyPolicy) (*http.Client, error) {
 	}
 	if policy.Enabled {
 		httpTransport.Proxy = func(request *http.Request) (*url.URL, error) {
-			return policy.proxyFor(request.URL.Hostname())
+			proxy, err := policy.proxyFor(request.URL.Hostname())
+			if err == nil && proxy == nil && policy.Strict && policy.Intended {
+				return nil, errStrictProxy
+			}
+			return proxy, err
 		}
 	}
 	return &http.Client{Transport: destinationGuard{next: httpTransport, allowPrivate: policy.AllowPrivate}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, nil
@@ -241,4 +264,46 @@ func validateDestinationHost(ctx context.Context, host string, allowPrivate bool
 		}
 	}
 	return nil
+}
+
+// newRelayClient builds the client for a relay pool. The relay is the only host it
+// dials, so it is the one the SSRF guard checks.
+func newRelayClient(policy ProxyPolicy) (*http.Client, error) {
+	relay, err := url.Parse(policy.RelayURL)
+	if err != nil || relay.Host == "" || (relay.Scheme != "http" && relay.Scheme != "https") {
+		return nil, errors.New("invalid relay URL")
+	}
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	base := &http.Transport{
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		DialContext:           dialGuard(dialer.DialContext, policy.AllowPrivate),
+	}
+	return &http.Client{Transport: relayTransport{relay: relay, next: relayGuard{next: base, allowPrivate: policy.AllowPrivate}}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, nil
+}
+
+// relayGuard checks the relay's own address. The request it sees is already
+// rewritten to the relay URL, whose path may carry the function name but, unlike an
+// outbound destination, may not be refused for it.
+type relayGuard struct {
+	next         http.RoundTripper
+	allowPrivate bool
+}
+
+func (g relayGuard) CloseIdleConnections() {
+	if closer, ok := g.next.(interface{ CloseIdleConnections() }); ok {
+		closer.CloseIdleConnections()
+	}
+}
+
+func (g relayGuard) RoundTrip(request *http.Request) (*http.Response, error) {
+	if err := validateDestinationHost(request.Context(), request.URL.Hostname(), g.allowPrivate); err != nil {
+		closeBody(request)
+		return nil, err
+	}
+	return g.next.RoundTrip(request)
 }

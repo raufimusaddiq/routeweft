@@ -1525,6 +1525,92 @@ connection checks, model tests and model discovery. Work made for no connection
 
 Outbound URL validation and redirects use the same SSRF policy for inference, provider tests, model discovery, Headroom/PXPIPE, and other server-side fetches.
 
+### 20.1 Pool kinds, strict pools, relays, no-auth rotation and Netlify provisioning
+
+Evidence is LiteRouter `main` at `4279093457458e168a2431604935f0145f2e76ec` (PARITY 6.38).
+`C` = `src/lib/network/connectionProxy.js`, `F` = `open-sse/utils/proxyFetch.js`,
+`R` = `src/app/api/proxy-pools/route.js`, `I` = `.../[id]/route.js`,
+`N` = `.../netlify-deploy/route.js`, `L` = `src/lib/network/netlifyRelay.js`,
+`A` = `src/sse/services/auth.js`, `P` = `src/lib/db/repos/proxyPoolsRepo.js`.
+
+**Kind.** A pool is one of `http` (its members are forward proxies; the default),
+`vercel`, `cloudflare`, `deno` or `netlify` (its members are relay functions). The
+kind is read exactly: anything else, on a create or an update that names it, is `http`
+(`R:10,18`, `I:40-43`). A relay member is an http(s) URL without credentials; a
+forward-proxy member keeps the schemes of 20 above.
+
+**Relay.** A connection whose pool is a usable relay pool sends every request to the
+relay member's URL instead of to its destination, with the same method, headers and
+body, plus `X-Relay-Target` = scheme and host of the destination (a default port is
+omitted) and `X-Relay-Path` = its path and query (`F:97-110`; `C:111-125`). The relay is
+the only host dialed, and it passes the SSRF policy; a destination that can never be a
+public host (`localhost`, a private or loopback address) is refused rather than sent to
+a third party. A relay pool's `noProxy` does not apply (`F:97-110` returns before it is
+read). The relay function (`L:29-99`) forwards the request and returns the answer; its
+text is `internal/proxy/netlify/bundle_gen.go`, generated from the oracle.
+
+**Resolution** (`C:66-181`), per request, from the pool the connection is bound to
+(`__none__` or no id means none):
+1. the pool, when it exists, is enabled and has a usable member: a relay pool gives a
+   relay; any other gives the member as the connection's proxy with the pool's `noProxy`
+   (hosts that bypass the member, and then take the global proxy);
+2. else the connection's own proxy, when `connectionProxyEnabled` is the JSON `true` and
+   its URL is not blank;
+3. else no proxy.
+A pool that is `strict` keeps that guarantee when it cannot be used (disabled, or no
+usable member), and a pool that no longer exists counts as strict (`C:80-85,103-104`).
+For a strict connection a request that no proxy applies to (including a host that the
+pool's `noProxy` or the connection's bypass list excludes, with no global proxy to take
+over) fails and is not sent direct (`F:130-146`). A pool that is not strict falls back
+as in 20. A connection that names no pool is never strict.
+
+**No-auth rotation** (`A:78-104`). A `providerStrategies` entry for a provider whose
+connections need no credential may carry `proxyPoolId` (a pool id, `__none__` for none) and
+`rotateStrategy` (`none`, `round-robin`, `random`; any other value takes the first pool).
+For such a connection the entry replaces its pool binding and its own proxy:
+`rotateStrategy` `none` or absent uses `proxyPoolId`; otherwise each request takes one of
+the enabled pools that have a usable member (newest `updatedAt` first), by `round-robin`
+(a position per provider, kept in memory, restarting at the first after a restart) or
+`random`, and with no such pool the request goes direct (`C:18-34`). A pool that an entry
+names cannot be deleted (`P:108-131`).
+
+**Admin API** (the reference's routes `R`, `I`, `N`, in Routeweft's envelope):
+`GET /admin/v1/proxy-pools?isActive=&includeUsage=` filters by `enabled` when the value is
+exactly `true` or `false` (`R:4-8,47-56`) and, for `includeUsage=true`, adds
+`boundConnectionCount` (connections bound to the pool; `R:31-42,58-70`). A pool carries
+`type`, `strictProxy`, `noProxy`, `testStatus` (`unknown`, `active`, `error`),
+`lastTestedAt` and `lastError`; `strictProxy` is true only for the JSON `true`, and a
+`noProxy` that is not a string is empty (`R:12-29`). An update changes only the fields it
+names (`I:9-46`). `DELETE` is `409 proxy_pool_in_use` with `boundConnectionCount` while a
+connection is bound or a `providerStrategies` entry names the pool (`I:94-125`). A test
+of a whole pool records `testStatus`, `lastTestedAt`, `lastError` and enables the pool
+when it passed and disables it when it failed (`proxy-pools/[id]/test/route.js:49-56`); a relay is
+tested by sending a request through it.
+
+**Netlify provisioning** (`POST /admin/v1/proxy-pools/netlify-deploy`; `N`, `L:1-27,193-219`).
+Body `{netlifyToken, projectName | siteName}`. Without a token: `400 Netlify API token is
+required`, and nothing is called. The site name is the requested one lower-cased with
+anything but letters, digits and hyphens turned into a hyphen, runs collapsed and the
+ends trimmed, else `relay-` and the time in base 36 (`N:13-19`). Then, with the token as a
+bearer credential and the user agent `9Router`:
+1. `POST /sites {name}`: a failure answers Netlify's status (422, name taken, as 409) and
+   message, or `Failed to create Netlify site`, followed by a full stop and, for 422,
+   ` Site name "x" is taken — choose a different name.` (`N:43-57`); an answer without an id
+   or URL is 502 (`N:59-64`);
+2. `POST /sites/{id}/deploys {files: {"/index.html": sha1}, functions: {relay: sha256}}`:
+   a failure answers its status and message, an answer without an id is 502 (`N:70-90`);
+3. only what the answer lists as required is uploaded: `PUT /deploys/{id}/files/index.html`
+   and `PUT /deploys/{id}/functions/relay?runtime=js`, as `application/octet-stream`; a
+   failure answers its status and message (`N:92-125`). The function is a stored (not
+   compressed) ZIP of `relay.js`, written byte for byte as `L:133-186` writes it;
+4. `GET /deploys/{id}` every 3 s until `ready`; `error` answers `error_message` (else
+   `Netlify deploy failed`), a failed status call `Netlify status failed (n)`, and more than
+   120 s `Netlify deploy timed out`, all as 500 (`N:128`, `L:204-219`).
+On success a pool is created (`type netlify`, enabled, not strict, no bypass list, one
+member: `<site url>/.netlify/functions/relay`) and the answer is `201 {proxyPool, deployUrl}`.
+The token is used for these calls only: it is not stored, logged or returned, and a
+transport error is stripped of it before it is reported.
+
 ## 21. Telemetry
 
 Normal request completion:
@@ -1637,14 +1723,15 @@ credentials; responses always strip userinfo, query, and fragment, and an update
 may send a stored member by `id` alone to keep its URL.
 
 ```text
-GET    /admin/v1/proxy-pools            bounded list (existing read model)
+GET    /admin/v1/proxy-pools            bounded list (existing read model); ?isActive=true|false, ?includeUsage=true (20.1)
 GET    /admin/v1/proxy-pools/{id}
-POST   /admin/v1/proxy-pools            {name, enabled?, strategy?, members: [{url, enabled?}]}; 201
+POST   /admin/v1/proxy-pools            {name, enabled?, strategy?, type?, strictProxy?, noProxy?, members: [{url, enabled?}]}; 201
+POST   /admin/v1/proxy-pools/netlify-deploy  {netlifyToken, projectName?|siteName?}; 201 {proxyPool, deployUrl} (20.1)
 PUT    /admin/v1/proxy-pools/{id}       replaces fields and members; member {id} alone, or with the redacted
                                          url echoed back, keeps its stored url; url with userinfo replaces it;
                                          url with an empty userinfo (http://@host:3128) removes credentials
-DELETE /admin/v1/proxy-pools/{id}       409 proxy_pool_in_use while any connection is bound to it
-POST   /admin/v1/proxy-pools/{id}/test  {memberId?}; per-member classified result
+DELETE /admin/v1/proxy-pools/{id}       409 proxy_pool_in_use while any connection is bound to it or a providerStrategies entry names it
+POST   /admin/v1/proxy-pools/{id}/test  {memberId?}; per-member classified result; a whole-pool test is recorded and switches the pool (20.1)
 POST   /admin/v1/settings/proxy-test    {url?}; tests url, else the global outbound proxy (400 if disabled)
 POST   /admin/v1/connections/{id}/proxy {proxyPoolId?, connectionProxyEnabled?, connectionProxyUrl?, connectionNoProxy?}
 ```

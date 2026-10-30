@@ -10,7 +10,7 @@ import (
 // loadProxyPools reads every durable proxy pool and its members into compiled
 // snapshot input so proxy selection stays database-free at request time.
 func loadProxyPools(ctx context.Context, db *sql.DB) ([]ProxyPool, error) {
-	rows, err := db.QueryContext(ctx, "SELECT id,enabled,strategy FROM proxy_pools ORDER BY id")
+	rows, err := db.QueryContext(ctx, "SELECT id,enabled,strategy,kind,strict,no_proxy,updated_at FROM proxy_pools ORDER BY id")
 	if err != nil {
 		return nil, fmt.Errorf("load proxy pools: %w", err)
 	}
@@ -19,11 +19,11 @@ func loadProxyPools(ctx context.Context, db *sql.DB) ([]ProxyPool, error) {
 	index := make(map[string]int)
 	for rows.Next() {
 		var pool ProxyPool
-		var enabled int
-		if err := rows.Scan(&pool.ID, &enabled, &pool.Strategy); err != nil {
+		var enabled, strict int
+		if err := rows.Scan(&pool.ID, &enabled, &pool.Strategy, &pool.Kind, &strict, &pool.NoProxy, &pool.UpdatedAt); err != nil {
 			return nil, err
 		}
-		pool.Enabled = enabled != 0
+		pool.Enabled, pool.Strict = enabled != 0, strict != 0
 		index[pool.ID] = len(pools)
 		pools = append(pools, pool)
 	}

@@ -66,6 +66,10 @@ type Options struct {
 	// stale. Zero uses defaultQuotaStaleAfter.
 	QuotaStaleAfter       time.Duration
 	AllowPrivateUpstreams bool
+	// NetlifyAPI and NetlifyHTTP replace Netlify's API root and the guarded client
+	// used to reach it, for tests that stand in for Netlify (PARITY 6.38).
+	NetlifyAPI  string
+	NetlifyHTTP *http.Client
 	// HostCredentialDiscovery is the host's consent to reading MiMo Desktop's
 	// credentials from the server user's home directory (#296). Off, nothing on the
 	// host is read; on, each read still needs the operator's consent in its request.
@@ -274,6 +278,7 @@ func (h *Handler) Attach(mux *http.ServeMux) {
 	mux.Handle("PUT /admin/v1/capability-adapters/{capability}", h.requireSessionHandler(http.HandlerFunc(h.handlePutCapabilityAdapter)))
 	mux.Handle("GET /admin/v1/proxy-pools/{id}", h.requireSessionHandler(http.HandlerFunc(h.handleGetProxyPool)))
 	mux.Handle("POST /admin/v1/proxy-pools", h.requireSessionHandler(http.HandlerFunc(h.handlePutProxyPool)))
+	mux.Handle("POST /admin/v1/proxy-pools/netlify-deploy", h.requireSessionHandler(http.HandlerFunc(h.handleNetlifyDeploy)))
 	mux.Handle("PUT /admin/v1/proxy-pools/{id}", h.requireSessionHandler(http.HandlerFunc(h.handlePutProxyPool)))
 	mux.Handle("DELETE /admin/v1/proxy-pools/{id}", h.requireSessionHandler(http.HandlerFunc(h.handleDeleteProxyPool)))
 	mux.Handle("POST /admin/v1/proxy-pools/{id}/test", h.requireSessionHandler(http.HandlerFunc(h.handleTestProxyPool)))

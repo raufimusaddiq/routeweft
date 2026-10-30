@@ -36,6 +36,14 @@ type ProxyPool struct {
 	Enabled  bool
 	Strategy string
 	Members  []ProxyMember
+	// Kind is "http" (members are forward proxies) or a relay kind (vercel,
+	// cloudflare, deno, netlify), whose members carry a request in x-relay-*
+	// headers. Strict and NoProxy are the pool's own guarantee and bypass list;
+	// UpdatedAt orders no-auth rotation (newest first), as the reference does.
+	Kind      string
+	Strict    bool
+	NoProxy   string
+	UpdatedAt string
 }
 
 // Candidate is mutable only while a serialized configuration update is built.
@@ -211,6 +219,7 @@ func (c Compiler) Compile(config Config, version uint64) (*RuntimeSnapshot, erro
 	snapshot.proxyURL = strings.TrimSpace(settings["outboundProxyUrl"])
 	snapshot.noProxy, _ = parseNoProxy(settings["noProxy"])
 	snapshot.compileCapacityAdapters()
+	snapshot.compileNoAuthProxies(config.Providers.Connections)
 	snapshot.nested = nestedCombos(combos)
 	snapshot.fusion = effectiveFusion(combos, strategyOverridesTolerant(settings["comboStrategies"], true))
 	snapshot.compileServingIndexes()
@@ -231,7 +240,12 @@ func compileProxyPools(pools []ProxyPool) map[string]proxyPoolEntry {
 		if strategy == "" {
 			strategy = "round_robin"
 		}
-		compiled[pool.ID] = proxyPoolEntry{enabled: pool.Enabled, strategy: strategy, members: append([]ProxyMember(nil), pool.Members...)}
+		kind := strings.TrimSpace(pool.Kind)
+		if kind == "" {
+			kind = "http"
+		}
+		compiled[pool.ID] = proxyPoolEntry{enabled: pool.Enabled, strategy: strategy, members: append([]ProxyMember(nil), pool.Members...),
+			kind: kind, strict: pool.Strict, noProxy: strings.TrimSpace(pool.NoProxy), updatedAt: pool.UpdatedAt}
 	}
 	return compiled
 }

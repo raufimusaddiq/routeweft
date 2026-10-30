@@ -1,0 +1,4007 @@
+{
+ "oracle": "raufimusaddiq/literouter",
+ "sha": "4279093457458e168a2431604935f0145f2e76ec",
+ "bundle": {
+  "functionCode": "exports.handler = async (event) => {\n  const headers = {};\n  for (const [k, v] of Object.entries(event.headers || {})) {\n    headers[k.toLowerCase()] = v;\n  }\n\n  const target = headers[\"x-relay-target\"];\n  const relayPath = headers[\"x-relay-path\"] || \"/\";\n\n  if (!target) {\n    return {\n      statusCode: 400,\n      headers: { \"content-type\": \"application/json\" },\n      body: JSON.stringify({ error: \"Missing x-relay-target header\" }),\n    };\n  }\n\n  const targetUrl = target.replace(/\\/$/, \"\") + relayPath;\n  const forwardHeaders = { ...event.headers };\n  for (const k of Object.keys(forwardHeaders)) {\n    const lower = k.toLowerCase();\n    if (\n      lower === \"x-relay-target\" ||\n      lower === \"x-relay-path\" ||\n      lower === \"host\" ||\n      lower === \"accept-encoding\"\n    ) {\n      delete forwardHeaders[k];\n    }\n  }\n\n  try {\n    const upstream = await fetch(targetUrl, {\n      method: event.httpMethod,\n      headers: forwardHeaders,\n      body: event.httpMethod !== \"GET\" && event.httpMethod !== \"HEAD\" && event.body\n        ? event.isBase64Encoded\n          ? Buffer.from(event.body, \"base64\")\n          : event.body\n        : undefined,\n    });\n    // Lambda response body must be a string: returning the stream object\n    // fails with cannot-unmarshal-object-into-Go-struct-field (live 502).\n    // So buffer here: text for API payloads (JSON/SSE), base64 for binary.\n    // Tradeoff vs the other relays: SSE arrives buffered, stays valid SSE.\n    const contentType = upstream.headers.get(\"content-type\") || \"\";\n    const isText = new RegExp(\"^(text/|[^;]*json|[^;]*event-stream|[^;]*javascript|[^;]*xml|[^;]*urlencoded)\", \"i\").test(contentType);\n    const responseHeaders = {};\n    upstream.headers.forEach((value, key) => {\n      if (key === \"content-encoding\" || key === \"content-length\") return;\n      responseHeaders[key] = value;\n    });\n    const rawBody = await upstream.arrayBuffer();\n    const responseBody = isText\n      ? Buffer.from(rawBody).toString(\"utf8\")\n      : Buffer.from(rawBody).toString(\"base64\");\n    return {\n      statusCode: upstream.status,\n      headers: responseHeaders,\n      body: responseBody,\n      isBase64Encoded: !isText,\n    };\n  } catch (error) {\n    return {\n      statusCode: 502,\n      headers: { \"content-type\": \"application/json\" },\n      body: JSON.stringify({ error: error.message || \"Relay fetch failed\" }),\n    };\n  }\n};\n",
+  "indexHtml": "<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>9Router Relay</title></head>\n<body><p>9Router relay function lives at <code>/.netlify/functions/relay</code>.</p></body></html>\n",
+  "zipBase64": "UEsDBBQAAAgAAAAAAAB0sMS9UgkAAFIJAAAIAAAAcmVsYXkuanNleHBvcnRzLmhhbmRsZXIgPSBhc3luYyAoZXZlbnQpID0+IHsKICBjb25zdCBoZWFkZXJzID0ge307CiAgZm9yIChjb25zdCBbaywgdl0gb2YgT2JqZWN0LmVudHJpZXMoZXZlbnQuaGVhZGVycyB8fCB7fSkpIHsKICAgIGhlYWRlcnNbay50b0xvd2VyQ2FzZSgpXSA9IHY7CiAgfQoKICBjb25zdCB0YXJnZXQgPSBoZWFkZXJzWyJ4LXJlbGF5LXRhcmdldCJdOwogIGNvbnN0IHJlbGF5UGF0aCA9IGhlYWRlcnNbIngtcmVsYXktcGF0aCJdIHx8ICIvIjsKCiAgaWYgKCF0YXJnZXQpIHsKICAgIHJldHVybiB7CiAgICAgIHN0YXR1c0NvZGU6IDQwMCwKICAgICAgaGVhZGVyczogeyAiY29udGVudC10eXBlIjogImFwcGxpY2F0aW9uL2pzb24iIH0sCiAgICAgIGJvZHk6IEpTT04uc3RyaW5naWZ5KHsgZXJyb3I6ICJNaXNzaW5nIHgtcmVsYXktdGFyZ2V0IGhlYWRlciIgfSksCiAgICB9OwogIH0KCiAgY29uc3QgdGFyZ2V0VXJsID0gdGFyZ2V0LnJlcGxhY2UoL1wvJC8sICIiKSArIHJlbGF5UGF0aDsKICBjb25zdCBmb3J3YXJkSGVhZGVycyA9IHsgLi4uZXZlbnQuaGVhZGVycyB9OwogIGZvciAoY29uc3QgayBvZiBPYmplY3Qua2V5cyhmb3J3YXJkSGVhZGVycykpIHsKICAgIGNvbnN0IGxvd2VyID0gay50b0xvd2VyQ2FzZSgpOwogICAgaWYgKAogICAgICBsb3dlciA9PT0gIngtcmVsYXktdGFyZ2V0IiB8fAogICAgICBsb3dlciA9PT0gIngtcmVsYXktcGF0aCIgfHwKICAgICAgbG93ZXIgPT09ICJob3N0IiB8fAogICAgICBsb3dlciA9PT0gImFjY2VwdC1lbmNvZGluZyIKICAgICkgewogICAgICBkZWxldGUgZm9yd2FyZEhlYWRlcnNba107CiAgICB9CiAgfQoKICB0cnkgewogICAgY29uc3QgdXBzdHJlYW0gPSBhd2FpdCBmZXRjaCh0YXJnZXRVcmwsIHsKICAgICAgbWV0aG9kOiBldmVudC5odHRwTWV0aG9kLAogICAgICBoZWFkZXJzOiBmb3J3YXJkSGVhZGVycywKICAgICAgYm9keTogZXZlbnQuaHR0cE1ldGhvZCAhPT0gIkdFVCIgJiYgZXZlbnQuaHR0cE1ldGhvZCAhPT0gIkhFQUQiICYmIGV2ZW50LmJvZHkKICAgICAgICA/IGV2ZW50LmlzQmFzZTY0RW5jb2RlZAogICAgICAgICAgPyBCdWZmZXIuZnJvbShldmVudC5ib2R5LCAiYmFzZTY0IikKICAgICAgICAgIDogZXZlbnQuYm9keQogICAgICAgIDogdW5kZWZpbmVkLAogICAgfSk7CiAgICAvLyBMYW1iZGEgcmVzcG9uc2UgYm9keSBtdXN0IGJlIGEgc3RyaW5nOiByZXR1cm5pbmcgdGhlIHN0cmVhbSBvYmplY3QKICAgIC8vIGZhaWxzIHdpdGggY2Fubm90LXVubWFyc2hhbC1vYmplY3QtaW50by1Hby1zdHJ1Y3QtZmllbGQgKGxpdmUgNTAyKS4KICAgIC8vIFNvIGJ1ZmZlciBoZXJlOiB0ZXh0IGZvciBBUEkgcGF5bG9hZHMgKEpTT04vU1NFKSwgYmFzZTY0IGZvciBiaW5hcnkuCiAgICAvLyBUcmFkZW9mZiB2cyB0aGUgb3RoZXIgcmVsYXlzOiBTU0UgYXJyaXZlcyBidWZmZXJlZCwgc3RheXMgdmFsaWQgU1NFLgogICAgY29uc3QgY29udGVudFR5cGUgPSB1cHN0cmVhbS5oZWFkZXJzLmdldCgiY29udGVudC10eXBlIikgfHwgIiI7CiAgICBjb25zdCBpc1RleHQgPSBuZXcgUmVnRXhwKCJeKHRleHQvfFteO10qanNvbnxbXjtdKmV2ZW50LXN0cmVhbXxbXjtdKmphdmFzY3JpcHR8W147XSp4bWx8W147XSp1cmxlbmNvZGVkKSIsICJpIikudGVzdChjb250ZW50VHlwZSk7CiAgICBjb25zdCByZXNwb25zZUhlYWRlcnMgPSB7fTsKICAgIHVwc3RyZWFtLmhlYWRlcnMuZm9yRWFjaCgodmFsdWUsIGtleSkgPT4gewogICAgICBpZiAoa2V5ID09PSAiY29udGVudC1lbmNvZGluZyIgfHwga2V5ID09PSAiY29udGVudC1sZW5ndGgiKSByZXR1cm47CiAgICAgIHJlc3BvbnNlSGVhZGVyc1trZXldID0gdmFsdWU7CiAgICB9KTsKICAgIGNvbnN0IHJhd0JvZHkgPSBhd2FpdCB1cHN0cmVhbS5hcnJheUJ1ZmZlcigpOwogICAgY29uc3QgcmVzcG9uc2VCb2R5ID0gaXNUZXh0CiAgICAgID8gQnVmZmVyLmZyb20ocmF3Qm9keSkudG9TdHJpbmcoInV0ZjgiKQogICAgICA6IEJ1ZmZlci5mcm9tKHJhd0JvZHkpLnRvU3RyaW5nKCJiYXNlNjQiKTsKICAgIHJldHVybiB7CiAgICAgIHN0YXR1c0NvZGU6IHVwc3RyZWFtLnN0YXR1cywKICAgICAgaGVhZGVyczogcmVzcG9uc2VIZWFkZXJzLAogICAgICBib2R5OiByZXNwb25zZUJvZHksCiAgICAgIGlzQmFzZTY0RW5jb2RlZDogIWlzVGV4dCwKICAgIH07CiAgfSBjYXRjaCAoZXJyb3IpIHsKICAgIHJldHVybiB7CiAgICAgIHN0YXR1c0NvZGU6IDUwMiwKICAgICAgaGVhZGVyczogeyAiY29udGVudC10eXBlIjogImFwcGxpY2F0aW9uL2pzb24iIH0sCiAgICAgIGJvZHk6IEpTT04uc3RyaW5naWZ5KHsgZXJyb3I6IGVycm9yLm1lc3NhZ2UgfHwgIlJlbGF5IGZldGNoIGZhaWxlZCIgfSksCiAgICB9OwogIH0KfTsKUEsBAgAAAAAACAAAAAAAAHSwxL1SCQAAUgkAAAgAAAAAAAAAAAAAAAAAAAAAAHJlbGF5LmpzUEsFBgAAAAABAAEANgAAAHgJAAAAAA==",
+  "zipSha256": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466",
+  "indexSha1": "732ed7f99760ff917893aaed829182dfc17b0334",
+  "functionName": "relay",
+  "functionPath": "/.netlify/functions/relay",
+  "api": "https://api.netlify.com/api/v1",
+  "relayUrls": [
+   {
+    "site": "https://a.netlify.app",
+    "url": "https://a.netlify.app/.netlify/functions/relay"
+   },
+   {
+    "site": "https://a.netlify.app/",
+    "url": "https://a.netlify.app/.netlify/functions/relay"
+   },
+   {
+    "site": "",
+    "url": "/.netlify/functions/relay"
+   },
+   {
+    "site": null,
+    "url": "/.netlify/functions/relay"
+   }
+  ],
+  "headers": {
+   "Authorization": "Bearer TOKEN",
+   "User-Agent": "9Router"
+  }
+ },
+ "deploy": [
+  {
+   "name": "no token",
+   "body": {},
+   "api": {},
+   "throws": null,
+   "clockStep": 0,
+   "calls": [],
+   "created": [],
+   "status": 400,
+   "answer": {
+    "error": "Netlify API token is required"
+   }
+  },
+  {
+   "name": "blank token",
+   "body": {
+    "netlifyToken": "   "
+   },
+   "api": {},
+   "throws": null,
+   "clockStep": 0,
+   "calls": [],
+   "created": [],
+   "status": 400,
+   "answer": {
+    "error": "Netlify API token is required"
+   }
+  },
+  {
+   "name": "full flow, named site",
+   "body": {
+    "netlifyToken": " nfp_synthetic ",
+    "projectName": "My Relay_01!!"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 201,
+     "json": {
+      "id": "site-1",
+      "ssl_url": "https://relay-a.netlify.app"
+     }
+    },
+    "POST /sites/site-1/deploys": {
+     "status": 200,
+     "json": {
+      "id": "deploy-1",
+      "required": [
+       "732ed7f99760ff917893aaed829182dfc17b0334"
+      ],
+      "required_functions": [
+       "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      ]
+     }
+    },
+    "PUT /deploys/deploy-1/files/index.html": {
+     "status": 200,
+     "json": {}
+    },
+    "PUT /deploys/deploy-1/functions/relay?runtime=js": {
+     "status": 200,
+     "json": {}
+    },
+    "GET /deploys/deploy-1": [
+     {
+      "status": 200,
+      "json": {
+       "state": "processing"
+      }
+     },
+     {
+      "status": 200,
+      "json": {
+       "state": "ready"
+      }
+     }
+    ]
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "my-relay-01"
+     }
+    },
+    {
+     "key": "POST /sites/site-1/deploys",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "files": {
+       "/index.html": "732ed7f99760ff917893aaed829182dfc17b0334"
+      },
+      "functions": {
+       "relay": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      }
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/files/index.html",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 185,
+      "sha256": "3aec854e87f39da1446df5cc22fd781855a2ca35f27b7cd42f646b067ff92baf"
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/functions/relay?runtime=js",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 2500,
+      "sha256": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+     }
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    }
+   ],
+   "created": [
+    {
+     "name": "my-relay-01",
+     "proxyUrl": "https://relay-a.netlify.app/.netlify/functions/relay",
+     "type": "netlify",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false
+    }
+   ],
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "pool-1",
+     "name": "my-relay-01",
+     "proxyUrl": "https://relay-a.netlify.app/.netlify/functions/relay",
+     "type": "netlify",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "createdAt": "T",
+     "updatedAt": "T"
+    },
+    "deployUrl": "https://relay-a.netlify.app/.netlify/functions/relay"
+   }
+  },
+  {
+   "name": "siteName is used when projectName is absent",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "siteName": "Edge Relay"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 201,
+     "json": {
+      "id": "site-1",
+      "ssl_url": "https://relay-a.netlify.app"
+     }
+    },
+    "POST /sites/site-1/deploys": {
+     "status": 200,
+     "json": {
+      "id": "deploy-1",
+      "required": [
+       "732ed7f99760ff917893aaed829182dfc17b0334"
+      ],
+      "required_functions": [
+       "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      ]
+     }
+    },
+    "PUT /deploys/deploy-1/files/index.html": {
+     "status": 200,
+     "json": {}
+    },
+    "PUT /deploys/deploy-1/functions/relay?runtime=js": {
+     "status": 200,
+     "json": {}
+    },
+    "GET /deploys/deploy-1": [
+     {
+      "status": 200,
+      "json": {
+       "state": "processing"
+      }
+     },
+     {
+      "status": 200,
+      "json": {
+       "state": "ready"
+      }
+     }
+    ]
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "edge-relay"
+     }
+    },
+    {
+     "key": "POST /sites/site-1/deploys",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "files": {
+       "/index.html": "732ed7f99760ff917893aaed829182dfc17b0334"
+      },
+      "functions": {
+       "relay": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      }
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/files/index.html",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 185,
+      "sha256": "3aec854e87f39da1446df5cc22fd781855a2ca35f27b7cd42f646b067ff92baf"
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/functions/relay?runtime=js",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 2500,
+      "sha256": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+     }
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    }
+   ],
+   "created": [
+    {
+     "name": "edge-relay",
+     "proxyUrl": "https://relay-a.netlify.app/.netlify/functions/relay",
+     "type": "netlify",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false
+    }
+   ],
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "pool-1",
+     "name": "edge-relay",
+     "proxyUrl": "https://relay-a.netlify.app/.netlify/functions/relay",
+     "type": "netlify",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "createdAt": "T",
+     "updatedAt": "T"
+    },
+    "deployUrl": "https://relay-a.netlify.app/.netlify/functions/relay"
+   }
+  },
+  {
+   "name": "projectName wins over siteName",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "one",
+    "siteName": "two"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 201,
+     "json": {
+      "id": "site-1",
+      "ssl_url": "https://relay-a.netlify.app"
+     }
+    },
+    "POST /sites/site-1/deploys": {
+     "status": 200,
+     "json": {
+      "id": "deploy-1",
+      "required": [
+       "732ed7f99760ff917893aaed829182dfc17b0334"
+      ],
+      "required_functions": [
+       "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      ]
+     }
+    },
+    "PUT /deploys/deploy-1/files/index.html": {
+     "status": 200,
+     "json": {}
+    },
+    "PUT /deploys/deploy-1/functions/relay?runtime=js": {
+     "status": 200,
+     "json": {}
+    },
+    "GET /deploys/deploy-1": [
+     {
+      "status": 200,
+      "json": {
+       "state": "processing"
+      }
+     },
+     {
+      "status": 200,
+      "json": {
+       "state": "ready"
+      }
+     }
+    ]
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "one"
+     }
+    },
+    {
+     "key": "POST /sites/site-1/deploys",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "files": {
+       "/index.html": "732ed7f99760ff917893aaed829182dfc17b0334"
+      },
+      "functions": {
+       "relay": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      }
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/files/index.html",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 185,
+      "sha256": "3aec854e87f39da1446df5cc22fd781855a2ca35f27b7cd42f646b067ff92baf"
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/functions/relay?runtime=js",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 2500,
+      "sha256": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+     }
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    }
+   ],
+   "created": [
+    {
+     "name": "one",
+     "proxyUrl": "https://relay-a.netlify.app/.netlify/functions/relay",
+     "type": "netlify",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false
+    }
+   ],
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "pool-1",
+     "name": "one",
+     "proxyUrl": "https://relay-a.netlify.app/.netlify/functions/relay",
+     "type": "netlify",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "createdAt": "T",
+     "updatedAt": "T"
+    },
+    "deployUrl": "https://relay-a.netlify.app/.netlify/functions/relay"
+   }
+  },
+  {
+   "name": "unnamed site gets a generated name",
+   "body": {
+    "netlifyToken": "nfp_synthetic"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 201,
+     "json": {
+      "id": "site-1",
+      "ssl_url": "https://relay-a.netlify.app"
+     }
+    },
+    "POST /sites/site-1/deploys": {
+     "status": 200,
+     "json": {
+      "id": "deploy-1",
+      "required": [
+       "732ed7f99760ff917893aaed829182dfc17b0334"
+      ],
+      "required_functions": [
+       "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      ]
+     }
+    },
+    "PUT /deploys/deploy-1/files/index.html": {
+     "status": 200,
+     "json": {}
+    },
+    "PUT /deploys/deploy-1/functions/relay?runtime=js": {
+     "status": 200,
+     "json": {}
+    },
+    "GET /deploys/deploy-1": [
+     {
+      "status": 200,
+      "json": {
+       "state": "processing"
+      }
+     },
+     {
+      "status": 200,
+      "json": {
+       "state": "ready"
+      }
+     }
+    ]
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "relay-loyw3v28"
+     }
+    },
+    {
+     "key": "POST /sites/site-1/deploys",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "files": {
+       "/index.html": "732ed7f99760ff917893aaed829182dfc17b0334"
+      },
+      "functions": {
+       "relay": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      }
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/files/index.html",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 185,
+      "sha256": "3aec854e87f39da1446df5cc22fd781855a2ca35f27b7cd42f646b067ff92baf"
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/functions/relay?runtime=js",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 2500,
+      "sha256": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+     }
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    }
+   ],
+   "created": [
+    {
+     "name": "relay-loyw3v28",
+     "proxyUrl": "https://relay-a.netlify.app/.netlify/functions/relay",
+     "type": "netlify",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false
+    }
+   ],
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "pool-1",
+     "name": "relay-loyw3v28",
+     "proxyUrl": "https://relay-a.netlify.app/.netlify/functions/relay",
+     "type": "netlify",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "createdAt": "T",
+     "updatedAt": "T"
+    },
+    "deployUrl": "https://relay-a.netlify.app/.netlify/functions/relay"
+   }
+  },
+  {
+   "name": "a name with nothing usable gets a generated name",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "!!!"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 201,
+     "json": {
+      "id": "site-1",
+      "ssl_url": "https://relay-a.netlify.app"
+     }
+    },
+    "POST /sites/site-1/deploys": {
+     "status": 200,
+     "json": {
+      "id": "deploy-1",
+      "required": [
+       "732ed7f99760ff917893aaed829182dfc17b0334"
+      ],
+      "required_functions": [
+       "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      ]
+     }
+    },
+    "PUT /deploys/deploy-1/files/index.html": {
+     "status": 200,
+     "json": {}
+    },
+    "PUT /deploys/deploy-1/functions/relay?runtime=js": {
+     "status": 200,
+     "json": {}
+    },
+    "GET /deploys/deploy-1": [
+     {
+      "status": 200,
+      "json": {
+       "state": "processing"
+      }
+     },
+     {
+      "status": 200,
+      "json": {
+       "state": "ready"
+      }
+     }
+    ]
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "relay-loyw3v28"
+     }
+    },
+    {
+     "key": "POST /sites/site-1/deploys",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "files": {
+       "/index.html": "732ed7f99760ff917893aaed829182dfc17b0334"
+      },
+      "functions": {
+       "relay": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      }
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/files/index.html",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 185,
+      "sha256": "3aec854e87f39da1446df5cc22fd781855a2ca35f27b7cd42f646b067ff92baf"
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/functions/relay?runtime=js",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 2500,
+      "sha256": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+     }
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    }
+   ],
+   "created": [
+    {
+     "name": "relay-loyw3v28",
+     "proxyUrl": "https://relay-a.netlify.app/.netlify/functions/relay",
+     "type": "netlify",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false
+    }
+   ],
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "pool-1",
+     "name": "relay-loyw3v28",
+     "proxyUrl": "https://relay-a.netlify.app/.netlify/functions/relay",
+     "type": "netlify",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "createdAt": "T",
+     "updatedAt": "T"
+    },
+    "deployUrl": "https://relay-a.netlify.app/.netlify/functions/relay"
+   }
+  },
+  {
+   "name": "a non-string name gets a generated name",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": 42
+   },
+   "api": {
+    "POST /sites": {
+     "status": 201,
+     "json": {
+      "id": "site-1",
+      "ssl_url": "https://relay-a.netlify.app"
+     }
+    },
+    "POST /sites/site-1/deploys": {
+     "status": 200,
+     "json": {
+      "id": "deploy-1",
+      "required": [
+       "732ed7f99760ff917893aaed829182dfc17b0334"
+      ],
+      "required_functions": [
+       "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      ]
+     }
+    },
+    "PUT /deploys/deploy-1/files/index.html": {
+     "status": 200,
+     "json": {}
+    },
+    "PUT /deploys/deploy-1/functions/relay?runtime=js": {
+     "status": 200,
+     "json": {}
+    },
+    "GET /deploys/deploy-1": [
+     {
+      "status": 200,
+      "json": {
+       "state": "processing"
+      }
+     },
+     {
+      "status": 200,
+      "json": {
+       "state": "ready"
+      }
+     }
+    ]
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "relay-loyw3v28"
+     }
+    },
+    {
+     "key": "POST /sites/site-1/deploys",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "files": {
+       "/index.html": "732ed7f99760ff917893aaed829182dfc17b0334"
+      },
+      "functions": {
+       "relay": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      }
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/files/index.html",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 185,
+      "sha256": "3aec854e87f39da1446df5cc22fd781855a2ca35f27b7cd42f646b067ff92baf"
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/functions/relay?runtime=js",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 2500,
+      "sha256": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+     }
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    }
+   ],
+   "created": [
+    {
+     "name": "relay-loyw3v28",
+     "proxyUrl": "https://relay-a.netlify.app/.netlify/functions/relay",
+     "type": "netlify",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false
+    }
+   ],
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "pool-1",
+     "name": "relay-loyw3v28",
+     "proxyUrl": "https://relay-a.netlify.app/.netlify/functions/relay",
+     "type": "netlify",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "createdAt": "T",
+     "updatedAt": "T"
+    },
+    "deployUrl": "https://relay-a.netlify.app/.netlify/functions/relay"
+   }
+  },
+  {
+   "name": "Netlify already has both files",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "dedupe"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 201,
+     "json": {
+      "id": "site-1",
+      "ssl_url": "https://relay-a.netlify.app"
+     }
+    },
+    "POST /sites/site-1/deploys": {
+     "status": 200,
+     "json": {
+      "id": "deploy-1",
+      "required": [],
+      "required_functions": []
+     }
+    },
+    "PUT /deploys/deploy-1/files/index.html": {
+     "status": 200,
+     "json": {}
+    },
+    "PUT /deploys/deploy-1/functions/relay?runtime=js": {
+     "status": 200,
+     "json": {}
+    },
+    "GET /deploys/deploy-1": [
+     {
+      "status": 200,
+      "json": {
+       "state": "processing"
+      }
+     },
+     {
+      "status": 200,
+      "json": {
+       "state": "ready"
+      }
+     }
+    ]
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "dedupe"
+     }
+    },
+    {
+     "key": "POST /sites/site-1/deploys",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "files": {
+       "/index.html": "732ed7f99760ff917893aaed829182dfc17b0334"
+      },
+      "functions": {
+       "relay": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      }
+     }
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    }
+   ],
+   "created": [
+    {
+     "name": "dedupe",
+     "proxyUrl": "https://relay-a.netlify.app/.netlify/functions/relay",
+     "type": "netlify",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false
+    }
+   ],
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "pool-1",
+     "name": "dedupe",
+     "proxyUrl": "https://relay-a.netlify.app/.netlify/functions/relay",
+     "type": "netlify",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "createdAt": "T",
+     "updatedAt": "T"
+    },
+    "deployUrl": "https://relay-a.netlify.app/.netlify/functions/relay"
+   }
+  },
+  {
+   "name": "only the function is required",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "fn-only"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 201,
+     "json": {
+      "id": "site-1",
+      "ssl_url": "https://relay-a.netlify.app"
+     }
+    },
+    "POST /sites/site-1/deploys": {
+     "status": 200,
+     "json": {
+      "id": "deploy-1",
+      "required_functions": [
+       "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      ]
+     }
+    },
+    "PUT /deploys/deploy-1/files/index.html": {
+     "status": 200,
+     "json": {}
+    },
+    "PUT /deploys/deploy-1/functions/relay?runtime=js": {
+     "status": 200,
+     "json": {}
+    },
+    "GET /deploys/deploy-1": [
+     {
+      "status": 200,
+      "json": {
+       "state": "processing"
+      }
+     },
+     {
+      "status": 200,
+      "json": {
+       "state": "ready"
+      }
+     }
+    ]
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "fn-only"
+     }
+    },
+    {
+     "key": "POST /sites/site-1/deploys",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "files": {
+       "/index.html": "732ed7f99760ff917893aaed829182dfc17b0334"
+      },
+      "functions": {
+       "relay": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      }
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/functions/relay?runtime=js",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 2500,
+      "sha256": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+     }
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    }
+   ],
+   "created": [
+    {
+     "name": "fn-only",
+     "proxyUrl": "https://relay-a.netlify.app/.netlify/functions/relay",
+     "type": "netlify",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false
+    }
+   ],
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "pool-1",
+     "name": "fn-only",
+     "proxyUrl": "https://relay-a.netlify.app/.netlify/functions/relay",
+     "type": "netlify",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "createdAt": "T",
+     "updatedAt": "T"
+    },
+    "deployUrl": "https://relay-a.netlify.app/.netlify/functions/relay"
+   }
+  },
+  {
+   "name": "site name taken (422)",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "taken"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 422,
+     "json": {
+      "message": "Subdomain not available"
+     }
+    }
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "taken"
+     }
+    }
+   ],
+   "created": [],
+   "status": 409,
+   "answer": {
+    "error": "Subdomain not available. Site name \"taken\" is taken — choose a different name."
+   }
+  },
+  {
+   "name": "site create fails with a message",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "x"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 401,
+     "json": {
+      "message": "Access Denied"
+     }
+    }
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "x"
+     }
+    }
+   ],
+   "created": [],
+   "status": 401,
+   "answer": {
+    "error": "Access Denied."
+   }
+  },
+  {
+   "name": "site create fails with an error field",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "x"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 403,
+     "json": {
+      "error": "Forbidden"
+     }
+    }
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "x"
+     }
+    }
+   ],
+   "created": [],
+   "status": 403,
+   "answer": {
+    "error": "Forbidden."
+   }
+  },
+  {
+   "name": "site create fails without a body",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "x"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 500
+    }
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "x"
+     }
+    }
+   ],
+   "created": [],
+   "status": 500,
+   "answer": {
+    "error": "Failed to create Netlify site."
+   }
+  },
+  {
+   "name": "site answer without a URL",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "x"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 201,
+     "json": {
+      "id": "site-1"
+     }
+    }
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "x"
+     }
+    }
+   ],
+   "created": [],
+   "status": 502,
+   "answer": {
+    "error": "Netlify site created but no site URL returned"
+   }
+  },
+  {
+   "name": "site answer with site_id and url",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "alt"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 201,
+     "json": {
+      "site_id": "site-1",
+      "url": "http://relay-a.netlify.app/"
+     }
+    },
+    "POST /sites/site-1/deploys": {
+     "status": 200,
+     "json": {
+      "id": "deploy-1",
+      "required": [
+       "732ed7f99760ff917893aaed829182dfc17b0334"
+      ],
+      "required_functions": [
+       "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      ]
+     }
+    },
+    "PUT /deploys/deploy-1/files/index.html": {
+     "status": 200,
+     "json": {}
+    },
+    "PUT /deploys/deploy-1/functions/relay?runtime=js": {
+     "status": 200,
+     "json": {}
+    },
+    "GET /deploys/deploy-1": [
+     {
+      "status": 200,
+      "json": {
+       "state": "processing"
+      }
+     },
+     {
+      "status": 200,
+      "json": {
+       "state": "ready"
+      }
+     }
+    ]
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "alt"
+     }
+    },
+    {
+     "key": "POST /sites/site-1/deploys",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "files": {
+       "/index.html": "732ed7f99760ff917893aaed829182dfc17b0334"
+      },
+      "functions": {
+       "relay": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      }
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/files/index.html",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 185,
+      "sha256": "3aec854e87f39da1446df5cc22fd781855a2ca35f27b7cd42f646b067ff92baf"
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/functions/relay?runtime=js",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 2500,
+      "sha256": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+     }
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    }
+   ],
+   "created": [
+    {
+     "name": "alt",
+     "proxyUrl": "http://relay-a.netlify.app/.netlify/functions/relay",
+     "type": "netlify",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false
+    }
+   ],
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "pool-1",
+     "name": "alt",
+     "proxyUrl": "http://relay-a.netlify.app/.netlify/functions/relay",
+     "type": "netlify",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "createdAt": "T",
+     "updatedAt": "T"
+    },
+    "deployUrl": "http://relay-a.netlify.app/.netlify/functions/relay"
+   }
+  },
+  {
+   "name": "deploy create fails",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "x"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 201,
+     "json": {
+      "id": "site-1",
+      "ssl_url": "https://relay-a.netlify.app"
+     }
+    },
+    "POST /sites/site-1/deploys": {
+     "status": 429,
+     "json": {
+      "message": "Too many deploys"
+     }
+    },
+    "PUT /deploys/deploy-1/files/index.html": {
+     "status": 200,
+     "json": {}
+    },
+    "PUT /deploys/deploy-1/functions/relay?runtime=js": {
+     "status": 200,
+     "json": {}
+    },
+    "GET /deploys/deploy-1": [
+     {
+      "status": 200,
+      "json": {
+       "state": "processing"
+      }
+     },
+     {
+      "status": 200,
+      "json": {
+       "state": "ready"
+      }
+     }
+    ]
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "x"
+     }
+    },
+    {
+     "key": "POST /sites/site-1/deploys",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "files": {
+       "/index.html": "732ed7f99760ff917893aaed829182dfc17b0334"
+      },
+      "functions": {
+       "relay": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      }
+     }
+    }
+   ],
+   "created": [],
+   "status": 429,
+   "answer": {
+    "error": "Too many deploys"
+   }
+  },
+  {
+   "name": "deploy answer without an id",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "x"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 201,
+     "json": {
+      "id": "site-1",
+      "ssl_url": "https://relay-a.netlify.app"
+     }
+    },
+    "POST /sites/site-1/deploys": {
+     "status": 200,
+     "json": {}
+    },
+    "PUT /deploys/deploy-1/files/index.html": {
+     "status": 200,
+     "json": {}
+    },
+    "PUT /deploys/deploy-1/functions/relay?runtime=js": {
+     "status": 200,
+     "json": {}
+    },
+    "GET /deploys/deploy-1": [
+     {
+      "status": 200,
+      "json": {
+       "state": "processing"
+      }
+     },
+     {
+      "status": 200,
+      "json": {
+       "state": "ready"
+      }
+     }
+    ]
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "x"
+     }
+    },
+    {
+     "key": "POST /sites/site-1/deploys",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "files": {
+       "/index.html": "732ed7f99760ff917893aaed829182dfc17b0334"
+      },
+      "functions": {
+       "relay": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      }
+     }
+    }
+   ],
+   "created": [],
+   "status": 502,
+   "answer": {
+    "error": "Netlify deploy created but no deploy ID returned"
+   }
+  },
+  {
+   "name": "index.html upload fails",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "x"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 201,
+     "json": {
+      "id": "site-1",
+      "ssl_url": "https://relay-a.netlify.app"
+     }
+    },
+    "POST /sites/site-1/deploys": {
+     "status": 200,
+     "json": {
+      "id": "deploy-1",
+      "required": [
+       "732ed7f99760ff917893aaed829182dfc17b0334"
+      ],
+      "required_functions": [
+       "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      ]
+     }
+    },
+    "PUT /deploys/deploy-1/files/index.html": {
+     "status": 500,
+     "json": {
+      "message": "disk"
+     }
+    },
+    "PUT /deploys/deploy-1/functions/relay?runtime=js": {
+     "status": 200,
+     "json": {}
+    },
+    "GET /deploys/deploy-1": [
+     {
+      "status": 200,
+      "json": {
+       "state": "processing"
+      }
+     },
+     {
+      "status": 200,
+      "json": {
+       "state": "ready"
+      }
+     }
+    ]
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "x"
+     }
+    },
+    {
+     "key": "POST /sites/site-1/deploys",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "files": {
+       "/index.html": "732ed7f99760ff917893aaed829182dfc17b0334"
+      },
+      "functions": {
+       "relay": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      }
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/files/index.html",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 185,
+      "sha256": "3aec854e87f39da1446df5cc22fd781855a2ca35f27b7cd42f646b067ff92baf"
+     }
+    }
+   ],
+   "created": [],
+   "status": 500,
+   "answer": {
+    "error": "disk"
+   }
+  },
+  {
+   "name": "function upload fails",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "x"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 201,
+     "json": {
+      "id": "site-1",
+      "ssl_url": "https://relay-a.netlify.app"
+     }
+    },
+    "POST /sites/site-1/deploys": {
+     "status": 200,
+     "json": {
+      "id": "deploy-1",
+      "required": [
+       "732ed7f99760ff917893aaed829182dfc17b0334"
+      ],
+      "required_functions": [
+       "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      ]
+     }
+    },
+    "PUT /deploys/deploy-1/files/index.html": {
+     "status": 200,
+     "json": {}
+    },
+    "PUT /deploys/deploy-1/functions/relay?runtime=js": {
+     "status": 400,
+     "json": {
+      "error": "bad zip"
+     }
+    },
+    "GET /deploys/deploy-1": [
+     {
+      "status": 200,
+      "json": {
+       "state": "processing"
+      }
+     },
+     {
+      "status": 200,
+      "json": {
+       "state": "ready"
+      }
+     }
+    ]
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "x"
+     }
+    },
+    {
+     "key": "POST /sites/site-1/deploys",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "files": {
+       "/index.html": "732ed7f99760ff917893aaed829182dfc17b0334"
+      },
+      "functions": {
+       "relay": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      }
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/files/index.html",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 185,
+      "sha256": "3aec854e87f39da1446df5cc22fd781855a2ca35f27b7cd42f646b067ff92baf"
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/functions/relay?runtime=js",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 2500,
+      "sha256": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+     }
+    }
+   ],
+   "created": [],
+   "status": 400,
+   "answer": {
+    "error": "bad zip"
+   }
+  },
+  {
+   "name": "the deploy ends in error",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "x"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 201,
+     "json": {
+      "id": "site-1",
+      "ssl_url": "https://relay-a.netlify.app"
+     }
+    },
+    "POST /sites/site-1/deploys": {
+     "status": 200,
+     "json": {
+      "id": "deploy-1",
+      "required": [
+       "732ed7f99760ff917893aaed829182dfc17b0334"
+      ],
+      "required_functions": [
+       "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      ]
+     }
+    },
+    "PUT /deploys/deploy-1/files/index.html": {
+     "status": 200,
+     "json": {}
+    },
+    "PUT /deploys/deploy-1/functions/relay?runtime=js": {
+     "status": 200,
+     "json": {}
+    },
+    "GET /deploys/deploy-1": [
+     {
+      "status": 200,
+      "json": {
+       "state": "error",
+       "error_message": "Function bundling failed"
+      }
+     }
+    ]
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "x"
+     }
+    },
+    {
+     "key": "POST /sites/site-1/deploys",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "files": {
+       "/index.html": "732ed7f99760ff917893aaed829182dfc17b0334"
+      },
+      "functions": {
+       "relay": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      }
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/files/index.html",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 185,
+      "sha256": "3aec854e87f39da1446df5cc22fd781855a2ca35f27b7cd42f646b067ff92baf"
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/functions/relay?runtime=js",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 2500,
+      "sha256": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+     }
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    }
+   ],
+   "created": [],
+   "status": 500,
+   "answer": {
+    "error": "Function bundling failed"
+   }
+  },
+  {
+   "name": "the deploy ends in error without a message",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "x"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 201,
+     "json": {
+      "id": "site-1",
+      "ssl_url": "https://relay-a.netlify.app"
+     }
+    },
+    "POST /sites/site-1/deploys": {
+     "status": 200,
+     "json": {
+      "id": "deploy-1",
+      "required": [
+       "732ed7f99760ff917893aaed829182dfc17b0334"
+      ],
+      "required_functions": [
+       "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      ]
+     }
+    },
+    "PUT /deploys/deploy-1/files/index.html": {
+     "status": 200,
+     "json": {}
+    },
+    "PUT /deploys/deploy-1/functions/relay?runtime=js": {
+     "status": 200,
+     "json": {}
+    },
+    "GET /deploys/deploy-1": [
+     {
+      "status": 200,
+      "json": {
+       "state": "error"
+      }
+     }
+    ]
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "x"
+     }
+    },
+    {
+     "key": "POST /sites/site-1/deploys",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "files": {
+       "/index.html": "732ed7f99760ff917893aaed829182dfc17b0334"
+      },
+      "functions": {
+       "relay": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      }
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/files/index.html",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 185,
+      "sha256": "3aec854e87f39da1446df5cc22fd781855a2ca35f27b7cd42f646b067ff92baf"
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/functions/relay?runtime=js",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 2500,
+      "sha256": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+     }
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    }
+   ],
+   "created": [],
+   "status": 500,
+   "answer": {
+    "error": "Netlify deploy failed"
+   }
+  },
+  {
+   "name": "the status call fails",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "x"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 201,
+     "json": {
+      "id": "site-1",
+      "ssl_url": "https://relay-a.netlify.app"
+     }
+    },
+    "POST /sites/site-1/deploys": {
+     "status": 200,
+     "json": {
+      "id": "deploy-1",
+      "required": [
+       "732ed7f99760ff917893aaed829182dfc17b0334"
+      ],
+      "required_functions": [
+       "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      ]
+     }
+    },
+    "PUT /deploys/deploy-1/files/index.html": {
+     "status": 200,
+     "json": {}
+    },
+    "PUT /deploys/deploy-1/functions/relay?runtime=js": {
+     "status": 200,
+     "json": {}
+    },
+    "GET /deploys/deploy-1": [
+     {
+      "status": 503,
+      "json": {}
+     }
+    ]
+   },
+   "throws": null,
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "x"
+     }
+    },
+    {
+     "key": "POST /sites/site-1/deploys",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "files": {
+       "/index.html": "732ed7f99760ff917893aaed829182dfc17b0334"
+      },
+      "functions": {
+       "relay": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      }
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/files/index.html",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 185,
+      "sha256": "3aec854e87f39da1446df5cc22fd781855a2ca35f27b7cd42f646b067ff92baf"
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/functions/relay?runtime=js",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 2500,
+      "sha256": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+     }
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    }
+   ],
+   "created": [],
+   "status": 500,
+   "answer": {
+    "error": "Netlify status failed (503)"
+   }
+  },
+  {
+   "name": "the deploy never becomes ready",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "x"
+   },
+   "api": {
+    "POST /sites": {
+     "status": 201,
+     "json": {
+      "id": "site-1",
+      "ssl_url": "https://relay-a.netlify.app"
+     }
+    },
+    "POST /sites/site-1/deploys": {
+     "status": 200,
+     "json": {
+      "id": "deploy-1",
+      "required": [
+       "732ed7f99760ff917893aaed829182dfc17b0334"
+      ],
+      "required_functions": [
+       "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      ]
+     }
+    },
+    "PUT /deploys/deploy-1/files/index.html": {
+     "status": 200,
+     "json": {}
+    },
+    "PUT /deploys/deploy-1/functions/relay?runtime=js": {
+     "status": 200,
+     "json": {}
+    },
+    "GET /deploys/deploy-1": [
+     {
+      "status": 200,
+      "json": {
+       "state": "processing"
+      }
+     }
+    ]
+   },
+   "throws": null,
+   "clockStep": 60000,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "x"
+     }
+    },
+    {
+     "key": "POST /sites/site-1/deploys",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "files": {
+       "/index.html": "732ed7f99760ff917893aaed829182dfc17b0334"
+      },
+      "functions": {
+       "relay": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+      }
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/files/index.html",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 185,
+      "sha256": "3aec854e87f39da1446df5cc22fd781855a2ca35f27b7cd42f646b067ff92baf"
+     }
+    },
+    {
+     "key": "PUT /deploys/deploy-1/functions/relay?runtime=js",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/octet-stream"
+     },
+     "body": {
+      "bytes": 2500,
+      "sha256": "cd41ae2fac7e38df4209b862ca0ef1ef1142e3cabd2180c046ccb9b34707d466"
+     }
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    },
+    {
+     "key": "GET /deploys/deploy-1",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router"
+     },
+     "body": null
+    }
+   ],
+   "created": [],
+   "status": 500,
+   "answer": {
+    "error": "Netlify deploy timed out"
+   }
+  },
+  {
+   "name": "the network fails",
+   "body": {
+    "netlifyToken": "nfp_synthetic",
+    "projectName": "x"
+   },
+   "api": {},
+   "throws": "getaddrinfo ENOTFOUND api.netlify.com",
+   "clockStep": 0,
+   "calls": [
+    {
+     "key": "POST /sites",
+     "headers": {
+      "Authorization": "Bearer nfp_synthetic",
+      "User-Agent": "9Router",
+      "Content-Type": "application/json"
+     },
+     "body": {
+      "name": "x"
+     }
+    }
+   ],
+   "created": [],
+   "status": 500,
+   "answer": {
+    "error": "getaddrinfo ENOTFOUND api.netlify.com"
+   }
+  }
+ ],
+ "list": [
+  {
+   "query": "",
+   "filters": [
+    {}
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPools": [
+     {
+      "id": "a",
+      "name": "A",
+      "proxyUrl": "http://a:1",
+      "isActive": true
+     },
+     {
+      "id": "b",
+      "name": "B",
+      "proxyUrl": "http://b:1",
+      "isActive": false
+     },
+     {
+      "id": "c",
+      "name": "C",
+      "proxyUrl": "https://c.netlify.app/.netlify/functions/relay",
+      "type": "netlify",
+      "isActive": true
+     }
+    ]
+   }
+  },
+  {
+   "query": "?isActive=true",
+   "filters": [
+    {
+     "isActive": true
+    }
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPools": [
+     {
+      "id": "a",
+      "name": "A",
+      "proxyUrl": "http://a:1",
+      "isActive": true
+     },
+     {
+      "id": "c",
+      "name": "C",
+      "proxyUrl": "https://c.netlify.app/.netlify/functions/relay",
+      "type": "netlify",
+      "isActive": true
+     }
+    ]
+   }
+  },
+  {
+   "query": "?isActive=false",
+   "filters": [
+    {
+     "isActive": false
+    }
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPools": [
+     {
+      "id": "b",
+      "name": "B",
+      "proxyUrl": "http://b:1",
+      "isActive": false
+     }
+    ]
+   }
+  },
+  {
+   "query": "?isActive=yes",
+   "filters": [
+    {}
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPools": [
+     {
+      "id": "a",
+      "name": "A",
+      "proxyUrl": "http://a:1",
+      "isActive": true
+     },
+     {
+      "id": "b",
+      "name": "B",
+      "proxyUrl": "http://b:1",
+      "isActive": false
+     },
+     {
+      "id": "c",
+      "name": "C",
+      "proxyUrl": "https://c.netlify.app/.netlify/functions/relay",
+      "type": "netlify",
+      "isActive": true
+     }
+    ]
+   }
+  },
+  {
+   "query": "?isActive=TRUE",
+   "filters": [
+    {}
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPools": [
+     {
+      "id": "a",
+      "name": "A",
+      "proxyUrl": "http://a:1",
+      "isActive": true
+     },
+     {
+      "id": "b",
+      "name": "B",
+      "proxyUrl": "http://b:1",
+      "isActive": false
+     },
+     {
+      "id": "c",
+      "name": "C",
+      "proxyUrl": "https://c.netlify.app/.netlify/functions/relay",
+      "type": "netlify",
+      "isActive": true
+     }
+    ]
+   }
+  },
+  {
+   "query": "?includeUsage=true",
+   "filters": [
+    {}
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPools": [
+     {
+      "id": "a",
+      "name": "A",
+      "proxyUrl": "http://a:1",
+      "isActive": true,
+      "boundConnectionCount": 2
+     },
+     {
+      "id": "b",
+      "name": "B",
+      "proxyUrl": "http://b:1",
+      "isActive": false,
+      "boundConnectionCount": 0
+     },
+     {
+      "id": "c",
+      "name": "C",
+      "proxyUrl": "https://c.netlify.app/.netlify/functions/relay",
+      "type": "netlify",
+      "isActive": true,
+      "boundConnectionCount": 1
+     }
+    ]
+   }
+  },
+  {
+   "query": "?includeUsage=1",
+   "filters": [
+    {}
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPools": [
+     {
+      "id": "a",
+      "name": "A",
+      "proxyUrl": "http://a:1",
+      "isActive": true
+     },
+     {
+      "id": "b",
+      "name": "B",
+      "proxyUrl": "http://b:1",
+      "isActive": false
+     },
+     {
+      "id": "c",
+      "name": "C",
+      "proxyUrl": "https://c.netlify.app/.netlify/functions/relay",
+      "type": "netlify",
+      "isActive": true
+     }
+    ]
+   }
+  },
+  {
+   "query": "?isActive=true&includeUsage=true",
+   "filters": [
+    {
+     "isActive": true
+    }
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPools": [
+     {
+      "id": "a",
+      "name": "A",
+      "proxyUrl": "http://a:1",
+      "isActive": true,
+      "boundConnectionCount": 2
+     },
+     {
+      "id": "c",
+      "name": "C",
+      "proxyUrl": "https://c.netlify.app/.netlify/functions/relay",
+      "type": "netlify",
+      "isActive": true,
+      "boundConnectionCount": 1
+     }
+    ]
+   }
+  },
+  {
+   "query": "?isActive=false&includeUsage=true",
+   "filters": [
+    {
+     "isActive": false
+    }
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPools": [
+     {
+      "id": "b",
+      "name": "B",
+      "proxyUrl": "http://b:1",
+      "isActive": false,
+      "boundConnectionCount": 0
+     }
+    ]
+   }
+  }
+ ],
+ "create": [
+  {
+   "body": {
+    "name": " P ",
+    "proxyUrl": " http://p:1 "
+   },
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "new",
+     "name": "P",
+     "proxyUrl": "http://p:1",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "type": "http"
+    }
+   }
+  },
+  {
+   "body": {
+    "proxyUrl": "http://p:1"
+   },
+   "status": 400,
+   "answer": {
+    "error": "Name is required"
+   }
+  },
+  {
+   "body": {
+    "name": "P"
+   },
+   "status": 400,
+   "answer": {
+    "error": "Proxy URL is required"
+   }
+  },
+  {
+   "body": {
+    "name": "P",
+    "proxyUrl": "  "
+   },
+   "status": 400,
+   "answer": {
+    "error": "Proxy URL is required"
+   }
+  },
+  {
+   "body": {
+    "name": "P",
+    "proxyUrl": "http://p:1",
+    "noProxy": " a.com,b.com "
+   },
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "new",
+     "name": "P",
+     "proxyUrl": "http://p:1",
+     "noProxy": "a.com,b.com",
+     "isActive": true,
+     "strictProxy": false,
+     "type": "http"
+    }
+   }
+  },
+  {
+   "body": {
+    "name": "P",
+    "proxyUrl": "http://p:1",
+    "isActive": false
+   },
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "new",
+     "name": "P",
+     "proxyUrl": "http://p:1",
+     "noProxy": "",
+     "isActive": false,
+     "strictProxy": false,
+     "type": "http"
+    }
+   }
+  },
+  {
+   "body": {
+    "name": "P",
+    "proxyUrl": "http://p:1",
+    "isActive": "false"
+   },
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "new",
+     "name": "P",
+     "proxyUrl": "http://p:1",
+     "noProxy": "",
+     "isActive": false,
+     "strictProxy": false,
+     "type": "http"
+    }
+   }
+  },
+  {
+   "body": {
+    "name": "P",
+    "proxyUrl": "http://p:1",
+    "isActive": 0
+   },
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "new",
+     "name": "P",
+     "proxyUrl": "http://p:1",
+     "noProxy": "",
+     "isActive": false,
+     "strictProxy": false,
+     "type": "http"
+    }
+   }
+  },
+  {
+   "body": {
+    "name": "P",
+    "proxyUrl": "http://p:1",
+    "strictProxy": true
+   },
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "new",
+     "name": "P",
+     "proxyUrl": "http://p:1",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": true,
+     "type": "http"
+    }
+   }
+  },
+  {
+   "body": {
+    "name": "P",
+    "proxyUrl": "http://p:1",
+    "strictProxy": "true"
+   },
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "new",
+     "name": "P",
+     "proxyUrl": "http://p:1",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "type": "http"
+    }
+   }
+  },
+  {
+   "body": {
+    "name": "P",
+    "proxyUrl": "https://r.example/relay",
+    "type": "http"
+   },
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "new",
+     "name": "P",
+     "proxyUrl": "https://r.example/relay",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "type": "http"
+    }
+   }
+  },
+  {
+   "body": {
+    "name": "P",
+    "proxyUrl": "https://r.example/relay",
+    "type": "vercel"
+   },
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "new",
+     "name": "P",
+     "proxyUrl": "https://r.example/relay",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "type": "vercel"
+    }
+   }
+  },
+  {
+   "body": {
+    "name": "P",
+    "proxyUrl": "https://r.example/relay",
+    "type": "cloudflare"
+   },
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "new",
+     "name": "P",
+     "proxyUrl": "https://r.example/relay",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "type": "cloudflare"
+    }
+   }
+  },
+  {
+   "body": {
+    "name": "P",
+    "proxyUrl": "https://r.example/relay",
+    "type": "deno"
+   },
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "new",
+     "name": "P",
+     "proxyUrl": "https://r.example/relay",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "type": "deno"
+    }
+   }
+  },
+  {
+   "body": {
+    "name": "P",
+    "proxyUrl": "https://r.example/relay",
+    "type": "netlify"
+   },
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "new",
+     "name": "P",
+     "proxyUrl": "https://r.example/relay",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "type": "netlify"
+    }
+   }
+  },
+  {
+   "body": {
+    "name": "P",
+    "proxyUrl": "https://r.example/relay",
+    "type": "socks"
+   },
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "new",
+     "name": "P",
+     "proxyUrl": "https://r.example/relay",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "type": "http"
+    }
+   }
+  },
+  {
+   "body": {
+    "name": "P",
+    "proxyUrl": "https://r.example/relay",
+    "type": "NETLIFY"
+   },
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "new",
+     "name": "P",
+     "proxyUrl": "https://r.example/relay",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "type": "http"
+    }
+   }
+  },
+  {
+   "body": {
+    "name": "P",
+    "proxyUrl": "https://r.example/relay",
+    "type": 7
+   },
+   "status": 201,
+   "answer": {
+    "proxyPool": {
+     "id": "new",
+     "name": "P",
+     "proxyUrl": "https://r.example/relay",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": false,
+     "type": "http"
+    }
+   }
+  }
+ ],
+ "update": [
+  {
+   "existing": false,
+   "body": {
+    "name": "x"
+   },
+   "updates": [],
+   "status": 404,
+   "answer": {
+    "error": "Proxy pool not found"
+   }
+  },
+  {
+   "existing": true,
+   "body": {},
+   "updates": [
+    {}
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPool": {
+     "id": "p1",
+     "name": "P"
+    }
+   }
+  },
+  {
+   "existing": true,
+   "body": {
+    "name": "  "
+   },
+   "updates": [],
+   "status": 400,
+   "answer": {
+    "error": "Name is required"
+   }
+  },
+  {
+   "existing": true,
+   "body": {
+    "name": " New "
+   },
+   "updates": [
+    {
+     "name": "New"
+    }
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPool": {
+     "id": "p1",
+     "name": "New"
+    }
+   }
+  },
+  {
+   "existing": true,
+   "body": {
+    "proxyUrl": ""
+   },
+   "updates": [],
+   "status": 400,
+   "answer": {
+    "error": "Proxy URL is required"
+   }
+  },
+  {
+   "existing": true,
+   "body": {
+    "proxyUrl": " http://z:2 "
+   },
+   "updates": [
+    {
+     "proxyUrl": "http://z:2"
+    }
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPool": {
+     "id": "p1",
+     "name": "P",
+     "proxyUrl": "http://z:2"
+    }
+   }
+  },
+  {
+   "existing": true,
+   "body": {
+    "noProxy": " a.com "
+   },
+   "updates": [
+    {
+     "noProxy": "a.com"
+    }
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPool": {
+     "id": "p1",
+     "name": "P",
+     "noProxy": "a.com"
+    }
+   }
+  },
+  {
+   "existing": true,
+   "body": {
+    "noProxy": 5
+   },
+   "updates": [
+    {
+     "noProxy": ""
+    }
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPool": {
+     "id": "p1",
+     "name": "P",
+     "noProxy": ""
+    }
+   }
+  },
+  {
+   "existing": true,
+   "body": {
+    "isActive": false
+   },
+   "updates": [
+    {
+     "isActive": false
+    }
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPool": {
+     "id": "p1",
+     "name": "P",
+     "isActive": false
+    }
+   }
+  },
+  {
+   "existing": true,
+   "body": {
+    "isActive": "true"
+   },
+   "updates": [
+    {
+     "isActive": false
+    }
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPool": {
+     "id": "p1",
+     "name": "P",
+     "isActive": false
+    }
+   }
+  },
+  {
+   "existing": true,
+   "body": {
+    "strictProxy": true
+   },
+   "updates": [
+    {
+     "strictProxy": true
+    }
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPool": {
+     "id": "p1",
+     "name": "P",
+     "strictProxy": true
+    }
+   }
+  },
+  {
+   "existing": true,
+   "body": {
+    "strictProxy": 1
+   },
+   "updates": [
+    {
+     "strictProxy": false
+    }
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPool": {
+     "id": "p1",
+     "name": "P",
+     "strictProxy": false
+    }
+   }
+  },
+  {
+   "existing": true,
+   "body": {
+    "type": "deno"
+   },
+   "updates": [
+    {
+     "type": "deno"
+    }
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPool": {
+     "id": "p1",
+     "name": "P",
+     "type": "deno"
+    }
+   }
+  },
+  {
+   "existing": true,
+   "body": {
+    "type": "nope"
+   },
+   "updates": [
+    {
+     "type": "http"
+    }
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPool": {
+     "id": "p1",
+     "name": "P",
+     "type": "http"
+    }
+   }
+  },
+  {
+   "existing": true,
+   "body": {
+    "name": "N",
+    "proxyUrl": "http://z:2",
+    "type": "netlify",
+    "isActive": true,
+    "strictProxy": true,
+    "noProxy": ""
+   },
+   "updates": [
+    {
+     "name": "N",
+     "proxyUrl": "http://z:2",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": true,
+     "type": "netlify"
+    }
+   ],
+   "status": 200,
+   "answer": {
+    "proxyPool": {
+     "id": "p1",
+     "name": "N",
+     "proxyUrl": "http://z:2",
+     "noProxy": "",
+     "isActive": true,
+     "strictProxy": true,
+     "type": "netlify"
+    }
+   }
+  }
+ ],
+ "remove": [
+  {
+   "existing": false,
+   "connections": 0,
+   "deleted": [],
+   "status": 404,
+   "answer": {
+    "error": "Proxy pool not found"
+   }
+  },
+  {
+   "existing": true,
+   "connections": 0,
+   "deleted": [
+    "p1"
+   ],
+   "status": 200,
+   "answer": {
+    "success": true
+   }
+  },
+  {
+   "existing": true,
+   "connections": 1,
+   "deleted": [],
+   "status": 409,
+   "answer": {
+    "error": "Proxy pool is currently in use",
+    "boundConnectionCount": 1
+   }
+  },
+  {
+   "existing": true,
+   "connections": 3,
+   "deleted": [],
+   "status": 409,
+   "answer": {
+    "error": "Proxy pool is currently in use",
+    "boundConnectionCount": 2
+   }
+  },
+  {
+   "existing": true,
+   "connections": 1,
+   "deleted": [
+    "p1"
+   ],
+   "status": 200,
+   "answer": {
+    "success": true
+   }
+  }
+ ],
+ "resolved": [
+  {
+   "providerSpecificData": {},
+   "result": {
+    "source": "none",
+    "proxyPoolId": null,
+    "proxyPool": null,
+    "strictProxy": false,
+    "connectionProxyEnabled": false,
+    "connectionProxyUrl": "",
+    "connectionNoProxy": ""
+   }
+  },
+  {
+   "providerSpecificData": {
+    "proxyPoolId": ""
+   },
+   "result": {
+    "source": "none",
+    "proxyPoolId": null,
+    "proxyPool": null,
+    "strictProxy": false,
+    "connectionProxyEnabled": false,
+    "connectionProxyUrl": "",
+    "connectionNoProxy": ""
+   }
+  },
+  {
+   "providerSpecificData": {
+    "proxyPoolId": "__none__"
+   },
+   "result": {
+    "source": "none",
+    "proxyPoolId": null,
+    "proxyPool": null,
+    "strictProxy": false,
+    "connectionProxyEnabled": false,
+    "connectionProxyUrl": "",
+    "connectionNoProxy": ""
+   }
+  },
+  {
+   "providerSpecificData": {
+    "proxyPoolId": " active "
+   },
+   "result": {
+    "source": "pool",
+    "proxyPoolId": "active",
+    "proxyPool": {
+     "id": "active"
+    },
+    "connectionProxyEnabled": true,
+    "connectionProxyUrl": "http://p:8080",
+    "connectionNoProxy": "a.com",
+    "strictProxy": false
+   }
+  },
+  {
+   "providerSpecificData": {
+    "proxyPoolId": "strict"
+   },
+   "result": {
+    "source": "pool",
+    "proxyPoolId": "strict",
+    "proxyPool": {
+     "id": "strict"
+    },
+    "connectionProxyEnabled": true,
+    "connectionProxyUrl": "http://s:1",
+    "connectionNoProxy": "",
+    "strictProxy": true
+   }
+  },
+  {
+   "providerSpecificData": {
+    "proxyPoolId": "inactive"
+   },
+   "result": {
+    "source": "none",
+    "proxyPoolId": "inactive",
+    "proxyPool": null,
+    "strictProxy": false,
+    "connectionProxyEnabled": false,
+    "connectionProxyUrl": "",
+    "connectionNoProxy": ""
+   }
+  },
+  {
+   "providerSpecificData": {
+    "proxyPoolId": "inactiveStrict"
+   },
+   "result": {
+    "source": "none",
+    "proxyPoolId": "inactiveStrict",
+    "proxyPool": null,
+    "strictProxy": true,
+    "connectionProxyEnabled": false,
+    "connectionProxyUrl": "",
+    "connectionNoProxy": ""
+   }
+  },
+  {
+   "providerSpecificData": {
+    "proxyPoolId": "empty"
+   },
+   "result": {
+    "source": "none",
+    "proxyPoolId": "empty",
+    "proxyPool": null,
+    "strictProxy": false,
+    "connectionProxyEnabled": false,
+    "connectionProxyUrl": "",
+    "connectionNoProxy": ""
+   }
+  },
+  {
+   "providerSpecificData": {
+    "proxyPoolId": "emptyStrict"
+   },
+   "result": {
+    "source": "none",
+    "proxyPoolId": "emptyStrict",
+    "proxyPool": null,
+    "strictProxy": true,
+    "connectionProxyEnabled": false,
+    "connectionProxyUrl": "",
+    "connectionNoProxy": ""
+   }
+  },
+  {
+   "providerSpecificData": {
+    "proxyPoolId": "vercel"
+   },
+   "result": {
+    "source": "vercel",
+    "proxyPoolId": "vercel",
+    "proxyPool": {
+     "id": "vercel"
+    },
+    "connectionProxyEnabled": false,
+    "connectionProxyUrl": "",
+    "connectionNoProxy": "x.com",
+    "strictProxy": false,
+    "vercelRelayUrl": "https://v.example/relay"
+   }
+  },
+  {
+   "providerSpecificData": {
+    "proxyPoolId": "cloudflare"
+   },
+   "result": {
+    "source": "cloudflare",
+    "proxyPoolId": "cloudflare",
+    "proxyPool": {
+     "id": "cloudflare"
+    },
+    "connectionProxyEnabled": false,
+    "connectionProxyUrl": "",
+    "connectionNoProxy": "",
+    "strictProxy": true,
+    "vercelRelayUrl": "https://c.example/"
+   }
+  },
+  {
+   "providerSpecificData": {
+    "proxyPoolId": "deno"
+   },
+   "result": {
+    "source": "deno",
+    "proxyPoolId": "deno",
+    "proxyPool": {
+     "id": "deno"
+    },
+    "connectionProxyEnabled": false,
+    "connectionProxyUrl": "",
+    "connectionNoProxy": "",
+    "strictProxy": false,
+    "vercelRelayUrl": "https://d.example/"
+   }
+  },
+  {
+   "providerSpecificData": {
+    "proxyPoolId": "netlify"
+   },
+   "result": {
+    "source": "netlify",
+    "proxyPoolId": "netlify",
+    "proxyPool": {
+     "id": "netlify"
+    },
+    "connectionProxyEnabled": false,
+    "connectionProxyUrl": "",
+    "connectionNoProxy": "",
+    "strictProxy": false,
+    "vercelRelayUrl": "https://n.netlify.app/.netlify/functions/relay"
+   }
+  },
+  {
+   "providerSpecificData": {
+    "proxyPoolId": "inactiveRelay"
+   },
+   "result": {
+    "source": "none",
+    "proxyPoolId": "inactiveRelay",
+    "proxyPool": null,
+    "strictProxy": true,
+    "connectionProxyEnabled": false,
+    "connectionProxyUrl": "",
+    "connectionNoProxy": ""
+   }
+  },
+  {
+   "providerSpecificData": {
+    "proxyPoolId": "gone"
+   },
+   "result": {
+    "source": "missing-pool",
+    "proxyPoolId": "gone",
+    "proxyPool": null,
+    "strictProxy": true,
+    "connectionProxyEnabled": false,
+    "connectionProxyUrl": "",
+    "connectionNoProxy": ""
+   }
+  },
+  {
+   "providerSpecificData": {
+    "proxyPoolId": "boom"
+   },
+   "result": {
+    "throws": "Proxy pool could not be resolved"
+   }
+  },
+  {
+   "providerSpecificData": {
+    "connectionProxyEnabled": true,
+    "connectionProxyUrl": " http://l:1 ",
+    "connectionNoProxy": " l.com "
+   },
+   "result": {
+    "source": "legacy",
+    "proxyPoolId": null,
+    "proxyPool": null,
+    "strictProxy": false,
+    "connectionProxyEnabled": true,
+    "connectionProxyUrl": "http://l:1",
+    "connectionNoProxy": "l.com"
+   }
+  },
+  {
+   "providerSpecificData": {
+    "connectionProxyEnabled": true
+   },
+   "result": {
+    "source": "none",
+    "proxyPoolId": null,
+    "proxyPool": null,
+    "strictProxy": false,
+    "connectionProxyEnabled": true,
+    "connectionProxyUrl": "",
+    "connectionNoProxy": ""
+   }
+  },
+  {
+   "providerSpecificData": {
+    "connectionProxyUrl": "http://l:1"
+   },
+   "result": {
+    "source": "none",
+    "proxyPoolId": null,
+    "proxyPool": null,
+    "strictProxy": false,
+    "connectionProxyEnabled": false,
+    "connectionProxyUrl": "http://l:1",
+    "connectionNoProxy": ""
+   }
+  },
+  {
+   "providerSpecificData": {
+    "connectionProxyEnabled": "true",
+    "connectionProxyUrl": "http://l:1"
+   },
+   "result": {
+    "source": "none",
+    "proxyPoolId": null,
+    "proxyPool": null,
+    "strictProxy": false,
+    "connectionProxyEnabled": false,
+    "connectionProxyUrl": "http://l:1",
+    "connectionNoProxy": ""
+   }
+  },
+  {
+   "providerSpecificData": {
+    "connectionProxyEnabled": true,
+    "connectionProxyUrl": " http://l:1 ",
+    "connectionNoProxy": " l.com ",
+    "proxyPoolId": "active"
+   },
+   "result": {
+    "source": "pool",
+    "proxyPoolId": "active",
+    "proxyPool": {
+     "id": "active"
+    },
+    "connectionProxyEnabled": true,
+    "connectionProxyUrl": "http://p:8080",
+    "connectionNoProxy": "a.com",
+    "strictProxy": false
+   }
+  },
+  {
+   "providerSpecificData": {
+    "connectionProxyEnabled": true,
+    "connectionProxyUrl": " http://l:1 ",
+    "connectionNoProxy": " l.com ",
+    "proxyPoolId": "inactive"
+   },
+   "result": {
+    "source": "legacy",
+    "proxyPoolId": "inactive",
+    "proxyPool": null,
+    "strictProxy": false,
+    "connectionProxyEnabled": true,
+    "connectionProxyUrl": "http://l:1",
+    "connectionNoProxy": "l.com"
+   }
+  },
+  {
+   "providerSpecificData": {
+    "connectionProxyEnabled": true,
+    "connectionProxyUrl": " http://l:1 ",
+    "connectionNoProxy": " l.com ",
+    "proxyPoolId": "inactiveStrict"
+   },
+   "result": {
+    "source": "legacy",
+    "proxyPoolId": "inactiveStrict",
+    "proxyPool": null,
+    "strictProxy": true,
+    "connectionProxyEnabled": true,
+    "connectionProxyUrl": "http://l:1",
+    "connectionNoProxy": "l.com"
+   }
+  },
+  {
+   "providerSpecificData": {
+    "connectionProxyEnabled": true,
+    "connectionProxyUrl": " http://l:1 ",
+    "connectionNoProxy": " l.com ",
+    "proxyPoolId": "gone"
+   },
+   "result": {
+    "source": "legacy",
+    "proxyPoolId": "gone",
+    "proxyPool": null,
+    "strictProxy": true,
+    "connectionProxyEnabled": true,
+    "connectionProxyUrl": "http://l:1",
+    "connectionNoProxy": "l.com"
+   }
+  },
+  {
+   "providerSpecificData": {
+    "connectionProxyEnabled": true,
+    "connectionProxyUrl": " http://l:1 ",
+    "connectionNoProxy": " l.com ",
+    "proxyPoolId": "__none__"
+   },
+   "result": {
+    "source": "legacy",
+    "proxyPoolId": null,
+    "proxyPool": null,
+    "strictProxy": false,
+    "connectionProxyEnabled": true,
+    "connectionProxyUrl": "http://l:1",
+    "connectionNoProxy": "l.com"
+   }
+  },
+  {
+   "providerSpecificData": {
+    "connectionProxyEnabled": true,
+    "connectionProxyUrl": " http://l:1 ",
+    "connectionNoProxy": " l.com ",
+    "proxyPoolId": "netlify"
+   },
+   "result": {
+    "source": "netlify",
+    "proxyPoolId": "netlify",
+    "proxyPool": {
+     "id": "netlify"
+    },
+    "connectionProxyEnabled": false,
+    "connectionProxyUrl": "",
+    "connectionNoProxy": "",
+    "strictProxy": false,
+    "vercelRelayUrl": "https://n.netlify.app/.netlify/functions/relay"
+   }
+  }
+ ],
+ "rotation": [
+  {
+   "ids": [],
+   "strategy": "round-robin",
+   "provider": "p",
+   "random": [],
+   "picked": null
+  },
+  {
+   "ids": [
+    "a"
+   ],
+   "strategy": "round-robin",
+   "provider": "single",
+   "random": [],
+   "picked": "a"
+  },
+  {
+   "ids": [
+    "a"
+   ],
+   "strategy": "random",
+   "provider": "single",
+   "random": [],
+   "picked": "a"
+  },
+  {
+   "ids": [
+    "a",
+    "b",
+    "c"
+   ],
+   "strategy": "round-robin",
+   "provider": "rr",
+   "random": [],
+   "picked": "a"
+  },
+  {
+   "ids": [
+    "a",
+    "b",
+    "c"
+   ],
+   "strategy": "round-robin",
+   "provider": "rr",
+   "random": [],
+   "picked": "b"
+  },
+  {
+   "ids": [
+    "a",
+    "b",
+    "c"
+   ],
+   "strategy": "round-robin",
+   "provider": "rr",
+   "random": [],
+   "picked": "c"
+  },
+  {
+   "ids": [
+    "a",
+    "b",
+    "c"
+   ],
+   "strategy": "round-robin",
+   "provider": "rr",
+   "random": [],
+   "picked": "a"
+  },
+  {
+   "ids": [
+    "a",
+    "b",
+    "c"
+   ],
+   "strategy": "round-robin",
+   "provider": "other",
+   "random": [],
+   "picked": "a"
+  },
+  {
+   "ids": [
+    "a",
+    "b"
+   ],
+   "strategy": "round-robin",
+   "provider": "rr",
+   "random": [],
+   "picked": "b"
+  },
+  {
+   "ids": [
+    "a",
+    "b",
+    "c"
+   ],
+   "strategy": "random",
+   "provider": "r",
+   "random": [
+    0
+   ],
+   "picked": "a"
+  },
+  {
+   "ids": [
+    "a",
+    "b",
+    "c"
+   ],
+   "strategy": "random",
+   "provider": "r",
+   "random": [
+    0.5
+   ],
+   "picked": "b"
+  },
+  {
+   "ids": [
+    "a",
+    "b",
+    "c"
+   ],
+   "strategy": "random",
+   "provider": "r",
+   "random": [
+    0.99
+   ],
+   "picked": "c"
+  },
+  {
+   "ids": [
+    "a",
+    "b",
+    "c"
+   ],
+   "strategy": "none",
+   "provider": "n",
+   "random": [],
+   "picked": "a"
+  },
+  {
+   "ids": [
+    "a",
+    "b",
+    "c"
+   ],
+   "strategy": "whatever",
+   "provider": "n",
+   "random": [],
+   "picked": "a"
+  },
+  {
+   "ids": [
+    "a",
+    "b",
+    "c"
+   ],
+   "strategy": null,
+   "provider": "n",
+   "random": [],
+   "picked": "a"
+  },
+  {
+   "ids": null,
+   "strategy": "round-robin",
+   "provider": "p",
+   "random": [],
+   "picked": null
+  }
+ ],
+ "fetches": [
+  {
+   "url": "https://api.openai.com/v1/chat/completions",
+   "options": {
+    "method": "POST",
+    "headers": {
+     "authorization": "Bearer synthetic",
+     "content-type": "application/json"
+    },
+    "body": "{\"a\":1}"
+   },
+   "proxyOptions": {
+    "vercelRelayUrl": "https://n.netlify.app/.netlify/functions/relay"
+   },
+   "sent": [
+    {
+     "target": "https://n.netlify.app/.netlify/functions/relay",
+     "method": "POST",
+     "headers": {
+      "authorization": "Bearer synthetic",
+      "content-type": "application/json",
+      "x-relay-target": "https://api.openai.com",
+      "x-relay-path": "/v1/chat/completions"
+     },
+     "body": "{\"a\":1}",
+     "dispatcher": false
+    }
+   ]
+  },
+  {
+   "url": "https://api.anthropic.com:8443/v1/messages?beta=true",
+   "options": {
+    "method": "POST",
+    "headers": {
+     "x-api-key": "synthetic"
+    },
+    "body": "b"
+   },
+   "proxyOptions": {
+    "vercelRelayUrl": " https://n.netlify.app/.netlify/functions/relay ",
+    "strictProxy": true
+   },
+   "sent": [
+    {
+     "target": "https://n.netlify.app/.netlify/functions/relay",
+     "method": "POST",
+     "headers": {
+      "x-api-key": "synthetic",
+      "x-relay-target": "https://api.anthropic.com:8443",
+      "x-relay-path": "/v1/messages?beta=true"
+     },
+     "body": "b",
+     "dispatcher": false
+    }
+   ]
+  },
+  {
+   "url": "http://upstream.example/path",
+   "options": {
+    "method": "GET"
+   },
+   "proxyOptions": {
+    "vercelRelayUrl": "https://n.netlify.app/.netlify/functions/relay",
+    "connectionProxyEnabled": true,
+    "connectionProxyUrl": "http://p:1"
+   },
+   "sent": [
+    {
+     "target": "https://n.netlify.app/.netlify/functions/relay",
+     "method": "GET",
+     "headers": {
+      "x-relay-target": "http://upstream.example",
+      "x-relay-path": "/path"
+     },
+     "body": null,
+     "dispatcher": false
+    }
+   ]
+  },
+  {
+   "url": "https://api.openai.com/v1/models",
+   "options": {},
+   "proxyOptions": {
+    "vercelRelayUrl": ""
+   },
+   "sent": [
+    {
+     "target": "https://api.openai.com/v1/models",
+     "method": null,
+     "headers": null,
+     "body": null,
+     "dispatcher": false
+    }
+   ]
+  },
+  {
+   "url": "https://api.openai.com/v1/models",
+   "options": {},
+   "proxyOptions": {
+    "strictProxy": true
+   },
+   "sent": [
+    {
+     "target": "https://api.openai.com/v1/models",
+     "method": null,
+     "headers": null,
+     "body": null,
+     "dispatcher": false
+    }
+   ]
+  },
+  {
+   "url": "https://api.openai.com/v1/models",
+   "options": {},
+   "proxyOptions": {
+    "strictProxy": true,
+    "proxyPoolId": "gone"
+   },
+   "sent": [],
+   "throws": "[ProxyFetch] Proxy required but none resolved (strictProxy=true)"
+  },
+  {
+   "url": "https://api.openai.com/v1/models",
+   "options": {},
+   "proxyOptions": {
+    "strictProxy": true,
+    "enabled": true
+   },
+   "sent": [],
+   "throws": "[ProxyFetch] Proxy required but none resolved (strictProxy=true)"
+  },
+  {
+   "url": "https://api.openai.com/v1/models",
+   "options": {},
+   "proxyOptions": {
+    "strictProxy": true,
+    "connectionProxyEnabled": true
+   },
+   "sent": [],
+   "throws": "[ProxyFetch] Proxy required but none resolved (strictProxy=true)"
+  },
+  {
+   "url": "https://api.openai.com/v1/models",
+   "options": {},
+   "proxyOptions": {
+    "strictProxy": true,
+    "connectionProxyUrl": "http://p:1",
+    "connectionProxyEnabled": false
+   },
+   "sent": [],
+   "throws": "[ProxyFetch] Proxy required but none resolved (strictProxy=true)"
+  },
+  {
+   "url": "https://api.openai.com/v1/models",
+   "options": {},
+   "proxyOptions": {
+    "strictProxy": false,
+    "proxyPoolId": "gone"
+   },
+   "sent": [
+    {
+     "target": "https://api.openai.com/v1/models",
+     "method": null,
+     "headers": null,
+     "body": null,
+     "dispatcher": false
+    }
+   ]
+  }
+ ],
+ "viaHeaders": [
+  {
+   "target": "https://n.netlify.app/.netlify/functions/relay",
+   "headers": {
+    "x-custom": "v",
+    "x-relay-target": "https://api.openai.com",
+    "x-relay-path": "/v1/x"
+   }
+  }
+ ]
+}

@@ -27,6 +27,14 @@ type Binding struct {
 	// it only when no usable pool is bound (connectionProxy.js:58-165).
 	ConnectionProxyURL string
 	ConnectionNoProxy  []string
+	// RelayURL is set when the bound pool is a relay: the request goes there with
+	// its destination in the relay headers. PoolNoProxy is the pool's own bypass list.
+	RelayURL    string
+	PoolNoProxy []string
+	// Strict and Intended: a pool was named, and it is strict (or gone), so a
+	// request that no proxy applies to fails instead of dialing directly.
+	Strict   bool
+	Intended bool
 }
 
 // Resolver compiles transport.ProxyPolicy values. Pools are durable; the
@@ -47,6 +55,9 @@ func (r Resolver) Policy(binding Binding) transport.ProxyPolicy {
 	if !r.Global.Enabled {
 		globalURL = ""
 	}
+	if relay := strings.TrimSpace(binding.RelayURL); relay != "" {
+		return transport.ProxyPolicy{RelayURL: relay, AllowPrivate: r.Global.AllowLocal, Strict: binding.Strict, Intended: binding.Intended}
+	}
 	if strings.TrimSpace(binding.MemberURL) == "" {
 		if connectionURL := strings.TrimSpace(binding.ConnectionProxyURL); connectionURL != "" {
 			return transport.ProxyPolicy{
@@ -57,6 +68,8 @@ func (r Resolver) Policy(binding Binding) transport.ProxyPolicy {
 				AllowPrivate:          r.Global.AllowLocal,
 				ConnectionOwnsNoProxy: true,
 				ConnectionNoProxy:     append([]string(nil), binding.ConnectionNoProxy...),
+				Strict:                binding.Strict,
+				Intended:              binding.Intended,
 			}
 		}
 	}
@@ -66,6 +79,9 @@ func (r Resolver) Policy(binding Binding) transport.ProxyPolicy {
 		ConnectionProxyURL: strings.TrimSpace(binding.MemberURL),
 		NoProxy:            append([]string(nil), r.Global.NoProxy...),
 		AllowPrivate:       r.Global.AllowLocal,
+		PoolNoProxy:        append([]string(nil), binding.PoolNoProxy...),
+		Strict:             binding.Strict,
+		Intended:           binding.Intended,
 	}
 }
 

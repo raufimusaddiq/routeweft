@@ -224,10 +224,18 @@ func TestC04StrategyOverrideObjects(t *testing.T) {
 	if got := snapshot.ComboStrategy("auto"); got != "round-robin" {
 		t.Fatalf("combo object override=%q", got)
 	}
+	// The pin's no-auth proxy choice is accepted (PARITY 6.38) and parsed.
+	parsed, err := parseStrategyOverrides(`{"opencode":{"proxyPoolId":" p1 ","rotateStrategy":"round-robin"}}`, false)
+	if err != nil || parsed["opencode"].ProxyPoolID != "p1" || parsed["opencode"].RotateStrategy != "round-robin" || parsed["opencode"].Strategy != "" {
+		t.Fatalf("proxy choice: %+v %v", parsed, err)
+	}
+	if _, err := parseStrategyOverrides(`{"c":{"proxyPoolId":"p1"}}`, true); err == nil {
+		t.Fatal("a combo has no proxy of its own")
+	}
 	// Unsupported pin fields are refused by name, never stored and ignored.
 	for _, bad := range []string{
-		`{"openai":{"proxyPoolId":"p1"}}`,
-		`{"openai":{"rotateStrategy":"round-robin"}}`,
+		`{"openai":{"proxyPoolId":3}}`,
+		`{"openai":{"rotateStrategy":["random"]}}`,
 		`{"openai":{"fallbackStrategy":"fusion"}}`,
 		`{"openai":{"stickyRoundRobinLimit":-1}}`,
 		`{"openai":3}`,
@@ -438,7 +446,7 @@ func TestC04ImportReportsNonStringFallbackStrategy(t *testing.T) {
 
 // One malformed stored entry is skipped alone; the other overrides survive.
 func TestC04TolerantReaderSkipsOnlyTheBadEntry(t *testing.T) {
-	raw := `{"openai":{"fallbackStrategy":"round-robin"},"bad":{"proxyPoolId":"x"},"claude":"sticky-round-robin","worse":7}`
+	raw := `{"openai":{"fallbackStrategy":"round-robin"},"bad":{"unknownField":"x"},"claude":"sticky-round-robin","worse":7}`
 	got := strategyOverridesTolerant(raw, false)
 	if len(got) != 2 || got["openai"].Strategy != "round-robin" || got["claude"].Strategy != "sticky-round-robin" {
 		t.Fatalf("got=%v", got)

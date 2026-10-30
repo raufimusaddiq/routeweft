@@ -20,6 +20,12 @@ type strategyOverride struct {
 	Strategy string
 	// StickyLimit is 0 when the entry inherits the global sticky limit.
 	StickyLimit uint64
+	// ProxyPoolID and RotateStrategy are the proxy choice a no-auth provider's
+	// entry makes (src/sse/services/auth.js:78-104): a fixed pool, and/or a rotation
+	// over every active pool ("round-robin", "random"; "none" or empty is no
+	// rotation; any other value takes the first pool, as the reference does).
+	ProxyPoolID    string
+	RotateStrategy string
 	// Fusion is set by a combo entry whose fallbackStrategy is "fusion"
 	// (src/sse/handlers/chat.js:116-133): the Combo is served as a panel and a
 	// judge instead of an ordered list. JudgeModel and Tuning belong to it.
@@ -32,8 +38,8 @@ type strategyOverride struct {
 // false) or comboStrategies (combo true) setting. A combo entry may carry the
 // pin's fallbackStrategy "fusion", judgeModel and fusionTuning. Fields Routeweft
 // does not apply are rejected by name instead of being stored and ignored: the
-// pin's proxyPoolId/rotateStrategy (no-auth proxy rotation) are owned by another
-// item (PARITY 5.2).
+// pin's proxyPoolId/rotateStrategy are accepted on a provider entry and applied to
+// no-auth providers' connections (PARITY 6.38).
 func parseStrategyOverrides(raw string, combo bool) (map[string]strategyOverride, error) {
 	out, errs, err := parseStrategyOverridesEach(raw, combo)
 	if err != nil {
@@ -114,6 +120,23 @@ func parseStrategyOverride(name string, value json.RawMessage, combo bool) (stra
 					return strategyOverride{}, fmt.Errorf("%q: %w", name, err)
 				}
 				override.Tuning = tuning
+			case (key == "proxyPoolId" || key == "rotateStrategy") && !combo:
+				var text *string
+				if err := json.Unmarshal(fields[key], &text); err != nil {
+					return strategyOverride{}, fmt.Errorf("%q: %s must be a string", name, key)
+				}
+				value := ""
+				if text != nil {
+					value = strings.TrimSpace(*text)
+				}
+				if len(value) > 128 {
+					return strategyOverride{}, fmt.Errorf("%q: %s is too long", name, key)
+				}
+				if key == "proxyPoolId" {
+					override.ProxyPoolID = value
+				} else {
+					override.RotateStrategy = value
+				}
 			case key == "stickyRoundRobinLimit" && !combo:
 				var limit int64
 				if err := json.Unmarshal(fields[key], &limit); err != nil || limit < 0 {
