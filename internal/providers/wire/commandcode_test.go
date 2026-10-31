@@ -218,19 +218,30 @@ func TestCommandCodeDoRecoversOnRetryAndReplaysTheStreamExactly(t *testing.T) {
 	}
 }
 
-func TestCommandCodeDoNeverRetriesAnHTTPError(t *testing.T) {
-	noSleep(t)
-	for _, status := range []int{401, 429, 502, 503} {
+// The base executor retries 502/503 on the same URL before the wrapper sees an
+// answer (base.js:100-180, runtimeConfig.js:80-87); 401/429 are not retried.
+func TestCommandCodeDoRetriesOnlyTheBaseGatewayStatuses(t *testing.T) {
+	for _, c := range []struct {
+		status   int
+		attempts int
+	}{
+		{401, 1}, {429, 1}, {502, 4}, {503, 4},
+	} {
+		delays := noSleep(t)
+		*delays = nil
 		fake := &commandCodeServer{}
 		server := httptest.NewServer(fake.handler(func(w http.ResponseWriter) {
-			w.WriteHeader(status)
+			w.WriteHeader(c.status)
 			io.WriteString(w, `{"error":"upstream"}`)
 		}))
 		response, err := doCommandCode(t, server, context.Background())
 		server.Close()
 		body, _ := io.ReadAll(response.Body)
-		if err != nil || response.StatusCode != status || string(body) != `{"error":"upstream"}` || len(fake.sessions) != 1 {
-			t.Fatalf("%d: status %d attempts %d body %q err %v", status, response.StatusCode, len(fake.sessions), body, err)
+		if err != nil || response.StatusCode != c.status || string(body) != `{"error":"upstream"}` || len(fake.sessions) != c.attempts {
+			t.Fatalf("%d: status %d attempts %d body %q err %v", c.status, response.StatusCode, len(fake.sessions), body, err)
+		}
+		if len(*delays) != c.attempts-1 {
+			t.Fatalf("%d: delays %v", c.status, *delays)
 		}
 	}
 }

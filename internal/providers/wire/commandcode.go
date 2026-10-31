@@ -244,12 +244,16 @@ func CommandCodeDo(client *http.Client, request *http.Request) (*http.Response, 
 		attemptRequest := request.Clone(request.Context())
 		attemptRequest.Body = io.NopCloser(bytes.NewReader(payload))
 		attemptRequest.ContentLength = int64(len(payload))
-		attemptRequest.GetBody = nil
+		attemptRequest.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(payload)), nil
+		}
 		if attempt > 0 {
 			// buildHeaders runs again on a retry, so the session id is new (:28-40).
 			attemptRequest.Header.Set("x-session-id", uuid.NewString())
 		}
-		response, err := client.Do(attemptRequest)
+		// BaseExecutor.execute retries 502/503/504 and transport errors on the
+		// same URL before this wrapper sees an answer (commandcode.js:42-61).
+		response, err := exchangeWithRetry(request.Context(), client, attemptRequest, commandCodeSleep)
 		if err != nil {
 			return nil, err
 		}
