@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { EmptyState, ErrorNotice, SkeletonRows } from './kit'
 import { Caption, Dot, Main, Row, Status } from './editorial'
-import { num, numOrDash, periodStart, statusTone, type UsageEvent } from './format'
+import { moneyFine, num, numOrDash, periodStart, statusTone, type UsageEvent } from './format'
 import { addLive, connectionLabel, freshLive, parseLiveRow, type Connection, type LiveRow } from './usageLive'
 
 export const LOG_PAGE_SIZE = 25
@@ -132,7 +132,7 @@ export function UsageLogs({ period, periodLabel, onUnauthorized, onOpen }: Props
               <td><button className="link-button" type="button" onClick={() => onOpen(event.requestId)} aria-label={`Open details for request ${event.requestId}`}>{event.requestId}</button></td>
               <td className="log-route">{event.providerId || '—'} / {event.modelId || '—'}</td>
               <td className="num log-status"><Status tone={statusTone(event.status)}>{event.status}</Status></td>
-              <td className="num log-tokens">{numOrDash(event.inputTokens)} / {numOrDash(event.outputTokens)}</td>
+              <td className="num log-tokens">{numOrDash(event.inputTokens)} / {numOrDash(event.outputTokens)}{recorded(event) && event.cost !== undefined && <><br /><small className="log-cost" title="Estimated cost">{moneyFine(event.cost)}</small></>}</td>
               <td className="num log-latency">{event.durationMs !== undefined ? `${num(event.durationMs)} ms` : '—'}{recorded(event) && event.ttftMs !== undefined ? ` · ${num(event.ttftMs)}` : ''}</td>
               <td className="num log-time">{new Date(event.createdAt).toLocaleString()}</td>
             </tr>)}</tbody></table>

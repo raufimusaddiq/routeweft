@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { EmptyState, ErrorNotice, SkeletonRows } from './kit'
 import { Caption, Fact, Main, Margin, Row, Status } from './editorial'
-import { compactOrDash, numOrDash, num, statusTone, type RequestRecord, type UsageEvent } from './format'
+import { compactOrDash, moneyFine, numOrDash, num, statusTone, type RequestRecord, type UsageEvent } from './format'
 
 type Props = { requestId: string; onSelect: (requestId: string) => void; onUnauthorized: () => void }
 
@@ -15,6 +15,7 @@ function EventFacts({ event }: { event: UsageEvent }) {
     <Fact label="Key" value={<code>{event.apiKeyId || dash}</code>} note={event.apiKeyId ? undefined : 'no client key was recorded for this request'} />
     <Fact label="Tokens" value={<>{compactOrDash(event.inputTokens, event.outputTokens)} <small>in + out</small></>} note={event.usageUnobserved ? 'the upstream reported no usage for this request' : `input ${numOrDash(event.inputTokens)}, output ${numOrDash(event.outputTokens)}`} />
     <Fact label="Cache" value={<>{compactOrDash(event.cacheReadTokens, event.cacheWriteTokens)} <small>tokens</small></>} note={event.usageUnobserved ? undefined : `read ${numOrDash(event.cacheReadTokens)}, write ${numOrDash(event.cacheWriteTokens)}`} />
+    <Fact label="Cost" value={event.usageUnobserved ? dash : moneyFine(event.cost)} note={event.usageUnobserved ? 'no usage was reported, so nothing is priced' : 'estimated from the model catalog, not a bill'} />
     <Fact label="Duration" value={event.durationMs !== undefined ? <>{num(event.durationMs)} <small>ms</small></> : dash} />
     <Fact label="Time to first token" value={event.ttftMs !== undefined ? <>{num(event.ttftMs)} <small>ms</small></> : dash} note={event.ttftMs === undefined ? 'not recorded for this request' : undefined} />
   </dl>
