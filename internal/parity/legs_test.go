@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/commandcode"
@@ -114,6 +115,10 @@ var requestAdapters = map[string]func(input map[string]any, stream bool) (any, e
 		return decode(cursor.ChatRequestToCursor(in, testModel, stream, false))
 	},
 	"openai>commandcode": func(in map[string]any, stream bool) (any, error) {
+		// The oracle writes today's UTC date and its recording ran on a frozen clock, so the
+		// conversion runs on that clock too; a wall clock would make the compared date change
+		// with the day the test runs.
+		defer commandcode.SetClock(commandcodeClock)()
 		return decode(commandcode.ChatRequestToCommandCode(in, testModel, stream, false))
 	},
 	"openai>kiro": func(in map[string]any, stream bool) (any, error) {
@@ -136,6 +141,13 @@ func decode(raw []byte, err error) (any, error) {
 	}
 	return out, nil
 }
+
+// oracleInstant is the instant the oracle's recording ran at: compat/parity/generate-protocol-legs.mjs
+// freezes Date to 1700000000000 ms (FixedDate, line 41).
+var oracleInstant = time.UnixMilli(1700000000000)
+
+// commandcodeClock is the clock the openai>commandcode leg runs on; a test may move it.
+var commandcodeClock = func() time.Time { return oracleInstant }
 
 // legDiff is one leaf difference between the oracle's output and Routeweft's.
 type legDiff struct {
@@ -490,4 +502,24 @@ func TestUpdateLedger(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("%d entries written", len(entries))
+}
+
+// TestCommandCodeDateIsStillCompared keeps the frozen clock from hiding the field: on any
+// other day the conversion's date differs from the oracle's recording, and that has to show.
+func TestCommandCodeDateIsStillCompared(t *testing.T) {
+	pin := loadLegsPin(t)
+	key := legGroup{Leg: "openai>commandcode", Kind: "changed", Path: "$.config.date"}.key()
+	if _, ok := groupRequestDiffs(pin)[key]; ok {
+		t.Fatalf("%s differs on the oracle's own clock", key)
+	}
+	previous := commandcodeClock
+	defer func() { commandcodeClock = previous }()
+	commandcodeClock = func() time.Time { return oracleInstant.AddDate(0, 0, 1) }
+	group, ok := groupRequestDiffs(pin)[key]
+	if !ok {
+		t.Fatalf("a different day's date is not reported at %s", key)
+	}
+	if group.Oracle != `"2023-11-14"` || group.Go != `"2023-11-15"` {
+		t.Errorf("oracle %s routeweft %s", group.Oracle, group.Go)
+	}
 }

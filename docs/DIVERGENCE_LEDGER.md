@@ -11,9 +11,9 @@ Oracle for the protocol-leg differential: LiteRouter `main` `4279093457458e168a2
 | D rows (PARITY 6.1) | 53 |
 | approved | 15 |
 | **decision required** | **38** |
-| protocol-leg differences recorded | 171 (134 request, 25 response) over 28 legs |
+| protocol-leg differences recorded | 170 (133 request, 25 response) over 28 legs |
 | accounted for by a D row | 57 |
-| accounted for by an earlier register item or section (PARITY 6.3-6.12) | 114 |
+| accounted for by an earlier register item or section (PARITY 6.3-6.12) | 113 |
 | references that do not resolve | 0 |
 
 The earlier register items (V1-V40, G1-G13, C1-C2, A1-A8, F1-F3, R1-R8, M-items and the sections) were written by hand while the legs were built (#119) and have no state of their own; they are listed here so the owner can sign them with the D rows.
@@ -217,7 +217,6 @@ Each line is one group: a path where the legs differ, the item that accounts for
 
 | difference | path | account | example |
 |---|---|---|---|
-| differs | `$.config.date` | V35 | text: "2023-11-14" / "2026-10-30" |
 | differs | `$.config.workingDir` | V35 | text: "/work" / "/" |
 | differs | `$.params.messages[].content[].text` | §6.5 | developer role: "Follow the style guide." / "Write code" |
 | differs | `$.params.messages[].content[].toolName` | §6.5 | parallel calls and results: "" / "read_file" |

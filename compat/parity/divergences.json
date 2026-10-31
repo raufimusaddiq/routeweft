@@ -857,18 +857,6 @@
    "direction": "request",
    "example": {
     "case": "text",
-    "oracle": "\"2023-11-14\"",
-    "routeweft": "\"2026-10-30\""
-   },
-   "kind": "changed",
-   "leg": "openai>commandcode",
-   "path": "$.config.date",
-   "ref": "V35"
-  },
-  {
-   "direction": "request",
-   "example": {
-    "case": "text",
     "oracle": "\"/work\"",
     "routeweft": "\"/\""
    },
