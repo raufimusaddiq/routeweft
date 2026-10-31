@@ -199,7 +199,7 @@ func LocalAndNoAuth() []Spec {
 		{ID: "mmf", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, DefaultBaseURL: "https://api.xiaomimimo.com", TransportEndpoints: map[Protocol]string{TransportOpenAIChat: "api/free-ai/openai/chat"}, ModelCatalog: CatalogStatic},
 		{ID: "opencode", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthNone, DefaultBaseURL: "https://opencode.ai", DiscoveryPath: "zen/v1/models", ModelCatalog: CatalogDynamic, PassthroughModels: true},
 		{ID: "ollama", Transports: []Protocol{TransportOllama}, Auth: AuthAPIKey, DefaultBaseURL: "https://ollama.com", ModelCatalog: CatalogStatic, ReportsUsage: true},
-		{ID: "ollama-local", Transports: []Protocol{TransportOllama}, Auth: AuthNone, DefaultBaseURL: "http://localhost:11434", ModelCatalog: CatalogStatic},
+		{ID: "ollama-local", Transports: []Protocol{TransportOllama}, Auth: AuthNone, AuthModes: []AuthKind{AuthNone, AuthAPIKey}, DefaultBaseURL: "http://localhost:11434", ModelCatalog: CatalogStatic},
 		{ID: "typesafe", Transports: []Protocol{TransportSystemOne}, Auth: AuthAPIKey, DefaultBaseURL: "https://api.typesafe.ai/v1/systemone", ModelCatalog: CatalogStatic},
 	}
 }

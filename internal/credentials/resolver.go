@@ -50,7 +50,7 @@ func (r Resolver) ResolveForAccount(ctx context.Context, connectionID, upstreamM
 	if token == "" {
 		token = secret.Cookie
 	}
-	baseURL := wire.NodeBase(node.BaseURL, "", connection.Settings)
+	baseURL := wire.NodeBase(node.ProviderID, node.BaseURL, "", connection.Settings)
 	protocol := strings.TrimSpace(firstTransport(node.Transports))
 	if baseURL == "" || protocol == "" {
 		if r.Fallback == nil {

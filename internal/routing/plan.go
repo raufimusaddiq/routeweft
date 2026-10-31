@@ -19,6 +19,7 @@ type ProviderSettings struct {
 	Location                                                            string // Vertex location (stored as location)
 	ChatGPTAccountID                                                    string // Codex ChatGPT account (stored as chatgptAccountId)
 	KiroToolCallRepair                                                  string // "false" turns Kiro's integrity repair retry off (stored as kiroToolCallRepair)
+	KimchiEndpoint                                                      string // Kimchi model-catalog host (stored as kimchiEndpoint); serving keeps the node's base
 	// LiteRouter per-connection proxy, stored as connectionProxyEnabled,
 	// connectionProxyUrl and connectionNoProxy. The URL may carry proxy
 	// credentials and never leaves the server unredacted.

@@ -22,11 +22,19 @@ type Target struct {
 
 // NodeBase is the one rule for the base URL a connection is dialled at: the
 // node's own, else the catalog default, else the base the connection names
-// (azureEndpoint, then baseUrl; an Azure node declares none). Serving, probes,
-// model discovery and route listings all take their base from here, so what a
-// probe tests is what a request would reach. Empty means the connection is not
-// dialable.
-func NodeBase(nodeBase, specDefault string, settings routing.ProviderSettings) string {
+// (azureEndpoint, then baseUrl; an Azure node declares none). Local Ollama is the
+// exception: the pin dials the connection's baseUrl and falls back to
+// http://localhost:11434 only when it names none (config/providers.js:5-10,
+// executors/ollama-local.js:9-11), so there the connection comes first. Serving,
+// probes, model discovery and route listings all take their base from here, so
+// what a probe tests is what a request would reach. Empty means the connection is
+// not dialable.
+func NodeBase(providerID, nodeBase, specDefault string, settings routing.ProviderSettings) string {
+	if providerID == "ollama-local" {
+		if own := strings.TrimRight(strings.TrimSpace(settings.BaseURL), "/"); own != "" {
+			return own
+		}
+	}
 	for _, candidate := range []string{nodeBase, specDefault, settings.AzureEndpoint, settings.BaseURL} {
 		if candidate = strings.TrimSpace(candidate); candidate != "" {
 			return candidate
@@ -146,7 +154,22 @@ func betaQuery(provider routing.ProviderRef) (Target, error) {
 // Azure OpenAI (open-sse/executors/azure.js:8-52).
 const azureDefaultAPIVersion = "2024-10-01-preview"
 
-var azureDeployment = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+var (
+	azureDeployment = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	azureAPIVersion = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$`)
+)
+
+// ValidAzureDeployment reports whether name can be spliced in as the deployment path segment. The
+// dial (azureTarget) and the save of a connection's settings share this one rule, so a name the
+// form accepts is a name the request can use.
+func ValidAzureDeployment(name string) bool {
+	return azureDeployment.MatchString(name) && !strings.Contains(name, "..")
+}
+
+// ValidAzureAPIVersion reports whether version is a plain API version such as 2024-10-01-preview.
+// The request encodes the version into the query whatever it holds; the save refuses what is not a
+// version at all.
+func ValidAzureAPIVersion(version string) bool { return azureAPIVersion.MatchString(version) }
 
 // azureTarget builds {endpoint}/openai/deployments/{deployment}/chat/completions
 // ?api-version={version} (azure.js:8-24). The endpoint is the connection's own
@@ -164,7 +187,7 @@ func azureTarget(provider routing.ProviderRef) (Target, error) {
 	}
 	settings := provider.Connection.Settings
 	deployment := firstNonEmpty(settings.Deployment, provider.UpstreamModel)
-	if !azureDeployment.MatchString(deployment) || strings.Contains(deployment, "..") {
+	if !ValidAzureDeployment(deployment) {
 		return Target{}, errors.New("azure deployment name is not valid")
 	}
 	version := firstNonEmpty(settings.APIVersion, azureDefaultAPIVersion)

@@ -474,7 +474,7 @@ func (h *Handler) handleNodeRoutes(w http.ResponseWriter, r *http.Request) {
 	// (Azure) or whose path names the connection's account (Cloudflare) has no routes to show; the rest go through the same target rules as
 	// serving, so a Token Plan region, a deployment path or ?beta=true is what a
 	// request would reach.
-	base := wire.NodeBase(node.BaseURL, spec.DefaultBaseURL, routing.ProviderSettings{})
+	base := wire.NodeBase(node.ProviderID, node.BaseURL, spec.DefaultBaseURL, routing.ProviderSettings{})
 	for _, protocol := range node.Transports {
 		path, supported := map[string]string{"openai-chat": "chat/completions", "openai-responses": "responses", "anthropic-messages": "messages", "systemone": "", "gemini": "models/{model}:generateContent", "ollama": "api/chat"}[protocol]
 		if node.Kind == credentials.NodeBuiltin {
