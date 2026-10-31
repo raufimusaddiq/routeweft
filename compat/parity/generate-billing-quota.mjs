@@ -2,7 +2,7 @@
 // Gateway and Xiaomi MiMo quota readers return, so the Go tests can be offline
 // and still differential (#225). Run:
 //
-//   ORACLE_DIR=/path/to/pinned-oracle node compat/parity/generate-billing-quota.mjs
+//   ORACLE_DIR=/path/to/oracle ORACLE_SHA=<commit> node compat/parity/generate-billing-quota.mjs [--check]
 //
 // It evaluates the pin's own open-sse/services/usage/{shared,commandcode,kenari,
 // misc,opencode-go,xiaomi-mimo}.js and open-sse/shared/mimoAccount.js, read with
@@ -15,11 +15,11 @@
 process.env.TZ = 'UTC';
 
 const assert = (await import('node:assert/strict')).default;
-const { writeFileSync } = await import('node:fs');
+const { readFileSync, writeFileSync } = await import('node:fs');
 const crypto = (await import('node:crypto')).default;
 const path = (await import('node:path')).default;
 const vm = (await import('node:vm')).default;
-const { source } = await import('./oracle.mjs');
+const { source, pin } = await import('./oracle.mjs');
 
 const NOW = Date.parse('2026-10-20T12:00:00.000Z');
 const out = new URL('../../internal/providers/usage/testdata/billing_quota_pin.json', import.meta.url);
@@ -324,7 +324,7 @@ const mimoSessions = {
 
 // ---- run ----------------------------------------------------------------
 
-const record = { pin: '1c3b9f47837d42ea64992063309064af755a14a3', now: new Date(NOW).toISOString(), tz: 'UTC',
+const record = { pin, now: new Date(NOW).toISOString(), tz: 'UTC',
   commandcode: {}, kenari: {}, 'opencode-go': {}, ollama: {}, 'vercel-ai-gateway': {}, 'xiaomi-mimo': {} };
 
 async function run(name, steps, call, now = NOW) {
@@ -380,5 +380,14 @@ for (const [name, reads] of Object.entries(mimoSessions)) {
   record['xiaomi-mimo'][name] = { upstream: steps, reads: results };
 }
 
-writeFileSync(out, `${JSON.stringify(record, null, 2)}\n`);
-console.log(`wrote ${out.pathname}`);
+const text = `${JSON.stringify(record, null, 2)}\n`;
+if (process.argv.includes('--check')) {
+  // Everything the oracle's readers recorded must equal the committed file; only the commit it was
+  // recorded at may differ, since the oracle moves and these readers may not have.
+  const committed = JSON.parse(readFileSync(out, 'utf8'));
+  assert.deepEqual({ ...JSON.parse(text), pin: null }, { ...committed, pin: null }, 'oracle quota readers differ from the pin; regenerate');
+  console.log(`${pin}: Command Code, Kenari, OpenCode Go, Ollama, Vercel AI Gateway and MiMo quota readers match the pin`);
+} else {
+  writeFileSync(out, text);
+  console.log(`wrote ${out.pathname}`);
+}

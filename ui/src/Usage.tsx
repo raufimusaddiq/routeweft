@@ -3,7 +3,8 @@ import { BarChart, EditorialSkeleton, EmptyState, ErrorNotice, Sparkline, Stacke
 import { Caption, ErrCell, Fact, Main, Margin, Row, Statement, Status } from './editorial'
 import { RequestDetails } from './RequestDetails'
 import { UsageLogs } from './UsageLogs'
-import { badRate, compact, num, outlier, pct, failureStatuses, largest, latestWeekTotal, observeSeries, observedAverage, periodDays, providerTone, rate, sameDayLastWeek, share, statusTone, utcDay, weekOverWeek, type Summary } from './format'
+import { UsageTopology } from './UsageTopology'
+import { badRate, compact, money, moneyFine, num, outlier, pct, failureStatuses, largest, latestWeekTotal, observeSeries, observedAverage, periodDays, providerTone, rate, sameDayLastWeek, share, statusTone, utcDay, weekOverWeek, type Summary } from './format'
 
 type Props = { onUnauthorized: () => void }
 
@@ -130,6 +131,7 @@ export function Usage({ onUnauthorized }: Props) {
             <Fact label="Requests" value={<>{num(t.requests)} <small>req</small></>} note={wow ? `${num(wow.thisWeek)} successful in the latest 7 days, ${wow.change === null ? 'no prior week' : `${wow.change >= 0 ? '↑' : '↓'} ${Math.abs(wow.change).toFixed(1)}% vs prior 7 d`}` : showWeek ? `${num(thisWeek)} successful in the latest 7 days, ${num(t.requests / days)} requests a day on average` : `avg ${num(t.requests / days)} a day`} />
             <Fact label="Tokens" value={<>{compact(tokens)} <small>in + out</small></>} note={`input ${num(t.inputTokens)}, output ${num(t.outputTokens)}`} />
             <Fact label="Cache" value={<>{pct(hit, 0)} <small>of input</small></>} note={`read ${num(t.cacheReadTokens)}, write ${num(t.cacheWriteTokens)}`} />
+            <Fact label="Cost" value={<>{t.cost === undefined ? '—' : `~${money(t.cost)}`} <small>est.</small></>} note="Priced from the model catalog, not a bill" />
             <Fact label="Latency" value={<>{t.avgDurationMs !== undefined ? num(t.avgDurationMs) : '—'} <small>ms avg</small></>} note={`TTFT ${t.avgTtftMs !== undefined ? `${num(t.avgTtftMs)} ms` : '—'}`} />
           </dl>
         </Margin>
@@ -147,7 +149,7 @@ export function Usage({ onUnauthorized }: Props) {
               <table className="ed-table prov-table"><thead><tr><th scope="col">Provider</th><th scope="col" className="num">Requests</th><th scope="col"><span className="sr-only">Share</span></th><th scope="col" className="num">Errors</th></tr></thead>
                 <tbody>{summary.providers.slice(0, 8).map(item => <tr key={item.key}>
                   <td><Status tone={providerTone(item.errors, item.requests, fleet)}><span className="ed-name">{item.key}</span></Status></td>
-                  <td className="num ed-big">{num(item.requests)}</td>
+                  <td className="num ed-big">{num(item.requests)}{item.cost !== undefined && <><br /><small className="ed-quiet">{money(item.cost)}</small></>}</td>
                   <td className="share-cell"><span className="ed-bar"><span style={{ width: `${share(item.requests, topProvider)}%` }} /></span></td>
                   <ErrCell errors={item.errors} requests={item.requests} bad={badRate(item.errors, item.requests, fleet)} />
                 </tr>)}</tbody></table>
@@ -158,7 +160,7 @@ export function Usage({ onUnauthorized }: Props) {
           <h3 className="ed-h3">Models</h3>
           {summary.models.length === 0
             ? <p className="ed-now-note">No model activity in this period.</p>
-            : <ul className="ed-watch ed-models">{summary.models.slice(0, 6).map(model => <li key={model.key}><code>{model.key}</code><span className="num">{num(model.requests)} <small>req</small> · {compact(model.inputTokens + model.outputTokens)} <small>tok</small></span></li>)}</ul>}
+            : <ul className="ed-watch ed-models">{summary.models.slice(0, 6).map(model => <li key={model.key}><code>{model.key}</code><span className="num">{num(model.requests)} <small>req</small> · {compact(model.inputTokens + model.outputTokens)} <small>tok</small>{model.cost !== undefined ? <> · {money(model.cost)}</> : null}</span></li>)}</ul>}
         </Margin>
       </Row>
 
@@ -177,6 +179,8 @@ export function Usage({ onUnauthorized }: Props) {
       </Row>
     </>}
 
+    {tab === 'overview' && summary && <UsageTopology providers={summary.providers} onUnauthorized={onUnauthorized} />}
+
     {tab === 'overview' && summary && n > 1 && <Row gap="m" label="Daily trend">
       <Main title="Trend">
         <figure className="ed-figure"><p className="ed-subline">{compact(tokens / days)} tokens and {pct(hit, 0)} cache hit a day, on average, over the {summary.period === 'all' ? 'recorded history' : periodLabel.toLowerCase()}.</p>
@@ -185,6 +189,7 @@ export function Usage({ onUnauthorized }: Props) {
       <Margin>
         <figure className="ed-mini"><figcaption className="ed-label">Tokens per day</figcaption><Sparkline values={series.map(day => day.inputTokens + day.outputTokens)} label="Tokens per day" caption={`${compact(tokens / days)} /day`} /></figure>
         <figure className="ed-mini"><figcaption className="ed-label">Cache tokens per day</figcaption><Sparkline values={series.map(day => day.cacheReadTokens + day.cacheWriteTokens)} label="Cache tokens per day" caption={`${pct(hit, 0)} hit`} /></figure>
+        <figure className="ed-mini"><figcaption className="ed-label">Cost per day</figcaption><Sparkline values={series.map(day => day.cost ?? 0)} label="Estimated cost per day" caption={`${moneyFine(summary.totals.cost)} est.`} /></figure>
       </Margin>
     </Row>}
     </div>

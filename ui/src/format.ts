@@ -1,12 +1,12 @@
 // Pure formatting and derivation helpers shared by the editorial pages. No React, so they are unit-tested.
 
-export type Totals = { requests: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; errors: number; avgDurationMs?: number; avgTtftMs?: number }
-export type Day = { day: string; requests: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
-export type Breakdown = { key: string; requests: number; inputTokens: number; outputTokens: number; errors: number }
+export type Totals = { requests: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; errors: number; avgDurationMs?: number; avgTtftMs?: number; cost?: number }
+export type Day = { day: string; requests: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; cost?: number }
+export type Breakdown = { key: string; requests: number; inputTokens: number; outputTokens: number; errors: number; cost?: number }
 export type Summary = { period: string; since: string; totals: Totals; series: Day[]; providers: Breakdown[]; models: Breakdown[]; statuses: Breakdown[] }
 export type RequestDetail = { routeMode?: string; detail: unknown; createdAt: string }
 export type RequestRecord = { requestId: string; events: UsageEvent[]; detail: RequestDetail | null }
-export type UsageEvent = { id: number; requestId: string; status: number; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; usageUnobserved?: boolean; termination?: string; createdAt: string; providerId?: string; modelId?: string; connectionId?: string; apiKeyId?: string; durationMs?: number; ttftMs?: number }
+export type UsageEvent = { id: number; requestId: string; status: number; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; usageUnobserved?: boolean; termination?: string; createdAt: string; providerId?: string; modelId?: string; connectionId?: string; apiKeyId?: string; durationMs?: number; ttftMs?: number; cost?: number }
 
 const numberFormat = new Intl.NumberFormat('en-US')
 export const num = (value: number) => numberFormat.format(Math.round(value))
@@ -32,6 +32,11 @@ export function compact(value: number) {
 
 export const pct = (value: number, digits = 1) => `${value.toFixed(digits)}%`
 export const rate = (errors: number, requests: number) => (requests > 0 ? (errors / requests) * 100 : 0)
+
+// Estimated cost is priced from the catalog, not a bill; an absent value is unknown, never $0.
+export const money = (value?: number) => (value === undefined ? '—' : `$${value.toFixed(2)}`)
+// Per-request and per-day costs are often below a cent: four decimals keeps a nonzero cost from reading as $0.00.
+export const moneyFine = (value?: number) => (value === undefined ? '—' : `$${value.toFixed(value > 0 && value < 0.01 ? 4 : 2)}`)
 
 // Relative change in percent; null when there is nothing to compare against.
 export function delta(now: number, before: number | undefined | null) {

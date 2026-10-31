@@ -1962,8 +1962,13 @@ that no accounting was delayed or lost (SPEC section 21).
 
 Each usage event carries `apiKeyId`: the opaque id of the authenticated client
 key, resolved once at authorization, never the key or its prefix. It is empty
-when `requireApiKey` is false. Time-to-first-token, cost, and a metrics scrape
-endpoint are not yet defined by this specification and are not exposed.
+when `requireApiKey` is false. `ttftMs` is exposed per event and as the summary's
+`avgTtftMs`. `cost` is exposed on a priced usage event and as `totals.cost`, on
+each daily series item and on each provider/model breakdown: the stored estimate
+from the operator's pricing override or the generated catalog, never a bill. A
+request whose usage was never observed is not priced and omits `cost`; a
+breakdown sums only the priced rows. A metrics scrape endpoint is not defined by
+this specification and is not exposed.
 
 Dashboard password rotation uses `POST /admin/v1/auth/password` with the
 current and replacement password. It is same-origin and session-gated; the
