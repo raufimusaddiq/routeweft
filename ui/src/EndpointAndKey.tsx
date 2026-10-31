@@ -218,7 +218,7 @@ export function EndpointAndKey({ onUnauthorized }: Props) {
   }
 
   return (
-    <div className="endpoint-content" aria-busy={loading}>
+    <div className="endpoint-content page-d" aria-busy={loading}>
       {error && <p className="auth-error" role="alert">{error}</p>}
       {notice && <p className="inline-notice" role="status">{notice}</p>}
 

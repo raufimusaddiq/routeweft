@@ -981,3 +981,78 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
 .combo-tuning { display: grid; gap: 8px; min-width: 0; margin: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); padding: 10px 12px; }
 .combo-tuning legend { padding: 0 6px; color: var(--text-muted); font-size: var(--t-body); font-weight: 600; }
 .combo-tuning p { margin: 0; }
+
+/* ---- Page bodies in direction D (#263, phase 3a): Overview, Endpoint & Key, Combo, System One ----
+   Scoped by .page-d so phases 3b and 3c adopt the same rules one page at a time (add the class to the page's wrapper). */
+.page-d { --page-gap: 72px; }
+.page-d.endpoint-content { gap: 0; }
+.page-d > * + * { margin-top: var(--page-gap); }
+.page-d > :is([role="alert"], [role="status"], .auth-error, .inline-notice) { margin-top: 0; }
+.page-d > :is([role="alert"], [role="status"], .auth-error, .inline-notice) + * { margin-top: 24px; }
+
+/* Headline and statement are weight 400; the number a sentence is about is weight 700 on a highlight block. */
+.page-d :is(.ed-headline, .ed-statement) { font-weight: 400; }
+.page-d :is(.ed-headline, .ed-statement) strong { padding: 0 .2em; border-radius: var(--radius-pill); color: var(--highlight-ink); background: var(--highlight); font-weight: 700; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+
+/* A 6px ink rule opens a section, a statement and a margin list; a table head sits on a 4px one. */
+.page-d :is(.ed-statement-row, .ed-facts, .ed-watch, .ed-group) { border-top-width: 6px; }
+.page-d :is(.section-heading, .enforcement-panel) { border: 0; border-top: 6px solid var(--ink); padding-top: 14px; }
+.page-d thead th { border-bottom-width: 4px; }
+
+/* Fields that are not form inputs: the copyable URL is a pill like every field. */
+.page-d .copy-field code, .page-d .copy-field input { display: flex; min-height: var(--control-height); align-items: center; border: 3px solid var(--outline); border-radius: var(--radius-pill); padding: 0 18px; background: var(--surface); }
+
+/* Data stays open: the transport examples are rows between hairlines, not a boxed grid. */
+.page-d .transport-grid { gap: 0 36px; overflow: visible; border: 0; border-radius: 0; background: transparent; }
+.page-d .transport-grid > div { padding: 10px 0 12px; border-top: 1px solid var(--border-subtle); background: transparent; }
+.page-d .section-label { margin: 22px 0 6px; font-family: var(--font-mono); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+
+/* Choices are outlined pills of their own; the chosen one is a highlight block and still says so in words. */
+.page-d .access-picker { padding: 14px 0 0; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; }
+.page-d .access-modes { gap: 14px; }
+.page-d .access-modes label { align-items: center; justify-content: flex-start; gap: 14px; border: 3px solid var(--outline); border-radius: var(--radius-state); padding: 14px 20px; }
+.page-d .access-modes label:has(input:checked) { color: var(--highlight-ink); background: var(--highlight); }
+.page-d .access-modes label:has(input:checked) :is(span, small) { color: var(--highlight-ink); }
+.page-d .access-modes input { width: 22px; height: 22px; }
+
+/* Keys: the name is a row name (16px, 700) and the row has room. */
+.page-d .key-main h3 { font-size: var(--t-lead); font-weight: 700; }
+.page-d .key-row { min-height: 84px; padding: 16px 0; }
+
+/* Combo list and System One rows: the selected Combo is a 22px highlight block, not a ruled box. */
+.page-d .combo-row-selected { border-color: transparent; border-radius: 22px; color: var(--highlight-ink); background: var(--highlight);
+  /* Like the accent surface, the block re-points the tokens so a control, a tag and a rule inside it stay legible in both themes; state is the word. */
+  --text-main: var(--highlight-ink); --text-muted: var(--highlight-ink); --text-subtle: var(--highlight-ink); --ink: var(--highlight-ink); --ink-hover: var(--highlight-ink);
+  --paper: var(--highlight); --bg: var(--highlight); --surface: var(--highlight); --surface-2: var(--highlight); --surface-3: var(--highlight);
+  --border: var(--highlight-ink); --outline: var(--highlight-ink); --border-subtle: var(--highlight-ink); --shadow-ink: var(--highlight-ink); --hard-sm: 5px 3px 0 var(--highlight-ink);
+  --danger: var(--highlight-ink); --success: var(--highlight-ink); --warning: var(--highlight-ink); --focus: var(--highlight-ink); --live: var(--highlight-ink); }
+.page-d .detail-panel-empty { margin: 0; border: 3px solid var(--outline); border-radius: var(--radius-state); padding: 20px 24px; background: var(--surface); box-shadow: var(--hard-sm); }
+.page-d .systemone-layout { gap: 24px 56px; }
+
+/* A notice is a state box like the empty and error ones, in its own colour. */
+.page-d .inline-notice { border: 3px solid var(--success); border-radius: var(--radius-state); padding: 12px 20px; background: var(--surface); box-shadow: var(--hard-sm); }
+
+/* Inside the accent surface the heading sits under the slab's own edge: a hairline, not a 6px rule. */
+.page-d .accent-surface .section-heading { border-top: 0; border-bottom: 1px solid var(--border-subtle); padding: 0 0 12px; }
+/* A toolbar and what it controls are one group, not two sections. */
+.page-d > :is(.combos-toolbar, .systemone-toolbar) + * { margin-top: 32px; }
+.page-d .access-modes label span { text-align: left; }
+/* Optional settings of a form are an open block under a hairline, not a boxed fieldset. */
+.page-d .combo-tuning { margin: 4px 0 0; padding: 14px 0 0; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; }
+/* The access list reads left to right: the box, the name, then its kind and provider. */
+.page-d .access-list label { justify-content: flex-start; text-align: left; }
+.page-d .access-list input { flex: 0 0 auto; width: 20px; height: 20px; }
+/* An add form under a list is its own block, set off by a hairline. */
+.page-d .systemone-layout form { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border-subtle); }
+/* A route is one line: the cell ends in an ellipsis and the full route is its title. On a phone the stacked row gives it the full first line (the 14ch cap of the older log table is lifted there). */
+@media (max-width: 700px) { .page-d .log-table td.log-route { max-width: none; } }
+@media (min-width: 701px) { .page-d .log-table { table-layout: fixed; } .page-d .log-table thead th:first-child { width: 40%; } .page-d .log-table td.log-route { max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } }
+
+@media (max-width: 900px) { .page-d { --page-gap: 56px; } .page-d .systemone-layout { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 700px) {
+  .page-d { --page-gap: 48px; }
+  .page-d .transport-grid { grid-template-columns: minmax(0, 1fr); }
+  .page-d .access-modes { grid-template-columns: minmax(0, 1fr); }
+  .page-d .key-row { grid-template-columns: minmax(0, 1fr); }
+  .page-d .key-status { justify-items: start; }
+}

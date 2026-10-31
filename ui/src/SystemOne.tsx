@@ -162,7 +162,7 @@ export function SystemOne({ onUnauthorized }: Props) {
 
   const enabledCount = providerConnections.filter(connection => connection.enabled).length
 
-  return <div className="systemone-content" aria-busy={loading}>
+  return <div className="systemone-content page-d" aria-busy={loading}>
     <div className="systemone-toolbar"><label htmlFor="systemone-provider">System One provider</label><select id="systemone-provider" value={providerID} onChange={event => { setProviderID(event.target.value); setModelID(''); setModelPage(1); setAccountPage(1) }}>{providers.length === 0 && <option value="">No System One provider configured</option>}{providers.map(id => <option key={id} value={id}>{id}</option>)}</select><span className="count-label">{loading ? 'Loading…' : `${providers.length} provider${providers.length === 1 ? '' : 's'}`}</span><button className="button-secondary" type="button" disabled={loading} onClick={() => void load()}>Refresh</button></div>
     {error && <p className="auth-error" role="alert">{error}</p>}{notice && <p className="inline-notice" role="status">{notice}</p>}
 
