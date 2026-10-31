@@ -3,6 +3,7 @@ package parity
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -84,7 +85,7 @@ var onboardingClasses = map[string]onboardingClass{
 	"mmf":               {oNoAuth, "mmf"},
 	"nebius":            {oAPIKey, "nebius"},
 	"nvidia":            {oAPIKey, "nvidia"},
-	"ollama-local":      {oImport, "ollama-local"},
+	"ollama-local":      {oNoAuth, "ollama-local"},
 	"ollama":            {oAPIKey, "ollama"},
 	"openai":            {oAPIKey, "openai"},
 	"opencode-go":       {oAPIKey, "opencode-go"},
@@ -314,6 +315,8 @@ func TestProviderAcceptanceMatrixIsCurrent(t *testing.T) {
 	}
 	tests := testFunctions(t)
 	families := map[string]bool{}
+	classCount := map[string]int{}
+	specialCount := 0
 	qCount := map[string]int{}
 	for _, spec := range specs {
 		o, ok := onboardingClasses[spec.ID]
@@ -324,7 +327,9 @@ func TestProviderAcceptanceMatrixIsCurrent(t *testing.T) {
 		if o.Class != oAPIKey && o.Class != oNoAuth && o.Class != oBrowser && o.Class != oDevice && o.Class != oCookie && o.Class != oImport {
 			t.Errorf("%s has unknown O class %q", spec.ID, o.Class)
 		}
+		classCount[o.Class]++
 		if o.Class != oAPIKey && o.Class != oNoAuth {
+			specialCount++
 			families[o.Family] = true
 		}
 		cell := rows[spec.ID][colQuota]
@@ -339,28 +344,49 @@ func TestProviderAcceptanceMatrixIsCurrent(t *testing.T) {
 			t.Errorf("onboarding map names %q, which is not an active provider", id)
 		}
 	}
-	if len(families) != 21 {
-		t.Errorf("special-auth families = %d, want 21", len(families))
+	// Census the catalog fixes: 52 shared API-key, 4 no-auth (mimo-free, mmf,
+	// opencode, ollama-local), 25 special-auth providers in 20 families.
+	if classCount[oAPIKey] != 52 || classCount[oNoAuth] != 4 || specialCount != 25 || len(families) != 20 {
+		t.Errorf("onboarding census = %d O01 / %d O02 / %d special in %d families, want 52 / 4 / 25 / 20",
+			classCount[oAPIKey], classCount[oNoAuth], specialCount, len(families))
 	}
 	if qCount[qReader] != 24 || qCount[qNone] != 57 {
 		t.Errorf("quota census = %d readers / %d none, want 24 / 57", qCount[qReader], qCount[qNone])
 	}
 	body := renderAcceptanceMatrix(t, specs, rows)
 
-	// Every test the document names must exist, so a claim cannot outlive its fixture.
-	named := map[string]bool{}
-	for _, spec := range specs {
-		row := rows[spec.ID]
-		for _, c := range []cell{row[colList], row[colQuota], row[colImport]} {
-			for _, ref := range c.Refs {
-				named[ref] = true
-			}
+	// Every test the document names must exist, so a claim cannot outlive its
+	// fixture. This walks the rendered document, not a subset of inputs: class
+	// evidence, the appended passthrough test and the methods table included.
+	refPattern := regexp.MustCompile("`([a-z0-9]+(?:/[a-z0-9]+)*):(Test[A-Za-z0-9_]+)`")
+	named := 0
+	for _, match := range refPattern.FindAllStringSubmatch(body, -1) {
+		dir, name := match[1], match[2]
+		if !tests[dir][name] {
+			t.Errorf("matrix names %q, which is not a Test function in internal/%s", match[0], dir)
 		}
+		named++
 	}
-	for ref := range named {
-		dir, name, ok := strings.Cut(ref, ":")
-		if !ok || !tests[dir][name] {
-			t.Errorf("matrix names %q, which is not a Test function in internal/%s", ref, dir)
+	if named == 0 {
+		t.Fatal("the matrix names no test at all")
+	}
+	// Every row carries at least one residual ticket, in the linked form #N.
+	ticketPattern := regexp.MustCompile(`^#[0-9]+$`)
+	for _, spec := range specs {
+		o := onboardingClasses[spec.ID]
+		q := qReader
+		if rows[spec.ID][colQuota].Kind == kindN {
+			q = qNone
+		}
+		residual := residualsFor(spec.ID, o.Class != oAPIKey && o.Class != oNoAuth, q)
+		if residual == "" {
+			t.Errorf("%s has no residual ticket", spec.ID)
+			continue
+		}
+		for _, ticket := range strings.Split(residual, ", ") {
+			if !ticketPattern.MatchString(ticket) {
+				t.Errorf("%s residual %q is not a #N ticket", spec.ID, ticket)
+			}
 		}
 	}
 	// The three hidden providers are a documented census, not an omission.

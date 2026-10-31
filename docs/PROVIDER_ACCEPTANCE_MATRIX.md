@@ -14,7 +14,7 @@ The audit's historic 26-gap count was a snapshot of `3e3facd`, not a current tes
 ## Census
 
 - **81 active** providers; **3 hidden** remain absent: trae, devin-cli, windsurf (PROVIDER_BASELINE §3, "hidden" rows).
-- **52** shared API-key (O01), **3** no-auth (O02), **26** providers with a non-shared auth method (O03-O06) in **21** families.
+- **52** shared API-key (O01), **4** no-auth (O02), **25** providers with a non-shared auth method (O03-O06) in **20** families.
 - **24** dedicated quota readers (Q01), **57** providers with no dedicated quota surface (Q02; reported as *not reported*, never zero/unlimited).
 - **5** refused by immutable readiness: `typesafe`, `cursor`, `qoder`, `grok-web`, `perplexity-web`. Storing a credential never makes them routable or a Ready claim.
 
@@ -104,7 +104,7 @@ same change.
 | `mmf` | O02 | mmf | Q02 | `control/api:TestNoSecretProviderAcceptance` | N (pin) | N (pin) | N (pin) | #76 |
 | `opencode` | O02 | opencode | Q02 | `control/api:TestNoSecretProviderAcceptance` | `control/api:TestSuggestionFiltersPinnedFixtures`, `control/api:TestDiscoveryFailureKeepsTheSavedPassthroughModels` | N (pin) | N (pin) | #76 |
 | `ollama` | O01 | ollama | Q01 | `control/api:TestSharedAPIKeyProviderAcceptance` | `control/api:TestWorkflowNativeRoutesDiscoveryAndProbe`, `parity:TestEveryPinnedPlainListingURLMatches` | `providers/usage:TestOllamaUsageRatioIsUsedFractionAndNullWindowsAreSkipped` | N (pin) | #76, #225 |
-| `ollama-local` | O06 | ollama-local | Q02 | gap (`#231`) | G: the pin resolves the local host and GETs /api/tags (route.js:491-507) | N (pin) | N (pin) | #76, #231, #228 |
+| `ollama-local` | O02 | ollama-local | Q02 | `control/api:TestNoSecretProviderAcceptance` | G: the pin resolves the local host and GETs /api/tags (route.js:491-507) | N (pin) | N (pin) | #76, #228 |
 | `typesafe` | O01 | typesafe | Q02 | `control/api:TestSharedAPIKeyProviderAcceptance` | N (pin) | N (pin) | N (pin) | #76 |
 | `vertex-partner` | O06 | vertex-partner | Q02 | gap (`#231`) | N (pin) | N (pin) | N (pin) | #76, #231, #228 |
 | `tokenrouter` | O01 | tokenrouter | Q02 | `control/api:TestSharedAPIKeyProviderAcceptance` | `providers/discovery:TestModelsFetchesBearerCatalogAndTrimsIDs`, `control/api:TestDiscoveryFailureKeepsTheSavedPassthroughModels` | N (pin) | N (pin) | #76 |

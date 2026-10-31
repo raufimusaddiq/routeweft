@@ -2405,7 +2405,7 @@ Honest totals (of 81 providers; 648 cells): 45 have at least one provider-specif
 test, but only 26 have one on the serving path (streaming, non-streaming, error
 shapes or tokens). 33 are shared-path only. 3 (`vertex`, `grok-web`,
 `perplexity-web`) have no test of any kind because the build refuses them (superseded: vertex is served since #194, and grok-web and perplexity-web have fence-lifted full-path tests since #195 and #229, §6.23). 148
-cells are not applicable, each with a pin citation. 26 cells are gaps.
+cells are not applicable, each with a pin citation. 12 cells are gaps.
 
 | Area | Evidence added | Remaining / found | Status |
 | --- | --- | --- | --- |
