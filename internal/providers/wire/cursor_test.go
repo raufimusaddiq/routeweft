@@ -532,3 +532,18 @@ func TestCursorDoStopsUpstreamWhenTheClientLeaves(t *testing.T) {
 		t.Fatal("closing the response did not cancel the upstream request")
 	}
 }
+
+// The codec is the ingress arm: it hands CursorDo the Chat body, and CursorDo
+// builds the Run frame and turns the answer back into Chat SSE, so the stream is
+// already Chat and is copied through.
+func TestCursorCodecHandsChatToCursorDo(t *testing.T) {
+	chat := map[string]any{"model": "claude-4.5-sonnet", "messages": []any{map[string]any{"role": "user", "content": "hi"}}}
+	codec, ok, err := CodecFor(routing.ProviderRef{ProviderID: "cursor"}, nil, chat, "claude-4.5-sonnet")
+	if !ok || err != nil || codec.Endpoint != cursorRunPath || !strings.Contains(string(codec.Body), `"role":"user"`) {
+		t.Fatalf("codec ok=%v err=%v %+v", ok, err, codec)
+	}
+	var out strings.Builder
+	if err := codec.Stream(context.Background(), strings.NewReader("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"), &out); err != nil || !strings.Contains(out.String(), "hi") {
+		t.Fatalf("stream err=%v out=%s", err, out.String())
+	}
+}

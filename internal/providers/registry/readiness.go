@@ -74,9 +74,9 @@ func experimental(reason string) Readiness { return Readiness{ProviderExperiment
 // provider carries none. The unavailable set must equal the ingress unwired /
 // unreachable list (internal/ingress/readiness_test.go).
 var notReady = map[string]Readiness{
-	"cursor":         unavailable("the Chat legs and the Connect-RPC transport (wire.CursorDo) exist, but no ingress translation binds them and it is fenced in ingress.unwired; serving needs that binding, the owner's approval and a supervised live check (PARITY 6.23, #229)"),
+	"cursor":         unavailable("the Chat legs, Connect-RPC transport (wire.CursorDo) and a hook Codec exist, but the legacy ChatService path for image-bearing turns is not implemented and it is fenced in ingress.unwired; serving needs that path, the owner's approval and a supervised live check (PARITY 6.23, #229)"),
 	"typesafe":       unavailable("Chat, Responses and Messages clients cannot reach it, as at the pin (registry/typesafe.js:22 has no translator leg); System One requests on /v1/systemone are served. Re-declaring it is the owner's decision (PARITY 6.23, #229)"),
-	"qoder":          unavailable("the serving path is ported and tested offline against the pin (#203, PARITY 6.22), but no hook Codec binds it to dispatch; serving needs that binding, the owner's approval and a supervised live check (PARITY 6.23, #229)"),
+	"qoder":          unavailable("the serving path is ported and bound through a hook Codec and QoderDo (#203, #76 P02 part 3), but it is fenced in ingress.unwired; serving needs the owner's approval and a supervised live check (PARITY 6.23, #229)"),
 	"perplexity-web": unavailable("served end to end through its hook Codec (wire.PerplexityWeb*, ingress codecTranslation) but fenced in ingress.unwired: the owner keeps it unrouted until a supervised live check; live acceptance is unproven (PARITY 6.19, #195)"),
 	"grok-web":       unavailable("served end to end through its hook Codec (wire.GrokWeb*, ingress codecTranslation) but fenced in ingress.unwired: the owner keeps it unrouted until a supervised live check; live acceptance is unproven (PARITY 6.19, #195)"),
 

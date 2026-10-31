@@ -37,6 +37,9 @@ import (
 // A provider leaves this list in the PR that binds its wire.
 var unwired = map[string]bool{
 	cursor.Protocol: true,
+	// qoder has a hook Codec and a Do (#76 P02 part 3), but no client wire reaches
+	// it until the owner approves routability after a supervised live check.
+	"qoder": true,
 	// grok-web and perplexity-web have hook Codecs that convert (#195), but nothing
 	// routes to them until the owner approves it after a supervised live check.
 	"grok-web": true, "perplexity-web": true,

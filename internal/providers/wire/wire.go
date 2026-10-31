@@ -162,7 +162,7 @@ var hooks = map[string]Hook{
 	"glm":              {Target: betaQuery},
 	"kimi":             {OpenAIHeaders: kimiDeviceHeaders, MessagesHeaders: kimiDeviceHeaders, Target: betaQuery},
 	"kilocode":         {OpenAIHeaders: kilocodeOrgHeaders},
-	"qoder":            {RequestHeaders: qoderHeaders, RequireCredential: true},
+	"qoder":            {RequestHeaders: qoderHeaders, RequireCredential: true, ForceStream: true, Do: QoderDo, Codec: qoderCodec},
 	"iflow":            {OpenAIHeaders: iflowHeaders, Finalize: iflowStreamOptions, RequireCredential: true},
 	"kiro":             {NoOpenAIBearer: true, OpenAIHeaders: kiroHeaders, Target: kiroTarget, FinalizeAccount: kiroBody, RequireCredential: true},
 	"github":           githubHook,
@@ -182,7 +182,7 @@ var hooks = map[string]Hook{
 	"commandcode":      commandCodeHook,
 	"grok-web":         grokWebHook,
 	"perplexity-web":   perplexityWebHook,
-	"cursor":           {RequestHeaders: cursorHeaders, Target: cursorTarget, ForceStream: true, RequireCredential: true, Do: accountless(CursorDo)},
+	"cursor":           {RequestHeaders: cursorHeaders, Target: cursorTarget, ForceStream: true, RequireCredential: true, Do: accountless(CursorDo), Codec: cursorCodec},
 }
 
 var minimaxHook = Hook{Finalize: chain(dropOutputConfig, requireClaudeToolType), Target: betaQuery}

@@ -2,7 +2,10 @@ package wire
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
+	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
@@ -71,3 +74,40 @@ func perplexityCodec(provider routing.ProviderRef, state *CodecState, chat map[s
 	}
 	return Codec{Endpoint: perplexityWebEndpoint, Body: exchange.Body, Response: exchange.ResponseToChat, Stream: exchange.StreamToChat}, nil
 }
+
+// cursorCodec is CursorExecutor's dispatch (executors/cursor.js:81-90,894-918):
+// an agent-capable Chat goes to AgentService/Run. CursorDo builds the Connect
+// frame from this Chat body and returns Chat SSE, so the codec body is the Chat
+// JSON unchanged and the stream is identity. Image-bearing turns need the legacy
+// ChatService protobuf path, which is not implemented (see PARITY 6.23); such a
+// request is refused by cursorRun, as before.
+func cursorCodec(_ routing.ProviderRef, _ *CodecState, chat map[string]any, _ string) (Codec, error) {
+	body, err := json.Marshal(chat)
+	if err != nil {
+		return Codec{}, err
+	}
+	return Codec{Endpoint: cursorRunPath, Body: body,
+		Response: func(answer []byte) ([]byte, error) { return answer, nil },
+		Stream: func(_ context.Context, src io.Reader, dst io.Writer) error {
+			_, err := io.Copy(dst, src)
+			return err
+		}}, nil
+}
+
+// qoderCodec is QoderExecutor's dispatch (executors/qoder.js:613-702): the
+// executor converts the Chat body into its signed agent envelope. QoderDo builds
+// and signs that request, and QoderUnwrapSSE turns the answer back into Chat SSE.
+// Qoder always streams; a non-stream client is folded from the stream.
+func qoderCodec(_ routing.ProviderRef, _ *CodecState, chat map[string]any, model string) (Codec, error) {
+	body, err := json.Marshal(chat)
+	if err != nil {
+		return Codec{}, err
+	}
+	return Codec{Endpoint: qoderCodecEndpoint, Body: body,
+		Response: func([]byte) ([]byte, error) { return nil, errors.New("qoder answers only streams") },
+		Stream: func(ctx context.Context, src io.Reader, dst io.Writer) error {
+			return QoderUnwrapSSE(ctx, src, dst, QoderStreamOptions{Model: "qoder/" + strings.TrimPrefix(model, "qoder/")})
+		}}, nil
+}
+
+const qoderCodecEndpoint = "agent_chat_generation"
