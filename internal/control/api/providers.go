@@ -315,6 +315,10 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "provider_mismatch", "connection provider must match its node")
 		return
 	}
+	if err := h.validateConnectionSettings(node.ProviderID, body.Secret.ProviderData); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_connection_setting", err.Error())
+		return
+	}
 	authKind := credentials.AuthKind(body.AuthKind)
 	if node.Kind == credentials.NodeGeneric {
 		if authKind == "" {
@@ -981,7 +985,7 @@ func modelWireProviderID(node credentials.Node) string {
 func probeRef(node credentials.Node, connection credentials.Connection, spec registry.Spec, protocol, model, credential string) routing.ProviderRef {
 	return routing.ProviderRef{
 		ProviderID: modelWireProviderID(node), Protocol: protocol, UpstreamModel: model, APIToken: credential, ConnectionID: connection.ID,
-		BaseURL: wire.NodeBase(node.BaseURL, spec.DefaultBaseURL, connection.Settings),
+		BaseURL: wire.NodeBase(node.ProviderID, node.BaseURL, spec.DefaultBaseURL, connection.Settings),
 		Connection: routing.ConnectionMetadata{Name: connection.Name, AuthKind: string(connection.AuthKind), Identity: connection.Identity,
 			AccountID: connection.AccountID, Settings: connection.Settings},
 	}

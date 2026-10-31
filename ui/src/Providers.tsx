@@ -11,6 +11,7 @@ import { quotaLine, quotaQuery, type QuotaItem } from './quotaView'
 import { browserJourney, checkedNote, copilotNote, DEVICE_REQUEST_TIMEOUT_MS, deviceCopyItems, deviceJourney, devicePollDelay, devicePollingOver, identityPrompt, importJourney, profileArnNote, projectNote, requestBound, validProfileArn, validProjectId } from './journeys'
 import { canRelink, desktopRenewalConsent, desktopRenewalLine, lifecycleLine, relinkPatch, TEST_STATUS_LABEL, testStatusOf, testStatusTone, type ConnectionLifecycle } from './connectionStatus'
 import { BULK_MAX_BYTES, IMPORT_MAX_BYTES, expiredNote, hostDiscoveryNote, importShapes, type HostDiscovery, missingMeta as missingImportMeta, readBulkFiles, readCredentialFile, savedReadinessNote } from './credentialImport'
+import { ACCOUNT_ID_PROVIDERS, emptySettings, missingSetting, providerDataFor, savedSettings, settingFields, settingsPatch } from './connectionSettings'
 
 function ReadinessTag({ provider }: { provider: { readiness?: Readiness } }) {
   const status = readinessStatus(provider)
@@ -18,7 +19,7 @@ function ReadinessTag({ provider }: { provider: { readiness?: Readiness } }) {
 }
 type Provider = { id: string; transports: string[]; auth: string; authModes: string[]; defaultBaseURL?: string; modelCatalog: string; passthroughModels: boolean; staticModels?: string[]; reportsUsage: boolean; flowType?: string; signInModes?: SignInMode[]; metaKeys?: string[]; signInMethods?: SignInMethod[]; bulkImport?: boolean; hostDiscovery?: boolean; configuredNodes: number; enabledAccounts: number; readiness?: Readiness }
 type Node = { id: string; kind: string; providerId: string; name: string; prefix?: string; baseUrl?: string; transports: string[] }
-type Connection = { id: string; nodeId: string; providerId: string; name: string; authKind: string; identity: string; enabled: boolean; priority: number; proxyPoolId?: string; connectionProxy?: ConnectionProxy; credentialConfigured: boolean; signInMethod?: string; desktopSessionRenewal?: boolean; desktopSessionReadAt?: string; outcome?: string; plan?: string; project?: string; projectMissing?: boolean; profileArnMissing?: boolean; copilotMissing?: boolean; expired?: boolean; refreshable?: boolean } & ConnectionLifecycle
+type Connection = { id: string; nodeId: string; providerId: string; name: string; authKind: string; identity: string; enabled: boolean; priority: number; proxyPoolId?: string; connectionProxy?: ConnectionProxy; credentialConfigured: boolean; accountId?: string; settings?: Record<string, string>; signInMethod?: string; desktopSessionRenewal?: boolean; desktopSessionReadAt?: string; outcome?: string; plan?: string; project?: string; projectMissing?: boolean; profileArnMissing?: boolean; copilotMissing?: boolean; expired?: boolean; refreshable?: boolean } & ConnectionLifecycle
 type Model = { providerId: string; id: string; name?: string; contextWindow?: number; capabilities: string[]; disabled: boolean; custom?: boolean }
 type Alias = { alias: string; providerId: string; modelId: string }
 type Pricing = { providerId: string; modelId: string; inputPerMTok?: number; outputPerMTok?: number; cacheReadPerMTok?: number; cacheWritePerMTok?: number }
@@ -107,6 +108,9 @@ export function Providers({ onUnauthorized }: Props) {
   const [genericNodeID, setGenericNodeID] = useState('')
   const [generic, setGeneric] = useState({ name: '', prefix: '', baseUrl: '', transports: ['openai-chat'] })
   const [projectId, setProjectId] = useState('')
+  // The host and name settings of the provider being added to (#228), and Cloudflare's account ID.
+  const [settingValues, setSettingValues] = useState<Record<string, string>>({})
+  const [cloudflareAccount, setCloudflareAccount] = useState('')
   const [account, setAccount] = useState(EMPTY_ACCOUNT)
   const [methodId, setMethodId] = useState('')
   const [outcome, setOutcome] = useState<Outcome | null>(null)
@@ -155,7 +159,7 @@ export function Providers({ onUnauthorized }: Props) {
   // The stored credential is never read back; the field starts empty and a
   // blank one keeps it.
   const [editTarget, setEditTarget] = useState<Connection | null>(null)
-  const [edit, setEdit] = useState({ name: '', identity: '', credential: '' })
+  const [edit, setEdit] = useState({ name: '', identity: '', credential: '', accountId: '', settings: {} as Record<string, string> })
   // Bulk import: the pasted export (cleared once sent), and the per-item result.
   const [bulkInput, setBulkInput] = useState('')
   const [bulkError, setBulkError] = useState('')
@@ -206,6 +210,7 @@ export function Providers({ onUnauthorized }: Props) {
   }, [onUnauthorized])
 
   useEffect(() => { void load() }, [load])
+  useEffect(() => { setSettingValues(emptySettings(selected)); setCloudflareAccount('') }, [selected])
   // Device sign-in: the operator approves on the provider's page; poll until the
   // server reports the attempt ended. The server also throttles polling.
   useEffect(() => {
@@ -389,14 +394,18 @@ export function Providers({ onUnauthorized }: Props) {
     event.preventDefault()
     // Only the manual method submits the form; sign-in methods have their own buttons.
     if (!selectedProvider || method?.kind !== 'manual' || !account.name.trim() || !account.identity.trim()) return
+    if (missingSetting(selected, settingValues) || (ACCOUNT_ID_PROVIDERS.includes(selected) && !cloudflareAccount.trim())) return
     const authKind = method.authKind
     await action('account', 'Provider connection saved.', async () => {
       const secret: Record<string, string | Record<string, string>> = {}
       if (authKind === 'cookie') secret.cookie = account.cookie
       else if (authKind !== 'none') { secret.accessToken = account.accessToken; if (account.refreshToken) secret.refreshToken = account.refreshToken }
-      if (selected === 'vertex-partner' && projectId.trim()) secret.providerData = { projectId: projectId.trim() }
-      await send('/connections', 'POST', { providerId: selected, nodeId: selectedNode?.id, name: account.name, identity: account.identity, authKind, secret, enabled: true, priority: selectedConnections.length })
-      setAccountOpen(false); resetSecrets(); setProjectId(''); setAccount(EMPTY_ACCOUNT)
+      const providerData: Record<string, string> = { ...providerDataFor(selected, settingValues) }
+      if (selected === 'vertex-partner' && projectId.trim()) providerData.projectId = projectId.trim()
+      if (Object.keys(providerData).length > 0) secret.providerData = providerData
+      const accountId = ACCOUNT_ID_PROVIDERS.includes(selected) ? cloudflareAccount.trim() : ''
+      await send('/connections', 'POST', { providerId: selected, nodeId: selectedNode?.id, name: account.name, identity: account.identity, authKind, secret, enabled: true, priority: selectedConnections.length, ...(accountId ? { accountId } : {}) })
+      setAccountOpen(false); resetSecrets(); setProjectId(''); setSettingValues(emptySettings(selected)); setCloudflareAccount(''); setAccount(EMPTY_ACCOUNT)
     })
   }
 
@@ -782,18 +791,21 @@ export function Providers({ onUnauthorized }: Props) {
 
   function openEdit(connection: Connection) {
     setEditTarget(connection)
-    setEdit({ name: connection.name, identity: connection.identity || '', credential: '' })
+    setEdit({ name: connection.name, identity: connection.identity || '', credential: '', accountId: connection.accountId || '', settings: savedSettings(connection.providerId, connection.settings) })
   }
 
   function closeEdit() {
     setEditTarget(null)
-    setEdit({ name: '', identity: '', credential: '' })
+    setEdit({ name: '', identity: '', credential: '', accountId: '', settings: {} })
   }
 
   async function saveEdit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!editTarget) return
-    const patch = relinkPatch(editTarget, edit)
+    const patch: { name?: string; identity?: string; accountId?: string; secret?: { accessToken?: string; cookie?: string; providerData?: Record<string, string> } } = relinkPatch(editTarget, edit)
+    const changed = settingsPatch(editTarget.providerId, edit.settings, editTarget.settings)
+    if (Object.keys(changed).length > 0) patch.secret = { ...patch.secret, providerData: changed }
+    if (ACCOUNT_ID_PROVIDERS.includes(editTarget.providerId) && edit.accountId.trim() !== (editTarget.accountId || '')) patch.accountId = edit.accountId.trim()
     // The typed credential leaves the page state whether or not the save works.
     setEdit(value => ({ ...value, credential: '' }))
     if (Object.keys(patch).length === 0) { closeEdit(); return }
@@ -983,6 +995,8 @@ export function Providers({ onUnauthorized }: Props) {
               <p role="status"><span className="state-tag">Pending</span> Waiting for the provider's answer{oauthFlow.expiresAt ? `; this sign-in expires at ${new Date(oauthFlow.expiresAt).toLocaleTimeString()}` : ''}.</p>{pastExpiry && <p>The time limit has passed, so the server will most likely refuse this sign-in. Finish or cancel it to get the server's answer.</p>}{attemptNote && <p role="alert">{attemptNote}</p>}</>}
         </div>}
         {method.kind === 'manual' && <>
+          {settingFields(selected).map(field => <label className="wide-field" key={field.key}>{field.label}<input required={field.required} spellCheck={false} value={settingValues[field.key] ?? ''} placeholder={field.placeholder} onChange={event => setSettingValues({ ...settingValues, [field.key]: event.target.value })} />{field.hint && <span className="field-hint">{field.hint}</span>}</label>)}
+          {ACCOUNT_ID_PROVIDERS.includes(selected) && <label className="wide-field">Cloudflare account ID<input required spellCheck={false} value={cloudflareAccount} placeholder="32-character account id" onChange={event => setCloudflareAccount(event.target.value)} /><span className="field-hint">Workers AI has a free tier. It needs a Cloudflare API token and the account ID its URL is under.</span></label>}
           {selected === 'vertex-partner' && <label className="wide-field">Project ID<input required value={projectId} onChange={event => setProjectId(event.target.value)} placeholder="my-gcp-project" /></label>}
           {method.authKind === 'cookie' ? <label className="wide-field">Cookie/session<input type="password" autoComplete="new-password" value={account.cookie} onChange={event => setAccount({ ...account, cookie: event.target.value })} /></label> : method.authKind !== 'none' && <><label className="wide-field">Access token / API key<input required type="password" autoComplete="new-password" value={account.accessToken} onChange={event => setAccount({ ...account, accessToken: event.target.value })} /></label>{method.authKind === 'oauth' && <label className="wide-field">Refresh token<input type="password" autoComplete="new-password" value={account.refreshToken} onChange={event => setAccount({ ...account, refreshToken: event.target.value })} /></label>}</>}
         </>}
@@ -992,6 +1006,8 @@ export function Providers({ onUnauthorized }: Props) {
       {editTarget && <form className="detail-panel provider-form" aria-labelledby="connection-edit-title" onSubmit={event => void saveEdit(event)}><div className="section-heading"><div><h3 id="connection-edit-title">Edit “{editTarget.name}”</h3><p>{canRelink(editTarget) ? 'The stored credential is never shown. Leave the credential blank to keep it; a new one is untested until checked.' : 'The stored credential is never shown. Use Reauthenticate to renew a sign-in.'}</p></div><button className="button-ghost" type="button" onClick={closeEdit}>Close</button></div><div className="provider-form-grid">
         <label>Name<input required value={edit.name} onChange={event => setEdit({ ...edit, name: event.target.value })} /></label>
         <label>Account identity<input value={edit.identity} placeholder={editTarget.identity ? undefined : 'none'} onChange={event => setEdit({ ...edit, identity: event.target.value })} /></label>
+        {settingFields(editTarget.providerId).map(field => <label className="wide-field" key={field.key}>{field.label}<input required={field.required} spellCheck={false} value={edit.settings[field.key] ?? ''} placeholder={field.placeholder} onChange={event => setEdit({ ...edit, settings: { ...edit.settings, [field.key]: event.target.value } })} />{field.hint && <span className="field-hint">{field.hint}</span>}</label>)}
+        {ACCOUNT_ID_PROVIDERS.includes(editTarget.providerId) && <label className="wide-field">Cloudflare account ID<input required spellCheck={false} value={edit.accountId} onChange={event => setEdit({ ...edit, accountId: event.target.value })} /></label>}
         {canRelink(editTarget) && <label className="wide-field">{editTarget.authKind === 'cookie' ? 'Replace cookie/session' : 'Replace API key'}<input type="password" autoComplete="new-password" spellCheck={false} value={edit.credential} placeholder="Leave blank to keep the stored credential" onChange={event => setEdit({ ...edit, credential: event.target.value })} /></label>}
         <div><button className="button-primary" type="submit" disabled={busy !== ''}>{busy === `edit-${editTarget.id}` ? 'Saving…' : 'Save'}</button></div>
       </div></form>}

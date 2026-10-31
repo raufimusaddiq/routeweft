@@ -960,7 +960,9 @@ arbitrary remote command endpoint.
    duplicated evaluation calls may consume tokens or incur charges twice.
 5. Use the production image's CA trust bundle and existing SSRF policy. Keep
    `ROUTEWEFT_ALLOW_PRIVATE_UPSTREAMS=false` unless a trusted local operator
-   explicitly needs LAN helpers/models. Permit only the required browser
+   explicitly needs LAN helpers/models (a local Ollama host, or an Azure or Kimchi
+   endpoint on a private address; saving such a URL grants nothing, requests still
+   need this flag). Permit only the required browser
    origins with `ROUTEWEFT_CORS_ORIGINS`; do not weaken redirect revalidation.
    Do not forward v1 session cookies, Authorization, proxy userinfo, tokens or
    `X-Sync-Secret` into an application/access log. #74 owns deployed ingress

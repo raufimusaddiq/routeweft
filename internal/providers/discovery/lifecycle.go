@@ -60,7 +60,7 @@ func SyncSpec(ctx context.Context, client *Client, store Store, catalog *registr
 	if !ok {
 		return 0, errors.New("unknown provider " + providerID)
 	}
-	base := wire.NodeBase("", spec.DefaultBaseURL, routing.ProviderSettings{})
+	base := wire.NodeBase(providerID, "", spec.DefaultBaseURL, routing.ProviderSettings{})
 	if base == "" {
 		return 0, errors.New("provider " + providerID + " has no discoverable base URL")
 	}

@@ -216,11 +216,38 @@ the existing sealed credential payload into typed, immutable value fields.
 `AccountProvider` carries node ID/kind/name/prefix and connection
 name/auth-kind/identity/account ID/proxy-pool ID alongside the selected route.
 The provider-settings allowlist is `baseUrl`, `azureEndpoint`, `apiVersion`,
-`deployment`, `organization`, `region`, `workspaceId`, `deviceId`, `agentId`,
+`deployment`, `organization`, `kimchiEndpoint`, `region`, `workspaceId`, `deviceId`, `agentId`,
 `email`, `userId`, `systemId`, `organizationId`, `defaultOrganizationId`, `uid`.
 The raw `ProviderData` map, tokens, cookies and client secrets remain outside
-snapshots. Settings are not returned to browser clients by connection CRUD.
+snapshots. Settings are not returned to browser clients by connection CRUD,
+except the endpoint settings below, which are URLs and names and never a
+credential.
 No-auth connections may persist settings in the sealed payload without a token.
+
+Endpoint settings (#228). Four providers read a setting that chooses a host or a
+name, and the connection list returns exactly these as `settings` so the edit form
+shows what is saved: `azure` (`azureEndpoint`, `deployment`, `apiVersion`,
+`organization`), `kimchi` (`kimchiEndpoint`), and `ollama-local` (`baseUrl`).
+Cloudflare Workers AI's account ID is the connection's own `accountId`. They are
+saved, edited (an edit sends only what changed) and restored from the sealed
+payload, and they change the next request or listing:
+- Azure builds `{azureEndpoint}/openai/deployments/{deployment}/chat/completions?api-version={apiVersion}`
+  with the deployment falling back to the requested model; there is no ambient
+  environment fallback, so a connection without an endpoint is refused.
+- `ollama-local` dials the connection's `baseUrl` (trimmed, a trailing slash
+  dropped) and the catalog default `http://localhost:11434` only when it names
+  none. It accepts an optional API key, sent as a bearer token.
+- Kimchi's `kimchiEndpoint` replaces the host of the model-catalog listing only
+  (`{endpoint}/v1/models/metadata?include_in_cli=true`); serving keeps the node's
+  base.
+A save is refused (`invalid_connection_setting`) when a URL is not absolute
+HTTP(S) without userinfo, query or fragment, or names a non-public address
+(`azureEndpoint` and `kimchiEndpoint` obey the outbound policy of a request: public
+hosts, or the operator's trusted-local mode), when `apiVersion` or `deployment` is
+not a plain name, or `organization` has a line break. `ollama-local` may name a
+loopback or LAN host; saving it grants nothing, because every request, probe and
+listing still needs `ROUTEWEFT_ALLOW_PRIVATE_UPSTREAMS`, and redirects and DNS
+answers are checked at dial time by the SSRF-protected client.
 All connection edits preserve omitted provider fields, including token-only
 rotations. Metadata-only edits also preserve existing credentials.
 Credential imports/renewals that change projected settings also use the

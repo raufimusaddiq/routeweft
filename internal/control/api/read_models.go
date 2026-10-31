@@ -356,10 +356,21 @@ func (h *Handler) connections(w http.ResponseWriter, r *http.Request) error {
 	// snapshot setting, so the MiMo connections are opened once, before the list
 	// query holds the database, and only those two fields leave them.
 	renewals := map[string]map[string]any{}
+	endpoints := map[string]map[string]string{}
 	if h.opts.Credentials != nil {
 		if mimo, err := h.opts.Credentials.ListConnections(r.Context(), mimoProviderID); err == nil {
 			for _, connection := range mimo {
 				renewals[connection.ID] = connectionJSON(connection)
+			}
+		}
+		// The endpoint settings (#228) are sealed the same way, so the edit form can show what is saved.
+		for providerID := range connectionSettingKeys {
+			if saved, err := h.opts.Credentials.ListConnections(r.Context(), providerID); err == nil {
+				for _, connection := range saved {
+					if settings := publicSettings(connection.ProviderID, connection.Secret.ProviderData); len(settings) > 0 {
+						endpoints[connection.ID] = settings
+					}
+				}
 			}
 		}
 	}
@@ -380,6 +391,8 @@ FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where+` ORD
 			CreatedAt            string `json:"createdAt"`
 			UpdatedAt            string `json:"updatedAt"`
 			AccountID            string `json:"accountId,omitempty"`
+			// Settings are the URL and name settings a provider's connection holds (#228): never a credential.
+			Settings map[string]string `json:"settings,omitempty"`
 			// ConnectionProxy is the LiteRouter per-connection proxy in force when
 			// no usable pool is bound, its URL without credentials.
 			ConnectionProxy *connectionProxyView `json:"connectionProxy,omitempty"`
@@ -421,6 +434,7 @@ FROM provider_connections c JOIN provider_nodes n ON n.id=c.node_id`+where+` ORD
 		if legacy, ok := snapshot.LegacyConnectionProxy(item.ID); ok {
 			item.ConnectionProxy = &connectionProxyView{URL: safeURL(legacy.URL), NoProxy: strings.Join(legacy.NoProxy, ",")}
 		}
+		item.Settings = endpoints[item.ID]
 		if view, ok := renewals[item.ID]; ok {
 			enabled, _ := view["desktopSessionRenewal"].(bool)
 			item.DesktopSessionRenewal = &enabled

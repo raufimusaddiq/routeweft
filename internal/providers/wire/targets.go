@@ -22,11 +22,19 @@ type Target struct {
 
 // NodeBase is the one rule for the base URL a connection is dialled at: the
 // node's own, else the catalog default, else the base the connection names
-// (azureEndpoint, then baseUrl; an Azure node declares none). Serving, probes,
-// model discovery and route listings all take their base from here, so what a
-// probe tests is what a request would reach. Empty means the connection is not
-// dialable.
-func NodeBase(nodeBase, specDefault string, settings routing.ProviderSettings) string {
+// (azureEndpoint, then baseUrl; an Azure node declares none). Local Ollama is the
+// exception: the pin dials the connection's baseUrl and falls back to
+// http://localhost:11434 only when it names none (config/providers.js:5-10,
+// executors/ollama-local.js:9-11), so there the connection comes first. Serving,
+// probes, model discovery and route listings all take their base from here, so
+// what a probe tests is what a request would reach. Empty means the connection is
+// not dialable.
+func NodeBase(providerID, nodeBase, specDefault string, settings routing.ProviderSettings) string {
+	if providerID == "ollama-local" {
+		if own := strings.TrimRight(strings.TrimSpace(settings.BaseURL), "/"); own != "" {
+			return own
+		}
+	}
 	for _, candidate := range []string{nodeBase, specDefault, settings.AzureEndpoint, settings.BaseURL} {
 		if candidate = strings.TrimSpace(candidate); candidate != "" {
 			return candidate
