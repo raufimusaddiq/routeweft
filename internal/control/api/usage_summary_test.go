@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"testing"
 	"time"
@@ -37,17 +38,18 @@ func TestUsageSummaryAggregatesAndAttributes(t *testing.T) {
 		provider, model string
 		status          int
 		input, output   int64
+		cost            float64
 	}{
-		"2026-09-24": {{"openai", "gpt-5", 200, 100, 20}, {"openai", "gpt-5", 200, 50, 10}, {"anthropic", "claude", 500, 0, 0}},
-		"2026-09-25": {{"openai", "gpt-5", 200, 30, 5}},
+		"2026-09-24": {{"openai", "gpt-5", 200, 100, 20, 0.02}, {"openai", "gpt-5", 200, 50, 10, 0.01}, {"anthropic", "claude", 500, 0, 0, 0.005}},
+		"2026-09-25": {{"openai", "gpt-5", 200, 30, 5, 0.03}},
 	} {
 		for i, row := range rows {
 			requestID := fmt.Sprintf("req-%s-%s-%d", day, row.model, i)
-			if _, err := store.DB().ExecContext(ctx, "INSERT INTO usage_events(request_id,provider_id,model_id,status,input_tokens,output_tokens,created_at) VALUES(?,?,?,?,?,?,?)", requestID, row.provider, row.model, row.status, row.input, row.output, day+"T12:00:00.000Z"); err != nil {
+			if _, err := store.DB().ExecContext(ctx, "INSERT INTO usage_events(request_id,provider_id,model_id,status,input_tokens,output_tokens,cost,created_at) VALUES(?,?,?,?,?,?,?,?)", requestID, row.provider, row.model, row.status, row.input, row.output, row.cost, day+"T12:00:00.000Z"); err != nil {
 				t.Fatal(err)
 			}
 			if row.status >= 200 && row.status < 300 {
-				if _, err := store.DB().ExecContext(ctx, "INSERT INTO usage_daily(day,provider_id,model_id,requests,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(day,provider_id,model_id) DO UPDATE SET requests=requests+1,input_tokens=input_tokens+excluded.input_tokens,output_tokens=output_tokens+excluded.output_tokens", day, row.provider, row.model, 1, row.input, row.output, 0, 0); err != nil {
+				if _, err := store.DB().ExecContext(ctx, "INSERT INTO usage_daily(day,provider_id,model_id,requests,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,cost) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(day,provider_id,model_id) DO UPDATE SET requests=requests+1,input_tokens=input_tokens+excluded.input_tokens,output_tokens=output_tokens+excluded.output_tokens,cost=cost+excluded.cost", day, row.provider, row.model, 1, row.input, row.output, 0, 0, row.cost); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -61,16 +63,25 @@ func TestUsageSummaryAggregatesAndAttributes(t *testing.T) {
 	var body struct {
 		Period string `json:"period"`
 		Totals struct {
-			Requests     int64 `json:"requests"`
-			InputTokens  int64 `json:"inputTokens"`
-			OutputTokens int64 `json:"outputTokens"`
-			Errors       int64 `json:"errors"`
+			Requests     int64   `json:"requests"`
+			InputTokens  int64   `json:"inputTokens"`
+			OutputTokens int64   `json:"outputTokens"`
+			Errors       int64   `json:"errors"`
+			Cost         float64 `json:"cost"`
 		} `json:"totals"`
-		Series    []map[string]any `json:"series"`
+		Series []struct {
+			Day  string  `json:"day"`
+			Cost float64 `json:"cost"`
+		} `json:"series"`
 		Providers []struct {
-			Key      string `json:"key"`
-			Requests int64  `json:"requests"`
+			Key      string  `json:"key"`
+			Requests int64   `json:"requests"`
+			Cost     float64 `json:"cost"`
 		} `json:"providers"`
+		Models []struct {
+			Key  string  `json:"key"`
+			Cost float64 `json:"cost"`
+		} `json:"models"`
 		Statuses []struct {
 			Key      string `json:"key"`
 			Requests int64  `json:"requests"`
@@ -85,11 +96,24 @@ func TestUsageSummaryAggregatesAndAttributes(t *testing.T) {
 	if body.Totals.Requests != 4 || body.Totals.InputTokens != 180 || body.Totals.OutputTokens != 35 || body.Totals.Errors != 1 {
 		t.Fatalf("totals=%+v", body.Totals)
 	}
-	if len(body.Series) != 2 {
-		t.Fatalf("series=%d want 2", len(body.Series))
+	// Cost is summed from the stored priced rows; a terminated request's cost is
+	// included. The daily series is success-only, as the rollup is.
+	if math.Abs(body.Totals.Cost-0.065) > 1e-9 {
+		t.Fatalf("total cost=%v want 0.065", body.Totals.Cost)
 	}
-	if len(body.Providers) != 2 || body.Providers[0].Key != "openai" || body.Providers[0].Requests != 3 {
+	if len(body.Series) != 2 || math.Abs(body.Series[0].Cost-0.03) > 1e-9 || math.Abs(body.Series[1].Cost-0.03) > 1e-9 {
+		t.Fatalf("series=%+v", body.Series)
+	}
+	if len(body.Providers) != 2 || body.Providers[0].Key != "openai" || body.Providers[0].Requests != 3 || math.Abs(body.Providers[0].Cost-0.06) > 1e-9 {
 		t.Fatalf("providers=%+v", body.Providers)
+	}
+	for _, provider := range body.Providers {
+		if provider.Key == "anthropic" && math.Abs(provider.Cost-0.005) > 1e-9 {
+			t.Fatalf("failed provider cost=%v want 0.005", provider.Cost)
+		}
+	}
+	if len(body.Models) == 0 || body.Models[0].Key != "openai/gpt-5" || math.Abs(body.Models[0].Cost-0.06) > 1e-9 {
+		t.Fatalf("models=%+v", body.Models)
 	}
 	foundError := false
 	for _, status := range body.Statuses {
