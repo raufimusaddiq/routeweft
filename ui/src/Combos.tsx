@@ -177,7 +177,7 @@ export function Combos({ onUnauthorized }: Props) {
     return adapters.find(item => item.capability === capability) || { capability, enabled: false, pool: [] }
   }
 
-  return <div className="combos-content" aria-busy={loading}>
+  return <div className="combos-content page-d" aria-busy={loading}>
     <datalist id="combo-member-choices">{choices.slice(0, 500).map(choice => <option key={`${choice.kind}-${choice.id}`} value={choice.id}>{choice.detail}</option>)}{nestedChoices.map(name => <option key={`combo-${name}`} value={name}>Combo</option>)}</datalist>
     <datalist id="combo-model-choices">{choices.filter(choice => choice.kind === 'model').slice(0, 500).map(choice => <option key={choice.id} value={choice.id} />)}</datalist>
     <div className="combos-toolbar accent-surface"><span className="count-label">{loading ? 'Loading…' : `${combos.length} Combo${combos.length === 1 ? '' : 's'}`}</span><button className="button-primary" type="button" onClick={startCreate}>New Combo</button><button className="button-secondary" type="button" disabled={loading} onClick={() => void load()}>Refresh</button></div>

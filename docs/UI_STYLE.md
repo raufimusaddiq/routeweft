@@ -9,9 +9,12 @@ Status: **Normative for frontend work**
 > (BDR-027). The tokens and rules below are D's. Phase 2 implements §2's tokens
 > and the shell (rail, phone header, page title, buttons, form controls, tags,
 > focus, the accent slab, empty and error states, `theme-color`, favicon) and the
-> §12 guards. Page bodies (headline, statement, figures, rows: phase 3) and
-> charts and the mark (phase 4) still use their BDR-015 layout with D's tokens.
-> Code, guards and this file change together, phase by phase.
+> §12 guards. Phase 3a (2026-11-01) gives the page bodies of Overview, Endpoint &
+> Key, Combo & Capability Adapter and System One their D layout (§5, "Page
+> bodies"); the other pages (phase 3b: Providers, Usage, Quota Tracker; 3c: Token
+> Saver, Console Log, Settings, Sign in, onboarding) and the charts and the mark
+> (phase 4) still use their BDR-015 layout with D's tokens. Code, guards and this
+> file change together, phase by phase.
 
 ## 1. House style: editorial instrument, retro neo-brutalist
 
@@ -189,6 +192,22 @@ Implemented in `ui/src/editorial.tsx` and `ui/src/style.css`.
   `errors` (`usage_summary.go`), so "failed", "Succeeded" and "Largest failure"
   always agree; redirects count in those totals though their mark is neutral.
   The rule lives in `isFailure()` in `ui/src/format.ts`.
+- **Page bodies (`.page-d`, phase 3a).** A page opts in by adding `page-d` to its
+  wrapper; 3b and 3c add it page by page. It sets: sections of a page 72px apart
+  (56px below 900px, 48px below 700px; a toolbar and what it controls 32px); a 6px
+  ink rule opens a section heading, statement, margin list and group, a 4px rule
+  sits under a table head, and a heading inside the accent surface keeps a hairline
+  instead; the headline and statement are weight 400 with the number they are about
+  weight 700 on a `--highlight` block (a pill, text `--highlight-ink`); copyable
+  values and fields are 3px-outlined pills; example lists and access lists are open
+  rows between hairlines, not boxed grids; a choice (model access) is a 24px
+  outlined box and the chosen one a `--highlight` block with the radio still
+  checked and its words unchanged; the selected Combo row is a 22px `--highlight`
+  block that re-points the tokens like the accent surface (state stays a word);
+  a notice, like an empty or error state, is a 3px outlined 24px box with
+  `--hard-sm` in its own colour; the request-log route is one line ending in an
+  ellipsis with the full route as its `title` (on a phone it takes the whole first
+  line of the stacked row).
 - **Accent surface** (`.accent-surface`): exactly one per page, marking the most
   important live thing (Overview: the live card; Usage: the daily chart plate;
   Providers: the provider summary banner; other pages: their toolbar or primary
@@ -312,6 +331,20 @@ black rail and the mono figures; one pink slab per page carries the live thing;
 titles and key numbers are poster-sized and never overflow or split a word at
 320px; nothing is blurred, glowing or gradient; and every text pair keeps 4.5:1
 and every control, shell edge and focus ring 3:1 in both themes.
+
+### Phase 3a guard (`ui/scripts/phase3a-pages-smoke.cjs`)
+
+Run by `npm run smoke`. It loads Overview, Endpoint & Key, Combo & Capability
+Adapter and System One with seeded data (the long Combo title, a long route) at
+1440, 390 and 320 in light and dark, plus the drawer, the key access editor with a
+choice made, the Combo edit form and the language dialog, and measures each view:
+no horizontal overflow, no text under 4.5:1, no control boundary under 3:1 (the
+frameless menu button is judged by its bars against the header, §12.10), no phone
+control under 44px, no blur, and every `box-shadow` a `--hard`/`--hard-sm` offset
+with zero blur and spread. With `PHASE3A_CAPTURE=1` and
+`ROUTEWEFT_SMOKE_ARTIFACTS` it writes the screenshots kept in
+`docs/evidence/263/phase3a/` (`before-` and `after-`, and `phase3a-*.json`).
+Phases 3b and 3c add their pages to its list.
 
 ## 11. What #263 changed from the BDR-015 text
 
