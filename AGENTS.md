@@ -157,21 +157,26 @@ Confirm the intended base commit before creating the feature worktree.
 For a normal feature based on main:
 
 ```bash
-mkdir -p ../routeweft-wt
-git worktree add ../routeweft-wt/<worktree-name> -b <branch-name> origin/main
+WT=<a path you can write>/s<sprint-number>-<feature-slug>
+git worktree add "$WT" -b <branch-name> origin/main
 ```
+
+The worktree location is the agent's choice. The one rule that binds: the directory must be free (it does not exist, or is empty) before `git worktree add`, and writable by the agent. The invariant is the isolation, not the location.
+
+A worktree placed inside the primary checkout must be excluded through `.git/info/exclude`, never through a tracked file such as `.gitignore`.
 
 Naming convention:
 
 ```text
 branch:   sprint/<sprint-number>-<feature-slug>
-worktree: ../routeweft-wt/s<sprint-number>-<feature-slug>
+worktree: s<sprint-number>-<feature-slug> (final path component; the parent directory is free)
 ```
 
 Example:
 
 ```bash
-git worktree add ../routeweft-wt/s1-repo-scaffold \
+WT=<a path you can write>/s1-repo-scaffold
+git worktree add "$WT" \
   -b sprint/1-repo-scaffold origin/main
 ```
 
@@ -192,8 +197,11 @@ Reuse the existing worktree bound to that branch.
 If it no longer exists, recreate exactly one worktree for the existing branch:
 
 ```bash
-git worktree add ../routeweft-wt/<worktree-name> <existing-branch>
+WT=<a path you can write>/<worktree-name>
+git worktree add "$WT" <existing-branch>
 ```
+
+The same rule applies: the directory must be free and writable.
 
 ### 8.3 Never branch-switch a feature worktree
 
@@ -245,13 +253,13 @@ Never use another feature worktree to patch the reviewed PR.
 
 ### 8.7 Cleanup after PR completion
 
-Only after the PR is merged or explicitly closed and no unpushed work remains:
+Only after the PR is merged or explicitly closed and no unpushed work remains (`WT` is the path chosen in 8.1):
 
 ```bash
 git fetch origin
 git switch main
 git pull --ff-only origin main
-git worktree remove ../routeweft-wt/<worktree-name>
+git worktree remove "$WT"
 git branch -d <branch-name>
 git worktree prune
 ```
