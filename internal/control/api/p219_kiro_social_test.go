@@ -519,8 +519,11 @@ func TestKiroSocialMissingProfileARNIsSurfacedAndRecoverable(t *testing.T) {
 			if stored := rig.stored(t); stored[0].Secret.ProviderData["profileArn"] != "" || stored[0].Secret.RefreshToken == "" {
 				t.Fatalf("stored %+v", stored[0].Secret.ProviderData)
 			}
-			if err := servable(t, rig); err == nil || !strings.Contains(err.Error(), "profileArn") {
-				t.Fatalf("an ARN-less connection was servable: %v", err)
+			// The sign-in still surfaces the missing profile, but serving no longer
+			// blocks: a social ARN-less connection takes the shared default the pin
+			// uses (wire/kiro.go, kiroConstants.js:30-42).
+			if err := servable(t, rig); err != nil {
+				t.Fatalf("an ARN-less social connection should serve with the shared default: %v", err)
 			}
 
 			// Recovery 1: the operator names the ARN; only it changes.

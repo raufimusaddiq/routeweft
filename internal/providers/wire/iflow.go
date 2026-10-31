@@ -1,6 +1,7 @@
 package wire
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/providers/oauthheaders"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
@@ -59,4 +61,18 @@ func iflowHeaders(provider routing.ProviderRef) map[string]string {
 		"x-iflow-timestamp": strconv.FormatInt(timestamp, 10),
 		"x-iflow-signature": iflowSignature(userAgent, sessionID, timestamp, provider.APIToken),
 	}
+}
+
+// iflowStreamOptions injects stream_options.include_usage for a streaming Chat
+// request (open-sse/executors/iflow.js:99-104): the gateway then reports usage
+// on the stream, so a streamed request is accounted instead of unobserved. An
+// existing stream_options (whatever it says) is the client's and is kept.
+func iflowStreamOptions(protocol string, body Body) bool {
+	if protocol != openaiadapter.ChatProtocol || string(bytes.TrimSpace(body["stream"])) != "true" {
+		return false
+	}
+	if _, present := body["stream_options"]; present {
+		return false
+	}
+	return setJSON(body, "stream_options", map[string]any{"include_usage": true})
 }

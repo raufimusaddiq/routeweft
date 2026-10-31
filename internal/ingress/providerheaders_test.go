@@ -14,7 +14,7 @@ import (
 func TestCodexProviderHeadersCarryCLIFingerprint(t *testing.T) {
 	provider := routing.ProviderRef{ProviderID: "codex", Protocol: "openai-responses", BaseURL: "https://chatgpt.com/backend-api", APIToken: "token"}
 	headers := openAIProviderHeaders(provider)
-	if headers.Get("Authorization") != "Bearer token" || headers.Get("originator") != "codex_cli_rs" || headers.Get("User-Agent") != "codex_cli_rs/0.154.0" {
+	if headers.Get("Authorization") != "Bearer token" || headers.Get("originator") != "codex_cli_rs" || headers.Get("User-Agent") != "codex_cli_rs/0.159.0" {
 		t.Fatalf("codex headers=%v", headers)
 	}
 	plain := openAIProviderHeaders(routing.ProviderRef{ProviderID: "openai", Protocol: "openai-chat", APIToken: "token"})

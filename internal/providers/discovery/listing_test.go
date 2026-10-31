@@ -48,7 +48,7 @@ func TestModelEntriesRunsAProviderListing(t *testing.T) {
 	}}}
 	models, err := client.ModelEntries(context.Background(), Request{
 		ProviderID: "codex", BaseURL: "https://chatgpt.com/backend-api/codex", Credential: "tok",
-		Method: "POST", Body: []byte(`{"project":"p"}`), Query: "client_version=0.154.0", Shape: wire.ShapeCodex,
+		Method: "POST", Body: []byte(`{"project":"p"}`), Query: "client_version=0.159.0", Shape: wire.ShapeCodex,
 		Headers: map[string]string{"X-Provider": "one"},
 		Sign: func(rawURL string, body []byte) (map[string]string, error) {
 			return map[string]string{"X-Signed": rawURL + "|" + string(body), "Accept": "signed"}, nil
@@ -58,7 +58,7 @@ func TestModelEntriesRunsAProviderListing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const url = "https://chatgpt.com/backend-api/codex/models?client_version=0.154.0"
+	const url = "https://chatgpt.com/backend-api/codex/models?client_version=0.159.0"
 	if got.Method != "POST" || got.URL.String() != url || gotBody != `{"project":"p"}` || got.Header.Get("Content-Type") != "application/json" {
 		t.Fatalf("request %s %s body %q", got.Method, got.URL, gotBody)
 	}

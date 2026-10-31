@@ -3,7 +3,6 @@ package ingress
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
-	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
 
@@ -57,12 +55,14 @@ func TestKiroWireRequestConstruction(t *testing.T) {
 	if profile != provider.Connection.Settings.ProfileARN || len(fields["conversationState"]) == 0 {
 		t.Fatalf("body %s", body)
 	}
+	// An external-IdP credential is account-bound: it may send no profile at all
+	// and lets CodeWhisperer use the token's own default (openai-to-kiro.js:325-341).
 	provider.Connection.Settings.ProfileARN = ""
 	request, err = h.newUpstreamRequest(inbound, nil, provider, translation.Endpoint, translation.Body, openAIProviderHeaders(provider))
-	var refused *wire.TargetError
-	if request != nil || !errors.As(err, &refused) || !strings.Contains(err.Error(), "profileArn") {
-		t.Fatalf("missing profile created request: %v, %v", request, err)
+	if err != nil || request == nil {
+		t.Fatalf("account-bound auth without a profile: request %v error %v", request, err)
 	}
+	request.Body.Close()
 }
 
 func TestKiroWithoutCredentialDoesNotDispatch(t *testing.T) {
@@ -84,18 +84,14 @@ func TestKiroWithoutCredentialDoesNotDispatch(t *testing.T) {
 
 func TestKiroMissingSettingsDoesNotDispatch(t *testing.T) {
 	up := newRecorder(t)
-	for _, missing := range []string{"profileArn", "authMethod"} {
-		ref := routing.ProviderRef{ProviderID: "kiro", Protocol: openai.ChatProtocol, BaseURL: up.srv.URL, APIToken: "fixture-token",
-			Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{ProfileARN: "fixture-profile", AuthMethod: "external_idp"}}}
-		if missing == "profileArn" {
-			ref.Connection.Settings.ProfileARN = ""
-		} else {
-			ref.Connection.Settings.AuthMethod = ""
-		}
-		out := send(t, ref, "/v1/chat/completions", chatBody)
-		if out.Code != 502 || !strings.Contains(out.Body.String(), missing) {
-			t.Fatalf("missing %s: status %d %s", missing, out.Code, out.Body)
-		}
+	// Only authMethod is mandatory: a missing profile is valid for an
+	// account-bound credential and gets the shared default for a social/builder
+	// sign-in (wire/kiro.go).
+	ref := routing.ProviderRef{ProviderID: "kiro", Protocol: openai.ChatProtocol, BaseURL: up.srv.URL, APIToken: "fixture-token",
+		Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{ProfileARN: "fixture-profile", AuthMethod: ""}}}
+	out := send(t, ref, "/v1/chat/completions", chatBody)
+	if out.Code != 502 || !strings.Contains(out.Body.String(), "authMethod") {
+		t.Fatalf("missing authMethod: status %d %s", out.Code, out.Body)
 	}
 	up.mu.Lock()
 	defer up.mu.Unlock()
