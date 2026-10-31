@@ -604,6 +604,19 @@ const { join } = require('node:path');
       if (overviewCalls === 2) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'read_failed' } }) });
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(overviewPayload) });
     }
+    // Read-only R09 helpers (#276); token-saver-panels-smoke.cjs covers the panels in detail.
+    if (url.pathname === '/admin/v1/headroom/status') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: tokenSaverSettings.headroomEnabled === 'true', url: 'http://localhost:8787', timeoutMs: '3000', compressUserMessages: false, health: { healthy: false, class: 'refused', message: 'helper refused the connection', latencyMs: 2 } }) });
+    }
+    if (url.pathname === '/admin/v1/pxpipe/status') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: tokenSaverSettings.pxpipeEnabled === 'true', url: 'http://localhost:8788', autoInstall: false, minChars: '25000', timeoutMs: '15000', health: { healthy: true, latencyMs: 3 }, stats: { attempts: 0, succeeded: 0, failed: 0, skipped: 0 } }) });
+    }
+    if (url.pathname === '/admin/v1/pxpipe/stats') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ stats: { attempts: 0, succeeded: 0, failed: 0, skipped: 0 }, recent: [] }) });
+    }
+    if (url.pathname === '/admin/v1/pxpipe/logs') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ logs: [] }) });
+    }
     return route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
   });
   // Freeze the page clock: the usage windows are calendar windows ending today, and the fixture's days are 2026-09-24 and 2026-09-25.
