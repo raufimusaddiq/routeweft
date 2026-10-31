@@ -159,8 +159,17 @@ const (
 // Kimchi lists a metadata catalog, filtered server-side to the models the CLI
 // shows: include_in_cli=true (kimchiModels.js:22-24,106-135). Serving uses
 // /openai/v1, which has no such listing.
-func kimchiListing(routing.ProviderRef) (Listing, error) {
-	return Listing{URL: kimchiModelsURL, Query: "include_in_cli=true", Headers: map[string]string{"User-Agent": kimchiUserAgent}, Shape: ShapeKimchi}, nil
+//
+// The connection's kimchiEndpoint, when it names one, replaces the host; blank or
+// whitespace means the default, and trailing slashes are dropped
+// (kimchiModels.js:17-24,144). Only the listing reads it: the pin's executor serves
+// from the registry base (executors/kimchi.js).
+func kimchiListing(provider routing.ProviderRef) (Listing, error) {
+	url := kimchiModelsURL
+	if endpoint := strings.TrimRight(strings.TrimSpace(provider.Connection.Settings.KimchiEndpoint), "/"); endpoint != "" {
+		url = endpoint + "/v1/models/metadata"
+	}
+	return Listing{URL: url, Query: "include_in_cli=true", Headers: map[string]string{"User-Agent": kimchiUserAgent}, Shape: ShapeKimchi}, nil
 }
 
 // Kiro (kiroModels.js:55-60,67-90,159-199): ListAvailableModels on the region of the
