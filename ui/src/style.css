@@ -985,6 +985,7 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
 /* ---- Page bodies in direction D (#263, phase 3a): Overview, Endpoint & Key, Combo, System One ----
    Scoped by .page-d so phases 3b and 3c adopt the same rules one page at a time (add the class to the page's wrapper). */
 .page-d { --page-gap: 72px; }
+.page-d.endpoint-content { gap: 0; }
 .page-d > * + * { margin-top: var(--page-gap); }
 .page-d > :is([role="alert"], [role="status"], .auth-error, .inline-notice) { margin-top: 0; }
 .page-d > :is([role="alert"], [role="status"], .auth-error, .inline-notice) + * { margin-top: 24px; }
@@ -1009,7 +1010,7 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
 /* Choices are outlined pills of their own; the chosen one is a highlight block and still says so in words. */
 .page-d .access-picker { padding: 14px 0 0; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; }
 .page-d .access-modes { gap: 14px; }
-.page-d .access-modes label { align-items: center; border: 3px solid var(--outline); border-radius: var(--radius-state); padding: 14px 20px; }
+.page-d .access-modes label { align-items: center; justify-content: flex-start; gap: 14px; border: 3px solid var(--outline); border-radius: var(--radius-state); padding: 14px 20px; }
 .page-d .access-modes label:has(input:checked) { color: var(--highlight-ink); background: var(--highlight); }
 .page-d .access-modes label:has(input:checked) :is(span, small) { color: var(--highlight-ink); }
 .page-d .access-modes input { width: 22px; height: 22px; }
@@ -1035,7 +1036,6 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
 .page-d .accent-surface .section-heading { border-top: 0; border-bottom: 1px solid var(--border-subtle); padding: 0 0 12px; }
 /* A toolbar and what it controls are one group, not two sections. */
 .page-d > :is(.combos-toolbar, .systemone-toolbar) + * { margin-top: 32px; }
-.page-d .access-modes label { justify-content: flex-start; gap: 14px; }
 .page-d .access-modes label span { text-align: left; }
 /* Optional settings of a form are an open block under a hairline, not a boxed fieldset. */
 .page-d .combo-tuning { margin: 4px 0 0; padding: 14px 0 0; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; }
@@ -1046,7 +1046,7 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
 .page-d .systemone-layout form { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border-subtle); }
 /* A route is one line: the cell ends in an ellipsis and the full route is its title. On a phone the stacked row gives it the full first line (the 14ch cap of the older log table is lifted there). */
 @media (max-width: 700px) { .page-d .log-table td.log-route { max-width: none; } }
-@media (min-width: 701px) { .page-d .log-table td.log-route { width: 34%; max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } }
+@media (min-width: 701px) { .page-d .log-table { table-layout: fixed; } .page-d .log-table thead th:first-child { width: 40%; } .page-d .log-table td.log-route { max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } }
 
 @media (max-width: 900px) { .page-d { --page-gap: 56px; } .page-d .systemone-layout { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 700px) {
