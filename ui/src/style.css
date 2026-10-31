@@ -931,6 +931,16 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
 .live-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 12px; margin-bottom: 12px; }
 .live-bar .count-label { margin-left: auto; }
 .log-row-live { animation: rise var(--motion) var(--ease); }
+.log-cost { color: var(--text-muted); font-size: var(--t-body); }
+/* Provider topology (#275): a hub over a wrapping rail of provider nodes. No absolute geometry, so it never scrolls sideways. */
+.usage-topology-figure { display: grid; gap: 14px; }
+.usage-topology-core { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: fit-content; max-width: 100%; border: 2px solid var(--border); border-radius: var(--radius-flat); padding: 10px 14px; }
+.usage-topology-core strong { font-size: var(--t-lead); font-weight: 600; }
+.usage-topology-nodes { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 0; padding: 10px 0 0; border-top: 1px solid var(--border-subtle); list-style: none; }
+.usage-topology-node { display: grid; min-width: 0; gap: 4px; border: 1px solid var(--border-subtle); border-radius: var(--radius-flat); padding: 10px 12px; }
+.usage-topology-node[data-active="true"] { border-color: var(--live); }
+.usage-topology-node small { min-width: 0; color: var(--text-subtle); font-size: var(--t-body); overflow-wrap: anywhere; }
+.usage-recent li { min-height: var(--row-height); }
 .log-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 10px; border-top: 1px solid var(--border-subtle); padding-top: 12px; }
 .request-event + .request-event { margin-top: 24px; }
 .request-detail-json { max-height: 360px; max-width: 100%; margin: 12px 0 0; overflow: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-flat); padding: 10px; color: var(--text-main); background: var(--surface-2); font: var(--t-body)/1.5 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -499,6 +499,9 @@ const { join } = require('node:path');
     const live = { requestId: 'req-live-1', providerId: 'openai', modelId: 'gpt-5', status: 200, durationMs: 120, inputTokens: 7, outputTokens: 3, createdAt: new Date().toISOString() };
     return route.fulfill({ status: 200, contentType: 'text/event-stream', body: `retry: 600000\n: connected\n\nid: 1\nevent: request.completed\ndata: ${JSON.stringify(live)}\n\n` });
   }
+  if (url.pathname === '/admin/v1/usage/active' && method === 'GET') {
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ activeRequests: [{ model: 'gpt-5', provider: 'openai', account: 'conn-1', count: 1 }], recentRequests: [], errorProvider: '' }) });
+  }
   if (url.pathname === '/admin/v1/usage' && method === 'GET') {
     lastUsageURL = url.search;
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [{ id: 1, requestId: 'req-abc', status: 200, providerId: 'openai', modelId: 'gpt-5', inputTokens: 100, outputTokens: 20, cacheReadTokens: 10, cacheWriteTokens: 0, durationMs: 300, ttftMs: 80, createdAt: '2026-09-25T20:00:00Z' }], page: 1, pageSize: 50, total: 1 }) });
