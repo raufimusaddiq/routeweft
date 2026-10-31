@@ -16,7 +16,7 @@ export function Overview({ onUnauthorized }: Props) {
   const data = useOverviewData(onUnauthorized)
   const { overview, week, month, events, connections } = data
 
-  if (data.loading && !overview) return <div className="overview-content" role="status" aria-label="Loading overview"><EditorialSkeleton /></div>
+  if (data.loading && !overview) return <div className="overview-content page-d" role="status" aria-label="Loading overview"><EditorialSkeleton /></div>
   if (data.error && !overview) return <ErrorNotice message={data.error} onRetry={data.reload} />
   if (!overview) return null
 
@@ -59,7 +59,7 @@ export function Overview({ onUnauthorized }: Props) {
   const slow = [...shown].sort((a, b) => (b.durationMs ?? 0) - (a.durationMs ?? 0))[0]
   const fast = [...shown].sort((a, b) => (a.durationMs ?? 0) - (b.durationMs ?? 0))[0]
 
-  return <div className="overview-content" aria-busy={data.loading}>
+  return <div className="overview-content page-d" aria-busy={data.loading}>
     <Row gap="s" label="This week">
       <div className="ed-main">
         {t
@@ -147,7 +147,7 @@ export function Overview({ onUnauthorized }: Props) {
           {shown.length === 0
             ? <p className="ed-now-note">No requests recorded yet. Send a request through the gateway and it will appear here.</p>
             : <table className="ed-table log-table"><thead><tr><th scope="col">Route</th><th scope="col" className="num">Status</th><th scope="col" className="num">Tokens in / out</th><th scope="col" className="num">Latency</th><th scope="col" className="num">Time</th></tr></thead>
-              <tbody>{shown.map(event => <tr key={event.id}><td className="log-route">{event.providerId} / {event.modelId}</td><td className="num log-status"><Status tone={statusTone(event.status)}>{event.status}</Status></td><td className="num log-tokens">{numOrDash(event.inputTokens)} / {numOrDash(event.outputTokens)}</td><td className="num log-latency">{event.durationMs ?? 0} ms</td><td className="num log-time">{clock(event.createdAt)}</td></tr>)}</tbody></table>}
+              <tbody>{shown.map(event => <tr key={event.id}><td className="log-route" title={`${event.providerId} / ${event.modelId}`}>{event.providerId} / {event.modelId}</td><td className="num log-status"><Status tone={statusTone(event.status)}>{event.status}</Status></td><td className="num log-tokens">{numOrDash(event.inputTokens)} / {numOrDash(event.outputTokens)}</td><td className="num log-latency">{event.durationMs ?? 0} ms</td><td className="num log-time">{clock(event.createdAt)}</td></tr>)}</tbody></table>}
           <figcaption><Caption kicker="Log">Newest first, {num(overview.traffic.requests)} requests recorded in all.</Caption></figcaption>
         </figure>
       </Main>
