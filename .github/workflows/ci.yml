@@ -72,6 +72,8 @@ jobs:
       # difference from them is accounted for in (#274).
       - run: node compat/parity/generate-protocol-legs.mjs --check
       - run: node compat/parity/generate-control-workflows.mjs --check
+      # The oracle's Command Code, Kenari, OpenCode Go, Ollama, Vercel AI Gateway and MiMo quota readers (#225).
+      - run: node compat/parity/generate-billing-quota.mjs --check
       # The display-language list, names, flags and catalogs the dashboard ships (#279).
       - run: node compat/parity/generate-locales.mjs --check
       - run: node compat/parity/ledger.mjs --check

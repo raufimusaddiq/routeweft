@@ -16,6 +16,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -64,7 +65,7 @@ func loadBillingPin(t *testing.T) billingRecord {
 	if err := json.Unmarshal(raw, &record); err != nil {
 		t.Fatal(err)
 	}
-	if record.Pin != "1c3b9f47837d42ea64992063309064af755a14a3" || record.TZ != "UTC" {
+	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(record.Pin) || record.TZ != "UTC" {
 		t.Fatalf("pin=%q tz=%q", record.Pin, record.TZ)
 	}
 	if bytes.Contains(raw, []byte(scopedToken)) {
