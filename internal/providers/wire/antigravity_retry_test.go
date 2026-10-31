@@ -641,13 +641,13 @@ func TestAntigravityReplaysABodyWithoutGetBody(t *testing.T) {
 	}
 }
 
-// Only Antigravity is repeated, and a connection probe stays plain.
-func TestAntigravityIsTheOnlyCloudCodeWireThatRepeats(t *testing.T) {
-	if For("antigravity").Do == nil || Exchanges("antigravity") {
-		t.Errorf("do=%v exchanges=%v", For("antigravity").Do != nil, Exchanges("antigravity"))
-	}
-	if For("gemini-cli").Do != nil {
-		t.Error("gemini-cli repeats; its pin executor has no such hook")
+// Antigravity repeats through its own override; gemini-cli repeats through the
+// base executor (base.js:100-180). Both are plain probes, never credential exchanges.
+func TestCloudCodeWiresRepeatThroughTheirOwnSeam(t *testing.T) {
+	for _, id := range []string{"antigravity", "gemini-cli"} {
+		if For(id).Do == nil || Exchanges(id) {
+			t.Errorf("%s: do=%v exchanges=%v", id, For(id).Do != nil, Exchanges(id))
+		}
 	}
 }
 

@@ -138,7 +138,7 @@ type Hook struct {
 var hooks = map[string]Hook{
 	"codex":       codexHook,
 	"grok-cli":    grokCLIHook,
-	"gemini-cli":  {ClassifyError: geminiCLIRetryInfo, Route: cloudCodeRoute, RequestHeaders: geminiCLIHeaders, RequireCredential: true},
+	"gemini-cli":  {ClassifyError: geminiCLIRetryInfo, Route: cloudCodeRoute, RequestHeaders: geminiCLIHeaders, RequireCredential: true, Do: accountless(geminiCLIExchange)},
 	"antigravity": {Route: cloudCodeRoute, RequestHeaders: antigravityHeaders, RequireCredential: true, Finalize: antigravityPrompts, Do: AntigravityDo},
 	// The gateway requires SSE even for buffered clients (registry/api-airforce.js:25-32).
 	"api-airforce": {ForceStream: true, Finalize: codebuddyStream, OpenAIHeaders: func(routing.ProviderRef) map[string]string {
