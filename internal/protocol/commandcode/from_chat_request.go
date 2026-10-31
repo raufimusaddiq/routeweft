@@ -28,6 +28,15 @@ var (
 	newThreadID = randomUUID
 )
 
+// SetClock replaces the clock the request envelope's date is read from and returns a
+// function that restores it. It exists so a parity harness can run the conversion at the
+// instant the oracle's recording was made; the serving path never calls it.
+func SetClock(clock func() time.Time) (restore func()) {
+	previous := now
+	now = clock
+	return func() { now = previous }
+}
+
 func randomUUID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
