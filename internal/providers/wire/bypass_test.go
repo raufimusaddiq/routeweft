@@ -134,12 +134,12 @@ func TestEveryUpstreamBaseComesFromTheWireSeam(t *testing.T) {
 // The functions that dial an upstream must reach it through the seam even when
 // they never name a base URL field themselves, so they are pinned by name too.
 var mustCallWire = map[string][]string{
-	"ingress/dispatch.go:dispatchAttempts":                 {"ResolveTarget"},
-	"ingress/ingress.go:newUpstreamRequest":                {"ResolveTarget", "FinalizeBodyAt"},
-	"control/api/providers.go:testProviderModel":           {"ResolveTarget", "FinalizeBodyAt"},
-	"control/api/providers.go:fetchConnectionModelEntries": {"DiscoveryBase"},
-	"control/api/workflows.go:handleNodeRoutes":            {"ResolveTarget", "NodeBase"},
-	"runtime/providers.go:AccountProvider":                 {"NodeBase"},
+	"ingress/dispatch.go:dispatchAttempts":       {"ResolveTarget"},
+	"ingress/ingress.go:newUpstreamRequest":      {"ResolveTarget", "FinalizeBodyAt"},
+	"control/api/providers.go:testProviderModel": {"ResolveTarget", "FinalizeBodyAt"},
+	"control/api/providers.go:listModelEntries":  {"DiscoveryBase"},
+	"control/api/workflows.go:handleNodeRoutes":  {"ResolveTarget", "NodeBase"},
+	"runtime/providers.go:AccountProvider":       {"NodeBase"},
 }
 
 func TestDialingFunctionsCallTheWireSeam(t *testing.T) {

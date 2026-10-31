@@ -27,6 +27,7 @@ const (
 	ShapeGrokCLI      Shape = "grok-cli"
 	ShapeQoder        Shape = "qoder"
 	ShapeCursor       Shape = "cursor"
+	ShapeZed          Shape = "zed"
 )
 
 // ListedModel is one model a provider listing returned.
@@ -62,6 +63,8 @@ func ParseListing(shape Shape, body []byte) ([]ListedModel, error) {
 		models, err = parseQoder(body)
 	case ShapeCursor:
 		models, err = parseCursor(body)
+	case ShapeZed:
+		models, err = parseZed(body)
 	default:
 		return nil, errors.New("unknown listing shape " + string(shape))
 	}
@@ -469,6 +472,71 @@ func parseQoder(body []byte) ([]ListedModel, error) {
 		models = append(models, model)
 	}
 	return models, nil
+}
+
+// Zed (zedAuth.js:336-359,362-404; route.js:293-326): a models[] array whose ids
+// may be strings, an [id, ...] array, or an object carrying id; snake_case and
+// camelCase field spellings are both read; is_disabled entries are not offered.
+func parseZed(body []byte) ([]ListedModel, error) {
+	value, err := decodeListing(body)
+	if err != nil {
+		return nil, err
+	}
+	root, _ := value.(object)
+	list, _ := root["models"].([]any)
+	var models []ListedModel
+	for _, entry := range objects(list) {
+		id := zedListingID(entry["id"])
+		if id == "" || listingFlag(entry, "is_disabled", "isDisabled") {
+			continue
+		}
+		model := ListedModel{
+			ID: id, Name: text(entry, "display_name", "displayName", "name"),
+			ContextWindow: number(entry, "max_token_count", "maxTokenCount", "contextLength", "context_length"),
+		}
+		if listingFlag(entry, "supports_images", "supportsImages") {
+			model.Capabilities = append(model.Capabilities, "vision")
+		}
+		if listingFlag(entry, "supports_thinking", "supportsThinking") {
+			model.Capabilities = append(model.Capabilities, "reasoning")
+		}
+		models = append(models, model)
+	}
+	return models, nil
+}
+
+// zedListingID is normalizeZedModelId (zedAuth.js:326-334): the id is a string,
+// the first string of an array, or a nested id.
+func zedListingID(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case []any:
+		if len(typed) > 0 {
+			if id, _ := typed[0].(string); strings.TrimSpace(id) != "" {
+				return strings.TrimSpace(id)
+			}
+		}
+	case object:
+		if id, _ := typed["id"].(string); strings.TrimSpace(id) != "" {
+			return strings.TrimSpace(id)
+		}
+	}
+	return ""
+}
+
+// listingFlag is the first boolean among the snake_case and camelCase spellings
+// a provider's listing uses for one flag.
+func listingFlag(entry object, keys ...string) bool {
+	for _, key := range keys {
+		switch value := entry[key].(type) {
+		case bool:
+			return value
+		case string:
+			return strings.EqualFold(strings.TrimSpace(value), "true")
+		}
+	}
+	return false
 }
 
 // Cursor (cursorModels.js:15-33,68-91): GetUsableModelsResponse carries repeated

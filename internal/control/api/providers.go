@@ -818,6 +818,39 @@ func (h *Handler) fetchConnectionModels(ctx context.Context, connection credenti
 }
 
 func (h *Handler) fetchConnectionModelEntries(ctx context.Context, connection credentials.Connection, node credentials.Node) ([]discovery.Model, error) {
+	credential, err := h.probeCredential(ctx, connection)
+	if err != nil {
+		return nil, errors.New("provider credentials are unavailable")
+	}
+	models, err := h.listModelEntries(ctx, connection, node, credential)
+	if err == nil || !listingAuthRefused(err) || h.opts.CredentialRegistry == nil ||
+		connection.AuthKind != credentials.AuthOAuth || strings.TrimSpace(connection.ID) == "" {
+		return models, err
+	}
+	// The pin refreshes a rotating token once on a listing 401/403 and retries the
+	// listing once (route.js:93-128). The registry's ForceRefresh is the single
+	// refresh path: it serializes concurrent callers, keeps a refresh token from
+	// being used twice and durably commits the rotated payload before publishing
+	// it. A refresh that cannot help leaves the listing's own failure in place.
+	secret, refreshErr := h.opts.CredentialRegistry.ForceRefresh(ctx, connection.ID, credential)
+	if refreshErr != nil || strings.TrimSpace(secret.AccessToken) == "" || secret.AccessToken == credential {
+		return nil, err
+	}
+	return h.listModelEntries(ctx, connection, node, secret.AccessToken)
+}
+
+// listingAuthRefused reports a listing answer the provider refused for its
+// credential; a refresh can change the only thing the caller controls.
+func listingAuthRefused(err error) bool {
+	var status *discovery.StatusError
+	if errors.As(err, &status) {
+		return status.Status == http.StatusUnauthorized || status.Status == http.StatusForbidden
+	}
+	var listing *wire.ListingStatusError
+	return errors.As(err, &listing) && (listing.Status == http.StatusUnauthorized || listing.Status == http.StatusForbidden)
+}
+
+func (h *Handler) listModelEntries(ctx context.Context, connection credentials.Connection, node credentials.Node, credential string) ([]discovery.Model, error) {
 	var spec registry.Spec
 	path := "models"
 	if node.Kind == credentials.NodeBuiltin {
@@ -860,9 +893,34 @@ func (h *Handler) fetchConnectionModelEntries(ctx context.Context, connection cr
 	if h.opts.DiscoveryClient != nil {
 		client.HTTP = h.opts.DiscoveryClient.HTTP
 	}
-	credential, err := h.probeCredential(ctx, connection)
-	if err != nil {
-		return nil, errors.New("provider credentials are unavailable")
+	// Zed is the one listing that is not a bearer GET: it exchanges the account
+	// credential for a short-lived LLM token and lists /models with that
+	// (route.js:293-326; zedAuth.js:258-302,362-404). It runs through the same
+	// discovery client so its own exchange obeys the outbound policy and proxy.
+	if node.Kind == credentials.NodeBuiltin && node.ProviderID == "zed" {
+		if _, err := h.validateOutboundURL(listBase); err != nil {
+			return nil, err
+		}
+		listingRef := route
+		listingRef.APIToken = credential
+		httpClient := &http.Client{}
+		switch {
+		case client.HTTP != nil:
+			httpClient.Transport = roundTripperFromClient(client.HTTP)
+		case h.opts.AllowPrivateUpstreams:
+			httpClient = transport.NewTrustedLocalSSRFProtectedClient()
+		default:
+			httpClient = transport.NewSSRFProtectedClient()
+		}
+		listed, err := wire.ZedListModels(ctx, httpClient, listingRef)
+		if err != nil {
+			return nil, err
+		}
+		models := make([]discovery.Model, 0, len(listed))
+		for _, model := range listed {
+			models = append(models, discovery.Model{ID: model.ID, Name: model.Name, ContextWindow: model.ContextWindow, Capabilities: model.Capabilities})
+		}
+		return models, nil
 	}
 	switch connection.AuthKind {
 	case credentials.AuthNone:

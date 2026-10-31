@@ -214,6 +214,49 @@ func zedReset() {
 	sessionNow = time.Now
 }
 
+// ZedListModels fetches the live Zed catalog the way resolveZedModels does
+// (zedAuth.js:362-404; route.js:293-326): exchange the account credential for an
+// LLM token at /client/llm_tokens, then GET /models with the LLM bearer and the
+// x-ai capability header. A token the host calls expired is exchanged once more
+// and the listing retried once (zedAuth.js:304-324); an account credential the
+// exchange refuses is returned as a ListingStatusError for the caller's
+// refresh-once policy.
+func ZedListModels(ctx context.Context, client *http.Client, provider routing.ProviderRef) ([]ListedModel, error) {
+	userAuth, err := zedUserAuth(provider)
+	if err != nil {
+		return nil, err
+	}
+	base, err := url.Parse(strings.TrimSpace(provider.BaseURL))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return nil, errors.New("zed connection has no valid base URL")
+	}
+	base.Path = strings.TrimRight(base.Path, "/")
+	account := zedAccount{provider: provider, userAuth: userAuth, base: *base}
+	response, err := account.fetch(ctx, client, http.MethodGet, "/models", account.headers(map[string]string{
+		"Accept":           "application/json",
+		zedHeaderClientXAI: "true",
+	}), nil)
+	if err != nil {
+		var rejected *zedRejection
+		if errors.As(err, &rejected) && rejected.response != nil {
+			return nil, &ListingStatusError{Status: rejected.response.StatusCode}
+		}
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, &ListingStatusError{Status: response.StatusCode}
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, zedReplyLimit+1))
+	if err != nil {
+		return nil, errors.New("zed models reply could not be read")
+	}
+	if len(body) > zedReplyLimit {
+		return nil, errors.New("zed models reply exceeds size limit")
+	}
+	return ParseListing(ShapeZed, body)
+}
+
 // zedRejection is an exchange step the host answered with a non-2xx status. The
 // answer is the account's, so it is handed to the dispatcher as the response.
 type zedRejection struct{ response *http.Response }

@@ -68,6 +68,15 @@ func listingError(format string, args ...any) error {
 	return &ListingError{Err: fmt.Errorf(format, args...)}
 }
 
+// ListingStatusError is a provider listing (or its credential exchange) answered
+// with a non-2xx status. It carries no response body: a provider's error text can
+// echo the credential, and the caller only needs the status to refresh once.
+type ListingStatusError struct{ Status int }
+
+func (e *ListingStatusError) Error() string {
+	return fmt.Sprintf("model listing returned HTTP %d", e.Status)
+}
+
 // listings maps a built-in provider to its listing request. Every entry cites the
 // reference line it reproduces.
 var listings = map[string]func(routing.ProviderRef) (Listing, error){
