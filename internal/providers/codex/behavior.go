@@ -5,9 +5,9 @@ import (
 )
 
 // CLIVersion is the Codex CLI version Codex identifies as upstream. It is kept
-// separate from the OAuth endpoints and pinned to the PROVIDER_BASELINE
-// reference snapshot value.
-const CLIVersion = "0.154.0"
+// separate from the OAuth endpoints and follows the oracle's
+// registry/codex.js:3-5,42-46 snapshot.
+const CLIVersion = "0.159.0"
 
 // Originator labels Codex traffic to the ChatGPT backend.
 const Originator = "codex_cli_rs"
@@ -24,6 +24,7 @@ const AutoReviewModel = "codex-auto-review"
 func Headers() map[string]string {
 	return map[string]string{
 		"originator": Originator,
+		"version":    CLIVersion,
 		"User-Agent": Originator + "/" + CLIVersion,
 	}
 }

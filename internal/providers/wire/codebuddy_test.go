@@ -19,14 +19,23 @@ func eachCodeBuddy(t *testing.T, run func(t *testing.T, id string)) {
 	}
 }
 
-func TestCodeBuddyHooksForceStreamAndSendNoIdentity(t *testing.T) {
+func TestCodeBuddyHooksForceStreamAndSendChannelIdentity(t *testing.T) {
 	eachCodeBuddy(t, func(t *testing.T, id string) {
 		if !ForcesStream(routing.ProviderRef{ProviderID: id}) {
 			t.Fatal("not a stream-only provider")
 		}
-		headers := OpenAIHeaders(routing.ProviderRef{ProviderID: id, APIToken: "tok"})
-		if len(headers) != 1 || headers.Get("Authorization") != "Bearer tok" {
-			t.Fatalf("a CodeBuddy request carries only its credential, got %v", headers)
+		ref := routing.ProviderRef{ProviderID: id, APIToken: "tok"}
+		headers := OpenAIHeaders(ref)
+		requestID := headers.Get("X-Request-ID")
+		if requestID == "" || headers.Get("Authorization") != "Bearer tok" {
+			t.Fatalf("CodeBuddy request lacks its credential or request id: %v", headers)
+		}
+		if headers.Get("X-Conversation-ID") == "" || headers.Get("X-Conversation-ID") == requestID ||
+			headers.Get("X-Conversation-Request-ID") != requestID || headers.Get("X-Conversation-Message-ID") != requestID {
+			t.Fatalf("channel-verification ids are not the pin's: %v", headers)
+		}
+		if again := OpenAIHeaders(ref).Get("X-Request-ID"); again == requestID {
+			t.Fatal("a request id was reused across requests")
 		}
 		for _, name := range []string{"User-Agent", "X-Product", "X-IDE-Type", "X-IDE-Name", "X-Requested-With", "X-Codebuddy-Request"} {
 			if headers.Get(name) != "" {

@@ -95,20 +95,23 @@ func TestKiroTargetAndStoredProfile(t *testing.T) {
 }
 
 func TestKiroFailsClosed(t *testing.T) {
-	for _, field := range []string{"profileArn", "authMethod"} {
-		for _, value := range []string{"", "  ", "invalid\r\nheader", "invalid\x00header"} {
-			p := kiroRef()
-			p.Connection.Settings.AuthMethod = "external_idp"
-			if field == "profileArn" {
-				p.Connection.Settings.ProfileARN = value
-			} else {
-				p.Connection.Settings.AuthMethod = value
-			}
-			_, err := ResolveTarget(p, "generateAssistantResponse")
-			var refused *TargetError
-			if !errors.As(err, &refused) || !strings.Contains(err.Error(), field) {
-				t.Fatalf("%s %q: error %v", field, value, err)
-			}
+	for _, value := range []string{"invalid\r\nheader", "invalid\x00header"} {
+		p := kiroRef()
+		p.Connection.Settings.AuthMethod = "external_idp"
+		p.Connection.Settings.ProfileARN = value
+		_, err := ResolveTarget(p, "generateAssistantResponse")
+		var refused *TargetError
+		if !errors.As(err, &refused) || !strings.Contains(err.Error(), "profileArn") {
+			t.Fatalf("profileArn %q: error %v", value, err)
+		}
+	}
+	for _, value := range []string{"", "  ", "invalid\r\nheader", "invalid\x00header"} {
+		p := kiroRef()
+		p.Connection.Settings.AuthMethod = value
+		_, err := ResolveTarget(p, "generateAssistantResponse")
+		var refused *TargetError
+		if !errors.As(err, &refused) || !strings.Contains(err.Error(), "authMethod") {
+			t.Fatalf("authMethod %q: error %v", value, err)
 		}
 	}
 	for _, token := range []string{"", "  "} {
@@ -217,13 +220,6 @@ func TestKiroAPIKeyMayOmitStoredProfile(t *testing.T) {
 			t.Fatalf("client profile survived omission: %s", fields["profileArn"])
 		}
 	}
-	for _, auth := range []string{"external_idp", "idc", "builder-id", "google", "github", "import"} {
-		p := kiroRef()
-		p.Connection.Settings.AuthMethod, p.Connection.Settings.ProfileARN = auth, ""
-		if _, err := ResolveTarget(p, "generateAssistantResponse"); err == nil || !strings.Contains(err.Error(), "profileArn") {
-			t.Fatalf("%s without profile: %v", auth, err)
-		}
-	}
 }
 
 func TestKiroCredentialHeadersUseOneTrimmedToken(t *testing.T) {
@@ -239,5 +235,50 @@ func TestKiroCredentialHeadersUseOneTrimmedToken(t *testing.T) {
 		} else if headers.Get("Authorization") != "Bearer "+trimmed || headers.Get("x-amz-sso-bearer") != trimmed {
 			t.Fatal("credential headers disagree with the trimmed token")
 		}
+	}
+}
+
+// A builder-id or social connection that never resolved its own profile serves
+// with the shared default ARN the pin uses (open-sse/config/kiroConstants.js:30-42;
+// openai-to-kiro.js:325-341). API key, IDC and external-IdP credentials are
+// account-bound: they send no shared default, only what the connection resolved.
+func TestKiroSharedProfileFallbacks(t *testing.T) {
+	for _, c := range []struct {
+		auth, want string
+	}{
+		{"builder-id", kiroDefaultBuilderARN},
+		{"google", kiroDefaultSocialARN},
+		{"github", kiroDefaultSocialARN},
+		{"import", kiroDefaultBuilderARN},
+		{"api_key", ""},
+		{"idc", ""},
+		{"external_idp", ""},
+	} {
+		p := kiroRef()
+		p.Connection.Settings.AuthMethod = c.auth
+		p.Connection.Settings.ProfileARN = ""
+		if _, err := ResolveTarget(p, "generateAssistantResponse"); err != nil {
+			t.Fatalf("%s: %v", c.auth, err)
+		}
+		if got := kiroHeaders(p)["x-amzn-codewhisperer-profile-arn"]; got != c.want {
+			t.Errorf("%s header profile = %q, want %q", c.auth, got, c.want)
+		}
+		got := FinalizeBody(p, []byte(`{"conversationState":{},"profileArn":"client"}`))
+		var parsed map[string]json.RawMessage
+		if err := json.Unmarshal(got, &parsed); err != nil {
+			t.Fatal(err)
+		}
+		var profile string
+		_ = json.Unmarshal(parsed["profileArn"], &profile)
+		if profile != c.want {
+			t.Errorf("%s body profile = %q, want %q (%s)", c.auth, profile, c.want, got)
+		}
+	}
+	// The connection's own profile always wins.
+	p := kiroRef()
+	p.Connection.Settings.AuthMethod = "google"
+	p.Connection.Settings.ProfileARN = "arn:aws:codewhisperer:eu-west-1:1:profile/mine"
+	if got := kiroHeaders(p)["x-amzn-codewhisperer-profile-arn"]; got != p.Connection.Settings.ProfileARN {
+		t.Fatalf("explicit profile lost: %q", got)
 	}
 }

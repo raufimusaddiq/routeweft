@@ -6,7 +6,7 @@ import (
 )
 
 func TestCodexHeadersAndReviewModels(t *testing.T) {
-	want := map[string]string{"originator": "codex_cli_rs", "User-Agent": "codex_cli_rs/0.154.0"}
+	want := map[string]string{"originator": "codex_cli_rs", "version": "0.159.0", "User-Agent": "codex_cli_rs/0.159.0"}
 	if got := Headers(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("headers=%v want=%v", got, want)
 	}
