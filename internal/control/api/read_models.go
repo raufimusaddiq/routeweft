@@ -364,7 +364,7 @@ func (h *Handler) connections(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 		// The endpoint settings (#228) are sealed the same way, so the edit form can show what is saved.
-		for providerID := range connectionSettingKeys {
+		for providerID := range connectionSettings {
 			if saved, err := h.opts.Credentials.ListConnections(r.Context(), providerID); err == nil {
 				for _, connection := range saved {
 					if settings := publicSettings(connection.ProviderID, connection.Secret.ProviderData); len(settings) > 0 {

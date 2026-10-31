@@ -235,6 +235,7 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 	h.connectionMu.Lock()
 	defer h.connectionMu.Unlock()
 	oldIdentity := ""
+	var storedData map[string]string
 	if r.Method == http.MethodPatch {
 		old, err := h.opts.Credentials.GetConnection(r.Context(), r.PathValue("id"))
 		if err != nil {
@@ -242,6 +243,7 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		oldIdentity = old.Identity
+		storedData = old.Secret.ProviderData
 		if body.NodeID == "" {
 			body.NodeID = old.NodeID
 		}
@@ -315,9 +317,14 @@ func (h *Handler) handlePutConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "provider_mismatch", "connection provider must match its node")
 		return
 	}
-	if err := h.validateConnectionSettings(node.ProviderID, body.Secret.ProviderData); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_connection_setting", err.Error())
-		return
+	// A create, or an edit that names provider data, is checked as it will be stored: the edit laid
+	// over the saved data, an empty value replacing the saved one (#228). An edit that leaves provider
+	// data alone (a rename, a new key) is not held to settings it did not touch.
+	if r.Method != http.MethodPatch || len(body.Secret.ProviderData) > 0 {
+		if err := h.validateConnectionSettings(node.ProviderID, mergedProviderData(storedData, body.Secret.ProviderData)); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_connection_setting", err.Error())
+			return
+		}
 	}
 	authKind := credentials.AuthKind(body.AuthKind)
 	if node.Kind == credentials.NodeGeneric {

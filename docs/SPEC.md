@@ -240,7 +240,12 @@ payload, and they change the next request or listing:
 - Kimchi's `kimchiEndpoint` replaces the host of the model-catalog listing only
   (`{endpoint}/v1/models/metadata?include_in_cli=true`); serving keeps the node's
   base.
-A save is refused (`invalid_connection_setting`) when a URL is not absolute
+A create, or an edit that names provider data, is checked as it will be stored (the
+edit laid over the saved data, an empty value replacing the saved one), so an edit
+cannot clear what the connection needs: an Azure connection without `azureEndpoint`
+is refused, whether created without it or edited to blank it. An edit that names no
+provider data (a rename, a new key) is not held to settings it did not touch. A save
+is refused (`invalid_connection_setting`) when a URL is not absolute
 HTTP(S) without userinfo, query or fragment, or names a non-public address
 (`azureEndpoint` and `kimchiEndpoint` obey the outbound policy of a request: public
 hosts, or the operator's trusted-local mode), when `apiVersion` or `deployment` is

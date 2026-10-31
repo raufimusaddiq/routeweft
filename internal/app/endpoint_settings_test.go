@@ -314,3 +314,52 @@ func TestARedirectFromANamedHostIsNotFollowed(t *testing.T) {
 		t.Fatalf("the named host saw %d requests, want the listing and the chat", n)
 	}
 }
+
+// An edit is checked as it will be stored: the edit laid over the saved settings, an empty value
+// replacing the saved one. The form blocks an empty required field; the API must too, because a
+// connection with no Azure endpoint is silently unselectable and its probes fail (Hermes round 2 on #331).
+func TestTheAPIRefusesToClearARequiredSetting(t *testing.T) {
+	e := newEndpointApp(t, false)
+	refused := func(method, path, body, want string) {
+		t.Helper()
+		code, out := e.admin(method, path, body)
+		if code != http.StatusBadRequest || !strings.Contains(out, "invalid_connection_setting") || !strings.Contains(out, want) {
+			t.Fatalf("%s %s %s: %d %s", method, path, body, code, out)
+		}
+	}
+	// A create without the endpoint is refused, as the form refuses it.
+	refused(http.MethodPost, "/admin/v1/connections", `{"providerId":"azure","name":"A","identity":"a","authKind":"api-key","enabled":true,"secret":{"accessToken":"k","providerData":{"deployment":"d"}}}`, "azureEndpoint is required")
+	refused(http.MethodPost, "/admin/v1/connections", `{"providerId":"azure","name":"A","identity":"a","authKind":"api-key","enabled":true,"secret":{"accessToken":"k"}}`, "azureEndpoint is required")
+
+	id := connectionID(t, e.mustAdmin(http.MethodPost, "/admin/v1/connections", `{"providerId":"azure","name":"A","identity":"a","authKind":"api-key","enabled":true,"secret":{"accessToken":"k","providerData":{"azureEndpoint":"https://res.openai.azure.com","deployment":"d"}}}`))
+	path := "/admin/v1/connections/" + id
+	// Clearing it, by an empty value or by blanks, is refused and leaves the saved endpoint alone.
+	refused(http.MethodPatch, path, `{"secret":{"providerData":{"azureEndpoint":""}}}`, "azureEndpoint is required")
+	refused(http.MethodPatch, path, `{"secret":{"providerData":{"azureEndpoint":"   "}}}`, "azureEndpoint is required")
+	if listed := e.mustAdmin(http.MethodGet, "/admin/v1/connections?provider=azure", ""); !strings.Contains(listed, `"azureEndpoint":"https://res.openai.azure.com"`) {
+		t.Fatalf("a refused edit changed the saved endpoint: %s", listed)
+	}
+	// An edit of another setting, or none, still works, and keeps the endpoint.
+	e.mustAdmin(http.MethodPatch, path, `{"secret":{"providerData":{"deployment":"d2"}}}`)
+	e.mustAdmin(http.MethodPatch, path, `{"name":"Renamed"}`)
+	if listed := e.mustAdmin(http.MethodGet, "/admin/v1/connections?provider=azure", ""); !strings.Contains(listed, `"azureEndpoint":"https://res.openai.azure.com"`) || !strings.Contains(listed, `"deployment":"d2"`) || !strings.Contains(listed, "Renamed") {
+		t.Fatalf("edits lost a setting: %s", listed)
+	}
+	// An optional setting can be cleared (kimchi falls back to its default host).
+	kimchi := connectionID(t, e.mustAdmin(http.MethodPost, "/admin/v1/connections", `{"providerId":"kimchi","name":"K","identity":"k","authKind":"api-key","enabled":true,"secret":{"accessToken":"k","providerData":{"kimchiEndpoint":"https://kimchi.example.test"}}}`))
+	e.mustAdmin(http.MethodPatch, "/admin/v1/connections/"+kimchi, `{"secret":{"providerData":{"kimchiEndpoint":""}}}`)
+
+	// A connection saved before this check, with no endpoint, can still be renamed; touching its
+	// settings asks for the endpoint, since the edit would leave it unusable.
+	legacy, err := e.a.creds.GetConnection(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy.Secret.ProviderData = map[string]string{"deployment": "d2"}
+	if _, err := e.a.creds.PutConnection(context.Background(), legacy); err != nil {
+		t.Fatal(err)
+	}
+	e.mustAdmin(http.MethodPatch, path, `{"name":"Renamed again"}`)
+	refused(http.MethodPatch, path, `{"secret":{"providerData":{"deployment":"d3"}}}`, "azureEndpoint is required")
+	e.mustAdmin(http.MethodPatch, path, `{"secret":{"providerData":{"azureEndpoint":"https://res.openai.azure.com"}}}`)
+}
