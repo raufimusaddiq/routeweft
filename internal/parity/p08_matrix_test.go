@@ -190,7 +190,7 @@ func listingCell(spec registry.Spec) cell {
 		"mimo-free":        {kindP, ref("control/api:TestSuggestionFiltersPinnedFixtures"), "registry modelsFetcher mimo-free filter"},
 		"api-airforce":     {kindP, ref("control/api:TestSuggestionFiltersPinnedFixtures"), "registry modelsFetcher airforce-free filter"},
 		"kilocode":         {kindP, ref("control/api:TestSuggestionFiltersPinnedFixtures", "control/api:TestKiloCacheFreshExpiredFailureAndConcurrency"), "registry modelsFetcher kilo-free filter and cache"},
-		"zed":              {kindG, nil, "the pin lists through a Zed LLM-token exchange (route.js:293-326); Routeweft sends the shared bearer to cloud.zed.dev/models (PARITY 6.15, MISSING)"},
+		"zed":              {kindP, ref("control/api:TestZedListingExchangesItsAccountCredential", "providers/wire:TestZedListingExchangesTheAccountCredential", "providers/wire:TestZedListingRefreshesTheLLMTokenOnce", "control/api:TestListingRefreshesOAuthOnceAndPersistsTheRotation"), "the LLM-token exchange at /client/llm_tokens and the x-ai listing header (route.js:293-326, zedAuth.js:258-324); an OAuth 401 refreshes once and retries (route.js:93-128), PARITY 6.15"},
 		"claude":           {kindG, nil, "the pin lists api.anthropic.com/v1/models with x-api-key (route.js:132-141); the OAuth credential's listing is not exercised"},
 		"ollama-local":     {kindG, nil, "the pin resolves the local host and GETs /api/tags (route.js:491-507); no test names ollama-local (provider is experimental)"},
 		"azure":            {kindN, nil, "the pin has no listing for Azure (not in PROVIDER_MODELS_CONFIG, route.js:131-507; answered 400 at route.js:595-601); Routeweft's hook is Unlisted and sends nothing"},
@@ -900,6 +900,10 @@ fails if a row is missing, a cell names a test that does not exist, a not-applic
 cell cites no pin file, or a served provider claims a refusal. ` + "`TestP08MatrixDocIsCurrent`" + `
 fails if this file differs from the table; regenerate with
 ` + "`P08_WRITE=1 go test ./internal/parity -run TestP08MatrixDocIsCurrent`" + `.
+
+The per-provider onboarding/quota acceptance and residual owner is
+` + "`docs/PROVIDER_ACCEPTANCE_MATRIX.md`" + ` (#230). This file stays the per-behaviour
+evidence; neither document alone is a live or production claim.
 
 ## Kinds
 

@@ -17,6 +17,10 @@ cell cites no pin file, or a served provider claims a refusal. `TestP08MatrixDoc
 fails if this file differs from the table; regenerate with
 `P08_WRITE=1 go test ./internal/parity -run TestP08MatrixDocIsCurrent`.
 
+The per-provider onboarding/quota acceptance and residual owner is
+`docs/PROVIDER_ACCEPTANCE_MATRIX.md` (#230). This file stays the per-behaviour
+evidence; neither document alone is a live or production claim.
+
 ## Kinds
 
 | Kind | Meaning |
@@ -51,7 +55,7 @@ Cells by kind and column:
 
 | Column | P | C | T | S | U | G | N |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Authenticated listing | 22 | 0 | 20 | 2 | 0 | 3 | 34 |
+| Authenticated listing | 23 | 0 | 20 | 2 | 0 | 2 | 34 |
 | Quota / usage read | 24 | 0 | 0 | 0 | 0 | 0 | 57 |
 | Applicable unavailability | 21 | 1 | 0 | 54 | 3 | 2 | 0 |
 | Import / refresh | 18 | 0 | 3 | 0 | 0 | 3 | 57 |
@@ -59,7 +63,7 @@ Cells by kind and column:
 | Non-streaming | 24 | 1 | 50 | 1 | 2 | 3 | 0 |
 | Error shapes | 29 | 2 | 1 | 47 | 2 | 0 | 0 |
 | Cached vs ordinary tokens | 18 | 2 | 5 | 54 | 2 | 0 | 0 |
-| **All cells** | **179** | **8** | **130** | **159** | **11** | **13** | **148** |
+| **All cells** | **180** | **8** | **130** | **159** | **11** | **12** | **148** |
 
 648 cells in all (81 providers x 8 behaviours). `N` cells carry a pin citation in the evidence tables below.
 
@@ -145,7 +149,7 @@ Cells by kind and column:
 | `grok-web` | unavailable | N | N | U | G | U | U | U | U |
 | `perplexity-web` | unavailable | N | N | U | G | U | U | U | U |
 | `kenari` | ready | P | P | P | N | P | P | P | S |
-| `zed` | ready | G | P | P | P | P | P | P | S |
+| `zed` | ready | P | P | P | P | P | P | P | S |
 | `kimchi` | ready | P | N | S | P | T | T | S | S |
 | `azure` | experimental | N | N | S | N | P | P | P | S |
 
@@ -176,13 +180,13 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `kiro` — ListAvailableModels, region from the ARN Tests: `control/api:TestKiroListingIsListAvailableModels`, `control/api:TestKiroListingRefusesAHostInTheRegion`, `providers/wire:TestParseKiroListing`.
 - **P** `grok-cli` — grok-shell identity headers Tests: `control/api:TestGrokCLIListingUsesTheGrokShellIdentity`, `providers/wire:TestParseGrokCLIListing`.
 - **P** `kenari` — registry modelsFetcher; chat-endpoint filter. The pin has no saved-connection listing for it (route.js:595-601) Tests: `control/api:TestSuggestionFiltersPinnedFixtures`.
+- **P** `zed` — the LLM-token exchange at /client/llm_tokens and the x-ai listing header (route.js:293-326, zedAuth.js:258-324); an OAuth 401 refreshes once and retries (route.js:93-128), PARITY 6.15 Tests: `control/api:TestZedListingExchangesItsAccountCredential`, `providers/wire:TestZedListingExchangesTheAccountCredential`, `providers/wire:TestZedListingRefreshesTheLLMTokenOnce`, `control/api:TestListingRefreshesOAuthOnceAndPersistsTheRotation`.
 - **P** `kimchi` — metadata catalog with include_in_cli Tests: `control/api:TestKimchiListingUsesTheMetadataCatalogWithItsFilter`, `providers/wire:TestParseKimchiListing`.
 - **T** `alicode-intl`, `alicode`, `alims-intl`, `byteplus`, `cerebras`, `chutes`, `cohere`, `fireworks`, `groq`, `hyperbolic`, `mistral`, `nebius`, `nvidia`, `siliconflow`, `together`, `vercel-ai-gateway`, `volcengine-ark`, `openai`, `deepseek`, `xai` — bearer GET to the URL the pin lists (route.js:75-82 and the entry for this provider) Tests: `parity:TestEveryPinnedPlainListingURLMatches`, `providers/discovery:TestModelsFetchesBearerCatalogAndTrimsIDs`.
 - **S** `venice` — registry modelsFetcher catalog (registry/venice.js); no per-provider test Tests: `providers/discovery:TestModelsFetchesBearerCatalogAndTrimsIDs`.
 - **S** `tokenrouter` — registry modelsFetcher catalog (registry/tokenrouter.js); no per-provider test Tests: `providers/discovery:TestModelsFetchesBearerCatalogAndTrimsIDs`.
 - **G** `claude` — the pin lists api.anthropic.com/v1/models with x-api-key (route.js:132-141); the OAuth credential's listing is not exercised
 - **G** `ollama-local` — the pin resolves the local host and GETs /api/tags (route.js:491-507); no test names ollama-local (provider is experimental)
-- **G** `zed` — the pin lists through a Zed LLM-token exchange (route.js:293-326); Routeweft sends the shared bearer to cloud.zed.dev/models (PARITY 6.15, MISSING)
 - **N** `alitp-intl`, `baidu`, `bazaarlink`, `blackbox`, `bluesminds`, `featherless`, `kilo-gateway`, `llm7`, `morph`, `poolside`, `sambanova`, `tencent`, `glm`, `glm-cn`, `minimax`, `minimax-cn`, `xiaomi-tokenplan`, `mmf`, `typesafe`, `vertex-partner`, `opencode-go`, `cloudflare-ai`, `muse`, `gitlab`, `iflow`, `kimi`, `xiaomi-mimo`, `codebuddy-cn`, `codebuddy-intl`, `vertex`, `commandcode`, `grok-web`, `perplexity-web` — the pin has no authenticated listing: no PROVIDER_MODELS_CONFIG entry (route.js:131-507), so the handler answers 400 "does not support models listing" (route.js:595-601). Routeweft still requests the shared GET {base}/models; unverified (PARITY 6.15)
 - **N** `azure` — the pin has no listing for Azure (not in PROVIDER_MODELS_CONFIG, route.js:131-507; answered 400 at route.js:595-601); Routeweft's hook is Unlisted and sends nothing
 
