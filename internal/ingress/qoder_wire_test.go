@@ -1,6 +1,9 @@
 package ingress
 
 import (
+	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,7 +37,7 @@ func TestQoderMissingIdentityFailsBeforeNetwork(t *testing.T) {
 	for _, missing := range []string{"machineId", "userId", "token"} {
 		t.Run(missing, func(t *testing.T) {
 			up := newRecorder(t)
-			ref := routing.ProviderRef{ProviderID: "qoder", Protocol: "openai-chat", BaseURL: up.srv.URL, APIToken: "fixture-token", ConnectionID: "qoder-account",
+			ref := routing.ProviderRef{ProviderID: "qoder", Protocol: "qoder", UpstreamModel: "auto", BaseURL: up.srv.URL, APIToken: "fixture-token", ConnectionID: "qoder-account",
 				Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{UserID: "fixture-user", MachineID: "stored-machine"}}}
 			switch missing {
 			case "machineId":
@@ -51,21 +54,57 @@ func TestQoderMissingIdentityFailsBeforeNetwork(t *testing.T) {
 			before := time.Now()
 			out := httptest.NewRecorder()
 			bearer(mux, key).ServeHTTP(out, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(chatBody)))
-			if out.Code != http.StatusServiceUnavailable || !strings.Contains(out.Body.String(), "credentials_unavailable") {
+			want := http.StatusServiceUnavailable
+			wantText := "credentials_unavailable"
+			switch missing {
+			case "machineId":
+				// Without qoderHeaders the request reaches QoderDo, which answers the
+				// pin's local error before any network call (qoder.js:621-689).
+				want, wantText = http.StatusBadRequest, "machineId"
+			case "userId":
+				want, wantText = http.StatusUnauthorized, "userId"
+			}
+			if out.Code != want || !strings.Contains(out.Body.String(), wantText) {
 				t.Fatalf("missing %s: status %d, body %s", missing, out.Code, out.Body)
 			}
 			until, cooling := state.CooldownUntil(ref.ConnectionID, time.Now())
-			if !cooling || until.Before(before.Add(2*time.Minute)) || until.After(time.Now().Add(2*time.Minute)) {
+			if missing == "machineId" {
+				if cooling {
+					t.Fatalf("a 400 cooled the account: %s", until)
+				}
+			} else if !cooling || until.Before(before.Add(2*time.Minute)) || until.After(time.Now().Add(2*time.Minute)) {
 				t.Fatalf("missing %s did not get the auth-refresh cooldown: %s", missing, until)
 			}
-			if missing == "machineId" && (!strings.Contains(out.Body.String(), "machineId") || !strings.Contains(out.Body.String(), "re-run Qoder sign-in")) {
-				t.Fatalf("missing recovery instruction: %s", out.Body)
-			}
+
 			up.mu.Lock()
 			defer up.mu.Unlock()
 			if len(up.seen) != 0 {
 				t.Fatal("unsigned request reached upstream")
 			}
 		})
+	}
+}
+
+// A non-stream client is served by unwrapping Qoder's envelope before the forced
+// stream is folded; without the codec-aware step FoldChatStream refused the
+// statusCodeValue field (executors/qoder.js:362-597).
+func TestQoderNonStreamFoldUnwrapsBeforeFolding(t *testing.T) {
+	provider := routing.ProviderRef{ProviderID: "qoder", Protocol: "qoder", UpstreamModel: "auto"}
+	ok := &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader("data: {\"statusCodeValue\":200,\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"pong\\\"}}]}\"}\n\ndata: [DONE]\n\n"))}
+	if err := foldForcedStream(context.Background(), ok, provider, false); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(ok.Body)
+	ok.Body.Close()
+	if !strings.Contains(string(body), `"content":"pong"`) || strings.Contains(string(body), "statusCodeValue") {
+		t.Fatalf("folded body %s", body)
+	}
+	failed := &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader("data: {\"statusCodeValue\":403,\"body\":\"{\\\"code\\\":\\\"112\\\",\\\"pricingUrl\\\":\\\"x\\\"}\"}\n\n"))}
+	err := foldForcedStream(context.Background(), failed, provider, false)
+	var dispatch *dispatchError
+	if !errors.As(err, &dispatch) || dispatch.status != http.StatusForbidden {
+		t.Fatalf("first-frame failure: %v", err)
 	}
 }

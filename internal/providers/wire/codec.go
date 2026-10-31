@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
@@ -106,7 +105,8 @@ func qoderCodec(_ routing.ProviderRef, _ *CodecState, chat map[string]any, model
 	return Codec{Endpoint: qoderCodecEndpoint, Body: body,
 		Response: func([]byte) ([]byte, error) { return nil, errors.New("qoder answers only streams") },
 		Stream: func(ctx context.Context, src io.Reader, dst io.Writer) error {
-			return QoderUnwrapSSE(ctx, src, dst, QoderStreamOptions{Model: "qoder/" + strings.TrimPrefix(model, "qoder/")})
+			// The client's routed model is echoed, as the grok/perplexity codecs do.
+			return QoderUnwrapSSE(ctx, src, dst, QoderStreamOptions{Model: model})
 		}}, nil
 }
 

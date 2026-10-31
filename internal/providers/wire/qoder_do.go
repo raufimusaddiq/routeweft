@@ -2,6 +2,7 @@ package wire
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -32,6 +33,14 @@ func QoderDo(provider routing.ProviderRef, client *http.Client, request *http.Re
 		return nil, errors.New("qoder request exceeds the limit")
 	}
 	settings := provider.Connection.Settings
+	// The identity COSY signing needs, refused locally as the old header seam did:
+	// no request is sent and no host is contacted without it.
+	if strings.TrimSpace(settings.UserID) == "" {
+		return qoderRefusal(request, http.StatusUnauthorized, "qoder credential is missing userId; reconnect the account"), nil
+	}
+	if strings.TrimSpace(settings.MachineID) == "" {
+		return qoderRefusal(request, http.StatusBadRequest, "qoder credential is missing machineId; re-run Qoder sign-in"), nil
+	}
 	prepared, err := qoderClientFor(client).PrepareChat(request.Context(), QoderChatInput{
 		Model: provider.UpstreamModel,
 		Body:  raw,
@@ -65,4 +74,27 @@ func qoderRefusal(request *http.Request, status int, message string) *http.Respo
 		StatusCode: status, Status: http.StatusText(status), Header: http.Header{"Content-Type": []string{"application/json"}},
 		Body: io.NopCloser(bytes.NewReader(body)), ContentLength: int64(len(body)), Request: request,
 	}
+}
+
+// qoderPreFold is the codec-aware fold path: a non-stream client gets Qoder's
+// envelope SSE unwrapped into Chat SSE before FoldChatStream reads it. The whole
+// answer was about to be buffered by the fold anyway, so this keeps the same
+// memory profile and lets a first-frame QoderAnswerError keep its HTTP status.
+func qoderPreFold(provider routing.ProviderRef, ctx context.Context, response *http.Response) error {
+	raw, err := io.ReadAll(io.LimitReader(response.Body, qoderMaxRequestBytes+1))
+	response.Body.Close()
+	if err != nil {
+		return err
+	}
+	if len(raw) > qoderMaxRequestBytes {
+		return errors.New("qoder answer exceeds the limit")
+	}
+	var folded bytes.Buffer
+	if err := QoderUnwrapSSE(ctx, bytes.NewReader(raw), &folded, QoderStreamOptions{Model: provider.UpstreamModel}); err != nil {
+		return err
+	}
+	response.Body = io.NopCloser(bytes.NewReader(folded.Bytes()))
+	response.ContentLength = int64(folded.Len())
+	response.Header.Set("Content-Type", "text/event-stream")
+	return nil
 }

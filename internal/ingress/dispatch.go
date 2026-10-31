@@ -83,6 +83,15 @@ func foldForcedStream(ctx context.Context, response *http.Response, provider rou
 	if mediaType != "text/event-stream" {
 		return nil
 	}
+	if pre := wire.For(provider.ProviderID).PreFoldStream; pre != nil {
+		if err := pre(provider, ctx, response); err != nil {
+			var answer *wire.QoderAnswerError
+			if errors.As(err, &answer) {
+				return &dispatchError{answer.Status, "upstream_stream_error", answer.Error()}
+			}
+			return &dispatchError{http.StatusBadGateway, "upstream_response_invalid", "upstream stream could not be returned as one response: " + err.Error()}
+		}
+	}
 	var folded openaiadapter.Folded
 	var err error
 	switch provider.Protocol {

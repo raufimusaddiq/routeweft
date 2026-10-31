@@ -9,6 +9,7 @@
 package wire
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -133,6 +134,10 @@ type Hook struct {
 	// in its executor and has no translator leg. It replaces the conversion legs,
 	// not the hook's headers, target or Do.
 	Codec func(provider routing.ProviderRef, state *CodecState, chat map[string]any, model string) (Codec, error)
+	// PreFoldStream rewrites a forced stream's raw answer into Chat SSE before the
+	// non-stream fold (a codec whose transport returns its own envelope, Qoder).
+	// A provider failure returned here is reported to the client with its status.
+	PreFoldStream func(routing.ProviderRef, context.Context, *http.Response) error
 }
 
 var hooks = map[string]Hook{
@@ -162,7 +167,7 @@ var hooks = map[string]Hook{
 	"glm":              {Target: betaQuery},
 	"kimi":             {OpenAIHeaders: kimiDeviceHeaders, MessagesHeaders: kimiDeviceHeaders, Target: betaQuery},
 	"kilocode":         {OpenAIHeaders: kilocodeOrgHeaders},
-	"qoder":            {RequestHeaders: qoderHeaders, RequireCredential: true, ForceStream: true, Do: QoderDo, Codec: qoderCodec},
+	"qoder":            {RequestHeaders: qoderHeaders, RequireCredential: true, ForceStream: true, Do: QoderDo, Codec: qoderCodec, PreFoldStream: qoderPreFold},
 	"iflow":            {OpenAIHeaders: iflowHeaders, Finalize: iflowStreamOptions, RequireCredential: true},
 	"kiro":             {NoOpenAIBearer: true, OpenAIHeaders: kiroHeaders, Target: kiroTarget, FinalizeAccount: kiroBody, RequireCredential: true},
 	"github":           githubHook,
