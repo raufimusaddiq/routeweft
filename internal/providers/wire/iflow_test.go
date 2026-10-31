@@ -102,3 +102,25 @@ func TestIflowHeadersRefuseToSignAnEmptyKey(t *testing.T) {
 		t.Fatal("a plain bearer provider was marked as requiring a credential")
 	}
 }
+
+// A streaming iFlow Chat request asks the gateway to report usage
+// (open-sse/executors/iflow.js:99-104), so a streamed request is accounted
+// instead of unobserved. A non-stream request and a client's own
+// stream_options are left exactly as they are.
+func TestIflowRequestsUsageOnAStreamOnlyWhenUnset(t *testing.T) {
+	out := finalize(t, "iflow", chat, `{"model":"glm-5","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	if got := decode(t, out)["stream_options"]; got == nil {
+		t.Fatalf("no include_usage on a stream: %s", out)
+	}
+	options, _ := decode(t, out)["stream_options"].(map[string]any)
+	if options["include_usage"] != true {
+		t.Fatalf("stream_options = %v", options)
+	}
+	if out := finalize(t, "iflow", chat, `{"model":"glm-5","stream":false,"messages":[{"role":"user","content":"hi"}]}`); strings.Contains(out, "stream_options") {
+		t.Fatalf("a non-stream request gained stream_options: %s", out)
+	}
+	in := `{"model":"glm-5","stream":true,"stream_options":{"include_usage":false},"messages":[{"role":"user","content":"hi"}]}`
+	if out := finalize(t, "iflow", chat, in); out != in {
+		t.Fatalf("a client's stream_options was rewritten: %s", out)
+	}
+}

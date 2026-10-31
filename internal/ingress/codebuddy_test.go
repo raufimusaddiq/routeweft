@@ -147,6 +147,11 @@ func TestCodeBuddyNonStreamClientsGetOneJSONBodyFromAForcedStream(t *testing.T) 
 			if headers.Get("User-Agent") != "Routeweft" || headers.Get("Authorization") != "Bearer secret" {
 				t.Fatalf("upstream headers %v", headers)
 			}
+			requestID := headers.Get("X-Request-ID")
+			if requestID == "" || headers.Get("X-Conversation-ID") == "" || headers.Get("X-Conversation-ID") == requestID ||
+				headers.Get("X-Conversation-Request-ID") != requestID || headers.Get("X-Conversation-Message-ID") != requestID {
+				t.Fatalf("channel-verification ids missing or mismatched: %v", headers)
+			}
 			for _, name := range []string{"X-Product", "X-Ide-Type", "X-Ide-Name", "X-Requested-With", "X-Codebuddy-Request"} {
 				if headers.Get(name) != "" {
 					t.Fatalf("%s sent: %v", name, headers)

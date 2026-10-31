@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
@@ -32,6 +34,7 @@ import (
 var codebuddyCN = Hook{
 	ForceStream:         true,
 	StripEmptyToolCalls: true,
+	OpenAIHeaders:       codebuddyChannelHeaders,
 	Finalize:            chain(codebuddyStream, codebuddyReasoning),
 	ClassifyError:       codebuddyFrequencyLimit,
 }
@@ -39,8 +42,23 @@ var codebuddyCN = Hook{
 var codebuddyIntl = Hook{
 	ForceStream:         true,
 	StripEmptyToolCalls: true,
+	OpenAIHeaders:       codebuddyChannelHeaders,
 	Finalize:            chain(codebuddyStream, codebuddyReasoning, codebuddyIntlMessages),
 	ClassifyError:       codebuddyFrequencyLimit,
+}
+
+// codebuddyChannelHeaders is the channel-verification quadruple the official
+// plugin sends (open-sse/executors/default.js:64-80): without it the gateway
+// answers 400 code 11128 "request illegal" before the model is reached. One
+// request id is echoed in three headers; the conversation id is its own.
+func codebuddyChannelHeaders(routing.ProviderRef) map[string]string {
+	requestID := uuid.NewString()
+	return map[string]string{
+		"X-Request-ID":              requestID,
+		"X-Conversation-ID":         uuid.NewString(),
+		"X-Conversation-Request-ID": requestID,
+		"X-Conversation-Message-ID": requestID,
+	}
 }
 
 // codebuddyStream: the gateway rejects a non-stream request (HTTP 400, code

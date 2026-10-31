@@ -14,17 +14,50 @@ import (
 
 const kiroOperation = "generateAssistantResponse"
 
+// Public default CodeWhisperer profile ARNs (us-east-1), keyed by the sign-in
+// method (open-sse/config/kiroConstants.js:30-42): builder-id and social
+// (Google/GitHub) accounts that cannot resolve their own profile use these.
+// API key, IDC and external-IdP credentials are account-bound and never take a
+// shared default (it belongs to another account and answers 403).
+const (
+	kiroDefaultBuilderARN = "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX"
+	kiroDefaultSocialARN  = "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK"
+)
+
+func kiroAccountBound(authMethod string) bool {
+	switch authMethod {
+	case "api_key", "idc", "external_idp":
+		return true
+	}
+	return false
+}
+
+// kiroProfileARN is the connection's own profile, else the shared default for a
+// non-account-bound sign-in (openai-to-kiro.js:325-341, claude-to-kiro.js:248-255).
+func kiroProfileARN(settings routing.ProviderSettings) string {
+	if arn := strings.TrimSpace(settings.ProfileARN); arn != "" {
+		return arn
+	}
+	if kiroAccountBound(settings.AuthMethod) {
+		return ""
+	}
+	switch settings.AuthMethod {
+	case "google", "github":
+		return kiroDefaultSocialARN
+	}
+	return kiroDefaultBuilderARN
+}
+
 func kiroTarget(provider routing.ProviderRef) (Target, error) {
 	settings := provider.Connection.Settings
-	for _, setting := range []struct{ name, value string }{
-		{"profileArn", settings.ProfileARN}, {"authMethod", settings.AuthMethod},
-	} {
-		if strings.TrimSpace(setting.value) == "" && !(setting.name == "profileArn" && settings.AuthMethod == "api_key") {
-			return Target{}, errors.New("kiro connection has no " + setting.name + ": set providerData." + setting.name + " on the connection")
-		}
-		if strings.IndexFunc(setting.value, func(r rune) bool { return r < 32 || r == 127 }) >= 0 {
-			return Target{}, errors.New("kiro connection has invalid " + setting.name)
-		}
+	if strings.TrimSpace(settings.AuthMethod) == "" {
+		return Target{}, errors.New("kiro connection has no authMethod: set providerData.authMethod on the connection")
+	}
+	if strings.IndexFunc(settings.AuthMethod, func(r rune) bool { return r < 32 || r == 127 }) >= 0 {
+		return Target{}, errors.New("kiro connection has invalid authMethod")
+	}
+	if strings.IndexFunc(settings.ProfileARN, func(r rune) bool { return r < 32 || r == 127 }) >= 0 {
+		return Target{}, errors.New("kiro connection has invalid profileArn")
 	}
 	return Target{Endpoint: kiroOperation}, nil
 }
@@ -47,8 +80,8 @@ func kiroHeaders(provider routing.ProviderRef) map[string]string {
 		"x-amzn-kiro-agent-mode":          "spec",
 		"x-amzn-codewhisperer-machine-id": "kiro-desktop",
 	}
-	if strings.TrimSpace(settings.ProfileARN) != "" {
-		headers["x-amzn-codewhisperer-profile-arn"] = settings.ProfileARN
+	if profile := kiroProfileARN(settings); profile != "" {
+		headers["x-amzn-codewhisperer-profile-arn"] = profile
 	}
 	switch settings.AuthMethod {
 	case "api_key":
@@ -67,7 +100,7 @@ func kiroBody(provider routing.ProviderRef, body Body) bool {
 		return false
 	}
 	// The connection owns the profile; a client body cannot select another account.
-	profile := provider.Connection.Settings.ProfileARN
+	profile := kiroProfileARN(provider.Connection.Settings)
 	if strings.TrimSpace(profile) == "" {
 		return body.delete("profileArn")
 	}

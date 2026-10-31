@@ -149,7 +149,9 @@ func TestDispatchEndpointGlobalBoundAndCancellation(t *testing.T) {
 				AccountProvider: func(_ *runtime.RuntimeSnapshot, _, id, _ string) (routing.ProviderRef, bool) {
 					auth := "api_key"
 					if refuseLater && id != "a" {
-						auth = "external_idp"
+						// A missing authMethod is refused before any upstream call; the
+						// scenario is that a later account cannot be dialled at all.
+						auth = ""
 					}
 					return routing.ProviderRef{ProviderID: "kiro", Protocol: "kiro", ConnectionID: id, APIToken: id, Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{AuthMethod: auth, BaseURL: "https://proxy.example"}}}, true
 				},
