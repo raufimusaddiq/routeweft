@@ -355,11 +355,19 @@ func validateCatalog(config Config) error {
 		if strings.TrimSpace(alias) == "" || strings.TrimSpace(target.ProviderID) == "" || strings.TrimSpace(target.ModelID) == "" {
 			return fmt.Errorf("alias and target are required")
 		}
-		if _, ok := models[modelKey(target.ProviderID, target.ModelID)]; !ok {
+		if _, ok := models[modelKey(canonicalProvider(target.ProviderID), target.ModelID)]; !ok {
 			return fmt.Errorf("alias %q references unknown model %s/%s", alias, target.ProviderID, target.ModelID)
 		}
 	}
 	return nil
+}
+
+// canonicalProvider maps a registry alias prefix to the provider id it names.
+func canonicalProvider(provider string) string {
+	if canonical, ok := capabilities.ProviderAlias(provider); ok {
+		return canonical
+	}
+	return provider
 }
 
 func cloneSettings(src map[string]string) map[string]string {

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/raufimusaddiq/routeweft/internal/auth"
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/store/migrations"
 	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
 )
@@ -427,3 +428,29 @@ func TestAPIKeyAccessPolicySurvivesRestartAndMutations(t *testing.T) {
 }
 
 func boolPtr(v bool) *bool { return &v }
+
+// A model alias may name the model through a registry provider alias: the
+// reward validation and serving both resolve the prefix (services/model.js:18-37).
+func TestAliasTargetMayNameARegistryProviderAlias(t *testing.T) {
+	ctx := context.Background()
+	manager, store := providerStore(t)
+	if _, err := store.PutNode(ctx, credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "kimi", Name: "kimi"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.PutAlias(ctx, "kimi-fast", ModelRef{ProviderID: "kmc", ModelID: "kimi-k3"}); err != nil {
+		t.Fatalf("alias through kmc/ was refused: %v", err)
+	}
+	snapshot, err := manager.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, requested := range []string{"kimi-fast", "kmc/kimi-k3", "kimi-coding/kimi-k3", "kimi/kimi-k3"} {
+		model, ok := snapshot.ServingModel(requested)
+		if !ok || model.ProviderID != "kimi" || model.ID != "kimi-k3" {
+			t.Fatalf("%s = %s/%s,%v", requested, model.ProviderID, model.ID, ok)
+		}
+	}
+	if err := manager.PutAlias(ctx, "broken", ModelRef{ProviderID: "kmc", ModelID: "no-such-model"}); err == nil {
+		t.Fatal("an unknown target was accepted")
+	}
+}
