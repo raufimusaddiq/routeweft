@@ -362,6 +362,21 @@ func nativeWireSkips(t *testing.T) map[string]bool {
 	return out
 }
 
+// plainProviderWires are the providers whose pinned entry is a plain API-key
+// wire. TestPinnedPlainProviderWires names each id and proves its own pinned
+// wire URL, bearer form, static catalog and models listing; the shared
+// transport table (TestRegistryChatWires) stays the T evidence for the seam.
+var plainProviderWires = map[string]bool{
+	"alicode-intl": true, "alitp-intl": true, "alicode": true, "alims-intl": true, "baidu": true,
+	"bazaarlink": true, "blackbox": true, "bluesminds": true, "byteplus": true, "cerebras": true,
+	"chutes": true, "cohere": true, "featherless": true, "fireworks": true, "hyperbolic": true,
+	"kilo-gateway": true, "llm7": true, "morph": true, "nebius": true, "nvidia": true,
+	"poolside": true, "sambanova": true, "siliconflow": true, "tencent": true, "together": true,
+	"venice": true, "volcengine-ark": true, "openai": true, "tokenrouter": true, "muse": true, "xai": true,
+}
+
+const plainProviderWireTest = "ingress:TestPinnedPlainProviderWires"
+
 // modeCell is the streaming (stream=true) or non-streaming cell.
 func modeCell(t *testing.T, spec registry.Spec, stream bool, chat, skips map[string]bool) cell {
 	id := spec.ID
@@ -370,6 +385,13 @@ func modeCell(t *testing.T, spec registry.Spec, stream bool, chat, skips map[str
 			return cell{kindP, s, sn}
 		}
 		return cell{kindP, ns, nsn}
+	}
+	if plainProviderWires[id] {
+		mode := "non-streaming"
+		if stream {
+			mode = "streaming"
+		}
+		return cell{kindP, ref(plainProviderWireTest), "its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, " + mode + " (registry/" + id + ".js)"}
 	}
 	switch id {
 	case "codebuddy-cn", "codebuddy-intl":
@@ -678,8 +700,11 @@ func TestP08MatrixCoversEveryActiveProviderWithRealEvidence(t *testing.T) {
 					t.Errorf("%s: kind %s names no test", where, c.Kind)
 				}
 			case kindN:
-				if !strings.Contains(c.Note, "open-sse/") && !strings.Contains(c.Note, "route.js") {
-					t.Errorf("%s: a not-applicable cell must cite the pin: %q", where, c.Note)
+				if !regexp.MustCompile(`(?:open-sse/|route\.js)[^ ]*:\d`).MatchString(c.Note) {
+					t.Errorf("%s: a not-applicable cell must cite a pin file and line: %q", where, c.Note)
+				}
+				if len(strings.TrimSpace(c.Note)) < 40 {
+					t.Errorf("%s: a not-applicable cell must give the pin's reason: %q", where, c.Note)
 				}
 			case kindG:
 				if c.Note == "" {
@@ -694,6 +719,21 @@ func TestP08MatrixCoversEveryActiveProviderWithRealEvidence(t *testing.T) {
 					t.Errorf("%s: %q is not a Test function in internal/%s", where, r, dir)
 				}
 			}
+		}
+	}
+	// Every active provider must name at least one test of its own: a P cell, or
+	// a C cell for a provider the build refuses (its codec is still tested under
+	// its id). A row whose evidence is only the shared path (T/S), only a
+	// not-applicable pin (N), or only its readiness refusal (U) is exactly the
+	// regression the P08 breadth review found.
+	for _, spec := range specs {
+		hasP, hasC := false, false
+		for _, c := range rows[spec.ID] {
+			hasP = hasP || c.Kind == kindP
+			hasC = hasC || c.Kind == kindC
+		}
+		if !hasP && !hasC {
+			t.Errorf("%s has no provider-specific test (no P or C cell); the shared path is not evidence for this provider", spec.ID)
 		}
 	}
 	// A provider the build refuses must never claim served evidence.
@@ -736,7 +776,7 @@ func renderMatrix(specs []registry.Spec, rows map[string][columns]cell) string {
 	b.WriteString(matrixIntro)
 
 	// Totals.
-	var withProviderTest, codecOnly, sharedOnly, noEvidence []string
+	var withP, withProviderTest, codecOnly, sharedOnly, noEvidence []string
 	for _, spec := range specs {
 		hasP, hasC, hasShared := false, false, false
 		for _, c := range rows[spec.ID] {
@@ -744,11 +784,15 @@ func renderMatrix(specs []registry.Spec, rows map[string][columns]cell) string {
 			hasC = hasC || c.Kind == kindC
 			hasShared = hasShared || c.Kind == kindT || c.Kind == kindS
 		}
-		switch {
-		case hasP:
-			withProviderTest = append(withProviderTest, spec.ID)
-		case hasC:
+		if hasP {
+			withP = append(withP, spec.ID)
+		}
+		if !hasP && hasC {
 			codecOnly = append(codecOnly, spec.ID)
+		}
+		switch {
+		case hasP || hasC:
+			withProviderTest = append(withProviderTest, spec.ID)
 		case hasShared:
 			sharedOnly = append(sharedOnly, spec.ID)
 		default:
@@ -757,8 +801,8 @@ func renderMatrix(specs []registry.Spec, rows map[string][columns]cell) string {
 	}
 	b.WriteString("## Honest totals\n\n")
 	fmt.Fprintf(&b, "Of the %d active providers:\n\n", len(specs))
-	fmt.Fprintf(&b, "- **%d** have at least one provider-specific test (a `P` cell).\n", len(withProviderTest))
-	fmt.Fprintf(&b, "- **%d** have no `P` cell but a codec-level test (`C`) for a provider the build refuses: %s.\n", len(codecOnly), codeList(codecOnly))
+	fmt.Fprintf(&b, "- **%d** have at least one provider-specific test (a `P` cell): %s.\n", len(withP), codeList(withP))
+	fmt.Fprintf(&b, "- **%d** have any provider-specific evidence (a `P` or `C` cell); **%d** of them only through a codec-level test (`C`) for a provider the build refuses: %s.\n", len(withProviderTest), len(withProviderTest)-len(withP), codeList(codecOnly))
 	fmt.Fprintf(&b, "- **%d** are shared-path only: every evidenced cell is a table row (`T`) or the shared path (`S`), and the rest are not applicable, refused or gaps: %s.\n", len(sharedOnly), codeList(sharedOnly))
 	fmt.Fprintf(&b, "- **%d** have no test of any kind: every cell is `N`, `U` or `G`: %s.\n\n", len(noEvidence), codeList(noEvidence))
 	var servingPath []string
@@ -900,8 +944,11 @@ Oracle: the matrix was written against the reference at ` + "`1c3b9f47`" + `, re
 ` + "`ORACLE_SHA`" + `. Every pin citation below is a path and line at ` + "`1c3b9f47`" + `.
 
 This file is generated from ` + "`internal/parity/p08_matrix_test.go`" + `. ` + "`TestP08MatrixCoversEveryActiveProviderWithRealEvidence`" + `
-fails if a row is missing, a cell names a test that does not exist, a not-applicable
-cell cites no pin file, or a served provider claims a refusal. ` + "`TestP08MatrixDocIsCurrent`" + `
+fails if a row is missing, a cell names a test that does not exist, an active
+provider's evidence is only the shared path (no ` + "`P`" + ` or codec ` + "`C`" + ` cell), a
+not-applicable cell cites no pin file and line, or a served provider claims a
+refusal. A ` + "`P`" + ` may be one parameterised test that lists the provider's id and
+asserts that provider's own pinned values. ` + "`TestP08MatrixDocIsCurrent`" + `
 fails if this file differs from the table; regenerate with
 ` + "`P08_WRITE=1 go test ./internal/parity -run TestP08MatrixDocIsCurrent`" + `.
 
@@ -934,6 +981,7 @@ New deterministic tests (no network, sanitized synthetic bodies shaped like the 
 
 - ` + "`internal/providers/usage/p08_test.go`" + `: pin-shaped quota fixtures for the readers that had none, namely OpenCode Go, Ollama, Xiaomi MiMo, Zed, Command Code, MiniMax and MiniMax CN, Qoder, and the GLM CN and CodeBuddy International regional hosts. They assert used-versus-remaining semantics, that an absent window is skipped rather than invented, exhausted windows, and that failures are errors, not healthy accounts.
 - ` + "`internal/ingress/p08_tokens_test.go`" + `: cached versus ordinary tokens through real dispatch with each provider's real id, stream and non-stream: Anthropic and MiniMax Messages cache read/creation, DeepSeek ` + "`prompt_cache_hit_tokens`" + `, Kimi top-level ` + "`cached_tokens`" + `, Mistral details, and Responses ` + "`input_tokens_details`" + ` for Codex, Grok CLI, Muse and xAI.
+- ` + "`internal/ingress/p08_breadth_test.go`" + `: the 31 providers whose pinned entry is a plain API-key wire each have a named row in one parameterised test. It drives real dispatch and asserts that provider's own pinned wire URL, bearer form, static catalog and models listing, in both modes; ` + "`TestRegistryChatWires`" + ` remains the ` + "`T`" + ` evidence for the shared seam.
 - ` + "`internal/ingress/p08_wires_test.go`" + `: stream and non-stream on every native transport of every served provider that ` + "`TestRegistryChatWires`" + ` (Chat only) did not already walk, the connection-scoped Azure and Token Plan targets, and OpenCode's forced stream folded to one JSON body. These are ` + "`T`" + ` evidence, not provider-specific behaviour.
 - ` + "`internal/ingress/p08_errors_test.go`" + `: provider-keyed non-OpenAI error bodies classified against the pin's rules and relayed to the client byte for byte, plus ` + "`TestP08ErrorClassificationClosedGaps`" + `, which now asserts the 402 cooldown (it pinned the divergence before it was closed) and ` + "`TestPaymentRequiredAccountFallsBackToTheNextAccount`" + `, which proves the next account serves.
 - ` + "`internal/parity/listing_urls_test.go`" + ` (oracle-gated): the authenticated-listing URL Routeweft builds for each of the 23 providers the pin lists with a plain bearer GET equals the pinned URL.
@@ -955,5 +1003,5 @@ The registry rewrite of Blackbox and DeepSeek ids (` + "`registry.UpstreamModelI
 
 ## What stays open
 
-P08 does not make any provider "work". The matrix has no ` + "`G`" + ` cell: every cell is evidenced by a test that would fail if the behaviour were absent (` + "`P`" + `, or ` + "`C`" + ` and ` + "`U`" + ` for the providers this build refuses, nothing reaching them from dispatch) or by the shared path (` + "`T`" + `, ` + "`S`" + `: only the shared path was exercised, and a bug in it would fail every row alike), or it is ` + "`N`" + ` with the pin's file and line. That is deterministic evidence against synthetic upstreams, not a live or production claim; no request has reached a real provider from this repository.
+P08 does not make any provider "work". The matrix has no ` + "`G`" + ` cell, and every active row now names at least one test of its own: 79 have a ` + "`P`" + ` cell and the two providers this build refuses (` + "`grok-web`" + `, ` + "`perplexity-web`" + `) have provider-named codec ` + "`C`" + ` cells. No row is shared-path only (0) and no row has no test (0). A ` + "`T`" + ` or ` + "`S`" + ` cell still means only the shared path was exercised and a bug in it would fail every row alike; an ` + "`N`" + ` cell carries the pin's file and line. That is deterministic evidence against synthetic upstreams, not a live or production claim; no request has reached a real provider from this repository.
 `

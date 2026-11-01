@@ -12,8 +12,11 @@ Oracle: the matrix was written against the reference at `1c3b9f47`, read with
 `ORACLE_SHA`. Every pin citation below is a path and line at `1c3b9f47`.
 
 This file is generated from `internal/parity/p08_matrix_test.go`. `TestP08MatrixCoversEveryActiveProviderWithRealEvidence`
-fails if a row is missing, a cell names a test that does not exist, a not-applicable
-cell cites no pin file, or a served provider claims a refusal. `TestP08MatrixDocIsCurrent`
+fails if a row is missing, a cell names a test that does not exist, an active
+provider's evidence is only the shared path (no `P` or codec `C` cell), a
+not-applicable cell cites no pin file and line, or a served provider claims a
+refusal. A `P` may be one parameterised test that lists the provider's id and
+asserts that provider's own pinned values. `TestP08MatrixDocIsCurrent`
 fails if this file differs from the table; regenerate with
 `P08_WRITE=1 go test ./internal/parity -run TestP08MatrixDocIsCurrent`.
 
@@ -42,12 +45,12 @@ known good view (#173); the quota and token cells are written against that rule.
 
 Of the 81 active providers:
 
-- **48** have at least one provider-specific test (a `P` cell).
-- **2** have no `P` cell but a codec-level test (`C`) for a provider the build refuses: `grok-web`, `perplexity-web`.
-- **31** are shared-path only: every evidenced cell is a table row (`T`) or the shared path (`S`), and the rest are not applicable, refused or gaps: `alicode-intl`, `alitp-intl`, `alicode`, `alims-intl`, `baidu`, `bazaarlink`, `blackbox`, `bluesminds`, `byteplus`, `cerebras`, `chutes`, `cohere`, `featherless`, `fireworks`, `hyperbolic`, `kilo-gateway`, `llm7`, `morph`, `nebius`, `nvidia`, `poolside`, `sambanova`, `siliconflow`, `tencent`, `together`, `venice`, `volcengine-ark`, `openai`, `tokenrouter`, `muse`, `xai`.
+- **79** have at least one provider-specific test (a `P` cell): `alicode-intl`, `alitp-intl`, `alicode`, `alims-intl`, `api-airforce`, `baidu`, `bazaarlink`, `blackbox`, `bluesminds`, `byteplus`, `cerebras`, `chutes`, `cohere`, `featherless`, `fireworks`, `groq`, `hyperbolic`, `kilo-gateway`, `llm7`, `mistral`, `morph`, `nebius`, `nvidia`, `openrouter`, `perplexity`, `poolside`, `sambanova`, `siliconflow`, `tencent`, `together`, `venice`, `vercel-ai-gateway`, `volcengine-ark`, `openai`, `codex`, `anthropic`, `gemini`, `claude`, `deepseek`, `glm`, `glm-cn`, `minimax`, `minimax-cn`, `xiaomi-tokenplan`, `mimo-free`, `mmf`, `opencode`, `ollama`, `ollama-local`, `typesafe`, `vertex-partner`, `tokenrouter`, `perplexity-agent`, `opencode-go`, `cloudflare-ai`, `muse`, `xai`, `github`, `gitlab`, `iflow`, `kimi`, `xiaomi-mimo`, `cline`, `clinepass`, `kilocode`, `codebuddy-cn`, `codebuddy-intl`, `antigravity`, `gemini-cli`, `cursor`, `qoder`, `kiro`, `vertex`, `commandcode`, `grok-cli`, `kenari`, `zed`, `kimchi`, `azure`.
+- **81** have any provider-specific evidence (a `P` or `C` cell); **2** of them only through a codec-level test (`C`) for a provider the build refuses: `grok-web`, `perplexity-web`.
+- **0** are shared-path only: every evidenced cell is a table row (`T`) or the shared path (`S`), and the rest are not applicable, refused or gaps: none.
 - **0** have no test of any kind: every cell is `N`, `U` or `G`: none.
 
-Counting only the serving path (a `P` in streaming, non-streaming, error shapes or tokens), **33** providers have a provider-specific test: `api-airforce`, `groq`, `mistral`, `openrouter`, `codex`, `anthropic`, `gemini`, `deepseek`, `minimax`, `xiaomi-tokenplan`, `mimo-free`, `mmf`, `opencode`, `ollama`, `typesafe`, `vertex-partner`, `cloudflare-ai`, `iflow`, `kimi`, `xiaomi-mimo`, `cline`, `clinepass`, `codebuddy-cn`, `codebuddy-intl`, `antigravity`, `gemini-cli`, `kiro`, `vertex`, `commandcode`, `grok-cli`, `kenari`, `zed`, `azure`. The other 48 have one only for listing, quota or import, or none.
+Counting only the serving path (a `P` in streaming, non-streaming, error shapes or tokens), **64** providers have a provider-specific test: `alicode-intl`, `alitp-intl`, `alicode`, `alims-intl`, `api-airforce`, `baidu`, `bazaarlink`, `blackbox`, `bluesminds`, `byteplus`, `cerebras`, `chutes`, `cohere`, `featherless`, `fireworks`, `groq`, `hyperbolic`, `kilo-gateway`, `llm7`, `mistral`, `morph`, `nebius`, `nvidia`, `openrouter`, `poolside`, `sambanova`, `siliconflow`, `tencent`, `together`, `venice`, `volcengine-ark`, `openai`, `codex`, `anthropic`, `gemini`, `deepseek`, `minimax`, `xiaomi-tokenplan`, `mimo-free`, `mmf`, `opencode`, `ollama`, `typesafe`, `vertex-partner`, `tokenrouter`, `cloudflare-ai`, `muse`, `xai`, `iflow`, `kimi`, `xiaomi-mimo`, `cline`, `clinepass`, `codebuddy-cn`, `codebuddy-intl`, `antigravity`, `gemini-cli`, `kiro`, `vertex`, `commandcode`, `grok-cli`, `kenari`, `zed`, `azure`. The other 17 have one only for listing, quota or import, or none.
 
 Kinds count cells, not providers: a `P` row can still have `T`, `S` and `G` cells, and the per-column tables below say which.
 
@@ -59,11 +62,11 @@ Cells by kind and column:
 | Quota / usage read | 24 | 0 | 0 | 0 | 0 | 0 | 57 |
 | Applicable unavailability | 23 | 1 | 0 | 54 | 3 | 0 | 0 |
 | Import / refresh | 19 | 0 | 3 | 0 | 0 | 0 | 59 |
-| Streaming | 25 | 4 | 51 | 1 | 0 | 0 | 0 |
-| Non-streaming | 26 | 4 | 50 | 1 | 0 | 0 | 0 |
+| Streaming | 56 | 4 | 20 | 1 | 0 | 0 | 0 |
+| Non-streaming | 57 | 4 | 19 | 1 | 0 | 0 | 0 |
 | Error shapes | 29 | 4 | 1 | 47 | 0 | 0 | 0 |
 | Cached vs ordinary tokens | 18 | 4 | 5 | 54 | 0 | 0 | 0 |
-| **All cells** | **189** | **17** | **130** | **159** | **3** | **0** | **150** |
+| **All cells** | **251** | **17** | **68** | **159** | **3** | **0** | **150** |
 
 648 cells in all (81 providers x 8 behaviours). `N` cells carry a pin citation in the evidence tables below.
 
@@ -71,40 +74,40 @@ Cells by kind and column:
 
 | Provider | Readiness | List | Quota | Unavail | Import | Stream | NonStr | Errors | Tokens |
 |---|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `alicode-intl` | ready | T | N | S | N | T | T | S | S |
-| `alitp-intl` | ready | N | N | S | N | T | T | S | S |
-| `alicode` | ready | T | N | S | N | T | T | S | S |
-| `alims-intl` | ready | T | N | S | N | T | T | S | S |
+| `alicode-intl` | ready | T | N | S | N | P | P | S | S |
+| `alitp-intl` | ready | N | N | S | N | P | P | S | S |
+| `alicode` | ready | T | N | S | N | P | P | S | S |
+| `alims-intl` | ready | T | N | S | N | P | P | S | S |
 | `api-airforce` | ready | P | N | S | N | P | P | P | P |
-| `baidu` | ready | N | N | S | N | T | T | S | S |
-| `bazaarlink` | ready | N | N | S | N | T | T | S | S |
-| `blackbox` | ready | N | N | S | N | T | T | S | S |
-| `bluesminds` | ready | N | N | S | N | T | T | S | S |
-| `byteplus` | ready | T | N | S | N | T | T | S | S |
-| `cerebras` | ready | T | N | S | N | T | T | S | S |
-| `chutes` | ready | T | N | S | N | T | T | S | S |
-| `cohere` | ready | T | N | S | N | T | T | S | S |
-| `featherless` | ready | N | N | S | N | T | T | S | S |
-| `fireworks` | ready | T | N | S | N | T | T | S | S |
+| `baidu` | ready | N | N | S | N | P | P | S | S |
+| `bazaarlink` | ready | N | N | S | N | P | P | S | S |
+| `blackbox` | ready | N | N | S | N | P | P | S | S |
+| `bluesminds` | ready | N | N | S | N | P | P | S | S |
+| `byteplus` | ready | T | N | S | N | P | P | S | S |
+| `cerebras` | ready | T | N | S | N | P | P | S | S |
+| `chutes` | ready | T | N | S | N | P | P | S | S |
+| `cohere` | ready | T | N | S | N | P | P | S | S |
+| `featherless` | ready | N | N | S | N | P | P | S | S |
+| `fireworks` | ready | T | N | S | N | P | P | S | S |
 | `groq` | ready | T | P | P | N | T | T | P | S |
-| `hyperbolic` | ready | T | N | S | N | T | T | S | S |
-| `kilo-gateway` | ready | N | N | S | N | T | T | S | S |
-| `llm7` | ready | N | N | S | N | T | T | S | S |
+| `hyperbolic` | ready | T | N | S | N | P | P | S | S |
+| `kilo-gateway` | ready | N | N | S | N | P | P | S | S |
+| `llm7` | ready | N | N | S | N | P | P | S | S |
 | `mistral` | ready | T | N | S | N | T | T | P | T |
-| `morph` | ready | N | N | S | N | T | T | S | S |
-| `nebius` | ready | T | N | S | N | T | T | S | S |
-| `nvidia` | ready | T | N | S | N | T | T | S | S |
+| `morph` | ready | N | N | S | N | P | P | S | S |
+| `nebius` | ready | T | N | S | N | P | P | S | S |
+| `nvidia` | ready | T | N | S | N | P | P | S | S |
 | `openrouter` | ready | P | N | P | N | P | T | S | S |
 | `perplexity` | ready | P | N | S | N | T | T | S | S |
-| `poolside` | ready | N | N | S | N | T | T | S | S |
-| `sambanova` | ready | N | N | S | N | T | T | S | S |
-| `siliconflow` | ready | T | N | S | N | T | T | S | S |
-| `tencent` | ready | N | N | S | N | T | T | S | S |
-| `together` | ready | T | N | S | N | T | T | S | S |
-| `venice` | ready | S | N | S | N | T | T | S | S |
+| `poolside` | ready | N | N | S | N | P | P | S | S |
+| `sambanova` | ready | N | N | S | N | P | P | S | S |
+| `siliconflow` | ready | T | N | S | N | P | P | S | S |
+| `tencent` | ready | N | N | S | N | P | P | S | S |
+| `together` | ready | T | N | S | N | P | P | S | S |
+| `venice` | ready | S | N | S | N | P | P | S | S |
 | `vercel-ai-gateway` | ready | T | P | P | N | T | T | S | S |
-| `volcengine-ark` | ready | T | N | S | N | T | T | S | S |
-| `openai` | ready | T | N | S | N | T | T | S | S |
+| `volcengine-ark` | ready | T | N | S | N | P | P | S | S |
+| `openai` | ready | T | N | S | N | P | P | S | S |
 | `codex` | ready | P | P | P | P | P | P | P | T |
 | `anthropic` | ready | P | N | S | N | T | T | P | P |
 | `gemini` | ready | P | N | S | N | P | P | P | P |
@@ -122,12 +125,12 @@ Cells by kind and column:
 | `ollama-local` | experimental | P | N | S | N | S | S | S | S |
 | `typesafe` | unavailable | N | N | U | N | P | P | P | P |
 | `vertex-partner` | experimental | N | N | S | N | P | P | P | S |
-| `tokenrouter` | ready | S | N | S | N | T | T | S | S |
+| `tokenrouter` | ready | S | N | S | N | P | P | S | S |
 | `perplexity-agent` | ready | P | N | S | N | T | T | S | S |
 | `opencode-go` | experimental | N | P | P | N | T | T | S | S |
 | `cloudflare-ai` | experimental | N | N | S | N | P | P | P | P |
-| `muse` | ready | N | N | S | N | T | T | S | T |
-| `xai` | ready | T | N | S | T | T | T | S | T |
+| `muse` | ready | N | N | S | N | P | P | S | T |
+| `xai` | ready | T | N | S | T | P | P | S | T |
 | `github` | experimental | P | P | P | P | T | T | T | S |
 | `gitlab` | ready | N | N | S | P | T | T | S | S |
 | `iflow` | ready | N | N | S | P | T | T | P | S |
@@ -385,8 +388,36 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 
 ### Streaming
 
+- **P** `alicode-intl` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/alicode-intl.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `alitp-intl` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/alitp-intl.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `alicode` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/alicode.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `alims-intl` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/alims-intl.js) Tests: `ingress:TestPinnedPlainProviderWires`.
 - **P** `api-airforce` — forced stream on Chat, Responses and Messages clients (registry/api-airforce.js:25-32) Tests: `ingress:TestAirforceForcedStreamAcrossClientProtocols`.
+- **P** `baidu` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/baidu.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `bazaarlink` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/bazaarlink.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `blackbox` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/blackbox.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `bluesminds` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/bluesminds.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `byteplus` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/byteplus.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `cerebras` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/cerebras.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `chutes` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/chutes.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `cohere` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/cohere.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `featherless` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/featherless.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `fireworks` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/fireworks.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `hyperbolic` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/hyperbolic.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `kilo-gateway` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/kilo-gateway.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `llm7` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/llm7.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `morph` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/morph.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `nebius` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/nebius.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `nvidia` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/nvidia.js) Tests: `ingress:TestPinnedPlainProviderWires`.
 - **P** `openrouter` — passthrough stream relayed byte for byte Tests: `ingress:TestOpenRouterPassthroughStreamRelaysBytes`, `ingress:TestRegistryNativeTransportWires`.
+- **P** `poolside` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/poolside.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `sambanova` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/sambanova.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `siliconflow` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/siliconflow.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `tencent` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/tencent.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `together` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/together.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `venice` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/venice.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `volcengine-ark` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/volcengine-ark.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `openai` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/openai.js) Tests: `ingress:TestPinnedPlainProviderWires`.
 - **P** `codex` — the endpoint's contract (executors/codex.js:417-519): stream forced, store:false, default instructions only when blank, review twin sent as its base model, unsupported fields dropped and the allowlist applied (P02 second slice, PARITY 6.19) Tests: `ingress:TestCodexStreamingClientKeepsItsStreamByteForByte`, `ingress:TestCodexDispatchSendsTheEndpointsContractNotTheClientsBody`, `providers/wire:TestCodexBodyIsAlwaysStreamedAndNeverStored`, `providers/wire:TestCodexInstructionsDefaultOnlyWhenBlank`, `providers/wire:TestCodexOnlyTheEndpointsFieldsAreSent`, `providers/wire:TestCodexModelIsTheUpstreamOne`, `ingress:TestCodexProviderHeadersCarryCLIFingerprint`.
 - **P** `gemini` — every converted client over streamGenerateContent Tests: `ingress:TestGeminiServesEveryConvertedClient`, `ingress:TestGeminiArrayFramedStreamIsServedWithUnobservedUsage`.
 - **P** `xiaomi-tokenplan` — Chat and Messages wires post to their own paths Tests: `ingress:TestConnectionScopedTargetsStreamAndNonStream`, `ingress:TestTokenplanRoutesPerWire`.
@@ -395,7 +426,10 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `ollama` — NDJSON stream conversion Tests: `ingress:TestOllamaFinalLineWithoutNewlineIsAccounted`, `ingress:TestTruncatedOllamaStreamIsAFailure`, `protocol/ollama:TestStreamIsConvertedLineByLine`.
 - **P** `typesafe` — System One stream, usage at EOF Tests: `app:TestConfiguredSystemOneWireAndAccounting`, `ingress:TestSystemOneStreamUsageAtEOFAndAfterOversizedOpaqueLine`.
 - **P** `vertex-partner` — a raw key with no project is probed for it (vertex.js:35-49,158-164), then streamed with the key in X-Goog-Api-Key; unverified against a live gateway (provider is experimental) Tests: `ingress:TestVertexPartnerRawKeyIsProbedAndServed`, `providers/wire:TestVertexPartnerProbesTheProjectOfARawKey`, `providers/wire:TestVertexPartnerProbeEndsWithTheRequest`.
+- **P** `tokenrouter` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/tokenrouter.js) Tests: `ingress:TestPinnedPlainProviderWires`.
 - **P** `cloudflare-ai` — the System One leg; the Chat leg is verified at the URL seam only (wire:TestCloudflareTargetURLs) Tests: `app:TestConfiguredSystemOneWireAndAccounting`, `app:TestConfiguredSystemOneCloudflareFallback`.
+- **P** `muse` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/muse.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `xai` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, streaming (registry/xai.js) Tests: `ingress:TestPinnedPlainProviderWires`.
 - **P** `cline`, `clinepass` — an SSE body is not unwrapped Tests: `ingress:TestClineEnvelopeOnlyUnwrapsNonStreamSuccess`.
 - **P** `codebuddy-cn`, `codebuddy-intl` — gateway answers only streams; empty tool_calls stripped, cancellation reaches the upstream Tests: `ingress:TestCodeBuddyStreamingClientKeepsItsStreamMinusEmptyToolCalls`, `ingress:TestCodeBuddyForcedStreamCancellationReachesUpstream`, `ingress:TestCodeBuddyInbandStreamErrorRelaysParsedMessage`.
 - **P** `antigravity`, `gemini-cli`, `vertex` — every client wire over streamGenerateContent?alt=sse, the Cloud Code envelope and its response unwrapped (executors/gemini-cli.js:10-35, antigravity.js:118-135, vertex.js:83-123) Tests: `ingress:TestGeminiFamilyIsServedToEveryClientWire`, `protocol/gemini:TestCloudCodeResponseLegsServeBothWires`, `providers/wire:TestCloudCodeURLs`, `providers/wire:TestVertexURLs`.
@@ -408,14 +442,12 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **C** `cursor` — the Connect stream codec and cancellation, and the legacy ChatService decoder (image-bearing turns, cursor.js:955-1250); the provider is unavailable Tests: `providers/wire:TestCursorConsumeStreamsTextAndStops`, `providers/wire:TestCursorDoStopsUpstreamWhenTheClientLeaves`, `providers/wire:TestCursorChatServiceServesAnImageTurn`.
 - **C** `qoder` — the pin converts in its executor, not a translator leg (registry/qoder.js:19-26): envelope, encoding, model_config, attachments (executors/qoder.js:210-335, shared/qoder/*.js) and the SSE unwrap with the socket closed at the terminal frame (:426-597) are ported and checked against the pin's own run (PARITY 6.22); the provider is unavailable, so nothing reaches them from dispatch Tests: `providers/wire:TestQoderEnvelopeMatchesPin`, `providers/wire:TestQoderEncodeBodyMatchesPin`, `providers/wire:TestQoderAttachmentsMatchPin`, `providers/wire:TestQoderPrepareChatMatchesPin`, `providers/wire:TestQoderPrepareChatSignsTheEncodedBody`, `providers/wire:TestQoderUnwrapSSEMatchesPin`, `providers/wire:TestQoderUnwrapSSEStopsWhenTheClientLeaves`, `ingress:TestQoderDispatchUsesThePreparedEnvelope`.
 - **C** `grok-web`, `perplexity-web` — refused by its immutable readiness, so nothing reaches it from dispatch; the hook Codec serves every client wire, streaming and not, with the fence lifted for the test run only, and the wire tests read the site's stream and whole answer as Chat Tests: `ingress:TestReadinessMatchesIngressReachability`, `ingress:TestGrokWebIsServedToEveryClientWire`, `ingress:TestPerplexityWebIsServedToEveryClientWire`, `ingress:TestPerplexityWebThreadIsContinuedOnlyOnTheSameConnection`, `providers/wire:TestGrokWebStreamToChat`, `providers/wire:TestGrokWebBufferedAnswer`, `providers/wire:TestPerplexityWebStreamToChat`, `providers/wire:TestPerplexityWebBufferedAnswer`.
-- **T** `alicode-intl`, `alitp-intl`, `alicode`, `alims-intl`, `baidu`, `bazaarlink`, `blackbox`, `bluesminds`, `byteplus`, `cerebras`, `chutes`, `cohere`, `featherless`, `fireworks`, `groq`, `hyperbolic`, `kilo-gateway`, `llm7`, `mistral`, `morph`, `nebius`, `nvidia`, `perplexity`, `poolside`, `sambanova`, `siliconflow`, `tencent`, `together`, `venice`, `vercel-ai-gateway`, `volcengine-ark`, `glm-cn`, `tokenrouter`, `gitlab` — shared path, this provider's own URL and credential: Chat Tests: `ingress:TestRegistryChatWires`.
-- **T** `openai` — shared path, this provider's own URL and credential: openai-chat, openai-responses Tests: `ingress:TestRegistryNativeTransportWires`.
+- **T** `groq`, `mistral`, `perplexity`, `vercel-ai-gateway`, `glm-cn`, `gitlab` — shared path, this provider's own URL and credential: Chat Tests: `ingress:TestRegistryChatWires`.
 - **T** `anthropic`, `claude` — shared path, this provider's own URL and credential: anthropic-messages Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `deepseek` — shared path, this provider's own URL and credential: Chat, anthropic-messages Tests: `ingress:TestRegistryChatWires`, `ingress:TestRegistryNativeTransportWires`.
 - **T** `glm`, `minimax`, `minimax-cn` — shared path, this provider's own URL and credential: openai-chat, anthropic-messages Tests: `ingress:TestRegistryNativeTransportWires`.
-- **T** `perplexity-agent`, `muse` — shared path, this provider's own URL and credential: openai-responses Tests: `ingress:TestRegistryNativeTransportWires`.
+- **T** `perplexity-agent` — shared path, this provider's own URL and credential: openai-responses Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `opencode-go` — shared path, this provider's own URL and credential: openai-chat, openai-responses, anthropic-messages. Open: Responses-only models, the session header and body normalization (executors/opencode-go.js:128-210) are not replicated (experimental) Tests: `ingress:TestRegistryNativeTransportWires`.
-- **T** `xai` — shared path, this provider's own URL and credential: Chat, openai-responses Tests: `ingress:TestRegistryChatWires`, `ingress:TestRegistryNativeTransportWires`.
 - **T** `github` — shared path, this provider's own URL and credential: openai-chat, openai-responses, anthropic-messages. Open: Claude models via /v1/messages and the forced stream on Responses (executors/github.js:250-275) are not replicated (experimental) Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `iflow` — Chat both modes through the table; the signature over the final body is asserted by TestIflowRequestIsSigned Tests: `ingress:TestRegistryNativeTransportWires`, `ingress:TestIflowRequestIsSigned`.
 - **T** `kimi` — shared path, this provider's own URL and credential: openai-chat, anthropic-messages, openai-responses Tests: `ingress:TestRegistryNativeTransportWires`.
@@ -425,7 +457,35 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 
 ### Non-streaming
 
+- **P** `alicode-intl` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/alicode-intl.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `alitp-intl` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/alitp-intl.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `alicode` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/alicode.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `alims-intl` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/alims-intl.js) Tests: `ingress:TestPinnedPlainProviderWires`.
 - **P** `api-airforce` — folded to one JSON body; a failed stream is never returned as partial JSON Tests: `ingress:TestAirforceForcedStreamAcrossClientProtocols`, `ingress:TestAirforceStreamFailureDoesNotReturnPartialJSON`.
+- **P** `baidu` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/baidu.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `bazaarlink` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/bazaarlink.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `blackbox` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/blackbox.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `bluesminds` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/bluesminds.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `byteplus` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/byteplus.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `cerebras` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/cerebras.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `chutes` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/chutes.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `cohere` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/cohere.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `featherless` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/featherless.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `fireworks` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/fireworks.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `hyperbolic` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/hyperbolic.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `kilo-gateway` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/kilo-gateway.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `llm7` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/llm7.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `morph` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/morph.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `nebius` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/nebius.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `nvidia` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/nvidia.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `poolside` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/poolside.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `sambanova` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/sambanova.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `siliconflow` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/siliconflow.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `tencent` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/tencent.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `together` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/together.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `venice` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/venice.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `volcengine-ark` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/volcengine-ark.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `openai` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/openai.js) Tests: `ingress:TestPinnedPlainProviderWires`.
 - **P** `codex` — a non-stream Chat, Responses or Messages client gets one body folded from the forced stream; an in-band failure of the stream is an account failure, not a partial answer Tests: `ingress:TestCodexNonStreamResponsesClientGetsOneJSONFromAForcedStream`, `ingress:TestCodexForcedStreamReachesTranslatedClients`, `ingress:TestCodexDispatchSendsTheEndpointsContractNotTheClientsBody`, `ingress:TestCodexInBandFailureOfAForcedStreamIsAnAccountFailure`.
 - **P** `gemini` — every converted client over generateContent Tests: `ingress:TestGeminiServesEveryConvertedClient`, `protocol/gemini:TestBufferedResponse`.
 - **P** `xiaomi-tokenplan` — Chat and Messages wires post to their own paths Tests: `ingress:TestConnectionScopedTargetsStreamAndNonStream`, `ingress:TestTokenplanRoutesPerWire`.
@@ -434,7 +494,10 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `ollama` — buffered body conversion Tests: `protocol/ollama:TestBufferedBodyIsConverted`, `ingress:TestOllamaRefusalMovesToTheNextCandidate`.
 - **P** `typesafe` — System One non-stream Tests: `app:TestConfiguredSystemOneWireAndAccounting`.
 - **P** `vertex-partner` — project from the service account, the ADC or projectId (vertex.js:71-74); SA/ADC minted into a bearer; unverified against a live gateway (provider is experimental) Tests: `ingress:TestVertexPartnerRawKeyIsProbedAndServed`, `providers/wire:TestVertexPartnerProjectPrecedence`, `providers/wire:TestVertexPartnerAuthorizesWithAMintedToken`.
+- **P** `tokenrouter` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/tokenrouter.js) Tests: `ingress:TestPinnedPlainProviderWires`.
 - **P** `cloudflare-ai` — the System One leg; the Chat leg is verified at the URL seam only Tests: `app:TestConfiguredSystemOneWireAndAccounting`.
+- **P** `muse` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/muse.js) Tests: `ingress:TestPinnedPlainProviderWires`.
+- **P** `xai` — its own row of a parameterised test: the pin's wire URL, bearer auth and static catalog, plus its models listing where the pin has one, non-streaming (registry/xai.js) Tests: `ingress:TestPinnedPlainProviderWires`.
 - **P** `kimi` — Chat fixture replayed byte for byte; Messages beta query and device headers; Responses through the table Tests: `ingress:TestProviderKimiChatNativeReplaysFixture`, `ingress:TestMessagesBetaQueryAndKimiDeviceHeaders`, `ingress:TestRegistryNativeTransportWires`.
 - **P** `xiaomi-mimo` — Messages fixture posts to the provider path; Chat through the table; Preview models take the account route with the sealed session (executors/xiaomi-mimo.js:21-99) Tests: `ingress:TestProviderXiaomiMimoMessagesNativeUsesProviderPath`, `ingress:TestRegistryNativeTransportWires`, `providers/wire:TestMimoPreviewDoSendsTheAccountRouteAndRetriesOnce`.
 - **P** `cline`, `clinepass` — the {success,data} envelope is unwrapped and accounted Tests: `ingress:TestClineEnvelopeFixtureIsUnwrappedAndAccounted`, `ingress:TestClineEnvelopeIsUnwrappedBeforeResponsesTranslation`, `ingress:TestClineAuthorizationPrefixReachesUpstream`.
@@ -449,15 +512,13 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **C** `cursor` — the buffered Chat body, and the pinned bytes and forced-stream fold of the ChatService path; the provider is unavailable Tests: `protocol/cursor:TestBufferedBody`, `providers/wire:TestCursorChatServiceServesAnImageTurn`.
 - **C** `qoder` — the pin always asks for a stream and folds it into one body above the executor (qoder.js:613-734); the fold is wired (PreFoldStream, dispatch.go) and a Chat, Responses or Messages client that did not stream gets one document, with the fence lifted for the test run only; the provider is unavailable, so nothing reaches it from dispatch Tests: `ingress:TestQoderServesNonStreamAndStreamClientsOnEveryWire`, `ingress:TestQoderNonStreamFoldUnwrapsBeforeFolding`, `providers/wire:TestQoderUnwrapSSEMatchesPin`.
 - **C** `grok-web`, `perplexity-web` — refused by its immutable readiness, so nothing reaches it from dispatch; the hook Codec serves every client wire, streaming and not, with the fence lifted for the test run only, and the wire tests read the site's stream and whole answer as Chat Tests: `ingress:TestReadinessMatchesIngressReachability`, `ingress:TestGrokWebIsServedToEveryClientWire`, `ingress:TestPerplexityWebIsServedToEveryClientWire`, `ingress:TestPerplexityWebThreadIsContinuedOnlyOnTheSameConnection`, `providers/wire:TestGrokWebStreamToChat`, `providers/wire:TestGrokWebBufferedAnswer`, `providers/wire:TestPerplexityWebStreamToChat`, `providers/wire:TestPerplexityWebBufferedAnswer`.
-- **T** `alicode-intl`, `alitp-intl`, `alicode`, `alims-intl`, `baidu`, `bazaarlink`, `blackbox`, `bluesminds`, `byteplus`, `cerebras`, `chutes`, `cohere`, `featherless`, `fireworks`, `groq`, `hyperbolic`, `kilo-gateway`, `llm7`, `mistral`, `morph`, `nebius`, `nvidia`, `perplexity`, `poolside`, `sambanova`, `siliconflow`, `tencent`, `together`, `venice`, `vercel-ai-gateway`, `volcengine-ark`, `glm-cn`, `tokenrouter`, `gitlab` — shared path, this provider's own URL and credential: Chat Tests: `ingress:TestRegistryChatWires`.
+- **T** `groq`, `mistral`, `perplexity`, `vercel-ai-gateway`, `glm-cn`, `gitlab` — shared path, this provider's own URL and credential: Chat Tests: `ingress:TestRegistryChatWires`.
 - **T** `openrouter`, `kilocode`, `kimchi` — shared path, this provider's own URL and credential: openai-chat Tests: `ingress:TestRegistryNativeTransportWires`.
-- **T** `openai` — shared path, this provider's own URL and credential: openai-chat, openai-responses Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `anthropic`, `claude` — shared path, this provider's own URL and credential: anthropic-messages Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `deepseek` — shared path, this provider's own URL and credential: Chat, anthropic-messages Tests: `ingress:TestRegistryChatWires`, `ingress:TestRegistryNativeTransportWires`.
 - **T** `glm`, `minimax`, `minimax-cn` — shared path, this provider's own URL and credential: openai-chat, anthropic-messages Tests: `ingress:TestRegistryNativeTransportWires`.
-- **T** `perplexity-agent`, `muse` — shared path, this provider's own URL and credential: openai-responses Tests: `ingress:TestRegistryNativeTransportWires`.
+- **T** `perplexity-agent` — shared path, this provider's own URL and credential: openai-responses Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `opencode-go` — shared path, this provider's own URL and credential: openai-chat, openai-responses, anthropic-messages. Open: Responses-only models, the session header and body normalization (executors/opencode-go.js:128-210) are not replicated (experimental) Tests: `ingress:TestRegistryNativeTransportWires`.
-- **T** `xai` — shared path, this provider's own URL and credential: Chat, openai-responses Tests: `ingress:TestRegistryChatWires`, `ingress:TestRegistryNativeTransportWires`.
 - **T** `github` — shared path, this provider's own URL and credential: openai-chat, openai-responses, anthropic-messages. Open: Claude models via /v1/messages and the forced stream on Responses (executors/github.js:250-275) are not replicated (experimental) Tests: `ingress:TestRegistryNativeTransportWires`.
 - **T** `iflow` — Chat both modes through the table; the signature over the final body is asserted by TestIflowRequestIsSigned Tests: `ingress:TestRegistryNativeTransportWires`, `ingress:TestIflowRequestIsSigned`.
 - **S** `ollama-local` — the shared Ollama codec; no test names ollama-local (experimental) Tests: `ingress:TestTruncatedOllamaStreamIsAFailure`, `protocol/ollama:TestBufferedBodyIsConverted`.
@@ -530,6 +591,7 @@ New deterministic tests (no network, sanitized synthetic bodies shaped like the 
 
 - `internal/providers/usage/p08_test.go`: pin-shaped quota fixtures for the readers that had none, namely OpenCode Go, Ollama, Xiaomi MiMo, Zed, Command Code, MiniMax and MiniMax CN, Qoder, and the GLM CN and CodeBuddy International regional hosts. They assert used-versus-remaining semantics, that an absent window is skipped rather than invented, exhausted windows, and that failures are errors, not healthy accounts.
 - `internal/ingress/p08_tokens_test.go`: cached versus ordinary tokens through real dispatch with each provider's real id, stream and non-stream: Anthropic and MiniMax Messages cache read/creation, DeepSeek `prompt_cache_hit_tokens`, Kimi top-level `cached_tokens`, Mistral details, and Responses `input_tokens_details` for Codex, Grok CLI, Muse and xAI.
+- `internal/ingress/p08_breadth_test.go`: the 31 providers whose pinned entry is a plain API-key wire each have a named row in one parameterised test. It drives real dispatch and asserts that provider's own pinned wire URL, bearer form, static catalog and models listing, in both modes; `TestRegistryChatWires` remains the `T` evidence for the shared seam.
 - `internal/ingress/p08_wires_test.go`: stream and non-stream on every native transport of every served provider that `TestRegistryChatWires` (Chat only) did not already walk, the connection-scoped Azure and Token Plan targets, and OpenCode's forced stream folded to one JSON body. These are `T` evidence, not provider-specific behaviour.
 - `internal/ingress/p08_errors_test.go`: provider-keyed non-OpenAI error bodies classified against the pin's rules and relayed to the client byte for byte, plus `TestP08ErrorClassificationClosedGaps`, which now asserts the 402 cooldown (it pinned the divergence before it was closed) and `TestPaymentRequiredAccountFallsBackToTheNextAccount`, which proves the next account serves.
 - `internal/parity/listing_urls_test.go` (oracle-gated): the authenticated-listing URL Routeweft builds for each of the 23 providers the pin lists with a plain bearer GET equals the pinned URL.
@@ -551,4 +613,4 @@ The registry rewrite of Blackbox and DeepSeek ids (`registry.UpstreamModelID`) c
 
 ## What stays open
 
-P08 does not make any provider "work". The matrix has no `G` cell: every cell is evidenced by a test that would fail if the behaviour were absent (`P`, or `C` and `U` for the providers this build refuses, nothing reaching them from dispatch) or by the shared path (`T`, `S`: only the shared path was exercised, and a bug in it would fail every row alike), or it is `N` with the pin's file and line. That is deterministic evidence against synthetic upstreams, not a live or production claim; no request has reached a real provider from this repository.
+P08 does not make any provider "work". The matrix has no `G` cell, and every active row now names at least one test of its own: 79 have a `P` cell and the two providers this build refuses (`grok-web`, `perplexity-web`) have provider-named codec `C` cells. No row is shared-path only (0) and no row has no test (0). A `T` or `S` cell still means only the shared path was exercised and a bug in it would fail every row alike; an `N` cell carries the pin's file and line. That is deterministic evidence against synthetic upstreams, not a live or production claim; no request has reached a real provider from this repository.
