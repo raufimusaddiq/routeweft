@@ -624,7 +624,9 @@ const { join } = require('node:path');
   });
   // Freeze the page clock: the usage windows are calendar windows ending today, and the fixture's days are 2026-09-24 and 2026-09-25.
   await page.clock.setFixedTime(new Date('2026-09-25T12:00:00Z'));
-  await page.goto('http://127.0.0.1:4173');
+  // The signed-out root is the public landing page (#347, landing-page-smoke.cjs). This sign-in journey enters through the
+  // console's own entry, the deep link every operator already uses.
+  await page.goto('http://127.0.0.1:4173/#overview');
   await page.waitForSelector('#sign-in-title');
   await page.keyboard.press('Tab');
   report.firstFocus = await page.evaluate(() => document.activeElement.className);

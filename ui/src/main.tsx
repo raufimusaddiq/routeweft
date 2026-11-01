@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { Combos } from './Combos'
 import { ConsoleLog } from './ConsoleLog'
 import { EndpointAndKey } from './EndpointAndKey'
+import { Landing, LandingChecking } from './Landing'
 import { Mark } from './Mark'
 import { Overview } from './Overview'
 import { Providers } from './Providers'
@@ -43,6 +44,8 @@ function readTheme(): Theme {
 function App() {
   const [theme, setTheme] = useState<Theme>(readTheme)
   const [page, setPage] = useState(() => pages[location.hash.slice(1)] ?? 'Overview')
+  // The bare root (no hash) is the public landing page while signed out (#347); any hash is a console route.
+  const [atRoot, setAtRoot] = useState(() => location.hash === '' || location.hash === '#')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [auth, setAuth] = useState<'checking' | 'signed-in' | 'signed-out' | 'unavailable'>('checking')
   const [authError, setAuthError] = useState('')
@@ -62,7 +65,7 @@ function App() {
   }
 
   useEffect(() => {
-    const updatePage = () => setPage(pages[location.hash.slice(1)] ?? 'Overview')
+    const updatePage = () => { setPage(pages[location.hash.slice(1)] ?? 'Overview'); setAtRoot(location.hash === '' || location.hash === '#') }
     addEventListener('hashchange', updatePage)
     return () => removeEventListener('hashchange', updatePage)
   }, [])
@@ -135,6 +138,11 @@ function App() {
       // Theme remains usable when browser storage is unavailable.
     }
   }
+
+  // Signed out at the root: the landing page, not the console. A valid session never sees it: while the session is
+  // being read the root shows only a status line, then the console renders.
+  if (atRoot && auth === 'checking') return <LandingChecking />
+  if (atRoot && auth === 'signed-out') return <Landing />
 
   return (
     <div className="app-shell">

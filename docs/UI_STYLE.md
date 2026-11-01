@@ -558,3 +558,45 @@ reads the two `theme-color` tags, the literal colours in `favicon.svg`, the domi
 and `apple-touch-icon.png`, and the rail mark's fills (`#f7f6f0` and `#ffd60a`) and fails on any other value.
 The chart caption now says "Coloured bars" rather than "Cyan bars" (the bars are `--highlight` on the accent
 surface) and "each tick" rather than "each white tick".
+
+## 13. The public landing page (#347)
+
+The bare root of the dashboard (`/`, no hash) is a public page while signed out; it is
+not part of the console and is not in the navigation (§4). Implemented in
+`ui/src/Landing.tsx`, wired in `ui/src/main.tsx`, guarded by
+`ui/scripts/landing-smoke.cjs`.
+
+- **Routing.** Signed out at the bare root: the landing page. Any hash is a console route and keeps
+  its meaning: a signed-out deep link (`#providers`) shows the existing sign-in screen, never the
+  landing page. A valid session at the root renders the console directly; while the session is
+  being read the root shows only a status line, so a signed-in operator never sees the landing page.
+  "Sign in" is a link to `#overview`, where the existing `SignIn` screen collects the credentials: no second
+  form and no change to authentication. Back returns to the landing page.
+- **Content.** The Routeweft mark, the name, a mono-capital label ("CONTROL PLANE"), one sentence on what it
+  does (routes requests across provider connections and reports what happened), one line on what signing in
+  gets you, and the one primary action. It reads nothing from the API and makes no claim about performance,
+  uptime, price or provider coverage.
+- **What it obeys from direction D.** The poster title at `--t-poster` (64px, 40px on a phone), weight 700,
+  line height 0.95, tracking `-0.055em` (§3); a 6px ink rule opens the section (§2 "Rules", §5); mono capital
+  labels, 12px, tracking `0.08em` (§3); the one accent surface, the pink slab, carries the statement and the
+  action (§5; 32px radius, 24px on a phone, `--hard`); the statement is 36px (26px on a phone), weight 400; the
+  action is a 3px-outlined pill with `--hard-sm` (§8); ink on paper in light and its dark counterpart (§2);
+  no gradient, blur, glass or glow; no other shadow or radius than the tokens in §2.
+- **Frozen.** Every control is 44px at 320px, nothing overflows horizontally at 320px, text keeps 4.5:1 and
+  control boundaries 3:1 in both themes, every control has a name and a 2px focus ring; the only status text
+  is a word. Fonts are the self-hosted ones; no dependency was added.
+- **Language.** The page follows the saved language like every screen (§8 "Display language control", SPEC
+  23.1): the language control is on the page (before sign-in it is the only way to change it), `<html lang>`
+  follows the choice, and a text with no catalog entry stays English (the catalogs are byte-identical to the
+  oracle's, so the new sentences have no entries; "Language" does).
+
+### Landing guard (`ui/scripts/landing-smoke.cjs`)
+
+Run by `npm run smoke`. At 1440, 390 and 320 in light and dark it measures the landing page: no horizontal
+overflow, no text under 4.5:1, no control boundary under 3:1, no phone control under 44px, no blur, every
+`box-shadow` a `--hard`/`--hard-sm` offset, every control named and ringed, the title 64px/40px at weight 700,
+the 6px rule, one `main` and one `h1`. It then proves the journey (Sign in reaches the existing sign-in, Back
+returns, a signed-out deep link skips the landing page, a valid session at the root renders the console and the
+landing page is never in the DOM, 1440 and 390) and the language (`zh-CN` at 1440 and 320, the dialog and focus
+return). `shell-smoke.cjs` enters its sign-in journey through `#overview`, the deep link, because the signed-out
+root is now the landing page; every assertion in it is unchanged.

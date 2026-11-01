@@ -52,6 +52,7 @@ node scripts/usage-page-smoke.cjs
 node scripts/systemone-combos-smoke.cjs
 node scripts/phase3a-pages-smoke.cjs
 node scripts/phase3b-pages-smoke.cjs
+node scripts/landing-smoke.cjs
 node scripts/phase3ca-pages-smoke.cjs
 node scripts/phase3cb-pages-smoke.cjs
 node scripts/phase4-figures-smoke.cjs

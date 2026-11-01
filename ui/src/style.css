@@ -1171,6 +1171,32 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
 .page-d .oauth-panel .oauth-actions { flex-wrap: wrap; gap: 12px; }
 @media (max-width: 700px) { .page-d .oauth-panel a.button-secondary { min-height: 44px; } .sign-in-panel.page-d { padding-top: 20px; } }
 
+/* ---- The public landing page (#347): direction D, signed out, at the bare root ---- */
+.landing { min-height: 100vh; padding: 20px 56px 96px; color: var(--text-main); background: var(--paper); }
+.landing:focus { outline: none; }
+.landing-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 44px; }
+.landing-brand { display: inline-flex; align-items: center; gap: 12px; font-size: var(--t-lead); font-weight: 700; letter-spacing: -.02em; }
+.landing-brand .brand-mark { width: 32px; height: 32px; }
+.landing-language { display: flex; align-items: center; gap: 12px; }
+.landing-language .language-button { width: auto; min-width: 180px; }
+.landing-label { margin: 0; color: var(--text-muted); font-family: var(--font-mono); font-size: var(--t-body); font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.landing-body { display: grid; justify-items: start; gap: 20px; max-width: 960px; margin-top: 72px; border-top: 6px solid var(--ink); padding-top: 28px; }
+.landing-body h1 { margin: 0; }
+.landing-slab { display: grid; justify-items: start; gap: 18px; max-width: 760px; margin-top: 28px; padding: 32px 36px 36px; }
+.landing-lead { margin: 0; font-size: 36px; font-weight: 400; letter-spacing: -.03em; line-height: 1.1; }
+.landing-note { margin: 0; font-size: var(--t-lead); }
+.landing-action { min-height: 44px; margin-top: 8px; padding: 0 32px; font-size: var(--t-lead); text-decoration: none; }
+.landing-checking { display: grid; align-content: start; }
+@media (max-width: 700px) {
+  .landing { padding: 16px 16px 64px; }
+  .landing-bar { flex-wrap: wrap; }
+  .landing-language { width: 100%; }
+  .landing-language .language-button { flex: 1 1 auto; }
+  .landing-body { margin-top: 40px; padding-top: 20px; }
+  .landing-slab { margin-top: 20px; padding: 24px 20px 28px; }
+  .landing-lead { font-size: 26px; }
+}
+
 /* ---- Figures in direction D (#263, phase 4): charts, share bars, the stacked bar, sparklines, status marks ----
    Flat fills, a crisp ink edge where a drawing is a box, no shadow and no blur on a figure (the slab carries the shadow). */
 /* A status mark is a 12px round dot with a 2px ink edge; the word beside it stays (status is never colour alone). */
