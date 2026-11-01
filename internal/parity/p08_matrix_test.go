@@ -278,7 +278,7 @@ func unavailableCell(spec registry.Spec) cell {
 		return c
 	}
 	paymentRequired := map[string]cell{
-		"deepseek":   {kindP, ref(gapGuard, "ingress:TestPaymentRequiredAccountFallsBackToTheNextAccount", "routing:TestClassifyStatusPaymentRequiredFallsBackAndCools", "providers/usage:TestDeepSeekBothZeroIsZeroNotUnlimited"), "402 Insufficient Balance cools the account for two minutes and falls back (errorConfig.js:77, accountFallback.js:35-46); the balance endpoint reports is_available:false (#212), though routing does not consume the balance"},
+		"deepseek":   {kindP, ref(gapGuard, "ingress:TestPaymentRequiredAccountFallsBackToTheNextAccount", "routing:TestClassifyStatusPaymentRequiredFallsBackAndCools", "routing:TestClassifyErrorPaymentRequiredBeatsRequestScopedKinds", "providers/usage:TestDeepSeekBothZeroIsZeroNotUnlimited"), "402 Insufficient Balance (its real body wears invalid_request_error, which must not end the chain) cools the account for two minutes and falls back (errorConfig.js:77, accountFallback.js:35-46); the balance endpoint reports is_available:false (#212), though routing does not consume the balance"},
 		"openrouter": {kindP, ref(gapGuard, "ingress:TestPaymentRequiredAccountFallsBackToTheNextAccount", "routing:TestClassifyStatusPaymentRequiredFallsBackAndCools"), "402 cools the account for two minutes and falls back (errorConfig.js:77)"},
 	}
 	if c, ok := paymentRequired[id]; ok {

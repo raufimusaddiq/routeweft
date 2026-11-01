@@ -125,3 +125,16 @@ func TestClassifyStatusPaymentRequiredFallsBackAndCools(t *testing.T) {
 		t.Fatalf("402 with Retry-After = %+v, want 45s", got)
 	}
 }
+
+// A 402 body that parses as a request fault (DeepSeek's wears invalid_request_error)
+// must not end the chain: the status rule wins over those kinds only.
+func TestClassifyErrorPaymentRequiredBeatsRequestScopedKinds(t *testing.T) {
+	for _, kind := range []string{"invalid-input", "context-length"} {
+		if got := ClassifyError(kind, http.StatusPaymentRequired); got.Outcome != OutcomeFallbackAccount || !got.AllowsFallback() {
+			t.Errorf("402 %s = %+v, want fallback-account", kind, got)
+		}
+		if got := ClassifyError(kind, http.StatusBadRequest); got.Outcome != OutcomeTerminalClientError {
+			t.Errorf("400 %s = %+v, must stay terminal", kind, got)
+		}
+	}
+}

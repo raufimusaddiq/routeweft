@@ -63,6 +63,13 @@ func ClassifyStatus(status int, header http.Header) Classification {
 // status-derived result; Retry-After/reset hints from the status path survive
 // because only the outcome is replaced.
 func ClassifyError(kind string, status int) Classification {
+	// 402 is the status rule of the pin (errorConfig.js:77, accountFallback.js:35-46):
+	// the account is out of credit, whatever envelope the body wears. DeepSeek's
+	// body type/code is "invalid_request_error", which reads as invalid-input and
+	// would end the chain; a request-scoped kind must not override the status here.
+	if status == http.StatusPaymentRequired && (kind == "invalid-input" || kind == "context-length") {
+		return Classification{Outcome: OutcomeFallbackAccount}
+	}
 	switch kind {
 	case "auth":
 		return Classification{Outcome: OutcomeAuthRefreshRequired}

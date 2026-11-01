@@ -13,6 +13,7 @@ import (
 
 	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
+	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
@@ -116,6 +117,15 @@ func TestP08ErrorClassificationClosedGaps(t *testing.T) {
 			if !cooling || got < 110*time.Second || got > 130*time.Second {
 				t.Errorf("%s 402: cooling=%v for %v, want the pin's two-minute cooldown", tc.provider, cooling, got.Round(time.Second))
 			}
+			// The cooldown alone survives a body-kind override; fallback is what the
+			// dispatch decides on, so assert the outcome the same way it derives it.
+			outcome := routing.ClassifyStatus(tc.status, http.Header{})
+			if mapped := routing.ClassifyError(shared.ParseError(tc.protocol, tc.status, []byte(tc.body)).Kind.String(), tc.status); mapped.Outcome != "" {
+				outcome.Outcome = mapped.Outcome
+			}
+			if !outcome.AllowsFallback() {
+				t.Errorf("%s 402 body %s classifies as %s: the next account would never be tried", tc.provider, tc.body, outcome.Outcome)
+			}
 		}
 	})
 	t.Run("402 honours a Retry-After the provider sends", func(t *testing.T) {
@@ -134,6 +144,13 @@ func TestP08ErrorClassificationClosedGaps(t *testing.T) {
 
 // An out-of-credit account answers 402; the next account serves and the first is
 // not tried again inside its cooldown (errorConfig.js:77, accountFallback.js:35-46).
+// Each provider's own 402 envelope. DeepSeek's wears type/code invalid_request_error,
+// which the shared parser reads as a request fault: the fallback must survive it.
+var paymentRequiredBodies = map[string]string{
+	"deepseek":   `{"error":{"message":"Insufficient Balance","type":"unknown_error","param":null,"code":"invalid_request_error"}}`,
+	"openrouter": `{"error":{"code":402,"message":"Insufficient credits"}}`,
+}
+
 func TestPaymentRequiredAccountFallsBackToTheNextAccount(t *testing.T) {
 	for _, provider := range []string{"deepseek", "openrouter"} {
 		for _, stream := range []bool{false, true} {
@@ -148,7 +165,7 @@ func TestPaymentRequiredAccountFallsBackToTheNextAccount(t *testing.T) {
 					if account == "broke" {
 						w.Header().Set("Content-Type", "application/json")
 						w.WriteHeader(http.StatusPaymentRequired)
-						_, _ = io.WriteString(w, `{"error":{"code":402,"message":"Insufficient credits"}}`)
+						_, _ = io.WriteString(w, paymentRequiredBodies[provider])
 						return
 					}
 					if stream {
