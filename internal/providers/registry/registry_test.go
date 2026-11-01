@@ -96,6 +96,12 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	if transport, ok := openai.NativeBinding("openai-chat"); !ok || transport != TransportOpenAIChat {
 		t.Fatalf("OpenAI Chat binding=%q ok=%v", transport, ok)
 	}
+	// API-key OpenAI and Codex remain separate providers (#228): an operator's
+	// OpenAI key is not a Codex credential and the origins differ.
+	codex, _ := catalog.Lookup("codex")
+	if openai.Auth != AuthAPIKey || codex.Auth != AuthOAuth || openai.DefaultBaseURL == codex.DefaultBaseURL || openai.ReportsUsage || !codex.ReportsUsage {
+		t.Fatalf("openai=%+v codex=%+v; the two providers must stay separate", openai, codex)
+	}
 	if spec, _ := catalog.Lookup("groq"); !spec.ReportsUsage {
 		t.Fatalf("Groq usage capability missing: %+v", spec)
 	}
