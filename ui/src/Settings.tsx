@@ -194,7 +194,7 @@ export function Settings({ onUnauthorized }: Props) {
     } finally { setBusy('') }
   }
 
-  return <div className="settings-content" aria-busy={loading}>
+  return <div className="settings-content page-d" aria-busy={loading}>
     <div className="settings-toolbar accent-surface"><span className="count-label" role="status">{loading ? 'Loading…' : 'Settings are saved through the active configuration transaction.'}</span><button className="button-secondary" type="button" disabled={loading || busy !== ''} onClick={() => void load()}>Reload</button></div>
     {error && <p className="auth-error" role="alert">{error}</p>}{notice && <p className="inline-notice" role="status">{notice}</p>}
 

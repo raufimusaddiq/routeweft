@@ -12,8 +12,8 @@ Status: **Normative for frontend work**
 > §12 guards. Phase 3a (2026-11-01) gives the page bodies of Overview, Endpoint &
 > Key, Combo & Capability Adapter and System One their D layout (§5, "Page
 > bodies"); phase 3b (2026-11-01) does the same for Providers, Usage and Quota
-> Tracker; the other pages (3c: Token Saver, Console Log, Settings, Sign in,
-> onboarding) and the charts and the mark (phase 4) still use their BDR-015 layout with D's tokens. Code, guards and this
+> Tracker; phase 3c part A (2026-11-01) for Token Saver, Console Log and Settings;
+> the other pages (3c part B: Sign in, onboarding) and the charts and the mark (phase 4) still use their BDR-015 layout with D's tokens. Code, guards and this
 > file change together, phase by phase.
 
 ## 1. House style: editorial instrument, retro neo-brutalist
@@ -193,7 +193,7 @@ Implemented in `ui/src/editorial.tsx` and `ui/src/style.css`.
   always agree; redirects count in those totals though their mark is neutral.
   The rule lives in `isFailure()` in `ui/src/format.ts`.
 - **Page bodies (`.page-d`, phase 3a).** A page opts in by adding `page-d` to its
-  wrapper; 3b did Providers, Usage and Quota, 3c adds the rest. It sets: sections of a page 72px apart
+  wrapper; 3b did Providers, Usage and Quota, 3c part A Token Saver, Console Log and Settings, part B adds the rest. It sets: sections of a page 72px apart
   (56px below 900px, 48px below 700px; a toolbar and what it controls 32px); a 6px
   ink rule opens a section heading, statement, margin list and group, a 4px rule
   sits under a table head, and a heading inside the accent surface keeps a hairline
@@ -491,3 +491,16 @@ Kept unchanged and never loosened: text contrast 4.5:1 (`:51-54`, `:75`), state
 colours 4.5:1 (`:59`, `:76`), the a11y audit (`:1328-1425`, `:1657-1665`), 320px
 overflow (`:1656`), reduced motion (`:1666-1669`), the empty-state border
 (`:1556`), 44px targets and every workflow assertion.
+
+### Phase 3c part A guard (`ui/scripts/phase3ca-pages-smoke.cjs`)
+
+Run by `npm run smoke`, same measurements as the 3a and 3b guards, for Token Saver,
+Console Log and Settings at 1440, 390 and 320 in light and dark, plus an edited
+Headroom field, an expanded console line (1440 and 390), the level filter, the
+language dialog opened from Settings (1440 and 390) and the drawer. Page rules added
+in 3c part A (2026-11-01): feature, toggle and helper rows are open rows under a
+hairline with 16px/700 names and 64px minimum height; the PXPIPE counters are 28px/700
+panel figures; a console line's detail is an open block with a 3px ink edge; the
+Settings JSON editors are 20px 3px-outlined textareas; a warning keeps its edge and
+its words. Two 44px phone targets the baseline missed are fixed here: the language
+dialog's close control and the Settings backup download link.
