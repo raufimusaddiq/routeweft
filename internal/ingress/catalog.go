@@ -3,6 +3,7 @@ package ingress
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"sort"
 
@@ -19,7 +20,18 @@ func unknownModelMessage(snapshot *runtime.RuntimeSnapshot, allowed func(string)
 		kind = "llm"
 	}
 	listed := publicModels(snapshot, kind, allowed)
-	return fmt.Sprintf("model not found. GET /v1/models lists the %d callable ids; pass one exactly as shown, including its \"<provider>/\" prefix. A provider with no discovered models has none there yet: run Discover for it on the Providers page.", len(listed))
+	// The count is the kind-filtered one, so the pointer carries the same filter:
+	// the bare path serves only the llm set, and a non-llm count aimed there
+	// describes a list the caller cannot see (#367).
+	path := "GET /v1/models"
+	if kind != "llm" {
+		path += "?kind=" + url.QueryEscape(kind)
+	}
+	noun := "ids"
+	if len(listed) == 1 {
+		noun = "id"
+	}
+	return fmt.Sprintf("model not found. %s lists the %d callable %s; pass one exactly as shown, including its \"<provider>/\" prefix. A provider with no discovered models has none there yet: run Discover for it on the Providers page.", path, len(listed), noun)
 }
 
 func matchesModelKind(model runtime.Model, kind, requested string) bool {
