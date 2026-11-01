@@ -786,8 +786,7 @@ func (h *Handler) handleDiscoverModels(w http.ResponseWriter, r *http.Request) {
 		}
 		// A refused listing is not a code failure: say which refusal it was, so an
 		// owner can tell a spent quota or a throttled key from a broken endpoint.
-		var status *discovery.StatusError
-		if errors.As(err, &status) && status.Status == http.StatusTooManyRequests {
+		if listingStatus(err) == http.StatusTooManyRequests {
 			writeError(w, http.StatusBadGateway, "model_discovery_rate_limited", "the provider refused the model list with HTTP 429 (rate limit or quota); the existing catalogue is unchanged, retry when the limit resets")
 			return
 		}
@@ -878,6 +877,21 @@ func (h *Handler) fetchConnectionModelEntries(ctx context.Context, connection cr
 		return nil, err
 	}
 	return h.listModelEntries(ctx, connection, node, secret.AccessToken)
+}
+
+// listingStatus is the HTTP status a listing refused with, whether it came
+// through the shared discovery client or a provider-owned request (Zed's token
+// exchange, a signed or custom listing). Zero means the error carries no status.
+func listingStatus(err error) int {
+	var status *discovery.StatusError
+	if errors.As(err, &status) {
+		return status.Status
+	}
+	var listing *wire.ListingStatusError
+	if errors.As(err, &listing) {
+		return listing.Status
+	}
+	return 0
 }
 
 // listingAuthRefused reports a listing answer the provider refused for its
