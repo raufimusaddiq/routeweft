@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -64,6 +65,17 @@ func c09UsageRows(t *testing.T, a *App) []c09Usage {
 		t.Fatal(err)
 	}
 	return out
+}
+
+// c09Mentions reports whether an event payload names requestID anywhere in its
+// JSON. Each subtest starts a fresh app and a fresh request id, so an event for
+// another id belongs to another subtest's request.
+func c09Mentions(data any, requestID string) bool {
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(encoded), requestID)
 }
 
 // TestSIGTERMDrainsInFlightRequestAndFlushesAccounting runs the real listener
@@ -265,9 +277,10 @@ func TestClientDisconnectKeepsExactlyOneUsageRecordWithoutLeaks(t *testing.T) {
 				if tc.systemOne {
 					body = fmt.Sprintf(`{"model":%q,"state":null,"questions":{"ok":null}}`, model)
 				}
+				requestID := fmt.Sprintf("c09-cancel-%s-%s", tc.name, mode)
 				request, _ := http.NewRequestWithContext(requestCtx, http.MethodPost, server.URL+path, strings.NewReader(body))
 				request.Header.Set("Authorization", "Bearer "+key)
-				request.Header.Set("X-Request-Id", "c09-cancel")
+				request.Header.Set("X-Request-Id", requestID)
 				clientDone := make(chan error, 1)
 				gotHeaders := make(chan struct{}, 1)
 				go func() {
@@ -321,8 +334,8 @@ func TestClientDisconnectKeepsExactlyOneUsageRecordWithoutLeaks(t *testing.T) {
 					t.Fatal(err)
 				}
 				rows = c09UsageRows(t, a)
-				if len(rows) != 1 || rows[0].requestID != "c09-cancel" || rows[0].termination != "client_abandoned" {
-					t.Fatalf("enabled=%v written=%d lost=%d usage=%+v want exactly one client_abandoned record for c09-cancel", a.usage.Enabled(), a.usage.Written(), a.usage.Lost(), rows)
+				if len(rows) != 1 || rows[0].requestID != requestID || rows[0].termination != "client_abandoned" {
+					t.Fatalf("enabled=%v written=%d lost=%d usage=%+v want exactly one client_abandoned record for %s", a.usage.Enabled(), a.usage.Written(), a.usage.Lost(), rows, requestID)
 				}
 				if a.usage.Lost() != 0 {
 					t.Fatalf("lost=%d", a.usage.Lost())
@@ -332,7 +345,11 @@ func TestClientDisconnectKeepsExactlyOneUsageRecordWithoutLeaks(t *testing.T) {
 				if rows[0].status == http.StatusBadGateway || (mode == "stream" && rows[0].status != http.StatusOK) {
 					t.Fatalf("abandoned %s recorded status %d", mode, rows[0].status)
 				}
-				// It was recorded, but never announced: nothing completed.
+				// It was recorded, but never announced: nothing completed. Scope the drain
+				// to this subtest's request id: a prior subtest's abandoned request can
+				// still land on the shared bus, and that is not this request being
+				// announced.
+			drain:
 				for {
 					select {
 					case event := <-liveEvents:
@@ -341,12 +358,16 @@ func TestClientDisconnectKeepsExactlyOneUsageRecordWithoutLeaks(t *testing.T) {
 						if snapshot, ok := event.Data.(live.Snapshot); ok && event.Type == "usage.pending" && len(snapshot.Recent) == 0 {
 							continue
 						}
-						t.Fatalf("abandoned request announced on the live event bus: %+v", event)
+						if c09Mentions(event.Data, requestID) {
+							t.Fatalf("abandoned request announced on the live event bus: %+v", event)
+						}
 					case event := <-feed.C():
-						t.Fatalf("abandoned request announced on the usage feed: %+v", event)
+						if event.RequestID == requestID {
+							t.Fatalf("abandoned request announced on the usage feed: %+v", event)
+						}
 					default:
+						break drain
 					}
-					break
 				}
 
 				server.Close()

@@ -72,6 +72,10 @@ func TestOpenCodeResponseRestoresCallerToolNames(t *testing.T) {
 	if function["name"] != "Bash" {
 		t.Fatalf("name = %v", function["name"])
 	}
+	// SSE permits the data field without a space.
+	if line, ok := opencodeRestoreLine(`data:{"choices":[{"delta":{"tool_calls":[{"function":{"name":"bash"}}]}}]}`, renamed); !ok || !strings.Contains(line, `"name":"Bash"`) {
+		t.Fatalf("data: without a space was not restored: %q %v", line, ok)
+	}
 }
 
 func TestOpenCodeDoSendsTheQuartetAndRestoresTheAnswer(t *testing.T) {
