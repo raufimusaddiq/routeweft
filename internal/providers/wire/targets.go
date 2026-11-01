@@ -330,9 +330,10 @@ func opencodeTarget(provider routing.ProviderRef) (Target, error) {
 // carries accessToken "public" (src/sse/services/auth.js:94). Without it a
 // request to the gateway has no Authorization header at all. A connection that
 // does hold a token keeps it: the pin has no such connection, so there is
-// nothing to match, and replacing a credential the operator set would be a guess. The session, request and project
-// headers (:417-426) and the free-tier fingerprint tools (:455-464) are not carried
-// (PARITY 6.19).
+// nothing to match, and replacing a credential the operator set would be a guess.
+// The session, request and project headers (:417-426,492-510) are carried by
+// ClientRequestHeaders (opencode_identity.go); the free-tier fingerprint tools
+// (:455-464) remain open (PARITY 6.19).
 func opencodeHeaders(provider routing.ProviderRef) map[string]string {
 	if strings.TrimSpace(provider.APIToken) != "" {
 		return map[string]string{}

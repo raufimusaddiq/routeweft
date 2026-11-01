@@ -250,7 +250,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .access-modes input { margin-top: 2px; accent-color: var(--ink); }
 /* The chosen label is a highlight block (#231): the ring must not be the page focus colour on it,
    where it drops to 1.29:1 in dark. The ink is 13:1 on the highlight in both themes. */
-.access-modes label:has(input:checked) input:focus-visible { outline-color: var(--highlight-ink); }
+.page-d .access-modes label:has(input:checked) input:focus-visible { outline-color: var(--highlight-ink); }
 .access-modes span { display: grid; gap: 3px; font-size: var(--t-body); }
 .access-modes small, .access-note, .access-list small { color: var(--text-muted); font-size: var(--t-body); }
 .access-allow { display: grid; gap: 9px; margin-top: 12px; }
@@ -1162,11 +1162,11 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
 
 /* Onboarding: the new-connection form opens with a 28px title; the device code is the figure of its screen; the result is an open block with a 6px ink edge, its state still a word. */
 .page-d .provider-form .section-heading h3 { font-size: var(--t-title); font-weight: 700; letter-spacing: -.04em; line-height: 1; }
-.page-d .provider-form .section-heading p { margin-top: 8px; font-size: var(--t-lead); }
+.page-d .provider-form .section-heading:has(> div > h3) p { margin-top: 8px; font-size: var(--t-lead); }
 .page-d .journey-notes { gap: 10px; font-size: var(--t-lead); line-height: 1.4; }
 .page-d .device-values { gap: 20px; }
 .page-d .device-values code { border: 3px solid var(--outline); border-radius: var(--radius-control); padding: 8px 14px; background: var(--surface); }
 .page-d .device-values code[aria-label="Device code"] { font-size: var(--t-title); font-weight: 700; letter-spacing: .06em; }
 .page-d .oauth-panel[aria-label="Sign-in result"] { border-top: 0; border-left: 6px solid var(--ink); padding: 4px 0 4px 18px; }
 .page-d .oauth-panel .oauth-actions { flex-wrap: wrap; gap: 12px; }
-@media (max-width: 700px) { .page-d .oauth-panel a.button-secondary { min-height: 44px; } .sign-in-panel.page-d { padding-top: 20px; } .page-d .device-values code[aria-label="Device code"] { font-size: 24px; } }
+@media (max-width: 700px) { .page-d .oauth-panel a.button-secondary { min-height: 44px; } .sign-in-panel.page-d { padding-top: 20px; } }
