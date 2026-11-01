@@ -226,8 +226,8 @@ func (s *RuntimeSnapshot) ResolveModel(provider, model string) (Model, bool) {
 }
 
 func (s *RuntimeSnapshot) ModelCapabilityDetails(provider, model string) capabilities.Capabilities {
-	if target, ok := s.aliases[model]; ok && (provider == "" || provider == target.ProviderID) {
-		provider, model = target.ProviderID, target.ModelID
+	if resolved, ok := s.ResolveModel(provider, model); ok {
+		provider, model = resolved.ProviderID, resolved.ID
 	}
 	return s.modelCapabilities.Resolve(provider, model)
 }
