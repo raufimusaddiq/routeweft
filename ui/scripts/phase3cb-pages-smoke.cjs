@@ -12,28 +12,17 @@ const { join } = require('node:path');
 const ORIGIN = process.env.ROUTEWEFT_SMOKE_ORIGIN || 'http://127.0.0.1:4173';
 const WIDTHS = [1440, 390, 320];
 const THEMES = ['light', 'dark'];
-const LONG_ROUTE = 'openrouter/anthropic/claude-3.5-sonnet-20241022:thinking-extended-very-long-model-name';
-const LONG_COMBO = 'production-fallback-with-a-really-long-combo-name-for-phones';
 
+const settingValues = { requireApiKey: 'true', rtkEnabled: 'true', headroomEnabled: 'false', cavemanEnabled: 'false', ponytailEnabled: 'false', pxpipeEnabled: 'false' };
 const day = i => new Date(Date.now() - (29 - i) * 86400000).toISOString().slice(0, 10);
 const series = Array.from({ length: 30 }, (_, i) => ({ day: day(i), requests: 80 + ((i * 37) % 60) + (i >= 23 ? 70 : 0), inputTokens: 90000 + i * 1000, outputTokens: 20000 + i * 300, cacheReadTokens: 40000, cacheWriteTokens: 5000, cost: 1.2 + i * 0.03 }));
 const breakdown = (key, requests, errors) => ({ key, requests, inputTokens: requests * 900, outputTokens: requests * 200, errors, cost: requests * 0.002 });
 const summary = period => ({ period, since: '2026-08-27T00:00:00Z', totals: { requests: period === '7d' ? 2947 : 9120, inputTokens: 8400000, outputTokens: 1900000, cacheReadTokens: 3100000, cacheWriteTokens: 400000, errors: period === '7d' ? 80 : 310, avgDurationMs: 840, avgTtftMs: 310, cost: 42.5 }, series: period === '7d' ? series.slice(-7) : series, providers: [breakdown('openai', 1500, 12), breakdown('anthropic', 900, 61), breakdown('deepseek', 400, 5), breakdown('groq', 147, 2)], models: [breakdown('gpt-4o', 1200, 9), breakdown('claude-sonnet', 900, 61), breakdown('deepseek-chat', 400, 5)], statuses: [breakdown('200', 2867, 0), breakdown('429', 50, 50), breakdown('500', 30, 30)] });
-const events = Array.from({ length: 24 }, (_, i) => ({ id: 100 - i, requestId: `req-${i}`, status: i % 9 === 4 ? 500 : i % 7 === 3 ? 429 : 200, inputTokens: 1200 + i * 11, outputTokens: 340 + i, createdAt: new Date(Date.UTC(2026, 8, 25, 20, 59 - i)).toISOString(), providerId: i % 3 === 0 ? 'openrouter' : 'openai', modelId: i % 3 === 0 ? 'anthropic/claude-3.5-sonnet-20241022:thinking-extended-very-long-model-name' : 'gpt-4o', connectionId: 'conn-1', durationMs: 700 + i * 13, ttftMs: 200 + i, cost: 0.004 }));
 const connections = [
   { id: 'conn-1', nodeId: 'node-openai', providerId: 'openai', name: 'primary', authKind: 'api-key', identity: 'a@example.test', enabled: true, priority: 0, credentialConfigured: true },
   { id: 'conn-2', nodeId: 'node-anthropic', providerId: 'anthropic', name: 'claude', authKind: 'api-key', identity: 'b@example.test', enabled: false, priority: 1, credentialConfigured: true },
   { id: 'conn-s1', nodeId: 'node-s1', providerId: 's1-prod', name: 'Prod account', authKind: 'api-key', identity: 'acct-prod', enabled: true, priority: 0, credentialConfigured: true },
   { id: 'conn-s1b', nodeId: 'node-s1', providerId: 's1-prod', name: 'Prod account with a rather long name to wrap on a phone screen', authKind: 'api-key', identity: 'acct-long', enabled: true, priority: 1, credentialConfigured: true },
-];
-const keys = [
-  { id: 'k-1', name: 'CI pipeline', prefix: 'rw_ci12', enabled: true, paused: false, createdAt: '2026-09-01T10:00:00Z', lastUsedAt: '2026-09-25T20:00:00Z', access: { restricted: false, allow: [] } },
-  { id: 'k-2', name: 'Contractor key with a long descriptive name that should wrap', prefix: 'rw_ct34', enabled: true, paused: true, createdAt: '2026-09-10T10:00:00Z', access: { restricted: true, allow: [{ kind: 'provider', providerId: 'openai' }] } },
-];
-const member = (providerId, modelId, position) => ({ providerId, modelId, position, selected: true });
-const combos = [
-  { id: 'combo-1', name: 'fast', strategy: 'fallback', stickyLimit: 0, judgeModel: '', fusionEnabled: false, members: [member('openai', 'gpt-4o', 0), member('anthropic', 'claude-sonnet', 1)] },
-  { id: 'combo-2', name: LONG_COMBO, strategy: 'round-robin', stickyLimit: 3, judgeModel: '', fusionEnabled: true, fusionTuning: { minPanel: 2, stragglerGraceMs: 8000, panelHardTimeoutMs: 90000 }, members: [member('openai', 'gpt-4o', 0), member('anthropic', 'claude-sonnet', 1), member('deepseek', 'deepseek-chat', 2)] },
 ];
 const models = [
   ...['gpt-4o', 'gpt-4o-mini'].map(id => ({ providerId: 'openai', id, name: id, capabilities: ['vision'], disabled: false })),
@@ -93,16 +82,11 @@ const PAGES = [
     if (path === '/auth/session') return json(route, 200, { username: 'operator', expiresAt: '2026-12-01T00:00:00Z' });
     if (path === '/overview') return json(route, 200, { runtime: { health: 'ready', version: '0.1.0', commit: 'deadbeef', configRevision: 7, snapshotVersion: 7 }, providers: { catalog: 80, nodes: 4, enabledConnections: 3 }, apiKeys: { active: 2 }, traffic: { active: 4, requests: 2947, errors: 80, lastRequestAt: '2026-09-25T20:59:00Z' }, telemetry: { enabled: true, written: 2900, lost: 0, lostDiagnostics: 2, degraded: true } });
     if (path === '/usage/summary') return json(route, 200, summary(url.searchParams.get('period') || '7d'));
-    if (path === '/usage') return json(route, 200, paged(events, url));
     if (path === '/connections') return json(route, 200, paged(connections, url));
-    if (path === '/keys') return json(route, 200, paged(keys, url));
     if (path === '/settings') return json(route, 200, { settings: settingValues, writable: Object.keys(settingValues) });
-    if (path === '/combos') return json(route, 200, paged(combos, url));
     if (path === '/models') return json(route, 200, paged(models, url));
-    if (path === '/systemone') return json(route, 200, paged(models.filter(m => m.providerId === 's1-prod'), url));
     if (path === '/provider-nodes') return json(route, 200, paged(nodes, url));
     if (path === '/providers') return json(route, 200, paged(providers, url));
-    if (path === '/capability-adapters') return json(route, 200, { items: [{ capability: 'vision', enabled: true, roundRobin: false, pool: [{ providerId: 'openai', modelId: 'gpt-4o' }] }, { capability: 'audio-input', enabled: false, pool: [] }] });
     if (path === '/aliases' || path === '/models/disabled') return json(route, 200, paged([], url));
     return json(route, 200, { items: [], page: 1, pageSize: 100, total: 0 });
   });
@@ -170,8 +154,13 @@ const PAGES = [
       if (style.boxShadow !== 'none') { const m = style.boxShadow.match(/(-?\d+)px (-?\d+)px (\d+)px (\d+)px/); shadows.add(m ? `${m[1]}px ${m[2]}px blur${m[3]} spread${m[4]}` : style.boxShadow); }
       if ((style.backdropFilter && style.backdropFilter !== 'none') || (style.filter && style.filter.includes('blur'))) blur += 1;
     }
+    // Spacing (UI_STYLE 5): the form sits 28px under the Sign in title. The page-d rhythm (72px between sections)
+    // must not reach inside this panel, which is itself the page-d root.
+    const signInHeading = document.querySelector('.sign-in-heading');
+    const signInForm = signInHeading && signInHeading.nextElementSibling;
+    const signInGap = signInForm ? Math.round(signInForm.getBoundingClientRect().top - signInHeading.getBoundingClientRect().bottom) : null;
     const root = document.documentElement;
-    return { menuBars, overflowX: Math.max(root.scrollWidth, document.body.scrollWidth) - root.clientWidth, lowContrast, weakControls, smallTargets, shadows: [...shadows], blur, title: document.querySelector('h1')?.textContent || '' };
+    return { signInGap, menuBars, overflowX: Math.max(root.scrollWidth, document.body.scrollWidth) - root.clientWidth, lowContrast, weakControls, smallTargets, shadows: [...shadows], blur, title: document.querySelector('h1')?.textContent || '' };
   });
 
   const results = [];
@@ -195,8 +184,8 @@ const PAGES = [
       }
     }
   }
-  // Interactive states, measured and shot the same way: the drawer, the key access editor with a choice made,
-  // the Combo form, and the language dialog. Light and dark, desktop and phone.
+  // Interactive states, measured and shot the same way: a rejected sign-in, and the provider onboarding flows (key,
+  // browser sign-in, device code and its finished result, import, bulk, the method picker). Light and dark, 1440 and 390.
   const states = [
     { name: 'signin-error', width: 1440, hash: '#overview', signedOut: true, act: async () => { await page.getByLabel('Username').fill('operator'); await page.getByLabel('Password').fill('wrong'); await page.getByRole('button', { name: 'Sign in' }).click(); await page.waitForSelector('.form-error'); await page.waitForTimeout(250); } },
     { name: 'signin-error', width: 390, hash: '#overview', signedOut: true, act: async () => { await page.getByLabel('Username').fill('operator'); await page.getByLabel('Password').fill('wrong'); await page.getByRole('button', { name: 'Sign in' }).click(); await page.waitForSelector('.form-error'); await page.waitForTimeout(250); } },
@@ -232,7 +221,7 @@ const PAGES = [
       results.push({ page: `state:${state.name}`, theme, width: state.width, theme_: await page.evaluate(() => document.documentElement.dataset.theme || ''), ...found });
       // A full-page capture taken from a scrolled page also shows the fixed skip link parked above the viewport; scroll home first.
       await page.evaluate(() => window.scrollTo(0, 0));
-      if (capture) await page.screenshot({ path: join(artifacts, `${label}-state-${state.name}-${theme}-${state.width}.png`), fullPage: state.name !== 'drawer' });
+      if (capture) await page.screenshot({ path: join(artifacts, `${label}-state-${state.name}-${theme}-${state.width}.png`), fullPage: true });
     }
   }
   writeFileSync(join(artifacts, `phase3cb-${label}.json`), JSON.stringify(results, null, 1));
@@ -243,6 +232,7 @@ const PAGES = [
     if (r.weakControls.length) issues.push(`control boundary under 3:1: ${r.weakControls.slice(0, 4).join('; ')}`);
     if (r.smallTargets.length) issues.push(`phone controls under 44px: ${r.smallTargets.slice(0, 4).join('; ')}`);
     if (r.menuBars !== null && r.menuBars < 3) issues.push(`menu bars ${r.menuBars.toFixed(2)}:1 against the header`);
+    if (r.signInGap !== null && r.signInGap !== 28) issues.push(`sign-in form ${r.signInGap}px under the title, want 28px`);
     if (r.blur) issues.push(`${r.blur} blurred element(s)`);
     for (const shadow of r.shadows) if (!/^(10px 6px|5px 3px) blur0 spread0$/.test(shadow)) issues.push(`shadow ${shadow}`);
     return issues.map(issue => `${r.page}/${r.theme}/${r.width}: ${issue}`);

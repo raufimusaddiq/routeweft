@@ -12,9 +12,9 @@ Status: **Normative for frontend work**
 > §12 guards. Phase 3a (2026-11-01) gives the page bodies of Overview, Endpoint &
 > Key, Combo & Capability Adapter and System One their D layout (§5, "Page
 > bodies"); phase 3b (2026-11-01) does the same for Providers, Usage and Quota
-> Tracker; phase 3c part B (2026-11-01) for Sign in and the provider onboarding
-> flows (Token Saver, Console Log and Settings are phase 3c part A); the
-> charts and the mark (phase 4) still use their BDR-015 form with D's tokens. Code, guards and this
+> Tracker; phase 3c part A (2026-11-01) for Token Saver, Console Log and Settings and
+> part B (2026-11-01) for Sign in and the provider onboarding flows; the charts
+> and the mark (phase 4) still use their BDR-015 form with D's tokens. Code, guards and this
 > file change together, phase by phase.
 
 ## 1. House style: editorial instrument, retro neo-brutalist
@@ -274,8 +274,12 @@ stay. Do not reorder focusable markup or alter event handlers during visual work
 
 Every control has a visible 2px focus outline in `--focus`, 2px offset, both
 themes (inside the slab it is `#111111`; in the rail it is `--highlight`, 13.4:1
-on black). Keep skip-to-content, landmarks, labels, `aria-live`, focus order and
-reduced motion. Focus must not be clipped by scroll regions. Normal text and
+on black). On a chosen access-mode label, which is a highlight block, the radio's
+ring is `--highlight-ink` instead, because `--focus` measures 1.29:1 on that
+block in dark. A selected Provider or Combo row re-points `--focus` for what sits
+inside it, so its own ring uses `--focus-page` (the page focus colour) and stays
+visible on the page behind the block instead of 1:1 in dark. Keep skip-to-content,
+landmarks, labels, `aria-live`, focus order and reduced motion. Focus must not be clipped by scroll regions. Normal text and
 state colours require WCAG AA 4.5:1; control boundaries, the frameless menu
 button's bars, the rail and header edges and focus require 3:1 against what is
 behind them.
@@ -359,6 +363,22 @@ weight 700 with `aria-selected`; provider detail panels open on a 6px rule, exce
 topology hub is an outlined pill and its nodes open rows (an active node a 3px ink
 rule, still saying "in flight"); a quota account is an open row under a 4px rule with
 its windows behind a 3px ink rule.
+
+### Keyboard, label and phone guard (`ui/scripts/a11y-keyboard-labels-smoke.cjs`)
+
+Run by `npm run smoke`. It loads Overview, Endpoint & Key, Providers, Combo &
+Capability Adapter, System One, Settings and Usage, plus the provider connection
+form, at 1440 and 390 in light and dark (32 views, 664 controls), and asserts
+from the rendered DOM: Tab reaches every control once in DOM order (a radio group
+is one stop; roving `tabindex` respected; no positive `tabindex`), every control
+shows a solid outline of at least 2px at 3:1 or more against the backdrop, Enter
+activates buttons and links, Space activates buttons, checkboxes and unchecked
+radios, every input/select/textarea/button/link has an accessible name, the
+language dialog is the only focus trap and returns focus on Escape, nothing
+overflows at 390 or 320 (16 views), and at 390 the focused field stays inside a
+420px visual viewport with no fixed bar over it. It click-counts activation with
+the default action prevented, so nothing navigates, submits or saves. The control
+API is stubbed; no credential or provider is contacted.
 
 ## 11. What #263 changed from the BDR-015 text
 
@@ -473,6 +493,19 @@ colours 4.5:1 (`:59`, `:76`), the a11y audit (`:1328-1425`, `:1657-1665`), 320px
 overflow (`:1656`), reduced motion (`:1666-1669`), the empty-state border
 (`:1556`), 44px targets and every workflow assertion.
 
+### Phase 3c part A guard (`ui/scripts/phase3ca-pages-smoke.cjs`)
+
+Run by `npm run smoke`, same measurements as the 3a and 3b guards, for Token Saver,
+Console Log and Settings at 1440, 390 and 320 in light and dark, plus an edited
+Headroom field, an expanded console line (1440 and 390), the level filter, the
+language dialog opened from Settings (1440 and 390) and the drawer. Page rules added
+in 3c part A (2026-11-01): feature, toggle and helper rows are open rows under a
+hairline with 16px/700 names and 64px minimum height; the PXPIPE counters are 28px/700
+panel figures; a console line's detail is an open block with a 3px ink edge; the
+Settings JSON editors are 20px 3px-outlined textareas; a warning keeps its edge and
+its words. Two 44px phone targets the baseline missed are fixed here: the language
+dialog's close control and the Settings backup download link.
+
 ### Phase 3c part B guard (`ui/scripts/phase3cb-pages-smoke.cjs`)
 
 Run by `npm run smoke`, same measurements as the 3a and 3b guards, for the signed-out
@@ -487,3 +520,12 @@ beside its words (no new radius); the new-connection form opens with a 28px titl
 the device code is a 28px/700 mono figure in a 3px-outlined block (2px control
 radius); a sign-in result is an open block with a 6px ink edge, its state still a
 word. The phone "Open ... sign-in page" link is held to 44px.
+Review round 1 (2026-11-01): the guard also measures spacing, since the Sign in panel
+is itself the `.page-d` root and the 72px section rhythm would otherwise reach inside
+it; the form sits 28px under the title at every width (the rule
+`.sign-in-panel.page-d > * + *` removes the rhythm there, and a missing rule fails at
+72px, 48px on a phone). Sign in labels are mono with tracking but not
+`text-transform`ed: that changes `innerText` and broke the locale guard. The 28px
+new-connection title rule (`.page-d .provider-form .section-heading h3`) reaches the
+connection Edit form on Providers too, deliberately: both are the same family of
+connection forms; no 3a or 3b page selector changed.

@@ -61,6 +61,7 @@
   --t-body: 12px;
   --t-label: 11px;
   --focus: #00727f;
+  --focus-page: #00727f;
   --accent-bg: #ff5fa2;
   --accent-fg: #111111;
   --accent-muted: #3a0a20;
@@ -100,6 +101,7 @@
   --info: #8dbff2;
   --slab: #ff6fae;
   --focus: #4fd1e0;
+  --focus-page: #4fd1e0;
   --accent-bg: #ff6fae;
   --accent-raised: #ff8fbf;
   --live: #4fd1e0;
@@ -246,6 +248,9 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .access-modes label { display: flex; align-items: flex-start; gap: 9px; border: 1px solid var(--border-subtle); border-radius: var(--radius-flat); padding: 9px 11px; cursor: pointer; }
 .access-modes label:has(input:checked) { border-color: var(--ink); background: var(--surface-2); }
 .access-modes input { margin-top: 2px; accent-color: var(--ink); }
+/* The chosen label is a highlight block (#231): the ring must not be the page focus colour on it,
+   where it drops to 1.29:1 in dark. The ink is 13:1 on the highlight in both themes. */
+.access-modes label:has(input:checked) input:focus-visible { outline-color: var(--highlight-ink); }
 .access-modes span { display: grid; gap: 3px; font-size: var(--t-body); }
 .access-modes small, .access-note, .access-list small { color: var(--text-muted); font-size: var(--t-body); }
 .access-allow { display: grid; gap: 9px; margin-top: 12px; }
@@ -1026,6 +1031,9 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
   --paper: var(--highlight); --bg: var(--highlight); --surface: var(--highlight); --surface-2: var(--highlight); --surface-3: var(--highlight);
   --border: var(--highlight-ink); --outline: var(--highlight-ink); --border-subtle: var(--highlight-ink); --shadow-ink: var(--highlight-ink); --hard-sm: 5px 3px 0 var(--highlight-ink);
   --danger: var(--highlight-ink); --success: var(--highlight-ink); --warning: var(--highlight-ink); --focus: var(--highlight-ink); --live: var(--highlight-ink); }
+/* The block re-points --focus for what sits inside it; its own ring is drawn outside the block, on
+   the page, where the ink would be 1:1 in dark. Use the page focus colour (#231). */
+.page-d :is(.combo-row-selected, .provider-option-selected):focus-visible { outline-color: var(--focus-page); }
 .page-d .detail-panel-empty { margin: 0; border: 3px solid var(--outline); border-radius: var(--radius-state); padding: 20px 24px; background: var(--surface); box-shadow: var(--hard-sm); }
 .page-d .systemone-layout { gap: 24px 56px; }
 
@@ -1106,6 +1114,37 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
 /* The Usage request log has the request id first and the route second: it keeps the automatic layout and the whole route (the 3a one-line route rule is the Overview log's). */
 @media (min-width: 701px) { .page-d .usage-table.log-table { table-layout: auto; } .page-d .usage-table.log-table thead th:first-child { width: auto; } .page-d .usage-table.log-table td.log-route { max-width: none; overflow: visible; text-overflow: clip; white-space: nowrap; } }
 
+/* ---- Page bodies in direction D (#263, phase 3c part A): Token Saver, Console Log, Settings ---- */
+/* A toolbar and what it controls are one group, 32px apart. */
+.page-d > :is(.token-saver-toolbar, .settings-toolbar, .console-log-toolbar) + * { margin-top: 32px; }
+.page-d > :is(.token-saver-toolbar, .settings-toolbar, .console-log-toolbar) + :is([role="alert"], [role="status"], .auth-error, .inline-notice) { margin-top: 24px; }
+.page-d .token-saver-panel { margin-bottom: 0; }
+.page-d:is(.token-saver-content, .settings-content, .console-log-content) .detail-panel > .section-heading { padding-bottom: 6px; }
+
+/* Rows are open between hairlines; a row's name is a row name (16px, 700) and the row has room. */
+.page-d :is(.feature-row, .setting-toggle, .helper-row) { min-height: 64px; padding: 16px 0; }
+.page-d :is(.feature-main strong, .setting-toggle strong) { font-size: var(--t-lead); font-weight: 700; }
+.page-d .helper-log-row, .page-d .console-log-row { padding: 14px 0; }
+.page-d .token-saver-grid { gap: 40px 56px; }
+.page-d .settings-grid { gap: 40px 56px; }
+
+/* Panel figures: the PXPIPE counters are secondary display (28px, 700) over a mono label. */
+.page-d .helper-stats { gap: 24px 20px; margin-top: 20px; }
+.page-d .helper-stat dd { font-size: var(--t-title); font-weight: 700; letter-spacing: -.03em; line-height: 1; }
+
+/* Console Log: one list under its section rule; a log line's detail is an open block with a 3px ink edge, not a boxed panel. */
+.page-d .console-log-row pre { border: 0; border-left: 3px solid var(--ink); border-radius: 0; padding: 8px 14px; background: var(--surface-2); }
+.page-d .console-log-pagination { margin-top: 8px; padding-top: 16px; }
+
+/* Settings: the JSON editor is a 20px textarea like every textarea; a warning keeps its colour edge and its words. */
+.page-d .settings-json-field textarea { padding: 12px 16px; background: var(--surface); }
+.page-d .settings-warning { border-left-width: 6px; padding-left: 14px; }
+.page-d .settings-password, .page-d .settings-restore, .page-d .settings-json-field, .page-d .settings-field { padding-top: 18px; }
+.page-d .settings-language { padding-top: 18px; border-top: 1px solid var(--border-subtle); }
+
+/* The language dialog's close control is a 44px target on a phone (UI_STYLE 4, 8). */
+@media (max-width: 700px) { .language-dialog .icon-button { min-width: 44px; min-height: 44px; } .page-d .settings-download { min-height: 44px; } .page-d :is(.feature-row, .setting-toggle, .helper-row) { padding: 14px 0; } .page-d :is(.token-saver-grid, .settings-grid) { gap: 40px; } }
+
 /* ---- Page bodies in direction D (#263, phase 3c part B): Sign in and the provider onboarding flows ---- */
 /* Sign in: an open block under a 6px rule, a 28px title, 3px pill fields; a failure is a 6px danger edge beside its words (no new radius). */
 .sign-in-panel.page-d { width: min(100%, 520px); margin-top: 8px; border: 0; border-top: 6px solid var(--ink); border-radius: 0; padding: 24px 0 0; background: transparent; }
@@ -1114,7 +1153,9 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
 .sign-in-panel.page-d .sign-in-heading h2 { font-size: var(--t-title); font-weight: 700; letter-spacing: -.04em; line-height: 1; }
 .sign-in-panel.page-d .sign-in-heading p { margin-top: 8px; font-size: var(--t-lead); }
 .sign-in-panel.page-d form { gap: 12px; }
-.sign-in-panel.page-d label { margin-top: 10px; font-family: var(--font-mono); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+.sign-in-panel.page-d label { margin-top: 10px; font-family: var(--font-mono); font-weight: 500; letter-spacing: .08em; }
+/* The panel is itself the page-d root: the section rhythm (72px between sections) does not apply to its heading and form. */
+.sign-in-panel.page-d > * + * { margin-top: 0; }
 .sign-in-panel.page-d input { border: 3px solid var(--outline); border-radius: var(--radius-pill); padding: 0 18px; background: var(--surface); }
 .sign-in-panel.page-d .button-primary { margin-top: 20px; }
 .sign-in-panel.page-d .form-error { margin: 4px 0 0; border-left: 6px solid var(--danger); padding: 2px 0 2px 14px; font-size: var(--t-lead); }
