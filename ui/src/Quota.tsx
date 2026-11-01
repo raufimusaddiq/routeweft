@@ -230,7 +230,7 @@ export function Quota({ onUnauthorized }: Props) {
   const pages = Math.max(1, Math.ceil(total / QUOTA_PAGE_SIZE))
   const filtered = provider !== '' || search !== ''
 
-  return <div className="quota-content" aria-busy={loading}>
+  return <div className="quota-content page-d" aria-busy={loading}>
     <div className="quota-toolbar accent-surface"><span className="count-label" role="status">{loading ? 'Loading…' : `${total.toLocaleString()} account${total === 1 ? '' : 's'}${filtered ? ' match' : ''}`}</span><button className="button-primary" type="button" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? 'Refreshing…' : 'Refresh quota'}</button><button className="button-secondary" type="button" disabled={loading} onClick={() => setReload(value => value + 1)}>Reload</button></div>
     <form className="quota-filters" onSubmit={applySearch} role="search" aria-label="Quota accounts">
       <label htmlFor="quota-provider">Provider</label>
