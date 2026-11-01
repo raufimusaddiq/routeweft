@@ -175,7 +175,8 @@ jobs:
       # A cache hit makes the download a no-op; the system libraries are not cached.
       - run: npx playwright-core install chromium firefox
       - run: npx playwright-core install-deps chromium firefox
-      - run: npm run smoke
+      - name: UI smoke, including the keyboard/label/phone guard (#231)
+        run: npm run smoke
       # smoke.sh stops its preview by PID on every exit path; this proves the pass
       # path left nothing on the port and the next step proves the failing ones.
       - name: Preview is gone after the smoke
