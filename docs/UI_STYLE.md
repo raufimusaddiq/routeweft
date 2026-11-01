@@ -273,8 +273,8 @@ stay. Do not reorder focusable markup or alter event handlers during visual work
 
 Every control has a visible 2px focus outline in `--focus`, 2px offset, both
 themes (inside the slab it is `#111111`; in the rail it is `--highlight`, 13.4:1
-on black). On a chosen access-mode label, which is a highlight block, the radio's
-ring is `--highlight-ink` instead, because `--focus` measures 1.29:1 on that
+on black). On a chosen access-mode label in the phase 3 pages, which is a highlight
+block, the radio's ring is `--highlight-ink` instead, because `--focus` measures 1.29:1 on that
 block in dark. A selected Provider or Combo row re-points `--focus` for what sits
 inside it, so its own ring uses `--focus-page` (the page focus colour) and stays
 visible on the page behind the block instead of 1:1 in dark. Keep skip-to-content,
@@ -367,7 +367,7 @@ its windows behind a 3px ink rule.
 
 Run by `npm run smoke`. It loads Overview, Endpoint & Key, Providers, Combo &
 Capability Adapter, System One, Settings and Usage, plus the provider connection
-form, at 1440 and 390 in light and dark (32 views, 664 controls), and asserts
+form, at 1440 and 390 in light and dark (32 views, 668 controls), and asserts
 from the rendered DOM: Tab reaches every control once in DOM order (a radio group
 is one stop; roving `tabindex` respected; no positive `tabindex`), every control
 shows a solid outline of at least 2px at 3:1 or more against the backdrop, Enter

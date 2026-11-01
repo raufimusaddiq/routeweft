@@ -34,7 +34,9 @@ const KEYBOARD_FIELD = '#new-key-name';
 const connection = (id, providerId, name) => ({ id, nodeId: `node-${providerId}`, providerId, name, authKind: 'api-key', identity: `${id}@example.test`, enabled: true, priority: 0, credentialConfigured: true });
 const connections = [connection('conn-1', 'openai', 'primary'), connection('conn-2', 'anthropic', 'claude')];
 const models = ['gpt-4o', 'gpt-4o-mini', 'claude-sonnet'].map((id, i) => ({ providerId: i === 2 ? 'anthropic' : 'openai', id, name: id, capabilities: ['vision'], disabled: false }));
-const providers = ['openai', 'anthropic', 'deepseek', 'groq'].map(id => ({ id, transports: ['openai-chat'], auth: 'api-key', authModes: ['api-key'], modelCatalog: 'static', passthroughModels: false, reportsUsage: false, signInModes: [], signInMethods: [], configuredNodes: 1, enabledAccounts: 1, readiness: { status: 'ready', served: true } }));
+// anthropic offers two connect methods, so the connection-method radiogroup renders and its
+// checked label — a highlight block on a page-d page — is reached by the ring and name checks.
+const providers = ['openai', 'anthropic', 'deepseek', 'groq'].map(id => ({ id, transports: ['openai-chat'], auth: 'api-key', authModes: id === 'anthropic' ? ['api-key', 'oauth'] : ['api-key'], modelCatalog: 'static', passthroughModels: false, reportsUsage: false, signInModes: [], signInMethods: [], configuredNodes: 1, enabledAccounts: 1, readiness: { status: 'ready', served: true } }));
 const nodes = ['openai', 'anthropic'].map(id => ({ id: `node-${id}`, kind: 'builtin', providerId: id, name: id, baseUrl: `https://api.${id}.com/v1`, transports: ['openai-chat'] }));
 const keys = [{ id: 'k-1', name: 'CI pipeline', prefix: 'rw_ci12', enabled: true, paused: false, createdAt: '2026-09-01T10:00:00Z', lastUsedAt: '2026-09-25T20:00:00Z', access: { restricted: false, allow: [] } }];
 const combos = [{ id: 'combo-1', name: 'fast', strategy: 'fallback', stickyLimit: 0, judgeModel: '', fusionEnabled: false, members: [{ providerId: 'openai', modelId: 'gpt-4o', position: 0, selected: true }] }];
@@ -82,6 +84,22 @@ const events = Array.from({ length: 3 }, (_, i) => ({ id: 3 - i, requestId: `req
 
   // Recorded once for the whole run: activation is a click on the focused control, and its default
   // action is prevented so Enter never submits a form or follows a link.
+  // The live channel would reconnect every few seconds and re-render the page under the probes;
+  // hold it open for the run, as shell-smoke does. Other EventSources are untouched.
+  await page.addInitScript(() => {
+    const Native = window.EventSource;
+    window.EventSource = class extends Native {
+      constructor(url, options) {
+        if (String(url).endsWith('/admin/v1/events')) {
+          const target = new EventTarget();
+          Object.assign(target, { url, readyState: 1, withCredentials: false, onopen: null, onerror: null, onmessage: null, close() { this.readyState = 2 } });
+          setTimeout(() => target.onopen && target.onopen(new Event('open')), 0);
+          return target;
+        }
+        super(url, options);
+      }
+    };
+  });
   await page.addInitScript(() => {
     window.__a11yClicks = [];
     window.__a11yBlockClicks = false;
@@ -99,6 +117,9 @@ const events = Array.from({ length: 3 }, (_, i) => ({ id: 3 - i, requestId: `req
       const style = getComputedStyle(element);
       return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity) > 0 && !element.closest('[aria-hidden="true"], .sr-only, template');
     };
+    // A same-document navigation (the same hash at another width) keeps the old DOM; clear last
+    // pass's markers so a hidden element cannot answer for a visible one with the same index.
+    for (const node of document.querySelectorAll('[data-a11y-index]')) node.removeAttribute('data-a11y-index');
     return [...document.querySelectorAll('a[href], button, input:not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"])')]
       // Native semantics: a radio group is one Tab stop (the checked one), and roving-tabindex
       // widgets (the Usage tabs) remove the unselected controls from the Tab order.
@@ -187,16 +208,20 @@ const events = Array.from({ length: 3 }, (_, i) => ({ id: 3 - i, requestId: `req
         const element = document.querySelector(`[data-a11y-index="${index}"]`);
         element?.focus();
         window.__a11yClicks = [];
-        window.__a11yBlockClicks = true;
+        window.__a11yBlockClicks = false;
         return document.activeElement === element;
       }, control.index);
       if (!focused) continue;
-      await page.keyboard.press(key);
-      await page.waitForTimeout(30);
-      if (await page.evaluate(() => {
-        window.__a11yBlockClicks = false;
-        return window.__a11yClicks.length > 0;
-      })) return true;
+      await page.evaluate(() => { window.__a11yBlockClicks = true; });
+      try {
+        await page.keyboard.press(key);
+        // The click can be dispatched a frame after the key; wait for it rather than guessing a delay.
+        const clicked = await page.waitForFunction(() => window.__a11yClicks.length > 0, null, { timeout: 1000 }).then(() => true).catch(() => false);
+        if (clicked) return true;
+      } finally {
+        // Never leave the page-wide click guard armed for the next control or the next state.
+        await page.evaluate(() => { window.__a11yBlockClicks = false; });
+      }
     }
     return false;
   };
@@ -204,7 +229,6 @@ const events = Array.from({ length: 3 }, (_, i) => ({ id: 3 - i, requestId: `req
   const keyboardOpen = async () => {
     await page.setViewportSize({ width: 390, height: 900 });
     await page.goto(`${ORIGIN}/#endpoint-key`);
-    await page.reload();
     await page.waitForSelector(KEYBOARD_FIELD);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(300);
@@ -292,7 +316,7 @@ const events = Array.from({ length: 3 }, (_, i) => ({ id: 3 - i, requestId: `req
       const clickable = control.tag === 'button' || control.tag === 'a' || ['checkbox', 'radio'].includes(control.type);
       if (!clickable) continue;
       if (control.tag === 'a') {
-        if (!(await activation(control, 'Enter'))) activationFailures.push(`${control.tag} "${control.text}" Enter`);
+        if (!(await activation(control, 'Enter'))) activationFailures.push(`${control.tag} "${control.name}" Enter`);
         continue;
       }
       if (control.type === 'radio') continue; // a checked radio is a no-op on Space; the group probe below covers it
@@ -318,15 +342,25 @@ const events = Array.from({ length: 3 }, (_, i) => ({ id: 3 - i, requestId: `req
     };
   };
 
+  await page.goto(ORIGIN);
+  // The app reads the persisted theme only in its startup initializer, and a fragment-only
+  // navigation would not re-read it. A unique query makes each view a hard load, so the explicit
+  // light/dark preference really is the one rendered; the assertion below proves it did not
+  // collapse to the OS preference.
+  let loads = 0;
+  const load = async (hash, theme) => {
+    await page.evaluate(value => { try { localStorage.setItem('routeweft-theme', value); } catch {} }, theme);
+    await page.emulateMedia({ colorScheme: theme === 'light' ? 'dark' : 'light' });
+    await page.goto(`${ORIGIN}/?v=${++loads}${hash}`);
+    await page.waitForFunction(value => document.documentElement.dataset.theme === value, theme);
+  };
+
   const results = [];
   for (const theme of THEMES) {
     for (const width of WIDTHS) {
       for (const target of PAGES) {
         await page.setViewportSize({ width, height: 900 });
-        await page.goto(`${ORIGIN}/${target.hash}`);
-        await page.evaluate(value => { try { localStorage.setItem('routeweft-theme', value); } catch {} }, theme);
-        await page.emulateMedia({ colorScheme: theme });
-        await page.reload();
+        await load(target.hash, theme);
         await page.waitForSelector(target.ready);
         await page.waitForLoadState('networkidle');
         await page.waitForTimeout(350);
@@ -340,14 +374,12 @@ const events = Array.from({ length: 3 }, (_, i) => ({ id: 3 - i, requestId: `req
   for (const theme of THEMES) {
     for (const width of WIDTHS) {
       await page.setViewportSize({ width, height: 900 });
-      await page.goto(`${ORIGIN}/#providers`);
-      await page.evaluate(value => { try { localStorage.setItem('routeweft-theme', value); } catch {} }, theme);
-      await page.emulateMedia({ colorScheme: theme });
-      await page.reload();
+      await load('#providers', theme);
       await page.waitForSelector('.provider-option');
       await page.waitForLoadState('networkidle');
       await page.waitForTimeout(300);
-      await page.locator('.provider-option').first().click();
+      await page.evaluate(() => [...document.querySelectorAll('.provider-option')].find(node => node.textContent.includes('anthropic'))?.click());
+      await page.waitForSelector('.provider-option-selected');
       await page.getByRole('button', { name: 'Add connection', exact: true }).click();
       await page.waitForSelector('form.provider-form input');
       await page.waitForTimeout(200);
@@ -359,10 +391,7 @@ const events = Array.from({ length: 3 }, (_, i) => ({ id: 3 - i, requestId: `req
   for (const theme of THEMES) {
     for (const target of PAGES) {
       await page.setViewportSize({ width: 320, height: 900 });
-      await page.goto(`${ORIGIN}/${target.hash}`);
-      await page.evaluate(value => { try { localStorage.setItem('routeweft-theme', value); } catch {} }, theme);
-      await page.emulateMedia({ colorScheme: theme });
-      await page.reload();
+      await load(target.hash, theme);
       await page.waitForSelector(target.ready);
       await page.waitForLoadState('networkidle');
       await page.waitForTimeout(250);
@@ -372,14 +401,12 @@ const events = Array.from({ length: 3 }, (_, i) => ({ id: 3 - i, requestId: `req
   // The same connection form at 320: the frozen no-overflow rule.
   for (const theme of THEMES) {
     await page.setViewportSize({ width: 320, height: 900 });
-    await page.goto(`${ORIGIN}/#providers`);
-    await page.evaluate(value => { try { localStorage.setItem('routeweft-theme', value); } catch {} }, theme);
-    await page.emulateMedia({ colorScheme: theme });
-    await page.reload();
+    await load('#providers', theme);
     await page.waitForSelector('.provider-option');
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(250);
-    await page.locator('.provider-option').first().click();
+    await page.evaluate(() => [...document.querySelectorAll('.provider-option')].find(node => node.textContent.includes('anthropic'))?.click());
+    await page.waitForSelector('.provider-option-selected');
     await page.getByRole('button', { name: 'Add connection', exact: true }).click();
     await page.waitForSelector('form.provider-form input');
     await page.waitForTimeout(200);
