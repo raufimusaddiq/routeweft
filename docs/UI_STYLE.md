@@ -324,18 +324,23 @@ No API paths, state logic, workflows or nav definitions change for visual work.
 5. Screenshots of every changed page at 1440px and 390px, light and dark, with
    the drawer and selections clicked, in `docs/evidence/263/<phase>/` (the
    BDR-015 set stays in `docs/evidence/102/final/`). They show a locally seeded
-   database, never production traffic.
+   database, never production traffic. In-tree history is trimmed: only the
+   phase 1 previews (`docs/evidence/263/preview/`) and
+   `docs/evidence/263/phase3a/` are kept; the phase 2, 3b, 3c and 4 sets were
+   deleted on 2026-11-02 (#361) because nothing read them. A new phase commits
+   its own capture set.
 6. Check contrast, overflow, browser errors, drawer dismissal/focus return,
    persistence, OS-theme changes and reduced motion. Record checks not run.
 
 `ROUTEWEFT_SMOKE_ARTIFACTS` selects the screenshot/report directory (default
 `/tmp/routeweft-ui-evidence`). Smoke reuses existing control-API fixtures;
 Chromium and `playwright-core` are required, as documented in
-`ui/scripts/smoke.sh`. CI runs the whole of it as the `ui-smoke` job on every push
-and pull request (Playwright pinned to 1.49.1, installed outside the manifest, its
-browsers cached by version; the evidence directory is uploaded as an artifact), so
-the contrast, focus, overflow, drawer and workflow assertions above are checked
-before merge; `make ui-smoke` runs the same locally.
+`ui/scripts/smoke.sh`. Since #361 no CI job runs the smoke: it is a local gate
+(`make ui-smoke` / `npm run smoke`, Playwright installed outside the manifest) and
+must be run on the branch before a UI change is merged, because PR CI checks only
+typecheck, unit tests and the production build. The contrast, focus, overflow,
+drawer and workflow assertions above are therefore only as current as the last
+local run.
 
 Acceptance sentence: the page is recognisably Routeweft from the weave mark, the
 black rail and the mono figures; one pink slab per page carries the live thing;

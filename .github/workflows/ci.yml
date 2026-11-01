@@ -1,103 +1,27 @@
 name: CI
 
+# Pull requests get the two cheap gates only: `go` and `ui`. Everything slower
+# lives in main.yml and runs after merge (#361):
+#   - parity (oracle generators, ~6 min)  -> main only
+#   - race (full tree under -race)        -> main only
+#   - container (image build/budget)      -> main only
+#   - ui-smoke (Playwright, ~10 min)      -> removed; run `npm run smoke` locally
+# A push to a feature branch used to start a second full run beside the PR run;
+# it no longer starts anything. Branch protection on main requires `go` and `ui`.
+
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
   contents: read
 
-jobs:
-  parity:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      # The resolver's own tests need no network and no oracle.
-      - run: node --test compat/parity/resolve-oracle.test.mjs compat/parity/report-changes.test.mjs
-      # LiteRouter refs/heads/main is resolved once for this job and frozen: every
-      # step below reads ORACLE_SHA. A failed resolve fails the job; there is no
-      # fallback SHA. Re-run a recorded commit with
-      # `node compat/parity/resolve-oracle.mjs --sha <sha>` (#289).
-      - name: Resolve and fetch the LiteRouter main oracle into disposable test storage
-        run: node compat/parity/resolve-oracle.mjs
-      - name: Upload the oracle run record
-        uses: actions/upload-artifact@v4
-        with:
-          name: oracle-run
-          path: ${{ env.ORACLE_RECORD }}
-      # Compare this run's frozen snapshot with the one the last successful main run
-      # recorded (#290). No earlier record is a first run, reported as such; the
-      # report is informational (no upstream state fails the job), and nothing is
-      # posted or filed from it.
-      - name: Fetch the previous recorded oracle snapshot
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          previous="$RUNNER_TEMP/previous-oracle"
-          run_id=$(gh run list --workflow ci.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty' || true)
-          if [ -n "$run_id" ] && gh run download "$run_id" --name oracle-run --dir "$previous" && [ -f "$previous/oracle-run.json" ]; then
-            echo "ORACLE_PREVIOUS=$previous/oracle-run.json" >> "$GITHUB_ENV"
-          else
-            echo "::notice::No previous oracle-run record is available; the change report will say first-run."
-          fi
-      - name: Report LiteRouter changes since the previous snapshot
-        run: node compat/parity/report-changes.mjs
-      - name: Upload the oracle change report
-        uses: actions/upload-artifact@v4
-        with:
-          name: oracle-change-report
-          path: ${{ env.ORACLE_REPORT_DIR }}
-      - run: node compat/parity/inventory.mjs
-      # The oracle's Combo routing (member order, capability detection, adapter pools) is
-      # re-run and compared with the pin the Go tests replay (#270).
-      - run: node compat/parity/generate-combo-routing.mjs --check
-      # The oracle's default price catalog and cost arithmetic, replayed by internal/pricing (#273).
-      - run: node compat/parity/generate-pricing.mjs --check
-      # The Headroom /v1/compress wire and PXPIPE's host contract, replayed by internal/transforms (#271).
-      - run: node compat/parity/generate-headroom.mjs --check
-      - run: node compat/parity/generate-pxpipe.mjs --check
-      # Proxy pools, relay pools and the Netlify relay deploy (#272).
-      - run: node compat/parity/generate-proxy-pools.mjs --check
-      # The oracle's conversion legs over the corpus, and the divergence ledger every
-      # difference from them is accounted for in (#274).
-      - run: node compat/parity/generate-protocol-legs.mjs --check
-      - run: node compat/parity/generate-control-workflows.mjs --check
-      # The oracle's Command Code, Kenari, OpenCode Go, Ollama, Vercel AI Gateway and MiMo quota readers (#225).
-      - run: node compat/parity/generate-billing-quota.mjs --check
-      # The display-language list, names, flags and catalogs the dashboard ships (#279).
-      - run: node compat/parity/generate-locales.mjs --check
-      - run: node compat/parity/ledger.mjs --check
-      - name: Upload the divergence ledger
-        uses: actions/upload-artifact@v4
-        with:
-          name: divergence-ledger
-          path: docs/DIVERGENCE_LEDGER.md
-      - run: go test -race ./internal/app -run TestPinnedSystemOneDifferential -count=1
-      - run: go test -race ./internal/security ./internal/ingress ./internal/providers/shared ./internal/providers/wire ./internal/protocol/concerns
-      - run: go test -race ./internal/parity ./internal/protocol/hub ./internal/pricing ./internal/transforms/... ./internal/proxy/... ./internal/transport -count=1
-      - run: go test -race ./internal/control/api -run "ControlWorkflows" -count=1
-      # Provider catalog, model seeds, quota readers and onboarding flows are
-      # compared against the oracle: no hand-kept provider list can drift.
-      - run: go test -tags oracle ./internal/providers/parity -count=1
-      # The secret tripwire reads the secrets the oracle ships. Without ORACLE_DIR
-      # it can only match known prefixes, which is how the iflow literal shipped, so
-      # it runs here where the oracle is present.
-      - run: go test ./internal/providers/onboarding -run TestNoThirdPartyProviderSecretInTree -count=1
-        env:
-          # This job fetches the oracle, so the scan must be the full one; without
-          # the oracle it fails rather than degrading to a prefix check.
-          ROUTEWEFT_REQUIRE_ORACLE_SECRET_SCAN: "1"
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+jobs:
   go:
     runs-on: ubuntu-latest
     steps:
@@ -107,25 +31,8 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go test ./...
-      - run: go test -race ./compat/...
       - run: go vet ./...
       - run: go build ./cmd/routeweft
-      - run: go test ./bench/router -run '^$$' -bench . -benchmem -count=1
-
-  # The whole tree under the race detector (#282). Go's default 10m per-package
-  # timeout is kept on purpose (RUNBOOK 29): a package that outgrows it fails here
-  # instead of being masked by a larger number. The job runs beside the others, so
-  # it adds no wall clock to a PR; timeout-minutes only stops a wedged runner.
-  race:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - run: go test -race -count=1 -timeout 10m ./...
 
   ui:
     runs-on: ubuntu-latest
@@ -140,75 +47,6 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - run: npm ci
-      - run: npm run typecheck
       - run: npm test
+      # `npm run build` is `tsc --noEmit && vite build`, so typecheck runs here.
       - run: npm run build
-
-  # The browser smoke and its accessibility checks (ui/scripts/shell-smoke.cjs and
-  # the other scripts `npm run smoke` runs) against a fresh Vite preview that
-  # smoke.sh starts in its own process group and stops by PID on every exit path
-  # (#280, #238). A separate job so the quick `ui` job above stays quick and this
-  # check has a stable name to require in branch protection (`ui-smoke`).
-  # Playwright is pinned and installed outside the committed manifest, as smoke.sh
-  # documents; its browsers are cached by that version.
-  ui-smoke:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: ui
-    env:
-      PLAYWRIGHT_CORE_VERSION: 1.49.1
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: ui/package-lock.json
-      - run: npm ci
-      - run: npm install --no-save --no-package-lock playwright-core@${{ env.PLAYWRIGHT_CORE_VERSION }}
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ env.PLAYWRIGHT_CORE_VERSION }}-chromium-firefox
-      # A cache hit makes the download a no-op; the system libraries are not cached.
-      - run: npx playwright-core install chromium firefox
-      - run: npx playwright-core install-deps chromium firefox
-      - name: UI smoke, including the keyboard/label/phone guard (#231)
-        run: npm run smoke
-      # smoke.sh stops its preview by PID on every exit path; this proves the pass
-      # path left nothing on the port and the next step proves the failing ones.
-      - name: Preview is gone after the smoke
-        run: '! ss -Hltn "sport = :4173" | grep -q .'
-      - name: Preview is stopped on the failing, interrupted and terminated paths (#238)
-        run: bash scripts/smoke-cleanup-check.sh fail interrupt term
-      - name: Keep the smoke evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui-smoke-evidence
-          # The smoke writes its screenshots and report to /tmp/routeweft-ui-evidence
-          # unless ROUTEWEFT_SMOKE_ARTIFACTS says otherwise.
-          path: |
-            /tmp/routeweft-ui-evidence
-            /tmp/routeweft-ui-preview.log
-          if-no-files-found: ignore
-
-  container:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: docker build -t routeweft:ci .
-      - run: test "$(docker image inspect routeweft:ci --format '{{.Config.Entrypoint}}')" = '[/routeweft]'
-      - name: Verify runtime TLS trust bundle
-        run: |
-          container_id=$(docker create routeweft:ci)
-          trap 'docker rm "$container_id"' EXIT
-          docker cp "$container_id:/etc/ssl/certs/ca-certificates.crt" "$RUNNER_TEMP/routeweft-ca.crt"
-          test -s "$RUNNER_TEMP/routeweft-ca.crt"
-      - name: Enforce production image budget
-        run: |
-          image_bytes=$(docker image inspect routeweft:ci --format '{{.Size}}')
-          echo "Image: ${image_bytes} bytes; goal: 104857600 bytes (100 MiB); stretch: 62914560 bytes (60 MiB)"
-          test "$image_bytes" -le 104857600

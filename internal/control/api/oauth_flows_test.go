@@ -764,15 +764,26 @@ func TestBulkImportNormalizesAndPersists(t *testing.T) {
 	}
 
 	// A provider without a bulk route refuses rather than accepting a batch it
-	// would silently drop. kiro is chosen only if it declares no Bulk hook.
+	// would silently drop. Pick a registered provider that declares no Bulk hook
+	// instead of naming kiro, which now has one; naming it skipped this assertion
+	// unconditionally (#361).
+	bulk := make(map[string]bool, len(bulkProviders(t)))
 	for _, provider := range bulkProviders(t) {
-		if provider == "kiro" {
-			t.Skip("kiro now declares a Bulk hook")
+		bulk[provider] = true
+	}
+	nonBulk := ""
+	for _, provider := range onboarding.NewRegistry().Providers() {
+		if !bulk[provider] {
+			nonBulk = provider
+			break
 		}
 	}
-	recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/kiro/bulk-import", `[{"access_token":"fixture-access","email":"kiro-bulk@example.invalid"}]`)
+	if nonBulk == "" {
+		t.Skip("every registered provider declares a Bulk hook")
+	}
+	recorder := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/oauth/"+nonBulk+"/bulk-import", `[{"access_token":"fixture-access","email":"fixture@example.invalid"}]`)
 	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("kiro bulk import: expected 404, got %d %s", recorder.Code, recorder.Body.String())
+		t.Fatalf("%s bulk import: expected 404, got %d %s", nonBulk, recorder.Code, recorder.Body.String())
 	}
 }
 

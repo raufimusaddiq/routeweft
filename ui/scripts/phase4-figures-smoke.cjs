@@ -2,7 +2,7 @@
 // measured (not asserted by eye): no horizontal overflow, no text under 4.5:1, no control boundary under 3:1,
 // no phone control under 44px, no blur, and every box-shadow a hard-offset token or none. A 30-day series (so the latest 7 days and the
 // week before are both drawn) and a failing provider are in the fixtures. With
-// ROUTEWEFT_SMOKE_ARTIFACTS set, a full-page screenshot of every state is written there (docs/evidence/263/phase4).
+// ROUTEWEFT_SMOKE_ARTIFACTS set, a full-page screenshot of every state is written there (default `/tmp/routeweft-ui-evidence`).
 // The control API is stubbed, so no credential exists. Run by scripts/smoke.sh.
 const { chromium } = require('playwright-core');
 const assert = require('node:assert/strict');

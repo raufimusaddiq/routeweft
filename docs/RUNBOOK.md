@@ -1204,8 +1204,8 @@ Not covered: SIGKILL or power loss lose events still in the in-memory queue
 ## 29. Race suite and CI budget
 
 `go test -race -count=1 -timeout 10m ./...` is the gate. It runs locally as
-`make race` and in CI as the `race` job of `.github/workflows/ci.yml` (#282),
-beside the other jobs (the parity job still races its selected packages too).
+`make race` and in CI as the `race` job of `.github/workflows/main.yml` (#282),
+post-merge only since #361 (a PR runs `go test ./...` without `-race`).
 Go's default ten minute per-package timeout is kept on purpose and spelled out:
 a package that outgrows it fails in the gate instead of being masked by a larger
 number. The job's `timeout-minutes: 45` only stops a wedged runner.
@@ -1247,47 +1247,37 @@ Before the fixes the full run had `internal/app` at 1030 s and
 `internal/control/api` at 872 s (both past the timeout) and `internal/ingress` at
 829 s alone.
 
-### 29.1 CI jobs and required checks (#280)
+### 29.1 CI jobs and required checks (#280, #361)
 
-`.github/workflows/ci.yml` runs on every push and pull request: `parity`, `go`, `race`
-(section 29), `ui` (typecheck, unit tests, build), `ui-smoke` and `container`.
+`.github/workflows/ci.yml` runs on pull requests and on pushes to `main` with two
+jobs: `go` (`go test ./...`, `go vet ./...`, `go build ./cmd/routeweft`) and `ui`
+(`npm test`, `npm run build`, which includes `tsc --noEmit`). `go` and `ui` are the
+checks to require on `main`.
 
-`ui-smoke` runs `npm run smoke` in `ui/` (`make ui-smoke` locally): the shell smoke
-with its accessibility checks (semantic labels, contrast, landmarks, heading order,
-focus and skip link, reduced motion, 390px and 320px overflow) and the OAuth,
-device, import-masking, connection-status, Kiro, quota-actions and quota-warming
-scripts. `smoke.sh` builds, starts `vite preview` in its own process group and stops
-it by PID on every exit path; the job then checks the port is free and runs
-`smoke-cleanup-check.sh fail interrupt term` to show the failing, interrupted and
-terminated paths stop it as well. Waits are on page conditions, never sleeps.
-Playwright is pinned to `playwright-core` 1.49.1, installed with
-`npm install --no-save --no-package-lock` (the manifest is untouched); Chromium and
-Firefox are cached under `~/.cache/ms-playwright` by that version and the system
-libraries are installed with `playwright-core install-deps`. The scripts launch the
-full Chromium that install provides (`chromium.executablePath()`), not Playwright's
-headless-shell default, because the OAuth journeys script asserts there are no console
-errors and the headless shell reports a blocked popup navigation the full browser does
-not; `ROUTEWEFT_SMOKE_CHROME` still overrides the binary. The evidence directory and
-the preview log are uploaded as the `ui-smoke-evidence` artifact.
+`.github/workflows/main.yml` runs on pushes to `main` only: `parity` (the LiteRouter
+oracle and the generator `--check` steps whose pins a Go or UI test replays, the
+oracle-tagged provider parity tests and the full secret scan), `race` (section 29)
+and `container` (image build, entrypoint, TLS trust bundle, 100 MiB budget). They
+run after merge because each takes minutes and a PR does not need the same evidence
+twice. `ledger.mjs --check` is not run anywhere: its only consumer is
+`docs/DIVERGENCE_LEDGER.md`, a document nothing gates on.
 
-**Required checks are branch-protection settings, not repository code.** When #280 was
-written, `main` required `Hermes Review` and `parity` only (`strict`, administrators
-included); `go`, `race`, `ui`, `ui-smoke` and `container` were not required. List them
-with:
+The Playwright browser smoke is not a CI job since #361. It cost 629 s of the
+~10 minute wall clock per run (497 s of smoke plus 89 s of cleanup checks).
+`make ui-smoke` / `npm run smoke` still runs the shell smoke with its accessibility
+checks and the page scripts locally; it needs `playwright-core` and Chromium
+installed by hand (`ui/scripts/smoke.sh`). Nothing installs Playwright in CI any
+more, so `ui-smoke` must not stay in branch protection.
+
+**Required checks are branch-protection settings, not repository code.** List the
+current set with:
 
 ```bash
 gh api repos/raufimusaddiq/routeweft/branches/main/protection/required_status_checks --jq '.contexts'
 ```
 
-To require the smoke, add its check name (`ui-smoke`, the job id, which is what GitHub
-reports) without touching the others:
-
-```bash
-echo '["ui-smoke"]' | gh api -X POST repos/raufimusaddiq/routeweft/branches/main/protection/required_status_checks/contexts --input -
-```
-
-Only do this after `ui-smoke` has passed on the PRs that carry it: a required check
-that never reports blocks every merge.
+When a job is renamed or removed, update protection in the same window: a required
+check that never reports blocks every merge.
 
 ## 30. Quota credits and opt-in warming
 
