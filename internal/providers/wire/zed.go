@@ -739,19 +739,23 @@ func ZedDo(provider routing.ProviderRef, client *http.Client, request *http.Requ
 		// The transport's goroutines still own the response client.Do returned, so
 		// what is changed is a copy of it. A trial_blocked body is rewritten before
 		// the client sees it (zed.js:284-305); every other body passes through.
-		body, readErr := io.ReadAll(io.LimitReader(response.Body, zedRequestLimit+1))
+		body, readErr := zedReadErrorBody(response.Body)
 		response.Body.Close()
 		cancel()
 		if readErr != nil {
 			return nil, readErr
 		}
+		rewritten, changed := zedRewriteTrialBlocked(body, response.Status)
 		kept := *response
-		body = zedRewriteTrialBlocked(body, response.Status)
-		kept.Body = io.NopCloser(bytes.NewReader(body))
-		kept.ContentLength = int64(len(body))
+		kept.Body = io.NopCloser(bytes.NewReader(rewritten))
+		kept.ContentLength = int64(len(rewritten))
 		kept.Header = response.Header.Clone()
 		kept.Header.Del("Content-Length")
-		kept.Header.Del("Content-Encoding")
+		if changed {
+			// Only a body this function replaced is known to be decoded; the header
+			// on an untouched upstream body must stay truthful.
+			kept.Header.Del("Content-Encoding")
+		}
 		return &kept, nil
 	}
 	// A failed status ahead of any output is read before the reply is handed on, so
@@ -783,10 +787,10 @@ func ZedDo(provider routing.ProviderRef, client *http.Client, request *http.Requ
 // body (zed.js:284-305): the client reads the pinned sentence and the upstream
 // message appended, in the field the body already used. A body that is not
 // JSON, or names another code, is returned unchanged.
-func zedRewriteTrialBlocked(body []byte, statusText string) []byte {
+func zedRewriteTrialBlocked(body []byte, statusText string) ([]byte, bool) {
 	var document map[string]any
 	if json.Unmarshal(body, &document) != nil {
-		return body
+		return body, false
 	}
 	code := strings.TrimSpace(concerns.Text(document["code"]))
 	errorObject, _ := document["error"].(map[string]any)
@@ -794,14 +798,14 @@ func zedRewriteTrialBlocked(body []byte, statusText string) []byte {
 		code = strings.TrimSpace(concerns.Text(errorObject["code"]))
 	}
 	if code != "trial_blocked" {
-		return body
+		return body, false
 	}
 	message := strings.TrimSpace(concerns.Text(document["message"]))
 	if message == "" && errorObject != nil {
 		message = strings.TrimSpace(concerns.Text(errorObject["message"]))
 	}
 	if message == "" {
-		message = strings.TrimSpace(concerns.Text(body))
+		message = strings.TrimSpace(string(body))
 	}
 	if message == "" {
 		message = statusText
@@ -814,9 +818,28 @@ func zedRewriteTrialBlocked(body []byte, statusText string) []byte {
 	target["message"] = rewritten
 	encoded, err := json.Marshal(document)
 	if err != nil {
-		return body
+		return body, false
 	}
-	return encoded
+	return encoded, true
+}
+
+// zedErrorLimit bounds the non-2xx body that is inspected and rewritten. An
+// error document is small; a larger one is replaced with a named error rather
+// than a silently cut-off body.
+const zedErrorLimit = 1 << 20
+
+func zedReadErrorBody(source io.Reader) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(source, zedErrorLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > zedErrorLimit {
+		named, _ := json.Marshal(map[string]any{"error": map[string]any{
+			"message": fmt.Sprintf("Zed error body exceeds %d bytes", zedErrorLimit), "type": "api_error",
+		}})
+		return named, nil
+	}
+	return body, nil
 }
 
 // zedBody ties the reply to the upstream request: closing it stops both.

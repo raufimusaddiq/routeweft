@@ -222,11 +222,13 @@ func opencodeRestoreStream(source io.ReadCloser, writer *io.PipeWriter, renamed 
 
 func opencodeRestoreLine(line string, renamed map[string]string) (string, bool) {
 	trimmed := strings.TrimRight(line, "\r\n")
-	if !strings.HasPrefix(trimmed, "data: ") {
+	if !strings.HasPrefix(trimmed, "data:") {
 		return "", false
 	}
+	// SSE permits both `data: {...}` and `data:{...}`.
+	payloadText := strings.TrimPrefix(strings.TrimPrefix(trimmed, "data:"), " ")
 	var payload any
-	if json.Unmarshal([]byte(strings.TrimPrefix(trimmed, "data: ")), &payload) != nil {
+	if json.Unmarshal([]byte(payloadText), &payload) != nil {
 		return "", false
 	}
 	if !opencodeRestore(payload, renamed) {

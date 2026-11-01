@@ -1316,9 +1316,19 @@ func TestZedTrialBlockedBodyIsRewritten(t *testing.T) {
 	}
 }
 
+func TestZedErrorBodyBoundIsNamed(t *testing.T) {
+	body, err := zedReadErrorBody(strings.NewReader(strings.Repeat("x", zedErrorLimit+1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "exceeds") {
+		t.Fatalf("oversized body was not named: %s", body)
+	}
+}
+
 func TestZedTrialBlockedRewriteShapes(t *testing.T) {
 	const sentence = "Zed trial access is blocked upstream. The account can list hosted models, but Zed is refusing completions until trial/billing access is enabled or unblocked. Zed says: "
-	nested := zedRewriteTrialBlocked([]byte(`{"error":{"code":"trial_blocked","message":"nested"}}`), "")
+	nested, _ := zedRewriteTrialBlocked([]byte(`{"error":{"code":"trial_blocked","message":"nested"}}`), "")
 	var document map[string]any
 	if json.Unmarshal(nested, &document) != nil {
 		t.Fatal("nested body is not JSON")
@@ -1326,10 +1336,10 @@ func TestZedTrialBlockedRewriteShapes(t *testing.T) {
 	if got := document["error"].(map[string]any)["message"]; got != sentence+"nested" {
 		t.Fatalf("nested message = %q", got)
 	}
-	if got := string(zedRewriteTrialBlocked([]byte(`{"code":"other","message":"keep"}`), "")); got != `{"code":"other","message":"keep"}` {
+	if got, _ := zedRewriteTrialBlocked([]byte(`{"code":"other","message":"keep"}`), ""); string(got) != `{"code":"other","message":"keep"}` {
 		t.Fatalf("non-trial body changed: %s", got)
 	}
-	if got := string(zedRewriteTrialBlocked([]byte("plain text"), "")); got != "plain text" {
+	if got, _ := zedRewriteTrialBlocked([]byte("plain text"), ""); string(got) != "plain text" {
 		t.Fatalf("non-JSON body changed: %s", got)
 	}
 }
