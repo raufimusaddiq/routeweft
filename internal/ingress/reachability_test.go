@@ -17,7 +17,7 @@ import (
 // leg at the oracle either, so closing them is an adapter decision, not a leg. (Qoder's
 // conversion is in the pin's executor, not absent; the entry says where.)
 var unreachableProviders = map[string]string{
-	"cursor":         "#76 P02 part 3: legs, Connect-RPC transport (wire.CursorDo) and a hook Codec landed, but the legacy ChatService path for image-bearing turns is not implemented and the provider is fenced in ingress.unwired (TestCursorAndQoderHaveAWholeIngressArmButStayFenced, PARITY 6.23)",
+	"cursor":         "#76 P02: legs, Connect-RPC transport (wire.CursorDo), the legacy ChatService path for image-bearing turns (wire/cursor_chat.go) and a hook Codec landed; no transport gap remains, and the provider is fenced in ingress.unwired (TestCursorAndQoderHaveAWholeIngressArmButStayFenced, PARITY 6.23)",
 	"typesafe":       "no conversion leg exists at the pin: registry/typesafe.js:22 format \"systemone\" is not in translator/formats.js:2-15",
 	"qoder":          "no translator leg at the pin: registry/qoder.js:19-26 declares no format, so the target format is \"openai\" (services/provider.js:142-151) and executors/qoder.js:210-335 builds the agent envelope from the Chat body, :426-597 unwraps its SSE; #203 ported both and #76 P02 part 3 binds them through a hook Codec + QoderDo, still fenced (PARITY 6.22, 6.23)",
 	"perplexity-web": "#195 Perplexity Web: hook Codec serves every client wire (the pin converts in the executor, no hub leg); fenced in ingress.unwired until a supervised live check",

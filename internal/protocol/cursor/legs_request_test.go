@@ -252,8 +252,9 @@ func TestMessagesAreConverted(t *testing.T) {
 	}
 }
 
-// Cross product: every content shape x every role. A part the model would not
-// see is refused, whichever turn holds it.
+// Cross product: every content shape x every role. An image is not carried by
+// this wire, so it is dropped as the pin's translator drops it; audio, files and
+// unknown parts are refused, whichever turn holds them.
 func TestContentShapesAcrossRoles(t *testing.T) {
 	image := `{"type":"image_url","image_url":{"url":"data:image/png;base64,QQ=="}}`
 	for _, role := range []string{"system", "developer", "user", "assistant", "tool"} {
@@ -264,22 +265,20 @@ func TestContentShapesAcrossRoles(t *testing.T) {
 			}
 			return `{"messages":[{"role":"` + role + `","content":` + content + extra + `},{"role":"user","content":"q"}]}`
 		}
-		for _, content := range []string{`"text"`, `null`, `[]`, `[{"type":"text","text":"t"}]`, `[{"type":"refusal","refusal":"no"}]`} {
+		for _, content := range []string{`"text"`, `null`, `[]`, `[{"type":"text","text":"t"}]`, `[{"type":"refusal","refusal":"no"}]`,
+			`[` + image + `]`, `[{"type":"text","text":"t"},` + image + `]`, `[{"type":"image_url","image_url":{"url":"https://x/y.png"}}]`} {
 			mustConvert(t, turn(content))
 		}
 		for name, content := range map[string]string{
-			"image":      `[` + image + `]`,
-			"text+image": `[{"type":"text","text":"t"},` + image + `]`,
-			"remote":     `[{"type":"image_url","image_url":{"url":"https://x/y.png"}}]`,
-			"audio":      `[{"type":"input_audio","input_audio":{"data":"x"}}]`,
-			"file":       `[{"type":"file","file":{"file_id":"f"}}]`,
-			"unknown":    `[{"type":"hologram"}]`,
-			"no type":    `[{"text":"t"}]`,
-			"number":     `7`,
-			"object":     `{"type":"text","text":"t"}`,
-			"text nil":   `[{"type":"text"}]`,
-			"text num":   `[{"type":"text","text":3}]`,
-			"part str":   `["t"]`,
+			"audio":    `[{"type":"input_audio","input_audio":{"data":"x"}}]`,
+			"file":     `[{"type":"file","file":{"file_id":"f"}}]`,
+			"unknown":  `[{"type":"hologram"}]`,
+			"no type":  `[{"text":"t"}]`,
+			"number":   `7`,
+			"object":   `{"type":"text","text":"t"}`,
+			"text nil": `[{"type":"text"}]`,
+			"text num": `[{"type":"text","text":3}]`,
+			"part str": `["t"]`,
 		} {
 			t.Run(role+"/"+name, func(t *testing.T) { mustRefuse(t, turn(content)) })
 		}

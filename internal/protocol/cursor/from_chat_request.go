@@ -306,10 +306,10 @@ func assistantCalls(value any) ([]any, error) {
 	return calls, nil
 }
 
-// contentText is extractContent (:14-26): the text of a content value. Anything
-// the model would not see is refused, because the pin drops it silently:
-// images and audio (the agent path takes text only, executors/cursor.js:81-90),
-// files and unknown parts.
+// contentText is extractContent (:14-26): the text of a content value. An image
+// is not carried: the pin's translator takes text blocks only, which is why a
+// turn carrying one takes the legacy ChatService path (executors/cursor.js:81-90,
+// PARITY V41). Audio, files and unknown parts are refused rather than dropped.
 func contentText(content any, separator string) (string, error) {
 	switch value := content.(type) {
 	case nil:
@@ -327,6 +327,8 @@ func contentText(content any, separator string) (string, error) {
 					return "", unsupported("%s part without text", kind)
 				}
 				texts = append(texts, text)
+			case "image_url", "image":
+				// openai-to-cursor.js:14-26 keeps text parts only.
 			default:
 				return "", unsupported("content part %q: Cursor takes text only", kind)
 			}
@@ -334,4 +336,10 @@ func contentText(content any, separator string) (string, error) {
 		return strings.Join(texts, separator), nil
 	}
 	return "", unsupported("content must be a string or a list of parts")
+}
+
+// ChatMessages is convertMessages (:52-170) for the wire's legacy ChatService
+// encoder, which the pin runs on the executor's input after this translation.
+func ChatMessages(body map[string]any) ([]any, error) {
+	return cursorMessages(concerns.Items(body["messages"]))
 }
