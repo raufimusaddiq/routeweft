@@ -83,7 +83,7 @@ export function Overview({ onUnauthorized }: Props) {
       <Main title="Requests per day">
         <figure className="ed-figure">
           <BarChart points={points} unit="requests" title="Requests per day, 30 days" shade={isWeekend} current={index => index >= n - 7} ghost={ghost} reference={{ value: average }} />
-          <figcaption><Caption kicker="Fig. 1">Last 30 days. Cyan bars are this week; {wow ? 'each white tick is the same day a week earlier. ' : 'ticks for the week before appear once two full weeks are recorded. '}The dashed line is the {averageLabel} of successful requests ({num(average)} a day), weekends shaded.</Caption></figcaption>
+          <figcaption><Caption kicker="Fig. 1">Last 30 days. Coloured bars are this week; {wow ? 'each tick is the same day a week earlier. ' : 'ticks for the week before appear once two full weeks are recorded. '}The dashed line is the {averageLabel} of successful requests ({num(average)} a day), weekends shaded.</Caption></figcaption>
         </figure>
       </Main>
       <Margin>

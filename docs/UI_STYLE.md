@@ -13,8 +13,10 @@ Status: **Normative for frontend work**
 > Key, Combo & Capability Adapter and System One their D layout (§5, "Page
 > bodies"); phase 3b (2026-11-01) does the same for Providers, Usage and Quota
 > Tracker; phase 3c part A (2026-11-01) for Token Saver, Console Log and Settings and
-> part B (2026-11-01) for Sign in and the provider onboarding flows; the charts
-> and the mark (phase 4) still use their BDR-015 form with D's tokens. Code, guards and this
+> part B (2026-11-01) for Sign in and the provider onboarding flows; phase 4
+> (2026-11-01) gives the charts, share bars, the stacked bar, sparklines and
+> status marks their D drawing (§6) and verifies the mark, favicon and `theme-color`
+> tags (§4a). Nothing in the UI uses the BDR-015 form any more. Code, guards and this
 > file change together, phase by phase.
 
 ## 1. House style: editorial instrument, retro neo-brutalist
@@ -169,8 +171,8 @@ and in the phone header. `ui/public/favicon.svg` is the same drawing with litera
 page's CSS variables) and a `prefers-color-scheme: dark` block; `favicon-32.png` and `apple-touch-icon.png` (180px) are
 rendered from it on the light ground. In the rail the mark is paper-coloured with a `--highlight` thread. The favicon
 keeps the drawing with D's literal colours: light warp `#111111`, weft `#00727f`; dark warp `#f7f6f0`, weft `#4fd1e0`.
-`ui/index.html` carries two `theme-color` tags equal to `--paper`: light `#f7f6f0` and dark `#111111` (BDR-015 values
-`#f4f4f2` / `#0c0e11` until phase 4 of #263).
+`ui/index.html` carries two `theme-color` tags equal to `--paper`: light `#f7f6f0` and dark `#111111`, measured by the phase 4 guard
+(the BDR-015 values `#f4f4f2` / `#0c0e11` are gone; the favicon and both PNG icons carry D's colours).
 
 ## 5. Layout components
 
@@ -183,7 +185,7 @@ Implemented in `ui/src/editorial.tsx` and `ui/src/style.css`.
 - **Two separator weights do different jobs:** a 6px ink rule opens a section,
   statement or margin list (4px under a table head); 1px `--border-subtle` rules
   separate rows.
-- **Status is never colour alone:** a 10px round dot (`.dot`, 50% radius) always
+- **Status is never colour alone:** a 12px round dot with a 2px ink edge (`.dot`, 50% radius; phase 4 made it 12px, it was 10px with no edge) always
   beside its word. #263 first froze "square dot plus word"; the owner lifted the
   shape part on 2026-10-28, so the mark follows D. The word beside it stays
   frozen. One
@@ -224,8 +226,9 @@ Implemented in `ui/src/editorial.tsx` and `ui/src/style.css`.
 ## 6. Data presentation
 
 - **Daily chart (Fig. 1):** SVG, no chart library. Axis, gridlines, peak label,
-  hover and arrow-key readout, and a screen-reader table. The latest 7 days are
-  `--live` bars; a 2px tick marks the same day a week earlier; a dashed line is the
+  hover and arrow-key readout, and a screen-reader table. Every bar is a box with a 2px ink edge (no radius). The latest 7 days are
+  `--live` bars (the `--highlight` colour on the accent surface, the week before a `--accent-raised`
+  fill there and `--surface-3` elsewhere); a 3px tick marks the same day a week earlier; a dashed line is the
   period average; weekends are shaded. Hover shows the change against the week
   before.
 - **Comparisons see only observed days.** The API omits a day with no attributed 2xx traffic, so a missing day is
@@ -237,18 +240,21 @@ Implemented in `ui/src/editorial.tsx` and `ui/src/style.css`.
   the 24-hour period, otherwise the page shows a per-day average. The comparison helpers accept only that type, so passing them a raw series does not compile
   (`ui/src/format.typecheck.ts` fails `npm run typecheck` if that changes), and a unit test checks that no result depends
   on the length of the zero-filled window.
-- **Share bars** all use one baseline, `largest()` of the values present, never the first row.
-- **Provider table (Table 1):** provider with status dot, requests, a thin
-  share bar, and the error rate with its own bar scaled to 10%. The error bar and
+- **Share bars** all use one baseline, `largest()` of the values present, never the first row. A share bar
+  (`.ed-bar`, and the error bar, `.err-bar.ed-bar`) is a 12px pill track with a 2px ink edge and an ink fill.
+- **Provider table (Table 1):** provider with status dot, requests, a
+  share bar (12px pill), and the error rate with its own bar scaled to 10%. The error bar and
   figure turn `--danger` only when a provider is above 1.5x the fleet rate, above
-  3%, with at least 50 requests. At 390px the share bar shrinks to a thin inline
-  bar and the error column stays.
+  3%, with at least 50 requests. At 390px the share bar shrinks to a narrower inline
+  bar and the error column stays. In the Providers catalogue below 700px the share bar takes its own line
+  under the provider's name (name, then bar, figure and error rate, then the meta line), so a drawing never
+  sits on a name.
 - **Request log:** a table on desktop; below 700px each row stacks into route and
   latency on the first line, then status, tokens and time. It never scrolls
   sideways.
-- **Outcomes (Fig. 2):** a 100% stacked bar with 2px seams and a labelled legend.
+- **Outcomes (Fig. 2):** a 100% stacked bar, 28px high in a 3px ink edge (no radius), with 3px ink seams between segments and a labelled legend whose swatches are 14px boxes with a 2px edge.
 - Every figure carries a unit, a delta or a comparison. A missing value is a dash.
-  Sparklines appear only in their own small figure, never on a KPI.
+  Sparklines appear only in their own small figure, never on a KPI: a 3px ink line ending in a 12px `--highlight` box with a 2px edge.
 
 ## 7. States
 
@@ -537,3 +543,18 @@ Endpoint & Key fields). The guard asserts the device code size, the heading size
 connection form, and adds 320px to the onboarding states, plus the Reauthenticate and Edit
 forms with a long account name and the New Generic Provider form.
 
+
+### Phase 4 guard (`ui/scripts/phase4-figures-smoke.cjs`)
+
+Run by `npm run smoke`, same page measurements as the earlier guards, for Overview, Providers and
+Usage at 1440, 390 and 320 in light and dark, plus the chart hover and arrow-key readout, the 30-day
+Usage chart (the latest 7 days and the week before), provider details and the drawer. It also reads each
+figure from the browser and fails unless: every status mark is a 12px round dot with a 2px edge and a word
+in its parent; every share bar is a 12px+ pill with a 2px edge; the stacked bar is 28px with a 3px edge and its
+swatches 14px with a 2px edge; every chart bar has a 2px stroke; sparklines are 3px with a 12px end box; no provider
+name overlaps its share bar, figure or error rate (measured from the text's own rectangles); every
+figure edge is 3:1 or better against what is behind it (lowest measured 6.66:1 in light, 7.32:1 in dark). It
+reads the two `theme-color` tags, the literal colours in `favicon.svg`, the dominant colours of `favicon-32.png`
+and `apple-touch-icon.png`, and the rail mark's fills (`#f7f6f0` and `#ffd60a`) and fails on any other value.
+The chart caption now says "Coloured bars" rather than "Cyan bars" (the bars are `--highlight` on the accent
+surface) and "each tick" rather than "each white tick".
