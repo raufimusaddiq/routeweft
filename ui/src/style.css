@@ -1105,3 +1105,27 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
 .page-d .provider-details > .detail-panel > .section-heading { border-top: 0; padding-top: 0; }
 /* The Usage request log has the request id first and the route second: it keeps the automatic layout and the whole route (the 3a one-line route rule is the Overview log's). */
 @media (min-width: 701px) { .page-d .usage-table.log-table { table-layout: auto; } .page-d .usage-table.log-table thead th:first-child { width: auto; } .page-d .usage-table.log-table td.log-route { max-width: none; overflow: visible; text-overflow: clip; white-space: nowrap; } }
+
+/* ---- Page bodies in direction D (#263, phase 3c part B): Sign in and the provider onboarding flows ---- */
+/* Sign in: an open block under a 6px rule, a 28px title, 3px pill fields; a failure is a 6px danger edge beside its words (no new radius). */
+.sign-in-panel.page-d { width: min(100%, 520px); margin-top: 8px; border: 0; border-top: 6px solid var(--ink); border-radius: 0; padding: 24px 0 0; background: transparent; }
+.sign-in-panel.page-d .sign-in-heading { align-items: center; gap: 16px; margin-bottom: 28px; }
+.sign-in-panel.page-d .sign-in-heading > .material-symbols { margin-top: 0; color: var(--text-main); font-size: 28px; }
+.sign-in-panel.page-d .sign-in-heading h2 { font-size: var(--t-title); font-weight: 700; letter-spacing: -.04em; line-height: 1; }
+.sign-in-panel.page-d .sign-in-heading p { margin-top: 8px; font-size: var(--t-lead); }
+.sign-in-panel.page-d form { gap: 12px; }
+.sign-in-panel.page-d label { margin-top: 10px; font-family: var(--font-mono); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+.sign-in-panel.page-d input { border: 3px solid var(--outline); border-radius: var(--radius-pill); padding: 0 18px; background: var(--surface); }
+.sign-in-panel.page-d .button-primary { margin-top: 20px; }
+.sign-in-panel.page-d .form-error { margin: 4px 0 0; border-left: 6px solid var(--danger); padding: 2px 0 2px 14px; font-size: var(--t-lead); }
+
+/* Onboarding: the new-connection form opens with a 28px title; the device code is the figure of its screen; the result is an open block with a 6px ink edge, its state still a word. */
+.page-d .provider-form .section-heading h3 { font-size: var(--t-title); font-weight: 700; letter-spacing: -.04em; line-height: 1; }
+.page-d .provider-form .section-heading p { margin-top: 8px; font-size: var(--t-lead); }
+.page-d .journey-notes { gap: 10px; font-size: var(--t-lead); line-height: 1.4; }
+.page-d .device-values { gap: 20px; }
+.page-d .device-values code { border: 3px solid var(--outline); border-radius: var(--radius-control); padding: 8px 14px; background: var(--surface); }
+.page-d .device-values code[aria-label="Device code"] { font-size: var(--t-title); font-weight: 700; letter-spacing: .06em; }
+.page-d .oauth-panel[aria-label="Sign-in result"] { border-top: 0; border-left: 6px solid var(--ink); padding: 4px 0 4px 18px; }
+.page-d .oauth-panel .oauth-actions { flex-wrap: wrap; gap: 12px; }
+@media (max-width: 700px) { .page-d .oauth-panel a.button-secondary { min-height: 44px; } .sign-in-panel.page-d { padding-top: 20px; } .page-d .device-values code[aria-label="Device code"] { font-size: 24px; } }

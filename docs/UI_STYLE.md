@@ -12,8 +12,9 @@ Status: **Normative for frontend work**
 > §12 guards. Phase 3a (2026-11-01) gives the page bodies of Overview, Endpoint &
 > Key, Combo & Capability Adapter and System One their D layout (§5, "Page
 > bodies"); phase 3b (2026-11-01) does the same for Providers, Usage and Quota
-> Tracker; the other pages (3c: Token Saver, Console Log, Settings, Sign in,
-> onboarding) and the charts and the mark (phase 4) still use their BDR-015 layout with D's tokens. Code, guards and this
+> Tracker; phase 3c part B (2026-11-01) for Sign in and the provider onboarding
+> flows (Token Saver, Console Log and Settings are phase 3c part A); the
+> charts and the mark (phase 4) still use their BDR-015 form with D's tokens. Code, guards and this
 > file change together, phase by phase.
 
 ## 1. House style: editorial instrument, retro neo-brutalist
@@ -193,7 +194,7 @@ Implemented in `ui/src/editorial.tsx` and `ui/src/style.css`.
   always agree; redirects count in those totals though their mark is neutral.
   The rule lives in `isFailure()` in `ui/src/format.ts`.
 - **Page bodies (`.page-d`, phase 3a).** A page opts in by adding `page-d` to its
-  wrapper; 3b did Providers, Usage and Quota, 3c adds the rest. It sets: sections of a page 72px apart
+  wrapper; 3b did Providers, Usage and Quota, 3c part B Sign in and the onboarding forms, 3c part A Token Saver, Console Log and Settings. It sets: sections of a page 72px apart
   (56px below 900px, 48px below 700px; a toolbar and what it controls 32px); a 6px
   ink rule opens a section heading, statement, margin list and group, a 4px rule
   sits under a table head, and a heading inside the accent surface keeps a hairline
@@ -471,3 +472,18 @@ Kept unchanged and never loosened: text contrast 4.5:1 (`:51-54`, `:75`), state
 colours 4.5:1 (`:59`, `:76`), the a11y audit (`:1328-1425`, `:1657-1665`), 320px
 overflow (`:1656`), reduced motion (`:1666-1669`), the empty-state border
 (`:1556`), 44px targets and every workflow assertion.
+
+### Phase 3c part B guard (`ui/scripts/phase3cb-pages-smoke.cjs`)
+
+Run by `npm run smoke`, same measurements as the 3a and 3b guards, for the signed-out
+Sign in screen at 1440, 390 and 320 in light and dark, plus a rejected sign-in, and the
+provider onboarding flows on Providers (the "Add connection" form: key, browser
+sign-in with its method picker, device code with its code and link, the finished
+result, import and bulk) at 1440 and 390. "Onboarding screens" means these flows
+(SPEC 19.1); there is no separate first-run page. Rules added in 3c part B
+(2026-11-01): Sign in is an open block under a 6px rule with a 28px title, labels in
+mono capitals and 3px pill fields, and a failed sign-in is a 6px `--danger` edge
+beside its words (no new radius); the new-connection form opens with a 28px title;
+the device code is a 28px/700 mono figure in a 3px-outlined block (2px control
+radius); a sign-in result is an open block with a 6px ink edge, its state still a
+word. The phone "Open ... sign-in page" link is held to 44px.

@@ -35,7 +35,7 @@ export function SignIn({ onSignedIn }: Props) {
   }
 
   return (
-    <section className="sign-in-panel" aria-labelledby="sign-in-title">
+    <section className="sign-in-panel page-d" aria-labelledby="sign-in-title">
       <div className="sign-in-heading">
         <span className="material-symbols" aria-hidden="true">lock</span>
         <div><h2 id="sign-in-title">Sign in to Routeweft</h2><p>Use your Routeweft admin account.</p></div>
