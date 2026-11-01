@@ -125,7 +125,7 @@ func TestOpenCodeGoSessionHeaderIsAppliedAndProbeFallsBack(t *testing.T) {
 		t.Fatalf("client session lost: %v", req.Header)
 	}
 	other, _ := http.NewRequest(http.MethodPost, "https://example.test/", nil)
-	ApplyClientRequestHeaders(routing.ProviderRef{ProviderID: "opencode"}, other, client, nil)
+	ApplyClientRequestHeaders(routing.ProviderRef{ProviderID: "kimchi"}, other, client, nil)
 	if len(other.Header) != 0 {
 		t.Fatalf("other provider got headers: %v", other.Header)
 	}
