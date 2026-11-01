@@ -945,6 +945,13 @@ func CursorDo(client *http.Client, request *http.Request) (*http.Response, error
 	if len(raw) > cursorRequestLimit {
 		return nil, cursorError(ErrCursorFraming, "request exceeds the limit")
 	}
+	// A body the Run stream cannot carry takes the legacy ChatService path
+	// (executors/cursor.js:894-918).
+	if legacy, err := cursorChatDispatches(raw); err != nil {
+		return nil, err
+	} else if legacy {
+		return cursorChatDo(client, request, raw)
+	}
 	frame, model, err := cursorRun(raw, uuid.NewString())
 	if err != nil {
 		return nil, err
