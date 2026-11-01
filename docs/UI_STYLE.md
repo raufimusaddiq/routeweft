@@ -11,9 +11,9 @@ Status: **Normative for frontend work**
 > focus, the accent slab, empty and error states, `theme-color`, favicon) and the
 > §12 guards. Phase 3a (2026-11-01) gives the page bodies of Overview, Endpoint &
 > Key, Combo & Capability Adapter and System One their D layout (§5, "Page
-> bodies"); the other pages (phase 3b: Providers, Usage, Quota Tracker; 3c: Token
-> Saver, Console Log, Settings, Sign in, onboarding) and the charts and the mark
-> (phase 4) still use their BDR-015 layout with D's tokens. Code, guards and this
+> bodies"); phase 3b (2026-11-01) does the same for Providers, Usage and Quota
+> Tracker; the other pages (3c: Token Saver, Console Log, Settings, Sign in,
+> onboarding) and the charts and the mark (phase 4) still use their BDR-015 layout with D's tokens. Code, guards and this
 > file change together, phase by phase.
 
 ## 1. House style: editorial instrument, retro neo-brutalist
@@ -193,7 +193,7 @@ Implemented in `ui/src/editorial.tsx` and `ui/src/style.css`.
   always agree; redirects count in those totals though their mark is neutral.
   The rule lives in `isFailure()` in `ui/src/format.ts`.
 - **Page bodies (`.page-d`, phase 3a).** A page opts in by adding `page-d` to its
-  wrapper; 3b and 3c add it page by page. It sets: sections of a page 72px apart
+  wrapper; 3b did Providers, Usage and Quota, 3c adds the rest. It sets: sections of a page 72px apart
   (56px below 900px, 48px below 700px; a toolbar and what it controls 32px); a 6px
   ink rule opens a section heading, statement, margin list and group, a 4px rule
   sits under a table head, and a heading inside the accent surface keeps a hairline
@@ -275,8 +275,10 @@ Every control has a visible 2px focus outline in `--focus`, 2px offset, both
 themes (inside the slab it is `#111111`; in the rail it is `--highlight`, 13.4:1
 on black). On a chosen access-mode label, which is a highlight block, the radio's
 ring is `--highlight-ink` instead, because `--focus` measures 1.29:1 on that
-block in dark. Keep skip-to-content, landmarks, labels, `aria-live`, focus order
-and reduced motion. Focus must not be clipped by scroll regions. Normal text and
+block in dark. A selected Provider or Combo row re-points `--focus` for what sits
+inside it, so its own ring uses `--focus-page` (the page focus colour) and stays
+visible on the page behind the block instead of 1:1 in dark. Keep skip-to-content,
+landmarks, labels, `aria-live`, focus order and reduced motion. Focus must not be clipped by scroll regions. Normal text and
 state colours require WCAG AA 4.5:1; control boundaries, the frameless menu
 button's bars, the rail and header edges and focus require 3:1 against what is
 behind them.
@@ -346,7 +348,20 @@ control under 44px, no blur, and every `box-shadow` a `--hard`/`--hard-sm` offse
 with zero blur and spread. With `PHASE3A_CAPTURE=1` and
 `ROUTEWEFT_SMOKE_ARTIFACTS` it writes the screenshots kept in
 `docs/evidence/263/phase3a/` (`before-` and `after-`, and `phase3a-*.json`).
-Phases 3b and 3c add their pages to its list.
+Phases 3b and 3c add their pages to their own scripts.
+
+### Phase 3b guard (`ui/scripts/phase3b-pages-smoke.cjs`)
+
+Run by `npm run smoke`, same measurements as the 3a guard, for Providers, Usage and
+Quota Tracker at 1440, 390 and 320 in light and dark, plus the states: provider details,
+the Add connection form, the Generic Provider form, the Usage Requests and Request
+details tabs, Codex credit expiry and the drawer. Page rules added in 3b (2026-11-01):
+the selected provider row is the 22px `--highlight` block (the `.provider-option`
+radius owner); the Usage tabs are `button-ghost` pills (the existing pill owner) with a 3px edge, the chosen one a `--highlight` block at
+weight 700 with `aria-selected`; provider detail panels open on a 6px rule, except the empty "Select a provider" one, which is the 3px outlined 24px state box (`.provider-empty`, a `--radius-state` owner in the shell guard and measured by the 3b guard); the
+topology hub is an outlined pill and its nodes open rows (an active node a 3px ink
+rule, still saying "in flight"); a quota account is an open row under a 4px rule with
+its windows behind a 3px ink rule.
 
 ### Keyboard, label and phone guard (`ui/scripts/a11y-keyboard-labels-smoke.cjs`)
 

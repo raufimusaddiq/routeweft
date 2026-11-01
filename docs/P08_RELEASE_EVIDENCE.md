@@ -69,11 +69,17 @@ a11y keyboard/labels: 32 views at 1440/390 light+dark, 664 interactive controls,
 keyboard-open 390: field 188..232 in 420, fixed bars 0; modal trap true, focus return true
 ```
 
-What it found and this PR fixed: the radio inside a **chosen access-mode label** (a highlight block)
-inherited the page focus colour and measured **1.29:1 in dark**. `style.css` now uses `--highlight-ink`
-for that ring (13:1 on the block in both themes). No control lacked an accessible name, no focusable
-control lacked a 2 px outline, and no Tab-order, activation or overflow failure was found elsewhere on
-these views. The whole `smoke.sh` list (16 scripts) ran green on this tree on 2026-11-01.
+What it found and this PR fixed, both the same class — a ring that inherits a token meant for the
+contents of a highlight block:
+
+- the radio inside a **chosen access-mode label** inherited the page focus colour and measured
+  **1.29:1 in dark**; its ring is now `--highlight-ink` (13:1 on the block in both themes);
+- a **selected Provider row** (phase 3b's highlight block) re-points `--focus` to its ink for its
+  children, so its own ring was ink on the page's ink — **1.00:1 in dark**. It now uses `--focus-page`,
+  the page focus colour, which is drawn on the page behind the block.
+
+No control lacked an accessible name, no focusable control lacked a 2 px outline, and no Tab-order,
+activation or overflow failure was found elsewhere on these views. The whole `smoke.sh` list (16 scripts) ran green on this tree on 2026-11-01.
 
 **Not done, and not claimed:** a real phone on-screen keyboard (the check shrinks the viewport and lets
 the browser scroll the field into view, which is a proxy, not a device), a screen-reader announcement

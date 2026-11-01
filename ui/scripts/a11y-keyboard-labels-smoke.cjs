@@ -180,18 +180,25 @@ const events = Array.from({ length: 3 }, (_, i) => ({ id: 3 - i, requestId: `req
   };
 
   const activation = async (control, key) => {
-    await page.evaluate(index => {
-      const element = document.querySelector(`[data-a11y-index="${index}"]`);
-      element?.focus();
-      window.__a11yClicks = [];
-      window.__a11yBlockClicks = true;
-    }, control.index);
-    await page.keyboard.press(key);
-    await page.waitForTimeout(30);
-    return page.evaluate(() => {
-      window.__a11yBlockClicks = false;
-      return window.__a11yClicks.length > 0;
-    });
+    // A live page can re-render between the snapshot and this probe; a focus that moved means the
+    // key never reached the control, so focus again and retry once before calling it a failure.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const focused = await page.evaluate(index => {
+        const element = document.querySelector(`[data-a11y-index="${index}"]`);
+        element?.focus();
+        window.__a11yClicks = [];
+        window.__a11yBlockClicks = true;
+        return document.activeElement === element;
+      }, control.index);
+      if (!focused) continue;
+      await page.keyboard.press(key);
+      await page.waitForTimeout(30);
+      if (await page.evaluate(() => {
+        window.__a11yBlockClicks = false;
+        return window.__a11yClicks.length > 0;
+      })) return true;
+    }
+    return false;
   };
 
   const keyboardOpen = async () => {

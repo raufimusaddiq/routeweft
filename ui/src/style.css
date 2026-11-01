@@ -61,6 +61,7 @@
   --t-body: 12px;
   --t-label: 11px;
   --focus: #00727f;
+  --focus-page: #00727f;
   --accent-bg: #ff5fa2;
   --accent-fg: #111111;
   --accent-muted: #3a0a20;
@@ -100,6 +101,7 @@
   --info: #8dbff2;
   --slab: #ff6fae;
   --focus: #4fd1e0;
+  --focus-page: #4fd1e0;
   --accent-bg: #ff6fae;
   --accent-raised: #ff8fbf;
   --live: #4fd1e0;
@@ -988,7 +990,7 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
 /* ---- Page bodies in direction D (#263, phase 3a): Overview, Endpoint & Key, Combo, System One ----
    Scoped by .page-d so phases 3b and 3c adopt the same rules one page at a time (add the class to the page's wrapper). */
 .page-d { --page-gap: 72px; }
-.page-d.endpoint-content { gap: 0; }
+.page-d:is(.endpoint-content, .providers-content, .quota-content, .usage-content) { gap: 0; }
 .page-d > * + * { margin-top: var(--page-gap); }
 .page-d > :is([role="alert"], [role="status"], .auth-error, .inline-notice) { margin-top: 0; }
 .page-d > :is([role="alert"], [role="status"], .auth-error, .inline-notice) + * { margin-top: 24px; }
@@ -1023,12 +1025,15 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
 .page-d .key-row { min-height: 84px; padding: 16px 0; }
 
 /* Combo list and System One rows: the selected Combo is a 22px highlight block, not a ruled box. */
-.page-d .combo-row-selected { border-color: transparent; border-radius: 22px; color: var(--highlight-ink); background: var(--highlight);
+.page-d :is(.combo-row-selected, .provider-option-selected) { border-color: transparent; border-radius: 22px; color: var(--highlight-ink); background: var(--highlight);
   /* Like the accent surface, the block re-points the tokens so a control, a tag and a rule inside it stay legible in both themes; state is the word. */
   --text-main: var(--highlight-ink); --text-muted: var(--highlight-ink); --text-subtle: var(--highlight-ink); --ink: var(--highlight-ink); --ink-hover: var(--highlight-ink);
   --paper: var(--highlight); --bg: var(--highlight); --surface: var(--highlight); --surface-2: var(--highlight); --surface-3: var(--highlight);
   --border: var(--highlight-ink); --outline: var(--highlight-ink); --border-subtle: var(--highlight-ink); --shadow-ink: var(--highlight-ink); --hard-sm: 5px 3px 0 var(--highlight-ink);
   --danger: var(--highlight-ink); --success: var(--highlight-ink); --warning: var(--highlight-ink); --focus: var(--highlight-ink); --live: var(--highlight-ink); }
+/* The block re-points --focus for what sits inside it; its own ring is drawn outside the block, on
+   the page, where the ink would be 1:1 in dark. Use the page focus colour (#231). */
+.page-d :is(.combo-row-selected, .provider-option-selected):focus-visible { outline-color: var(--focus-page); }
 .page-d .detail-panel-empty { margin: 0; border: 3px solid var(--outline); border-radius: var(--radius-state); padding: 20px 24px; background: var(--surface); box-shadow: var(--hard-sm); }
 .page-d .systemone-layout { gap: 24px 56px; }
 
@@ -1059,3 +1064,52 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
   .page-d .key-row { grid-template-columns: minmax(0, 1fr); }
   .page-d .key-status { justify-items: start; }
 }
+
+/* ---- Page bodies in direction D (#263, phase 3b): Providers, Usage, Quota Tracker ---- */
+/* A toolbar or filter row and what it controls are one group, 32px apart, not two sections. */
+.page-d > :is(.providers-toolbar, .quota-filters, .usage-tabs) + * { margin-top: 32px; }
+.page-d > .quota-toolbar + .quota-filters { margin-top: 24px; }
+
+/* Providers: the catalogue is open rows between hairlines; the selected one is a 22px highlight block, and its state is still its word. */
+.page-d .provider-option { min-height: 68px; border-left: 0; border-radius: 22px; padding: 12px 18px; }
+.page-d .provider-option:hover:not(.provider-option-selected) { background: var(--surface-2); }
+.page-d .provider-option > .status strong { font-weight: 700; }
+.page-d .ed-group { margin-bottom: 8px; }
+.page-d .provider-details > .detail-panel:not(.provider-empty) { border-top: 6px solid var(--ink); padding: 14px 0 28px; }
+.page-d .provider-details > .detail-panel + .detail-panel { margin-top: 12px; } /* on top of the container's 12px gap: panels sit 24px apart */
+.page-d .provider-details > .provider-empty { border: 3px solid var(--outline); border-radius: var(--radius-state); padding: 20px 24px 24px; background: var(--surface); box-shadow: var(--hard-sm); }
+.page-d .provider-summary .panel-heading h2 { font-size: var(--t-title); font-weight: 700; letter-spacing: -.04em; line-height: 1; }
+.page-d .transport-options { margin: 4px 0 0; padding: 14px 0 0; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; }
+.page-d .oauth-panel { border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; padding: 14px 0 0; background: transparent; }
+
+/* Usage: the views are pill tabs; the chosen one is a highlight block and stays weight 700 with aria-selected. */
+.page-d .usage-tabs { gap: 10px; margin-bottom: 0; border-bottom: 0; }
+.page-d .usage-tab { min-height: var(--control-height); border: 3px solid transparent; border-radius: var(--radius-pill); padding: 0 20px; font-weight: 400; }
+.page-d .usage-tab:hover { border-color: var(--outline); color: var(--text-main); background: transparent; }
+.page-d .usage-tab[aria-selected="true"]:hover { color: var(--highlight-ink); background: var(--highlight); }
+.page-d .usage-tab[aria-selected="true"] { border-color: var(--outline); color: var(--highlight-ink); background: var(--highlight); font-weight: 700; }
+.page-d .usage-tab:focus-visible { outline-offset: 2px; }
+.page-d .usage-topology-core { border: 3px solid var(--outline); border-radius: var(--radius-control); padding: 8px 20px; background: var(--surface); }
+.page-d .usage-topology-nodes { gap: 0 36px; padding-top: 0; border-top: 0; }
+.page-d .usage-topology-node { padding: 12px 0 14px; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; }
+.page-d .usage-topology-node[data-active="true"] { border-top: 3px solid var(--ink); }
+.page-d .usage-topology-node[data-active="true"] strong { font-weight: 700; }
+
+/* Quota: each account is an open row; its name is a row name, its windows a hairline-led list. */
+.page-d .quota-row { gap: 12px 24px; padding: 22px 0; }
+.page-d .quota-main strong { font-size: var(--t-lead); font-weight: 700; }
+.page-d .quota-windows { margin-top: 4px; padding-left: 16px; border-left: 3px solid var(--ink); }
+.page-d .quota-window-name { font-weight: 700; }
+.page-d .quota-list { margin-top: 18px; }
+.page-d .quota-list > .quota-row:first-child { border-top: 4px solid var(--ink); }
+.page-d .detail-panel > .section-heading p { max-width: 70ch; }
+
+@media (max-width: 700px) {
+  .page-d .provider-option { padding: 12px 14px; }
+  .page-d .usage-tab { padding: 0 16px; }
+  .page-d .quota-row { padding: 18px 0; }
+}
+/* A detail panel already opens on its own 6px rule; its heading does not draw a second one. */
+.page-d .provider-details > .detail-panel > .section-heading { border-top: 0; padding-top: 0; }
+/* The Usage request log has the request id first and the route second: it keeps the automatic layout and the whole route (the 3a one-line route rule is the Overview log's). */
+@media (min-width: 701px) { .page-d .usage-table.log-table { table-layout: auto; } .page-d .usage-table.log-table thead th:first-child { width: auto; } .page-d .usage-table.log-table td.log-route { max-width: none; overflow: visible; text-overflow: clip; white-space: nowrap; } }

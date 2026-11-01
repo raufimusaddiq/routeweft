@@ -876,7 +876,7 @@ export function Providers({ onUnauthorized }: Props) {
     </button>
   }
 
-  return <div className="providers-content" aria-busy={loading}>
+  return <div className="providers-content page-d" aria-busy={loading}>
     <section className="ed-banner accent-surface" aria-label="Provider summary">
       <p className="ed-headline"><strong>{num(inServiceAll.length)}</strong> of {num(providers.length)} providers carry traffic</p>
       <p className="ed-subline">{attention.length > 0 ? <><Dot tone={attention.some(row => tone(row) === 'bad') ? 'bad' : 'warn'} /> <strong>{attention.map(row => row.provider.id).join(', ')}</strong> {attention.length === 1 ? 'needs' : 'need'} a look.</> : loading ? 'Loading providers…' : 'Every connected provider is enabled and within the fleet error rate.'}</p>
