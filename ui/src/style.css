@@ -1113,3 +1113,34 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
 .page-d .provider-details > .detail-panel > .section-heading { border-top: 0; padding-top: 0; }
 /* The Usage request log has the request id first and the route second: it keeps the automatic layout and the whole route (the 3a one-line route rule is the Overview log's). */
 @media (min-width: 701px) { .page-d .usage-table.log-table { table-layout: auto; } .page-d .usage-table.log-table thead th:first-child { width: auto; } .page-d .usage-table.log-table td.log-route { max-width: none; overflow: visible; text-overflow: clip; white-space: nowrap; } }
+
+/* ---- Page bodies in direction D (#263, phase 3c part A): Token Saver, Console Log, Settings ---- */
+/* A toolbar and what it controls are one group, 32px apart. */
+.page-d > :is(.token-saver-toolbar, .settings-toolbar, .console-log-toolbar) + * { margin-top: 32px; }
+.page-d > :is(.token-saver-toolbar, .settings-toolbar, .console-log-toolbar) + :is([role="alert"], [role="status"], .auth-error, .inline-notice) { margin-top: 24px; }
+.page-d .token-saver-panel { margin-bottom: 0; }
+.page-d:is(.token-saver-content, .settings-content, .console-log-content) .detail-panel > .section-heading { padding-bottom: 6px; }
+
+/* Rows are open between hairlines; a row's name is a row name (16px, 700) and the row has room. */
+.page-d :is(.feature-row, .setting-toggle, .helper-row) { min-height: 64px; padding: 16px 0; }
+.page-d :is(.feature-main strong, .setting-toggle strong) { font-size: var(--t-lead); font-weight: 700; }
+.page-d .helper-log-row, .page-d .console-log-row { padding: 14px 0; }
+.page-d .token-saver-grid { gap: 40px 56px; }
+.page-d .settings-grid { gap: 40px 56px; }
+
+/* Panel figures: the PXPIPE counters are secondary display (28px, 700) over a mono label. */
+.page-d .helper-stats { gap: 24px 20px; margin-top: 20px; }
+.page-d .helper-stat dd { font-size: var(--t-title); font-weight: 700; letter-spacing: -.03em; line-height: 1; }
+
+/* Console Log: one list under its section rule; a log line's detail is an open block with a 3px ink edge, not a boxed panel. */
+.page-d .console-log-row pre { border: 0; border-left: 3px solid var(--ink); border-radius: 0; padding: 8px 14px; background: var(--surface-2); }
+.page-d .console-log-pagination { margin-top: 8px; padding-top: 16px; }
+
+/* Settings: the JSON editor is a 20px textarea like every textarea; a warning keeps its colour edge and its words. */
+.page-d .settings-json-field textarea { padding: 12px 16px; background: var(--surface); }
+.page-d .settings-warning { border-left-width: 6px; padding-left: 14px; }
+.page-d .settings-password, .page-d .settings-restore, .page-d .settings-json-field, .page-d .settings-field { padding-top: 18px; }
+.page-d .settings-language { padding-top: 18px; border-top: 1px solid var(--border-subtle); }
+
+/* The language dialog's close control is a 44px target on a phone (UI_STYLE 4, 8). */
+@media (max-width: 700px) { .language-dialog .icon-button { min-width: 44px; min-height: 44px; } .page-d .settings-download { min-height: 44px; } .page-d :is(.feature-row, .setting-toggle, .helper-row) { padding: 14px 0; } .page-d :is(.token-saver-grid, .settings-grid) { gap: 40px; } }

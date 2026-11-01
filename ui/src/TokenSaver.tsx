@@ -117,7 +117,7 @@ export function TokenSaver({ onUnauthorized }: Props) {
 
   const shownLogs = logs ? newestLogs(logs, 50) : null
 
-  return <div className="token-saver-content" aria-busy={loading}>
+  return <div className="token-saver-content page-d" aria-busy={loading}>
     <div className="token-saver-toolbar accent-surface"><span className="count-label" role="status">{loading ? 'Loading…' : 'Prompt-efficiency pipeline in order: RTK → Headroom → Caveman → Ponytail → PXPIPE'}</span><button className="button-secondary" type="button" disabled={loading} onClick={() => void load()}>Reload</button></div>
     {error && <p className="auth-error" role="alert">{error}</p>}{notice && <p className="inline-notice" role="status">{notice}</p>}
 
