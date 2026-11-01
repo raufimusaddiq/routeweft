@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/providers/discovery"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
+	"github.com/raufimusaddiq/routeweft/internal/store/sqlite"
 )
 
 func listingReply(status int, body string) *http.Response {
@@ -122,6 +124,28 @@ func TestListingRefreshesOAuthOnceAndPersistsTheRotation(t *testing.T) {
 	persisted, err := credStore.GetConnection(context.Background(), connection.ID)
 	if err != nil || persisted.Secret.AccessToken != "new" || persisted.Secret.RefreshToken != "refresh-2" {
 		t.Fatalf("persisted = %+v err=%v", persisted.Secret, err)
+	}
+	// The rotation survives a process restart: a new store over the same file
+	// decrypts the row with the configured key and sees the rotated payload.
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := sqlite.Open(context.Background(), store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	sealer, err := credentials.NewSealer(bytes.Repeat([]byte{7}, credentials.MasterKeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := credentials.NewStore(reopened.DB(), sealer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterRestart, err := restarted.GetConnection(context.Background(), connection.ID)
+	if err != nil || afterRestart.Secret.AccessToken != "new" || afterRestart.Secret.RefreshToken != "refresh-2" {
+		t.Fatalf("after restart = %+v err=%v", afterRestart.Secret, err)
 	}
 }
 
