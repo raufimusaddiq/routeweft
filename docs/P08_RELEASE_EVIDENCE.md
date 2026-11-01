@@ -10,10 +10,10 @@ Every way a sign-in attempt can end has a test that runs the real handler, the r
 scripted provider. One command runs them all:
 
 ```
-go test -race -count=1 -v ./internal/control/api ./internal/providers/oauthrefresh ./internal/providers/onboarding ./internal/credentials -run 'TestOAuthState|TestOAuthPasted|TestOAuthCancel|TestOAuthBrowserSaveFailure|TestOAuthDeviceSaveFailure|TestOAuthDeviceDenied|TestOAuthDeviceAttemptExpires|TestOAuthDeviceExpiry|TestOAuthSignInRefreshes|TestOAuthPending|TestOAuthGlobal|TestRefreshKeeps|TestRefreshWithout|TestExchangersRotate|TestRotatedCredential|TestFailedPersist|TestConcurrentRefreshRotations'
+go test -race -count=1 -v ./internal/control/api ./internal/providers/oauthrefresh ./internal/providers/onboarding ./internal/credentials -run 'TestOAuthState|TestOAuthPasted|TestOAuthCancel|TestOAuthBrowserSaveFailure|TestOAuthDeviceSaveFailure|TestOAuthDeviceDenied|TestOAuthDeviceAttemptExpires|TestOAuthDeviceExpiry|TestOAuthSignInRefreshes|TestOAuthTokenRotation|TestOAuthPending|TestOAuthGlobal|TestRefreshKeeps|TestRefreshWithout|TestExchangersRotate|TestRotatedCredential|TestFailedPersist|TestConcurrentRefreshRotations'
 ```
 
-Result on this commit: 24 tests, all PASS, 4 packages ok (`control/api` 9.9 s, `oauthrefresh` 8.0 s, `credentials` 7.8 s, `onboarding` 1.5 s).
+Result on this commit: 25 tests, all PASS, 4 packages ok (`control/api` 5.8 s, `oauthrefresh` 3.9 s, `onboarding` 1.1 s, `credentials` 3.1 s). The same tests run on every push under the `race` CI job (`go test -race ./...`).
 
 | Scenario | Test (file:line) |
 |---|---|
@@ -23,10 +23,11 @@ Result on this commit: 24 tests, all PASS, 4 packages ok (`control/api` 9.9 s, `
 | Cancel: a cancelled attempt cannot be finished or cancelled again; one being saved is not torn down | `oauth_capabilities_test.go:91` `TestOAuthCancelEndsTheAttempt`, `:127` `TestOAuthCancelLeavesASavingDeviceAttempt` |
 | Failed save, browser flow (**new**): nothing half-saved, no secret in the answer, a fresh attempt saves | `control/api/oauth_e2e_test.go` `TestOAuthBrowserSaveFailureLeavesNoConnectionAndNoSecret` |
 | Failed save, device flow: the attempt stays open and the retry saves | `oauth_device_test.go:313` `TestOAuthDeviceSaveFailureKeepsAttemptOpen`; `oauth_capabilities_test.go:226` |
-| Token rotation: a rotated refresh token is kept, an unrotated one is not lost, the rotated credential is durable, a failed persist leaves no half-rotated connection, concurrent rotations survive a restart | `onboarding/flow_test.go:469,496`; `oauthrefresh/oauthrefresh_test.go:59`; `oauthrefresh/rotation_durability_test.go:124,150`; `credentials/status_test.go:149`; `control/api/oauth_test.go:413` |
+| Token rotation, end to end (**new**): sign-in through the real handler and sealed store, two consecutive refreshes present the token each previous one rotated to, and a fresh registry over the same store continues from the durable rotation | `control/api/oauth_rotation_e2e_test.go` `TestOAuthTokenRotationIsUsedAndSurvivesARestart` |
+| Token rotation, pieces: a rotated refresh token is kept, an unrotated one is not lost, the rotated credential is durable, a failed persist leaves no half-rotated connection, concurrent rotations survive a restart | `onboarding/flow_test.go:469,496`; `oauthrefresh/oauthrefresh_test.go:59`; `oauthrefresh/rotation_durability_test.go:124,150`; `credentials/status_test.go:149`; `control/api/oauth_test.go:413` |
 | Bounded pending attempts | `oauth_test.go:318` (per session), `:396` (global) |
 
-The one gap found was the browser-flow failed save (only the device flow had one); it is the new test.
+Two gaps found and closed: the browser-flow failed save (only the device flow had one) and a handler-level token rotation (rotation was proven piecewise, not through the sign-in handler); both are new tests.
 Not covered: a companion or broker callback, which needs an approved threat model first (the ticket says so).
 
 ## O04: keyboard, focus, labels, light and dark
@@ -51,10 +52,22 @@ Nothing below is a budget; the tests assert bounds that are true by construction
 
 | What | Result | Test |
 |---|---|---|
-| Quota refresh of 1000 accounts over 4 providers (fake client, no network) | peak concurrent reads **1**, 1000 reads, one observation per account, 11 ms, heap +528 KiB after GC | `internal/quota/fanout_test.go` |
+| Quota refresh of 1000 accounts over 4 providers (fake client, no network) | peak concurrent reads **1**, 1000 reads, one observation per account, 7 ms, heap +544 KiB after GC | `internal/quota/fanout_test.go` |
 | Why it is one at a time | `RefreshProvider` loops its connections in order (`quota/service.go:85`); `RefreshAll` loops providers; the admin job takes a single slot, so a second refresh gets 409 `refresh_busy` and a deadline ends the job (`control/api/quota_refresh.go:143-189`) | read, not a benchmark |
-| 1000 connections through the list API | 10 pages of 100; a request for 100000 is clamped to 100; each account on exactly one page; no stored credential in any page; slowest page 201 ms, largest page 28 KiB, heap -56 KiB after GC | `control/api/pagination_scale_test.go` |
+| 1000 connections through the list API | 10 pages of 100; a request for 100000 is clamped to 100; each account on exactly one page; no stored credential in any page; slowest page 21 ms, largest page 28 KiB, heap -552 KiB after GC | `control/api/pagination_scale_test.go` |
 | Pending sign-in attempts | bounded per session and globally (tests at `oauth_test.go:318,396`) | O03 table |
+
+Reproduce both, one command each; the printed line is the measurement and the assertions beside it are
+true by construction, not budgets:
+
+```
+go test ./internal/quota -run TestARefreshOfAThousandAccountsReadsOneAtATime -count=1 -v
+go test ./internal/control/api -run TestAThousandConnectionsPageWithinTheBoundAndLeakNothing -count=1 -v
+```
+
+Both run in CI: `go test ./...` (job `go`) and `go test -race ./...` (job `race`) include every package
+above, so these fixtures and these numbers are produced on every push; `-v` is only what prints them.
+
 
 **Not measured, and not claimed:** cold and warm OAuth start or callback p95 (the mock has no network, so a
 number would say nothing about a provider); service RSS under load (`docs/S8_RESOURCE_BENCHMARK.md` states its
