@@ -98,7 +98,10 @@ func TestBuiltinOpenAIAPIKeyProviderGroupMatchesBaselineCapabilities(t *testing.
 	}
 	// API-key OpenAI and Codex remain separate providers (#228): an operator's
 	// OpenAI key is not a Codex credential and the origins differ.
-	codex, _ := catalog.Lookup("codex")
+	codex, ok := catalog.Lookup("codex")
+	if !ok {
+		t.Fatal("codex provider missing")
+	}
 	if openai.Auth != AuthAPIKey || codex.Auth != AuthOAuth || openai.DefaultBaseURL == codex.DefaultBaseURL || openai.ReportsUsage || !codex.ReportsUsage {
 		t.Fatalf("openai=%+v codex=%+v; the two providers must stay separate", openai, codex)
 	}
