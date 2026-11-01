@@ -123,7 +123,7 @@ export function Usage({ onUnauthorized }: Props) {
             ? <EmptyState reason="No attributed usage in this period.">{period !== 'all' && <button className="button-secondary" type="button" onClick={() => setPeriod('all')}>Show all time</button>}</EmptyState>
             : <figure className="ed-figure usage-chart-panel accent-surface ed-plate">
               <BarChart points={points} unit="requests" title="Requests per day" current={wow ? (index => index >= n - 7) : undefined} ghost={wow ? ghost : undefined} reference={n > 1 ? { value: dailyAverage } : undefined} />
-              <figcaption><Caption kicker="Fig. 1">{wow ? `Cyan bars are the latest 7 days; each tick is the same day a week earlier. Dashed line: average ${num(dailyAverage)} successful requests a day${averageNote}.` : 'One bar per day.'}</Caption></figcaption>
+              <figcaption><Caption kicker="Fig. 1">{wow ? `Coloured bars are the latest 7 days; each tick is the same day a week earlier. Dashed line: average ${num(dailyAverage)} successful requests a day${averageNote}.` : 'One bar per day.'}</Caption></figcaption>
             </figure>}
         </Main>
         <Margin>

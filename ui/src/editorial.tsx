@@ -37,5 +37,5 @@ export function Statement({ children, action, href }: { children: ReactNode; act
 // Error rate with its own bar (scaled to 10%); red only when the provider is clearly above the fleet rate.
 export function ErrCell({ errors, requests, bad }: { errors: number; requests: number; bad: boolean }) {
   const value = rate(errors, requests)
-  return <td className="num err-cell"><span className={`err-bar${bad ? ' err-bad' : ''}`} aria-hidden="true"><span style={{ width: `${Math.min(100, (value / 10) * 100)}%` }} /></span><span className={bad ? 'err-text-bad' : ''}>{pct(value)}</span></td>
+  return <td className="num err-cell"><span className={`ed-bar err-bar${bad ? ' err-bad' : ''}`} aria-hidden="true"><span style={{ width: `${Math.min(100, (value / 10) * 100)}%` }} /></span><span className={bad ? 'err-text-bad' : ''}>{pct(value)}</span></td>
 }

@@ -1196,3 +1196,40 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
   .landing-slab { margin-top: 20px; padding: 24px 20px 28px; }
   .landing-lead { font-size: 26px; }
 }
+
+/* ---- Figures in direction D (#263, phase 4): charts, share bars, the stacked bar, sparklines, status marks ----
+   Flat fills, a crisp ink edge where a drawing is a box, no shadow and no blur on a figure (the slab carries the shadow). */
+/* A status mark is a 12px round dot with a 2px ink edge; the word beside it stays (status is never colour alone). */
+.dot { box-sizing: border-box; width: 12px; height: 12px; border: 2px solid var(--text-main); }
+.dot-idle { background: transparent; }
+/* Share bars: a 12px pill track with a 2px ink edge and an ink fill; the error bar turns --danger only on the same rule as its figure. */
+.ed-bar { box-sizing: border-box; height: 12px; border: 2px solid var(--text-main); border-radius: var(--radius-pill); overflow: hidden; background: var(--surface); }
+.ed-bar > span { background: var(--text-main); }
+.err-bar { display: inline-block; width: 56px; margin-right: 12px; vertical-align: middle; min-width: 0; }
+.err-bar > span { background: var(--text-main); }
+.err-bar.err-bad > span { background: var(--danger); }
+/* Daily chart: every bar is a box with a 2px ink edge; the latest 7 days are --live (a highlight on the slab), the week before a surface fill. */
+.usage-bar { stroke: var(--text-main); stroke-width: 2; }
+.usage-bar-cur { fill: var(--live); }
+.accent-surface .usage-bar { fill: var(--accent-raised); stroke: var(--accent-fg); }
+.accent-surface .usage-bar-cur { fill: var(--highlight); }
+.usage-bar-active, .accent-surface .usage-bar-active { fill: var(--text-main); }
+.chart-grid .chart-baseline { stroke: var(--text-main); stroke-width: 2; }
+.chart-ghost { stroke-width: 3; }
+/* Outcomes: a 28px bar in a 3px ink edge, segments split by 3px ink seams; the legend swatches are 14px boxes with a 2px edge. */
+.stacked-bar { gap: 0; height: 28px; margin: 16px 0 12px; border: 3px solid var(--text-main); overflow: hidden; background: var(--surface); }
+.stacked-bar span + span { border-left: 3px solid var(--text-main); }
+.stacked-swatch { box-sizing: border-box; width: 14px; height: 14px; border: 2px solid var(--text-main); }
+/* Sparklines: a 3px ink line ending in a 12px highlight box with a 2px edge. */
+.sparkline path { stroke-width: 3; }
+.sparkline-end { box-sizing: border-box; width: 12px; height: 12px; margin: -6px 0 0 -6px; border: 2px solid var(--text-main); background: var(--highlight); }
+/* On a phone the 12px share bar gets its own line under the name, so a drawing never sits on a provider's name:
+   name, then bar | figure | error rate, then the meta line. */
+@media (max-width: 700px) {
+  .provider-option { grid-template-columns: minmax(0, 1fr) 72px 56px; }
+  .provider-option > .status { grid-area: 1 / 1 / 2 / 4; }
+  .provider-option > .ed-bar { grid-area: 2 / 1; }
+  .provider-option-fig { grid-area: 2 / 2; }
+  .provider-option-err { grid-area: 2 / 3; }
+  .provider-option-meta { grid-area: 3 / 1 / 4 / 4; }
+}
