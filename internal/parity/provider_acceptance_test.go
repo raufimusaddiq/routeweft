@@ -125,7 +125,7 @@ var onboardingClasses = map[string]onboardingClass{
 	"muse":              {oAPIKey, "muse"},
 }
 
-// settingsSensitive providers still own a provider-specific settings gap (#228):
+// settingsSensitive providers still own a provider-specific settings gap (docs/PARITY.md §6.43):
 // deployment/project/account/ARN or local-URL fields the shared form does not model.
 var settingsSensitive = map[string]bool{
 	"azure": true, "cloudflare-ai": true, "kimchi": true, "ollama-local": true,
@@ -161,18 +161,39 @@ func acceptanceEvidence(c cell) string {
 	return "—"
 }
 
-func residualsFor(id string, special bool, qClass string) string {
-	out := []string{"#76"}
+// residualsFor names the in-repository documents that own what a row does not prove.
+// Every owner is a document, never an issue: a ticket closes, a document stays.
+// Each class of work has its own owner; none is a catch-all for another.
+func residualsFor(id string, special bool, qClass string, listed bool) string {
+	out := []string{residualP08}
 	if qClass == qReader {
-		out = append(out, "#225")
+		out = append(out, residualP05)
 	}
-	if special {
-		out = append(out, "#231")
+	if listed {
+		out = append(out, residualListing)
 	}
 	if settingsSensitive[id] {
-		out = append(out, "#228")
+		out = append(out, residualSettings)
+	}
+	if special {
+		out = append(out, residualOnboarding)
 	}
 	return strings.Join(out, ", ")
+}
+
+const (
+	residualP08        = "docs/P08_TEST_MATRIX.md"
+	residualP05        = "docs/P05_QUOTA_AUDIT.md"
+	residualListing    = "docs/PARITY.md §6.15"
+	residualSettings   = "docs/PARITY.md §6.43"
+	residualOnboarding = "docs/P04_ONBOARDING_AUDIT.md"
+)
+
+// residualHeadings maps a PARITY section to the words its heading must carry, so a
+// reference resolves to the section that covers that class of work, not to any heading.
+var residualHeadings = map[string]string{
+	residualListing:  "## 6.15 Provider model listing",
+	residualSettings: "## 6.43 Endpoint and name settings",
 }
 
 func onboardingEvidence(o onboardingClass) string {
@@ -182,7 +203,7 @@ func onboardingEvidence(o onboardingClass) string {
 	case oNoAuth:
 		return "`control/api:TestNoSecretProviderAcceptance`"
 	default:
-		return "gap (`#231`)"
+		return "workflow classes: `control/api:TestSharedAPIKeyProviderAcceptance`, `control/api:TestNoSecretProviderAcceptance`; beyond them `docs/P04_ONBOARDING_AUDIT.md`"
 	}
 }
 
@@ -209,7 +230,7 @@ This file is generated from ` + "`internal/parity/provider_acceptance_test.go`" 
 		"test result; the current per-behaviour counts are P08's \"Honest totals\", and " +
 		"every gap here names its owner. This change delivers the matrix and the " +
 		"shared O01/O02 acceptance; provider-family onboarding stays with the residual " +
-		"tickets (#76, #225, #228, #231), not with a broad rewrite in this PR.\n\n")
+		"documents named per row, not with a broad rewrite in this PR.\n\n")
 
 	// Census, derived from the same inputs the rows use.
 	classCount := map[string]int{}
@@ -272,7 +293,7 @@ stored credential never makes one routable, and no row here claims it serves.
 | No-secret create and discovery | ` + "`control/api:TestNoSecretProviderAcceptance`" + ` | injected upstream asserts no Authorization/key header |
 | Passthrough and cached IDs survive a failed discovery | ` + "`control/api:TestDiscoveryFailureKeepsTheSavedPassthroughModels`" + ` | temp SQLite; 503 fixture then read-back |
 | Quota read / no dedicated surface | P08 quota cells; reader tests under ` + "`internal/providers/usage`" + ` | pinned sanitized responses |
-| Special-auth onboarding | P08 import cells; residual ` + "`#231`" + ` for workflows still short | sealed/sanitized fixtures only |
+| Special-auth onboarding | P08 import cells; residual ` + "`docs/PARITY.md §6.15`" + ` for workflows still short | sealed/sanitized fixtures only |
 
 Every Go fixture is an in-process ` + "`httptest`" + `/` + "`probeHTTPFunc`" + ` with a ` + "`t.TempDir`" + `
 database, so it is removed even when a test fails. Browser smokes are checked by
@@ -302,7 +323,7 @@ same change.
 			discovery,
 			acceptanceEvidence(row[colQuota]),
 			acceptanceEvidence(row[colImport]),
-			residualsFor(spec.ID, special, q),
+			residualsFor(spec.ID, special, q, row[colList].Kind != kindN),
 		)
 	}
 	return b.String()
@@ -370,23 +391,56 @@ func TestProviderAcceptanceMatrixIsCurrent(t *testing.T) {
 	if named == 0 {
 		t.Fatal("the matrix names no test at all")
 	}
-	// Every row carries at least one residual ticket, in the linked form #N.
-	ticketPattern := regexp.MustCompile(`^#[0-9]+$`)
+	// Every row carries at least one owner reference, each one a document that exists
+	// here, and none is a GitHub issue.
+	issuePattern := regexp.MustCompile(`#[0-9]+`)
+	parity, err := os.ReadFile("../../docs/PARITY.md")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, spec := range specs {
 		o := onboardingClasses[spec.ID]
 		q := qReader
 		if rows[spec.ID][colQuota].Kind == kindN {
 			q = qNone
 		}
-		residual := residualsFor(spec.ID, o.Class != oAPIKey && o.Class != oNoAuth, q)
+		residual := residualsFor(spec.ID, o.Class != oAPIKey && o.Class != oNoAuth, q, rows[spec.ID][colList].Kind != kindN)
 		if residual == "" {
-			t.Errorf("%s has no residual ticket", spec.ID)
+			t.Errorf("%s has no residual owner", spec.ID)
 			continue
 		}
-		for _, ticket := range strings.Split(residual, ", ") {
-			if !ticketPattern.MatchString(ticket) {
-				t.Errorf("%s residual %q is not a #N ticket", spec.ID, ticket)
+		if issuePattern.MatchString(residual) {
+			t.Errorf("%s residual %q names a GitHub issue; ownership must point at a document in this repository", spec.ID, residual)
+		}
+		for _, ref := range strings.Split(residual, ", ") {
+			path, _, _ := strings.Cut(ref, " §")
+			if _, err := os.Stat("../../" + path); err != nil {
+				t.Errorf("%s residual %q names %s, which does not exist", spec.ID, ref, path)
+				continue
 			}
+			if heading, ok := residualHeadings[ref]; ok &&
+				!strings.Contains(string(parity), "\n"+heading) {
+				t.Errorf("%s residual %q: PARITY has no section headed %q", spec.ID, ref, heading)
+			}
+			if strings.Contains(ref, " §") && residualHeadings[ref] == "" {
+				t.Errorf("%s residual %q is a section reference with no declared heading", spec.ID, ref)
+			}
+		}
+		// Section identity: each class of work resolves to its own owner.
+		want := map[string]bool{residualP08: true}
+		if settingsSensitive[spec.ID] {
+			want[residualSettings] = true
+		}
+		if o.Class != oAPIKey && o.Class != oNoAuth {
+			want[residualOnboarding] = true
+		}
+		for owner := range want {
+			if !strings.Contains(residual, owner) {
+				t.Errorf("%s residual %q omits its owner %s", spec.ID, residual, owner)
+			}
+		}
+		if !settingsSensitive[spec.ID] && strings.Contains(residual, residualSettings) {
+			t.Errorf("%s residual %q names the settings section but the provider has no endpoint setting", spec.ID, residual)
 		}
 	}
 	// The three hidden providers are a documented census, not an omission.
