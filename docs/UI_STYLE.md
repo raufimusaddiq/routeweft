@@ -324,7 +324,11 @@ No API paths, state logic, workflows or nav definitions change for visual work.
 5. Screenshots of every changed page at 1440px and 390px, light and dark, with
    the drawer and selections clicked, in `docs/evidence/263/<phase>/` (the
    BDR-015 set stays in `docs/evidence/102/final/`). They show a locally seeded
-   database, never production traffic.
+   database, never production traffic. In-tree history is trimmed: only the
+   phase 1 previews (`docs/evidence/263/preview/`) and
+   `docs/evidence/263/phase3a/` are kept; the phase 2, 3b, 3c and 4 sets were
+   deleted on 2026-11-02 (#361) because nothing read them. A new phase commits
+   its own capture set.
 6. Check contrast, overflow, browser errors, drawer dismissal/focus return,
    persistence, OS-theme changes and reduced motion. Record checks not run.
 

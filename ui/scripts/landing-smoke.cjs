@@ -3,7 +3,7 @@
 // at 1440, 390 and 320 in light and dark: no horizontal overflow, no text under 4.5:1, no control boundary under 3:1, no phone
 // control under 44px, no blur or gradient, every box-shadow a hard-offset token, every control named and ringed, the title
 // and the 6px rule at the size direction D sets, and the language choice honoured. The control API is stubbed, so no credential
-// exists. With ROUTEWEFT_SMOKE_ARTIFACTS set, screenshots are written there (docs/evidence/347). Run by scripts/smoke.sh.
+// exists. With ROUTEWEFT_SMOKE_ARTIFACTS set, screenshots are written there (default `/tmp/routeweft-ui-evidence`). Run by scripts/smoke.sh.
 const { chromium } = require('playwright-core');
 const assert = require('node:assert/strict');
 const { mkdirSync, writeFileSync } = require('node:fs');

@@ -1,0 +1,141 @@
+name: Main CI
+
+# The expensive gates that cannot catch a regression before merge (#361). They
+# run on every push to main so a break is still attributed to the merge that
+# caused it, and can be re-run by hand from the Actions tab.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: main-ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The resolver's own tests need no network and no oracle.
+      - run: node --test compat/parity/resolve-oracle.test.mjs compat/parity/report-changes.test.mjs
+      # LiteRouter refs/heads/main is resolved once for this job and frozen: every
+      # step below reads ORACLE_SHA. A failed resolve fails the job; there is no
+      # fallback SHA. Re-run a recorded commit with
+      # `node compat/parity/resolve-oracle.mjs --sha <sha>` (#289).
+      - name: Resolve and fetch the LiteRouter main oracle into disposable test storage
+        run: node compat/parity/resolve-oracle.mjs
+      - name: Upload the oracle run record
+        uses: actions/upload-artifact@v4
+        with:
+          name: oracle-run
+          path: ${{ env.ORACLE_RECORD }}
+      # Compare this run's frozen snapshot with the one the last successful main run
+      # recorded (#290). No earlier record is a first run, reported as such; the
+      # report is informational (no upstream state fails the job), and nothing is
+      # posted or filed from it.
+      - name: Fetch the previous recorded oracle snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          previous="$RUNNER_TEMP/previous-oracle"
+          run_id=$(gh run list --workflow main.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty' || true)
+          if [ -n "$run_id" ] && gh run download "$run_id" --name oracle-run --dir "$previous" && [ -f "$previous/oracle-run.json" ]; then
+            echo "ORACLE_PREVIOUS=$previous/oracle-run.json" >> "$GITHUB_ENV"
+          else
+            echo "::notice::No previous oracle-run record is available; the change report will say first-run."
+          fi
+      - name: Report LiteRouter changes since the previous snapshot
+        run: node compat/parity/report-changes.mjs
+      - name: Upload the oracle change report
+        uses: actions/upload-artifact@v4
+        with:
+          name: oracle-change-report
+          path: ${{ env.ORACLE_REPORT_DIR }}
+      - run: node compat/parity/inventory.mjs
+      # Every generator below writes a pin replayed by a Go or UI test; without
+      # --check here the pin could drift from the oracle silently. ledger.mjs
+      # --check is NOT run: its only consumer is docs/DIVERGENCE_LEDGER.md.
+      # The oracle's Combo routing (member order, capability detection, adapter pools) is
+      # re-run and compared with the pin the Go tests replay (#270).
+      - run: node compat/parity/generate-combo-routing.mjs --check
+      # The oracle's default price catalog and cost arithmetic, replayed by internal/pricing (#273).
+      - run: node compat/parity/generate-pricing.mjs --check
+      # The Headroom /v1/compress wire and PXPIPE's host contract, replayed by internal/transforms (#271).
+      - run: node compat/parity/generate-headroom.mjs --check
+      - run: node compat/parity/generate-pxpipe.mjs --check
+      # Proxy pools, relay pools and the Netlify relay deploy (#272).
+      - run: node compat/parity/generate-proxy-pools.mjs --check
+      # The oracle's conversion legs over the corpus, and the divergence ledger every
+      # difference from them is accounted for in (#274).
+      - run: node compat/parity/generate-protocol-legs.mjs --check
+      - run: node compat/parity/generate-control-workflows.mjs --check
+      # The oracle's Command Code, Kenari, OpenCode Go, Ollama, Vercel AI Gateway and MiMo quota readers (#225).
+      - run: node compat/parity/generate-billing-quota.mjs --check
+      # The display-language list, names, flags and catalogs the dashboard ships (#279).
+      - run: node compat/parity/generate-locales.mjs --check
+      - name: Upload the divergence ledger
+        uses: actions/upload-artifact@v4
+        with:
+          name: divergence-ledger
+          path: docs/DIVERGENCE_LEDGER.md
+      # Provider catalog, model seeds, quota readers and onboarding flows are
+      # compared against the oracle: no hand-kept provider list can drift.
+      - run: go test -tags oracle ./internal/providers/parity -count=1
+      # The secret tripwire reads the secrets the oracle ships. Without ORACLE_DIR
+      # it can only match known prefixes, which is how the iflow literal shipped, so
+      # it runs here where the oracle is present.
+      - run: go test ./internal/providers/onboarding -run TestNoThirdPartyProviderSecretInTree -count=1
+        env:
+          # This job fetches the oracle, so the scan must be the full one; without
+          # the oracle it fails rather than degrading to a prefix check.
+          ROUTEWEFT_REQUIRE_ORACLE_SECRET_SCAN: "1"
+
+  # The whole tree under the race detector (#282). Go's default 10m per-package
+  # timeout is kept on purpose (RUNBOOK 29): a package that outgrows it fails here
+  # instead of being masked by a larger number. Post-merge only: `go` on the PR
+  # already runs `go test ./...` without -race.
+  race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -race -count=1 -timeout 10m ./...
+
+  # Post-merge image gate: entrypoint, runtime TLS trust bundle and the size
+  # budget still hold for every main commit.
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t routeweft:ci .
+      - run: test "$(docker image inspect routeweft:ci --format '{{.Config.Entrypoint}}')" = '[/routeweft]'
+      - name: Verify runtime TLS trust bundle
+        run: |
+          container_id=$(docker create routeweft:ci)
+          trap 'docker rm "$container_id"' EXIT
+          docker cp "$container_id:/etc/ssl/certs/ca-certificates.crt" "$RUNNER_TEMP/routeweft-ca.crt"
+          test -s "$RUNNER_TEMP/routeweft-ca.crt"
+      - name: Enforce production image budget
+        run: |
+          image_bytes=$(docker image inspect routeweft:ci --format '{{.Size}}')
+          echo "Image: ${image_bytes} bytes; goal: 104857600 bytes (100 MiB); stretch: 62914560 bytes (60 MiB)"
+          test "$image_bytes" -le 104857600

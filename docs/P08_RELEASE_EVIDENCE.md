@@ -32,7 +32,8 @@ Not covered: a companion or broker callback, which needs an approved threat mode
 
 ## O04: keyboard, focus, labels, light and dark
 
-Both guards run in the `ui-smoke` job on every push (`npm run smoke` → `ui/scripts/smoke.sh`).
+Both guards run under `npm run smoke` (`ui/scripts/smoke.sh`), locally only since
+#361: CI no longer installs Playwright, so nothing runs them per push.
 
 `ui/scripts/shell-smoke.cjs` `captureVisuals` drives each page at **1440 and 390** in **light and dark**
 (and system at 1440) and asserts, per view/theme/width: no low-contrast text, control boundaries at 3:1
