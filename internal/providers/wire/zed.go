@@ -737,9 +737,21 @@ func ZedDo(provider routing.ProviderRef, client *http.Client, request *http.Requ
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		// The transport's goroutines still own the response client.Do returned, so
-		// what is changed is a copy of it.
+		// what is changed is a copy of it. A trial_blocked body is rewritten before
+		// the client sees it (zed.js:284-305); every other body passes through.
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, zedRequestLimit+1))
+		response.Body.Close()
+		cancel()
+		if readErr != nil {
+			return nil, readErr
+		}
 		kept := *response
-		kept.Body = &zedBody{ReadCloser: response.Body, cancel: cancel}
+		body = zedRewriteTrialBlocked(body, response.Status)
+		kept.Body = io.NopCloser(bytes.NewReader(body))
+		kept.ContentLength = int64(len(body))
+		kept.Header = response.Header.Clone()
+		kept.Header.Del("Content-Length")
+		kept.Header.Del("Content-Encoding")
 		return &kept, nil
 	}
 	// A failed status ahead of any output is read before the reply is handed on, so
@@ -765,6 +777,46 @@ func ZedDo(provider routing.ProviderRef, client *http.Client, request *http.Requ
 	kept.Header.Del("Content-Encoding")
 	kept.ContentLength, kept.Uncompressed = -1, true
 	return &kept, nil
+}
+
+// zedRewriteTrialBlocked is the pin's parseError rewrite for a trial_blocked
+// body (zed.js:284-305): the client reads the pinned sentence and the upstream
+// message appended, in the field the body already used. A body that is not
+// JSON, or names another code, is returned unchanged.
+func zedRewriteTrialBlocked(body []byte, statusText string) []byte {
+	var document map[string]any
+	if json.Unmarshal(body, &document) != nil {
+		return body
+	}
+	code := strings.TrimSpace(concerns.Text(document["code"]))
+	errorObject, _ := document["error"].(map[string]any)
+	if code == "" && errorObject != nil {
+		code = strings.TrimSpace(concerns.Text(errorObject["code"]))
+	}
+	if code != "trial_blocked" {
+		return body
+	}
+	message := strings.TrimSpace(concerns.Text(document["message"]))
+	if message == "" && errorObject != nil {
+		message = strings.TrimSpace(concerns.Text(errorObject["message"]))
+	}
+	if message == "" {
+		message = strings.TrimSpace(concerns.Text(body))
+	}
+	if message == "" {
+		message = statusText
+	}
+	rewritten := "Zed trial access is blocked upstream. The account can list hosted models, but Zed is refusing completions until trial/billing access is enabled or unblocked. Zed says: " + message
+	target := document
+	if code != strings.TrimSpace(concerns.Text(document["code"])) && errorObject != nil {
+		target = errorObject
+	}
+	target["message"] = rewritten
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		return body
+	}
+	return encoded
 }
 
 // zedBody ties the reply to the upstream request: closing it stops both.

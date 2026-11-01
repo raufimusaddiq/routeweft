@@ -4,8 +4,8 @@ package wire
 // the free tier reads a client fingerprint, not only the credential. The pin
 // sends a desktop User-Agent unless the caller's own names a supported
 // opencode version, a client kind, a session, a request id and a project. The
-// free-tier fingerprint *tools* (:455-464, utils/opencodeFingerprint.js) are a
-// separate remaining gap (PARITY 6.19); this file carries the header half.
+// free-tier fingerprint tools (:455-464, utils/opencodeFingerprint.js) are
+// carried by opencode_fingerprint.go.
 
 import (
 	"crypto/sha256"
