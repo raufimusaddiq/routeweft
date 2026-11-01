@@ -43,7 +43,7 @@ against what is behind it) after Tab. The sign-in panels are covered by `oauth-j
 
 `ui/scripts/a11y-keyboard-labels-smoke.cjs` (**#231 item 2**) loads Overview, Endpoint & Key, Providers,
 Combo & Capability Adapter, System One, Settings and Usage, plus the provider connection form (provider
-selected, Add connection opened), at **1440 and 390 in light and dark**: 32 views and 664 interactive
+selected, Add connection opened), at **1440 and 390 in light and dark**: 32 views and 668 interactive
 controls. Per view it asserts:
 
 - every control is reached by Tab, exactly once, in DOM order (a native radio group is one Tab stop,
@@ -65,15 +65,16 @@ Result on this head:
 
 ```
 node scripts/a11y-keyboard-labels-smoke.cjs
-a11y keyboard/labels: 32 views at 1440/390 light+dark, 664 interactive controls, 0 without a name, 0 without a focus ring, 16 views at 320, 0 problems
+a11y keyboard/labels: 32 views at 1440/390 light+dark, 668 interactive controls, 0 without a name, 0 without a focus ring, 16 views at 320, 0 problems
 keyboard-open 390: field 188..232 in 420, fixed bars 0; modal trap true, focus return true
 ```
 
 What it found and this PR fixed, both the same class — a ring that inherits a token meant for the
 contents of a highlight block:
 
-- the radio inside a **chosen access-mode label** inherited the page focus colour and measured
-  **1.29:1 in dark**; its ring is now `--highlight-ink` (13:1 on the block in both themes);
+- the radio inside a **chosen access-mode label** on a phase 3 page inherited the page focus colour and
+  measured **1.29:1 in dark**; its ring is now `--highlight-ink` (13:1 on the block in both themes), and
+  the rule is scoped to `.page-d`, where the chosen label is the highlight block;
 - a **selected Provider row** (phase 3b's highlight block) re-points `--focus` to its ink for its
   children, so its own ring was ink on the page's ink — **1.00:1 in dark**. It now uses `--focus-page`,
   the page focus colour, which is drawn on the page behind the block.
