@@ -107,3 +107,21 @@ func TestSessionsShareAndInvalidate(t *testing.T) {
 		t.Fatalf("another account's cookie was dropped: %q", cookie)
 	}
 }
+
+// An empty field is an incomplete credential, not one the SSO chain should
+// discover several hops later.
+func TestServiceCookieRejectsEachEmptyField(t *testing.T) {
+	full := map[string]string{"mimoPassToken": "p", "mimoUserId": "u", "mimoCUserId": "c"}
+	for _, missing := range []string{"mimoPassToken", "mimoUserId", "mimoCUserId"} {
+		data := map[string]string{}
+		for key, value := range full {
+			if key != missing {
+				data[key] = value
+			}
+		}
+		data[missing] = ""
+		if _, err := ServiceCookie(context.Background(), nil, data); err == nil || !strings.Contains(err.Error(), "invalid Xiaomi account credential") {
+			t.Fatalf("missing %s: %v", missing, err)
+		}
+	}
+}

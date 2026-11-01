@@ -62,6 +62,11 @@ type entry struct {
 	done   chan struct{} // open while the handshake runs
 }
 
+// Default is the process-wide cache: quota reads and Preview inference share
+// one service cookie per passToken, so a connection that reports usage does not
+// pay for a second five-hop handshake when it is served.
+var Default = NewSessions()
+
 // NewSessions returns an empty cache.
 func NewSessions() *Sessions { return &Sessions{entries: map[string]*entry{}} }
 
@@ -336,6 +341,9 @@ func EncodeURIComponent(text string) string {
 // internal/credentials reaches the wire package, and this package must stay
 // importable from it.
 func validCookieValue(value string) bool {
+	if value == "" {
+		return false
+	}
 	for _, c := range value {
 		if c < 0x21 || c > 0x7e || strings.ContainsRune("\";,\\", c) {
 			return false

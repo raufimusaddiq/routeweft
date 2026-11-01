@@ -21,6 +21,13 @@ import (
 // A provider absent here has no usage endpoint; the observer reports
 // ErrNotConfigured and routing treats that as "not exhausted", never as healthy.
 func Readers(client HTTPClient, now func() time.Time) (map[string]quota.UsageClient, error) {
+	// A standalone registry owns its session cache; the app passes the shared one
+	// through ReadersWithSessions so quota and Preview inference handshake once.
+	return ReadersWithSessions(client, now, mimoaccount.NewSessions())
+}
+
+// ReadersWithSessions is Readers with a caller-supplied MiMo session cache.
+func ReadersWithSessions(client HTTPClient, now func() time.Time, mimoSessions *mimoaccount.Sessions) (map[string]quota.UsageClient, error) {
 	// A nil client fails every usage read per call, which looks like a provider
 	// outage rather than a wiring mistake. It is refused where it is supplied, with
 	// an error: a library must not panic on its caller's wiring mistake.
@@ -36,7 +43,7 @@ func Readers(client HTTPClient, now func() time.Time) (map[string]quota.UsageCli
 	} {
 		readers[id] = apiKeyReader{Client: shared, Name: id}
 	}
-	readers["xiaomi-mimo"] = apiKeyReader{Client: shared, Name: "xiaomi-mimo", mimo: mimoaccount.NewSessions()}
+	readers["xiaomi-mimo"] = apiKeyReader{Client: shared, Name: "xiaomi-mimo", mimo: mimoSessions}
 	readers["github"] = githubReader{Client: shared}
 	readers["gemini-cli"] = geminiReader{Client: shared}
 	readers["kiro"] = kiroReader{Client: shared}

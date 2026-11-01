@@ -29,7 +29,7 @@ const mimoPreviewMissingSession = "Xiaomi MiMo account session unavailable. Sign
 var mimoPreviewModels = map[string]bool{"mimo-x-pro-preview": true, "mimo-x-flash-preview": true}
 
 // mimoSessions keeps the service cookie per passToken across requests.
-var mimoSessions = mimoaccount.NewSessions()
+var mimoSessions = mimoaccount.Default
 
 func mimoPreviewModel(model string) string {
 	if i := strings.LastIndex(model, "/"); i >= 0 {

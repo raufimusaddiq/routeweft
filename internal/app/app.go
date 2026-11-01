@@ -27,6 +27,7 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/ingress"
 	claudeprovider "github.com/raufimusaddiq/routeweft/internal/providers/claude"
 	"github.com/raufimusaddiq/routeweft/internal/providers/discovery"
+	"github.com/raufimusaddiq/routeweft/internal/providers/mimoaccount"
 	"github.com/raufimusaddiq/routeweft/internal/providers/oauthrefresh"
 	"github.com/raufimusaddiq/routeweft/internal/providers/onboarding"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
@@ -473,7 +474,7 @@ func (a *App) initializeQuota(ctx context.Context, store *sqlite.Store, manager 
 	// quota LiteRouter reads goes through the shared usage package, so the reader
 	// set is the reference dispatcher's table rather than a second hand-kept list.
 	usageClient := a.connectionClient(binder)
-	clients, err := providerusage.Readers(usageClient, nil)
+	clients, err := providerusage.ReadersWithSessions(usageClient, nil, mimoaccount.Default)
 	if err != nil {
 		return fmt.Errorf("install quota readers: %w", err)
 	}

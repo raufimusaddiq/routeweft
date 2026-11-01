@@ -163,7 +163,7 @@ func TestMimoRejectsUntrustedSessionRedirects(t *testing.T) {
 			return &http.Response{StatusCode: 302, Header: http.Header{"Location": {raw}}, Body: io.NopCloser(strings.NewReader(""))}, nil
 		})
 		readers, _ := Readers(client, nil)
-		state, err := readers["xiaomi-mimo"].Usage(context.Background(), quota.Credential{ProviderData: map[string]string{"mimoPassToken": "fixture-pass"}})
+		state, err := readers["xiaomi-mimo"].Usage(context.Background(), quota.Credential{ProviderData: map[string]string{"mimoPassToken": "fixture-pass", "mimoUserId": "fixture-user", "mimoCUserId": "fixture-cuser"}})
 		if err == nil || calls != 1 || len(state.Windows) != 0 {
 			t.Fatal("untrusted redirect was not refused")
 		}
@@ -265,7 +265,7 @@ func TestMimoInvalidValuesNeverInventQuota(t *testing.T) {
 
 func TestMimoReadRejectsCookieInjection(t *testing.T) {
 	for _, field := range []string{"mimoPassToken", "mimoUserId", "mimoCUserId"} {
-		data := map[string]string{"mimoPassToken": "fixture-pass"}
+		data := map[string]string{"mimoPassToken": "fixture-pass", "mimoUserId": "fixture-user", "mimoCUserId": "fixture-cuser"}
 		data[field] = "fixture-private; other=secret"
 		readers, _ := Readers(mimoClientFunc(func(*http.Request) (*http.Response, error) {
 			t.Fatal("invalid account credential made a request")
