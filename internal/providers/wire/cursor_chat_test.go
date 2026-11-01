@@ -205,6 +205,19 @@ func TestCursorChatStreamDecodesTextThinkingAndToolCalls(t *testing.T) {
 	}
 }
 
+func TestCursorChatStreamPutsTheRoleBeforeAFirstToolCall(t *testing.T) {
+	sse, err := decodeChat(t, cursorFrame(pbBytes(1, pbJoin(pbString(3, "c1"), pbString(9, "look"), pbString(10, "{}")))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := strings.Index(sse, "data: ")
+	role := strings.Index(sse, `"role":"assistant"`)
+	call := strings.Index(sse, `"tool_calls"`)
+	if role < 0 || call < 0 || role > call || first > role {
+		t.Fatalf("the role chunk is not first:\n%s", sse)
+	}
+}
+
 func TestCursorChatStreamRejectsAnErrorFrameBeforeContent(t *testing.T) {
 	payload := `{"error":{"code":"resource_exhausted","message":"slow down","details":[{"debug":{"error":"quota","details":{"title":"quota"}}}]}}`
 	_, err := decodeChat(t, cursorFrame([]byte(payload)))
@@ -225,6 +238,18 @@ func TestCursorChatStreamRejectsAnErrorFrameBeforeContent(t *testing.T) {
 		cursorFrame(pbBytes(2, pbString(1, "partial"))),
 		cursorFrame([]byte(payload)))
 	if err != nil || !strings.Contains(sse, `"content":"partial"`) {
+		t.Fatalf("%v\n%s", err, sse)
+	}
+}
+
+func TestCursorChatStreamTreatsAnUnparseableErrorLikeFrameAsData(t *testing.T) {
+	// The pin's guard is a substring plus JSON.parse: a frame it cannot parse is
+	// decoded as a message, not returned as an error (:1105-1120).
+	sse, err := decodeChat(t,
+		cursorFrame([]byte(`{"error": broken`)),
+		cursorFrame(pbBytes(2, pbString(1, "x"))),
+	)
+	if err != nil || !strings.Contains(sse, `"content":"x"`) {
 		t.Fatalf("%v\n%s", err, sse)
 	}
 }
