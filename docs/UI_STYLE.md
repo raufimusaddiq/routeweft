@@ -354,7 +354,7 @@ the Add connection form, the Generic Provider form, the Usage Requests and Reque
 details tabs, Codex credit expiry and the drawer. Page rules added in 3b (2026-11-01):
 the selected provider row is the 22px `--highlight` block (the `.provider-option`
 radius owner); the Usage tabs are `button-ghost` pills (the existing pill owner) with a 3px edge, the chosen one a `--highlight` block at
-weight 700 with `aria-selected`; provider detail panels open on a 6px rule; the
+weight 700 with `aria-selected`; provider detail panels open on a 6px rule, except the empty "Select a provider" one, which is the 3px outlined 24px state box (`.provider-empty`, a `--radius-state` owner in the shell guard and measured by the 3b guard); the
 topology hub is an outlined pill and its nodes open rows (an active node a 3px ink
 rule, still saying "in flight"); a quota account is an open row under a 4px rule with
 its windows behind a 3px ink rule.

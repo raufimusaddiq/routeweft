@@ -193,7 +193,18 @@ const PAGES = [
   }
   // Interactive states, measured and shot the same way: the drawer, the key access editor with a choice made,
   // the Combo form, and the language dialog. Light and dark, desktop and phone.
+  // The Providers empty detail (nothing selected) is a 3px outlined 24px box with the small hard shadow and side
+  // padding, not the 6px-ruled panel (UI_STYLE 5, 7). Measured, not assumed: the numbers go to the report.
+  const emptyChecks = [];
+  const probeEmpty = async (theme, width) => emptyChecks.push({ theme, width, ...(await page.evaluate(() => {
+    const element = document.querySelector('.provider-details > .provider-empty');
+    if (!element) return { found: false };
+    const style = getComputedStyle(element);
+    return { found: true, borders: ['Top', 'Right', 'Bottom', 'Left'].map(side => style[`border${side}Width`]), radius: style.borderTopLeftRadius, padLeft: style.paddingLeft, padRight: style.paddingRight, padTop: style.paddingTop, shadow: style.boxShadow.replace(/rgb\([^)]*\)/, '').trim() };
+  })) });
   const states = [
+    { name: 'provider-empty', width: 1440, hash: '#providers', act: async () => { await page.waitForSelector('.provider-empty'); await probeEmpty(currentTheme, 1440); } },
+    { name: 'provider-empty', width: 390, hash: '#providers', act: async () => { await page.waitForSelector('.provider-empty'); await probeEmpty(currentTheme, 390); } },
     { name: 'provider-details', width: 1440, hash: '#providers', act: async () => { await page.locator('.provider-option').first().click(); await page.waitForTimeout(300); } },
     { name: 'provider-details', width: 390, hash: '#providers', act: async () => { await page.locator('.provider-option').first().click(); await page.waitForTimeout(300); } },
     { name: 'provider-connect', width: 1440, hash: '#providers', act: async () => { await page.locator('.provider-option').first().click(); await page.getByRole('button', { name: 'Add connection' }).click(); await page.waitForTimeout(300); } },
@@ -208,7 +219,9 @@ const PAGES = [
     { name: 'quota-credits', width: 390, hash: '#quota-tracker', act: async () => { await page.getByRole('button', { name: 'Credit expiry' }).click(); await page.waitForTimeout(400); } },
     { name: 'drawer', width: 390, hash: '#providers', act: async () => { await page.locator('.mobile-menu').click(); await page.waitForTimeout(250); } },
   ];
+  let currentTheme = '';
   for (const theme of THEMES) {
+    currentTheme = theme;
     await page.evaluate(value => { try { localStorage.setItem('routeweft-theme', value); } catch {} }, theme);
     await page.emulateMedia({ colorScheme: theme });
     for (const state of states) {
@@ -238,6 +251,17 @@ const PAGES = [
     for (const shadow of r.shadows) if (!/^(10px 6px|5px 3px) blur0 spread0$/.test(shadow)) issues.push(`shadow ${shadow}`);
     return issues.map(issue => `${r.page}/${r.theme}/${r.width}: ${issue}`);
   });
+  const emptyBad = emptyChecks.flatMap(c => {
+    const issues = [];
+    if (!c.found) return [`${c.theme}/${c.width}: provider empty detail not rendered`];
+    if (c.borders.some(w => w !== '3px')) issues.push(`borders ${c.borders.join('/')}`);
+    if (c.radius !== '24px') issues.push(`radius ${c.radius}`);
+    if (c.padLeft !== '24px' || c.padRight !== '24px') issues.push(`side padding ${c.padLeft}/${c.padRight}`);
+    if (!/^5px 3px 0px 0px$/.test(c.shadow)) issues.push(`shadow ${c.shadow}`);
+    return issues.map(i => `${c.theme}/${c.width}: provider empty ${i}`);
+  });
+  console.log('provider empty state:', JSON.stringify(emptyChecks));
+  assert.deepEqual(emptyBad, [], 'provider empty state box');
   const themeFailures = results.filter(r => r.theme_ && r.theme_ !== r.theme);
   console.log(`phase 3b pages (${label}): ${results.length} views measured, ${bad.length} problems`);
   if (process.env.PHASE3B_REPORT === '1') { for (const line of bad) console.log('  ' + line); }

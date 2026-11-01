@@ -1068,10 +1068,9 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
 .page-d .provider-option-selected { padding-left: 18px; }
 .page-d .provider-option > .status strong { font-weight: 700; }
 .page-d .ed-group { margin-bottom: 8px; }
-.page-d .provider-details > .detail-panel { border-top: 6px solid var(--ink); padding: 14px 0 28px; }
+.page-d .provider-details > .detail-panel:not(.provider-empty) { border-top: 6px solid var(--ink); padding: 14px 0 28px; }
 .page-d .provider-details > .detail-panel + .detail-panel { margin-top: 24px; }
-.page-d .provider-details > .provider-summary.accent-surface { border-top: 3px solid var(--outline); padding: 24px 28px 28px; }
-.page-d .provider-empty { border: 3px solid var(--outline); border-radius: var(--radius-state); padding: 20px 24px 24px; background: var(--surface); box-shadow: var(--hard-sm); }
+.page-d .provider-details > .provider-empty { border: 3px solid var(--outline); border-radius: var(--radius-state); padding: 20px 24px 24px; background: var(--surface); box-shadow: var(--hard-sm); }
 .page-d .provider-summary .panel-heading h2 { font-size: var(--t-title); font-weight: 700; letter-spacing: -.04em; line-height: 1; }
 .page-d .transport-options { margin: 4px 0 0; padding: 14px 0 0; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; }
 .page-d .oauth-panel { border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; padding: 14px 0 0; background: transparent; }
@@ -1102,7 +1101,6 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
   .page-d .provider-option { padding: 12px 14px; }
   .page-d .usage-tab { padding: 0 16px; }
   .page-d .quota-row { padding: 18px 0; }
-  .page-d .provider-details > .provider-summary.accent-surface { padding: 18px 18px 22px; }
 }
 /* A detail panel already opens on its own 6px rule; its heading does not draw a second one. */
 .page-d .provider-details > .detail-panel > .section-heading { border-top: 0; padding-top: 0; }

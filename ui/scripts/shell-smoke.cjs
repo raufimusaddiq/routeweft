@@ -88,7 +88,7 @@ const { join } = require('node:path');
           const radiusOwners = {
             '999px': '.nav-link, .button-primary, .button-secondary, .button-ghost, .button-danger, input, select, .state-tag, .ed-bar, .ed-headline strong, .ed-statement strong',
             '32px': '.accent-surface',
-            '24px': '.accent-surface, .empty-state, .empty-keys, .page-error, .auth-error',
+            '24px': '.accent-surface, .empty-state, .empty-keys, .page-error, .auth-error, .provider-empty',
             '22px': '.provider-option',
             '20px': 'textarea',
             '50%': '.dot',
