@@ -407,6 +407,21 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 					return wire.Send(attemptProvider, h.clientFor(attemptProvider), retry)
 				}, body))
 			}
+			if wire.NeedsAccountData(provider) {
+				if h.opts.AccountDataFor == nil {
+					preAttemptErr = &dispatchError{503, "credentials_unavailable", "provider credentials are unavailable"}
+					trace.note(member, 503, "provider credentials are unavailable")
+					break
+				}
+				data, err := h.opts.AccountDataFor(r.Context(), provider.ConnectionID)
+				if err != nil {
+					h.recordClassification(provider.ConnectionID, routing.Classification{Outcome: routing.OutcomeAuthRefreshRequired}, time.Now())
+					preAttemptErr = &dispatchError{503, "credentials_unavailable", "provider credentials are unavailable"}
+					trace.note(member, 503, "provider credentials are unavailable")
+					break
+				}
+				request = request.WithContext(wire.WithAccountData(request.Context(), data))
+			}
 			used++
 			if h.opts.Live != nil && holder != nil {
 				// An earlier attempt of this request that never produced an answer

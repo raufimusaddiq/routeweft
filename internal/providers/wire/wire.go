@@ -130,6 +130,9 @@ type Hook struct {
 	// the dispatcher cools it and may try the next candidate, and it removes
 	// whatever marker Do left on the response.
 	AcceptedFailure func(*http.Response) (FailedAnswer, bool)
+	// NeedsAccountData marks the routes whose exchange reads sealed account
+	// fields beyond the bearer token (Xiaomi MiMo Preview's passToken).
+	NeedsAccountData func(routing.ProviderRef) bool
 	// Codec converts the request and its answer for a provider whose pin converts
 	// in its executor and has no translator leg. It replaces the conversion legs,
 	// not the hook's headers, target or Do.
@@ -188,6 +191,7 @@ var hooks = map[string]Hook{
 	"grok-web":         grokWebHook,
 	"perplexity-web":   perplexityWebHook,
 	"cursor":           {RequestHeaders: cursorHeaders, Target: cursorTarget, ForceStream: true, RequireCredential: true, Do: accountless(CursorDo), Codec: cursorCodec},
+	"xiaomi-mimo":      {Target: mimoTarget, Do: MimoDo, NeedsAccountData: mimoPreviewNeedsData},
 }
 
 var minimaxHook = Hook{Finalize: chain(dropOutputConfig, requireClaudeToolType), Target: betaQuery}

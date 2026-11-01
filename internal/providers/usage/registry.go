@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/mimoaccount"
 	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/quota"
 )
@@ -35,7 +36,7 @@ func Readers(client HTTPClient, now func() time.Time) (map[string]quota.UsageCli
 	} {
 		readers[id] = apiKeyReader{Client: shared, Name: id}
 	}
-	readers["xiaomi-mimo"] = apiKeyReader{Client: shared, Name: "xiaomi-mimo", mimo: newMimoSessions()}
+	readers["xiaomi-mimo"] = apiKeyReader{Client: shared, Name: "xiaomi-mimo", mimo: mimoaccount.NewSessions()}
 	readers["github"] = githubReader{Client: shared}
 	readers["gemini-cli"] = geminiReader{Client: shared}
 	readers["kiro"] = kiroReader{Client: shared}

@@ -238,6 +238,25 @@ func (a *App) initialize(ctx context.Context) error {
 			}
 			return a.credReg.Credential(ctx, account)
 		},
+		// The sealed fields a provider's exchange asked for (wire.Hook.NeedsAccountData).
+		// Only the MiMo account session is projected, and only to the serving request
+		// that presents it as a cookie; the snapshot and read models never see it.
+		AccountDataFor: func(ctx context.Context, account string) (map[string]string, error) {
+			if a.credReg == nil {
+				return nil, credentials.ErrKeyRequired
+			}
+			secret, err := a.credReg.Secret(ctx, account)
+			if err != nil {
+				return nil, err
+			}
+			fields := map[string]string{}
+			for _, key := range []string{"mimoPassToken", "mimoUserId", "mimoCUserId"} {
+				if value := secret.ProviderData[key]; value != "" {
+					fields[key] = value
+				}
+			}
+			return fields, nil
+		},
 		MaxBodyBytes:          a.cfg.MaxBodyBytes,
 		CORSOrigins:           a.cfg.CORSOrigins,
 		State:                 manager.State(),

@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/mimoaccount"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/quota"
 )
@@ -30,7 +31,7 @@ type apiKeyReader struct {
 	Name string
 
 	// mimo keeps Xiaomi MiMo account sessions between reads.
-	mimo *mimoSessions
+	mimo *mimoaccount.Sessions
 	// desktop is the consented MiMo Desktop session renewal (#299); nil never
 	// reads host credentials.
 	desktop MimoDesktopRenewal

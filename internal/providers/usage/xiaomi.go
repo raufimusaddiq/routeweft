@@ -2,27 +2,19 @@ package usage
 
 import (
 	"context"
-	"crypto/sha1"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"math"
 	"net/http"
-	"net/url"
-	"strings"
-	"sync"
 	"time"
 
-	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/providers/mimoaccount"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/quota"
 )
 
-const mimoAccountBase = "https://mimo-server-cn.xiaomimimo.com"
-const mimoAPIUserAgent = "miNative PC/Normal Windows_NT/10.0.19045 SDKV/1.0.0 DEVT/PC DEVS/Windows APP/miaccount_desktop APPV/0.1.0"
+var mimoAccountBase = mimoaccount.Base
+
+const mimoAPIUserAgent = mimoaccount.UserAgent
 const mimoSessionRequired = "Weekly quota requires Xiaomi account session. API key alone is insufficient."
 
 // xiaomi mirrors getXiaomiMimoUsage (open-sse/services/usage/xiaomi-mimo.js:22-125).
@@ -123,7 +115,7 @@ func (r apiKeyReader) mimoDesktopNote(state quota.State, data map[string]string)
 // handshakeFailed is whether the session itself could not be used, as opposed
 // to a usage answer that could not be read with it.
 func (r apiKeyReader) mimoAccountUsage(ctx context.Context, account map[string]string) (state quota.State, read, handshakeFailed bool, err error) {
-	cookie, err := r.mimo.cookie(ctx, account["mimoPassToken"], r.now, func() (string, error) { return r.mimoSession(ctx, account) })
+	cookie, err := r.mimo.Cookie(ctx, account["mimoPassToken"], r.now, func() (string, error) { return mimoaccount.ServiceCookie(ctx, r.HTTP, account) })
 	if err != nil {
 		return quota.State{}, false, true, nil
 	}
@@ -195,229 +187,3 @@ func mimoResetDate(raw json.RawMessage) *time.Time {
 // (open-sse/shared/mimoAccount.js:252-254) and the API-key fallback
 // (xiaomi-mimo.js:53-62). The SSO hops before them keep the shared bound.
 const mimoUsageTimeout = 10 * time.Second
-
-// mimoSessionTTL is COOKIE_TTL_MS (mimoAccount.js:29).
-const mimoSessionTTL = 30 * time.Minute
-
-// mimoSessions is the reference's session cache (mimoAccount.js:31-34,181-218):
-// one service cookie per passToken, kept for 30 minutes from the end of its
-// handshake and shared by concurrent reads while a handshake is in flight. A
-// failed handshake is not kept, and a usage read that fails does not drop the
-// session (the reference drops it only from Preview inference, which is
-// unwired here). The key is the passToken's SHA-256, so the cache holds no
-// second copy of the credential; the cookie lives in memory only.
-type mimoSessions struct {
-	mu      sync.Mutex
-	entries map[string]*mimoEntry
-}
-
-type mimoEntry struct {
-	cookie string
-	err    error
-	at     time.Time
-	// done is open while the handshake runs.
-	done chan struct{}
-}
-
-func newMimoSessions() *mimoSessions { return &mimoSessions{entries: map[string]*mimoEntry{}} }
-
-func (c *mimoSessions) cookie(ctx context.Context, passToken string, now func() time.Time, handshake func() (string, error)) (string, error) {
-	if c == nil {
-		return handshake()
-	}
-	sum := sha256.Sum256([]byte(passToken))
-	key := hex.EncodeToString(sum[:])
-	c.mu.Lock()
-	if entry, ok := c.entries[key]; ok {
-		if done := entry.done; done != nil {
-			c.mu.Unlock()
-			select {
-			case <-done:
-				return entry.cookie, entry.err
-			case <-ctx.Done():
-				return "", ctx.Err()
-			}
-		}
-		if now().Sub(entry.at) < mimoSessionTTL {
-			c.mu.Unlock()
-			return entry.cookie, nil
-		}
-	}
-	entry := &mimoEntry{done: make(chan struct{})}
-	c.entries[key] = entry
-	c.mu.Unlock()
-	cookie, err := handshake()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	entry.cookie, entry.err = cookie, err
-	close(entry.done)
-	entry.done = nil
-	if err != nil {
-		delete(c.entries, key)
-		return "", err
-	}
-	entry.at = now()
-	for other, kept := range c.entries {
-		if kept.done == nil && entry.at.Sub(kept.at) >= mimoSessionTTL {
-			delete(c.entries, other)
-		}
-	}
-	return cookie, nil
-}
-
-// encodeURIComponent percent-encodes every UTF-8 byte except ASCII letters,
-// digits and -_.!~*'().
-func encodeURIComponent(text string) string {
-	var out strings.Builder
-	for i := 0; i < len(text); i++ {
-		c := text[i]
-		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.IndexByte("-_.!~*'()", c) >= 0 {
-			out.WriteByte(c)
-			continue
-		}
-		fmt.Fprintf(&out, "%%%02X", c)
-	}
-	return out.String()
-}
-
-// Account redirects are untrusted: passToken must only reach the pinned SSO hosts.
-func mimoURL(raw, host, path string) (*url.URL, error) {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Host != host || u.User != nil || (path != "" && u.Path != path) || u.Fragment != "" || u.Opaque != "" {
-		return nil, errors.New("invalid Xiaomi account redirect")
-	}
-	return u, nil
-}
-
-func (r apiKeyReader) mimoSession(ctx context.Context, data map[string]string) (string, error) {
-	jar := map[string]string{}
-	for name, key := range map[string]string{"passToken": "mimoPassToken", "userId": "mimoUserId", "cUserId": "mimoCUserId"} {
-		value := data[key]
-		if !credentials.ValidMimoCookieValue(value) {
-			return "", errors.New("invalid Xiaomi account credential")
-		}
-		jar[name] = value
-	}
-	// Only the two JSON SSO hops send Accept (mimoAccount.js:126,137,147,155,165).
-	call := func(endpoint, ua string, accept bool) (response, error) {
-		request := &http.Request{Header: http.Header{}}
-		for _, name := range []string{"passToken", "userId", "cUserId", "serviceToken", "mimopc_ph", "mimopc_slh"} {
-			if jar[name] != "" {
-				request.AddCookie(&http.Cookie{Name: name, Value: jar[name]})
-			}
-		}
-		headers := map[string]string{"Cookie": request.Header.Get("Cookie"), "User-Agent": ua}
-		if accept {
-			headers["Accept"] = "application/json"
-		}
-		return r.call(ctx, http.MethodGet, endpoint, headers, nil)
-	}
-	absorb := func(reply response) {
-		for _, header := range reply.headers.Values("Set-Cookie") {
-			pair, _, _ := strings.Cut(header, ";")
-			name, value, ok := strings.Cut(strings.TrimSpace(pair), "=")
-			value = strings.Trim(value, "\"")
-			if !ok || value == "" || !credentials.ValidMimoCookieValue(value) {
-				continue
-			}
-			switch name {
-			case "serviceToken", "mimopc_ph", "mimopc_slh", "userId":
-				jar[name] = value
-			}
-		}
-	}
-	first, err := call(mimoAccountBase+"/api/user/xiaomi/me", mimoAPIUserAgent, false)
-	if err != nil {
-		return "", err
-	}
-	redirect, err := mimoURL(first.headers.Get("Location"), "account.xiaomi.com", "/pass/serviceLogin")
-	if err != nil {
-		return "", err
-	}
-	callback := redirect.Query().Get("callback")
-	if _, err := mimoURL(callback, "mimo-server-cn.xiaomimimo.com", "/api/sts"); err != nil {
-		return "", err
-	}
-	sso, err := call("https://account.xiaomi.com/pass/serviceLogin?sid=passportapi&_json=true", "MiClaw/1.0", true)
-	if err != nil {
-		return "", err
-	}
-	var login struct {
-		Location string          `json:"location"`
-		Nonce    json.RawMessage `json:"nonce"`
-		Security string          `json:"ssecurity"`
-	}
-	if decode([]byte(strings.TrimPrefix(string(sso.body), "&&&START&&&")), &login) != nil {
-		return "", errors.New("invalid Xiaomi SSO response")
-	}
-	location, err := mimoURL(login.Location, "account.xiaomi.com", "")
-	if err != nil {
-		return "", err
-	}
-	nonce := location.Query().Get("nonce")
-	if len(login.Nonce) > 0 && string(login.Nonce) != "null" {
-		if json.Unmarshal(login.Nonce, &nonce) != nil {
-			var n json.Number
-			if json.Unmarshal(login.Nonce, &n) != nil {
-				return "", errors.New("invalid Xiaomi SSO nonce")
-			}
-			nonce = n.String()
-		}
-	}
-	if nonce == "" {
-		return "", errors.New("missing Xiaomi SSO nonce")
-	}
-	input := "nonce=" + nonce
-	if strings.TrimSpace(login.Security) != "" {
-		input += "&" + login.Security
-	}
-	digest := sha1.Sum([]byte(input))
-	// The pin appends the signature to the location as sent
-	// (mimoAccount.js:96-99,145-146), so its own parameters keep their order and
-	// spelling.
-	signedURL, err := mimoURL(login.Location+"&clientSign="+encodeURIComponent(base64.StdEncoding.EncodeToString(digest[:])), "account.xiaomi.com", "")
-	if err != nil {
-		return "", err
-	}
-	account, err := call(signedURL.String(), "MiClaw/1.0", false)
-	if err != nil {
-		return "", err
-	}
-	absorb(account)
-	serviceURL, err := mimoURL("https://account.xiaomi.com/pass/serviceLogin?sid=mimopc&callback="+encodeURIComponent(callback)+"&_json=true", "account.xiaomi.com", "/pass/serviceLogin")
-	if err != nil {
-		return "", err
-	}
-	service, err := call(serviceURL.String(), "MiClaw/1.0", true)
-	if err != nil {
-		return "", err
-	}
-	var ticket struct {
-		Location string `json:"location"`
-	}
-	if decode([]byte(strings.TrimPrefix(string(service.body), "&&&START&&&")), &ticket) != nil {
-		return "", errors.New("invalid Xiaomi service response")
-	}
-	sts, err := mimoURL(ticket.Location, "mimo-server-cn.xiaomimimo.com", "/api/sts")
-	if err != nil {
-		return "", err
-	}
-	absorb(service)
-	// The passportapi token cannot substitute for a missing mimopc session cookie.
-	stamped, err := call(sts.String(), mimoAPIUserAgent, false)
-	if err != nil {
-		return "", err
-	}
-	delete(jar, "serviceToken")
-	absorb(stamped)
-	if jar["serviceToken"] == "" {
-		return "", errors.New("missing Xiaomi service session")
-	}
-	request := &http.Request{Header: http.Header{}}
-	for _, name := range []string{"serviceToken", "mimopc_ph", "mimopc_slh", "userId"} {
-		if jar[name] != "" {
-			request.AddCookie(&http.Cookie{Name: name, Value: jar[name]})
-		}
-	}
-	return request.Header.Get("Cookie"), nil
-}
