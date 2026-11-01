@@ -50,3 +50,33 @@ func TestServingRouteCarriesTheRegistrysUpstreamModelID(t *testing.T) {
 		}
 	}
 }
+
+// Telemetry reads the catalog id: a rewritten route names it, an unrewritten
+// route leaves it empty so RecordedModel falls back to the wire id.
+func TestRewrittenRouteKeepsTheCatalogIDForTelemetry(t *testing.T) {
+	ctx := context.Background()
+	m, s := providerStore(t)
+	node, err := s.PutNode(ctx, credentials.Node{ID: "blackbox", Kind: credentials.NodeBuiltin, ProviderID: "blackbox", Name: "b", Transports: []string{"openai-chat"}, BaseURL: "https://upstream.example/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PutConnection(ctx, credentials.Connection{ID: "b-acct", NodeID: node.ID, Name: "b", Identity: "b", AuthKind: credentials.AuthAPIKey, Enabled: true, Secret: credentials.Secret{AccessToken: "k"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"gpt-5.5", "plain"} {
+		if err := m.PutModel(ctx, Model{ProviderID: "blackbox", ID: id, Name: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, _ := m.Load()
+	for model, want := range map[string]string{"gpt-5.5": "gpt-5.5", "plain": "plain"} {
+		ref, ok := snapshot.AccountProvider("blackbox/"+model, "b-acct", "openai-chat", nil)
+		if !ok || ref.RecordedModel() != want {
+			t.Errorf("%s: ok=%v recorded=%q, want %q", model, ok, ref.RecordedModel(), want)
+		}
+	}
+	ref, _ := snapshot.AccountProvider("blackbox/gpt-5.5", "b-acct", "openai-chat", nil)
+	if ref.UpstreamModel != "blackboxai/openai/gpt-5.5" || ref.CatalogModel != "gpt-5.5" {
+		t.Errorf("route = %+v", ref)
+	}
+}

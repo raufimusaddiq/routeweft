@@ -329,7 +329,7 @@ func (h *Handler) publishOutcomeFlagged(r *http.Request, provider routing.Provid
 		APIKeyID:        apiKeyID,
 		RequestID:       requestID,
 		ProviderID:      provider.ProviderID,
-		ModelID:         provider.UpstreamModel,
+		ModelID:         provider.RecordedModel(),
 		ConnectionID:    provider.ConnectionID,
 		Status:          status,
 		InputTokens:     usage.InputTokens,

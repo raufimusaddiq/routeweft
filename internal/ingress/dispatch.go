@@ -335,7 +335,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 		}
 		outbound, err := prepare(provider)
 		if err == nil && holder != nil {
-			holder.upstream = provider.UpstreamModel
+			holder.upstream = provider.RecordedModel()
 			holder.selected = selected
 			if slot.label != "" {
 				holder.selected = slot.label
@@ -429,7 +429,7 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 				if holder.pending != nil {
 					holder.pending(true)
 				}
-				holder.pending = h.opts.Live.Begin(provider.ProviderID, provider.UpstreamModel, provider.ConnectionID)
+				holder.pending = h.opts.Live.Begin(provider.ProviderID, provider.RecordedModel(), provider.ConnectionID)
 			}
 			response, err := wire.Send(provider, h.clientFor(provider), request)
 			if err != nil {

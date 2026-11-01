@@ -1,9 +1,11 @@
 package ingress
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -97,7 +99,7 @@ func TestProviderErrorBodiesReachTheClientByteForByte(t *testing.T) {
 
 // CLOSED P08 CLASSIFICATION GAPS, kept as a guard so that reopening one is a
 // visible failure. The name is the one docs/P08_TEST_MATRIX.md cites.
-func TestOpenP08ErrorClassificationGaps(t *testing.T) {
+func TestP08ErrorClassificationClosedGaps(t *testing.T) {
 	t.Run("402 payment required cools the account and falls back", func(t *testing.T) {
 		// Pin: errorConfig.js:77 { status: 402, cooldownMs: 2 min } with
 		// accountFallback.js:35-46 shouldFallback:true, so an out-of-credit
@@ -178,5 +180,51 @@ func TestPaymentRequiredAccountFallsBackToTheNextAccount(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// The rewritten id is for the wire only. Telemetry, usage rollups and operator
+// price overrides are keyed on the catalog id, so a rewritten model must keep
+// recording under it (RequestOutcome.ModelID) while the upstream sees the other.
+func TestRewrittenUpstreamModelIDStaysOnTheWireNotInTelemetry(t *testing.T) {
+	var mu sync.Mutex
+	var sent string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		sent = string(raw)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"c1","choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`)
+	}))
+	t.Cleanup(up.Close)
+	log := &outcomeLog{}
+	manager := newManager(t)
+	_, key, err := manager.CreateAPIKey(context.Background(), "rewrite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(manager, Options{
+		AllowPrivateUpstreams: true,
+		OnRequestComplete:     log.add,
+		ProviderResolver: func(_ *runtime.RuntimeSnapshot, _ string) (routing.ProviderRef, bool) {
+			return routing.ProviderRef{ProviderID: "blackbox", Protocol: openaiadapter.ChatProtocol, BaseURL: up.URL + "/v1", APIToken: "fixture-credential",
+				UpstreamModel: "blackboxai/openai/gpt-5.5", CatalogModel: "gpt-5.5"}, true
+		},
+	})
+	mux := http.NewServeMux()
+	handler.Attach(mux)
+	gateway := httptest.NewServer(bearer(mux, key))
+	t.Cleanup(gateway.Close)
+	response := post(t, gateway.URL, "", "/v1/chat/completions", strings.Replace(chatRequest, "%s", "", 1))
+	response.Body.Close()
+	outcomes := log.wait(t)
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(sent, `"model":"blackboxai/openai/gpt-5.5"`) {
+		t.Errorf("the wire did not carry the upstream id: %s", sent)
+	}
+	if len(outcomes) != 1 || outcomes[0].ModelID != "gpt-5.5" {
+		t.Fatalf("telemetry recorded %+v, want the catalog id gpt-5.5", outcomes)
 	}
 }

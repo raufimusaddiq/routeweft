@@ -229,7 +229,7 @@ func (s *RuntimeSnapshot) AccountProvider(requested, account, source string, can
 		}
 	}
 	endpoint := config.endpoints[registry.Protocol(protocol)]
-	return routing.ProviderRef{Connection: config.metadata, ProviderID: model.ProviderID, ConnectionID: account, BaseURL: baseURL, Protocol: protocol, UpstreamModel: upstreamModelFor(config.node, model), Endpoint: endpoint}, true
+	return routing.ProviderRef{Connection: config.metadata, ProviderID: model.ProviderID, ConnectionID: account, BaseURL: baseURL, Protocol: protocol, UpstreamModel: upstreamModelFor(config.node, model), CatalogModel: catalogModelFor(config.node, model), Endpoint: endpoint}, true
 }
 
 func (s *RuntimeSnapshot) compileServingIndexes() {
@@ -314,4 +314,13 @@ func upstreamModelFor(node credentials.Node, model Model) string {
 		return model.ID
 	}
 	return registry.UpstreamModelID(model.ProviderID, model.ID)
+}
+
+// catalogModelFor is the catalog id, returned only when upstreamModelFor rewrote it,
+// so telemetry keeps the id operators price and report on.
+func catalogModelFor(node credentials.Node, model Model) string {
+	if upstreamModelFor(node, model) == model.ID {
+		return ""
+	}
+	return model.ID
 }

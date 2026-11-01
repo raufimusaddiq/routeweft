@@ -161,7 +161,7 @@ const (
 	genericErrors = "providers/shared:TestParseErrorNormalizesProviderErrBodies"
 	cooldownTest  = "ingress:TestRecordUpstreamFailureMapsProviderErrToCooldown"
 	readinessTest = "ingress:TestReadinessMatchesIngressReachability"
-	gapGuard      = "ingress:TestOpenP08ErrorClassificationGaps"
+	gapGuard      = "ingress:TestP08ErrorClassificationClosedGaps"
 )
 
 // listingCells: route.js is src/app/api/providers/[id]/models/route.js at the pin.
@@ -935,19 +935,23 @@ New deterministic tests (no network, sanitized synthetic bodies shaped like the 
 - ` + "`internal/providers/usage/p08_test.go`" + `: pin-shaped quota fixtures for the readers that had none, namely OpenCode Go, Ollama, Xiaomi MiMo, Zed, Command Code, MiniMax and MiniMax CN, Qoder, and the GLM CN and CodeBuddy International regional hosts. They assert used-versus-remaining semantics, that an absent window is skipped rather than invented, exhausted windows, and that failures are errors, not healthy accounts.
 - ` + "`internal/ingress/p08_tokens_test.go`" + `: cached versus ordinary tokens through real dispatch with each provider's real id, stream and non-stream: Anthropic and MiniMax Messages cache read/creation, DeepSeek ` + "`prompt_cache_hit_tokens`" + `, Kimi top-level ` + "`cached_tokens`" + `, Mistral details, and Responses ` + "`input_tokens_details`" + ` for Codex, Grok CLI, Muse and xAI.
 - ` + "`internal/ingress/p08_wires_test.go`" + `: stream and non-stream on every native transport of every served provider that ` + "`TestRegistryChatWires`" + ` (Chat only) did not already walk, the connection-scoped Azure and Token Plan targets, and OpenCode's forced stream folded to one JSON body. These are ` + "`T`" + ` evidence, not provider-specific behaviour.
-- ` + "`internal/ingress/p08_errors_test.go`" + `: provider-keyed non-OpenAI error bodies classified against the pin's rules and relayed to the client byte for byte, plus ` + "`TestOpenP08ErrorClassificationGaps`" + `, which now asserts the 402 cooldown (it pinned the divergence before it was closed) and ` + "`TestPaymentRequiredAccountFallsBackToTheNextAccount`" + `, which proves the next account serves.
+- ` + "`internal/ingress/p08_errors_test.go`" + `: provider-keyed non-OpenAI error bodies classified against the pin's rules and relayed to the client byte for byte, plus ` + "`TestP08ErrorClassificationClosedGaps`" + `, which now asserts the 402 cooldown (it pinned the divergence before it was closed) and ` + "`TestPaymentRequiredAccountFallsBackToTheNextAccount`" + `, which proves the next account serves.
 - ` + "`internal/parity/listing_urls_test.go`" + ` (oracle-gated): the authenticated-listing URL Routeweft builds for each of the 23 providers the pin lists with a plain bearer GET equals the pinned URL.
 
 ## Gaps this audit found
 
 These were findings of the audit. Each is recorded with its disposition; none is left open without a reason.
 
-1. **402 Payment Required was not an unavailability signal when this audit began.** The pin cools the account for two minutes and falls back (` + "`errorConfig.js:77`" + `, ` + "`accountFallback.js:35-46`" + `). Routeweft classified 402 as a terminal client error, so an out-of-credit DeepSeek or OpenRouter account kept being tried. Closed in #76 P08: ` + "`routing.ClassifyStatus`" + ` reads 402 as an account failure, a two-minute cooldown unless the provider sends ` + "`Retry-After`" + `, and the next account serves (` + "`TestOpenP08ErrorClassificationGaps`" + `, ` + "`TestPaymentRequiredAccountFallsBackToTheNextAccount`" + `, ` + "`routing:TestClassifyStatusPaymentRequiredFallsBackAndCools`" + `). Grok CLI keeps its own rule from #184.
+1. **402 Payment Required was not an unavailability signal when this audit began.** The pin cools the account for two minutes and falls back (` + "`errorConfig.js:77`" + `, ` + "`accountFallback.js:35-46`" + `). Routeweft classified 402 as a terminal client error, so an out-of-credit DeepSeek or OpenRouter account kept being tried. Closed in #76 P08: ` + "`routing.ClassifyStatus`" + ` reads 402 as an account failure, a two-minute cooldown unless the provider sends ` + "`Retry-After`" + `, and the next account serves (` + "`TestP08ErrorClassificationClosedGaps`" + `, ` + "`TestPaymentRequiredAccountFallsBackToTheNextAccount`" + `, ` + "`routing:TestClassifyStatusPaymentRequiredFallsBackAndCools`" + `). Grok CLI keeps its own rule from #184.
 2. **Codex ` + "`usage_limit_reached`" + ` ignored ` + "`resets_at`" + ` when this audit began.** P02 (#177) closed it (` + "`wire/error_reset.go`" + `); the gap guard for it was removed and the Codex cell is now P.
 3. **Groq had no quota reader in effect when this audit began.** #211 closed it: the reader now parses the ` + "`x-ratelimit-*`" + ` headers the pin reads (` + "`usage/groq.js:44-129`" + `) and the Groq quota and unavailability cells are now P.
 4. **A zero DeepSeek balance read as unlimited when this audit began.** #212 closed the read side: each currency is its own credit window, a zero stays zero and ` + "`is_available`" + ` is explicit (` + "`TestDeepSeekPinnedBalanceKeepsCurrenciesApart`" + `). Balances still do not take an out-of-credit account out of rotation; that is gap 1.
 5. **Codex and Grok CLI forced-stream executors were not replicated when this audit began.** Closed by the P02 second slice (PARITY 6.19) and now evidenced here: Codex (` + "`executors/codex.js:415-515`" + `: forced stream, ` + "`store:false`" + `, default instructions, allowlist) and Grok CLI (` + "`executors/grok-cli.js:362-470`" + `: grok-shell identity, forced stream) have stream and non-stream cells backed by dispatch-level tests (` + "`TestCodexDispatchSendsTheEndpointsContractNotTheClientsBody`" + `, ` + "`TestGrokCLIStreamingClientKeepsItsStreamByteForByte`" + `, ` + "`TestCodexNonStreamResponsesClientGetsOneJSONFromAForcedStream`" + `, ` + "`TestGrokCLINonStreamClientGetsOneJSONFromAForcedStream`" + `). Readiness is unchanged. Zed and MiMo Free with its alias mmf were closed earlier by #192.
 6. Smaller, in the cell notes: Command Code's empty window, MiniMax's camelCase envelope, Zed's ` + "`trial_blocked`" + ` message rewrite, Gemini CLI's ` + "`retryDelay`" + ` hint, Claude's and Zed's authenticated listing.
+
+## Storage and telemetry impact of the P03 upstream-id rewrite
+
+The registry rewrite of Blackbox and DeepSeek ids (` + "`registry.UpstreamModelID`" + `) changes only the ` + "`model`" + ` on the wire. ` + "`ProviderRef.CatalogModel`" + ` carries the catalog id and ` + "`RecordedModel()`" + ` returns it, so request outcomes, request logs, usage rollups, live activity and operator price overrides stay keyed on the catalog id. No schema change and no migration; the storage rows for rewritten models are keyed on the catalog id by design (` + "`TestRewrittenUpstreamModelIDStaysOnTheWireNotInTelemetry`" + `).
 
 ## What stays open
 
