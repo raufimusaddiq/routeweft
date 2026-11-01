@@ -353,6 +353,14 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .model-row code { min-width: min(100%, 140px); color: var(--text-main); }
 .model-row > span:not(.state-tag), .model-row > small { color: var(--text-muted); }
 .model-row .state-tag { margin-left: auto; }
+/* Provenance sits beside the id it describes; the status tag keeps the right edge. */
+.model-row .model-provenance { margin-left: 0; }
+/* The one call shape in the catalogue: endpoint and a minimal body, copyable as one string. */
+.call-shape { display: grid; gap: 9px; justify-items: start; margin: 4px 0 18px; padding: 0 0 14px; border-bottom: 1px solid var(--border-subtle); }
+.call-shape-label { margin: 0; color: var(--text-muted); font-family: var(--font-mono); font-size: var(--t-body); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+.call-shape pre { max-width: 100%; margin: 0; border: 3px solid var(--outline); border-radius: 20px; padding: 10px 12px; background: var(--surface); color: var(--text-main); font-size: var(--t-body); white-space: pre-wrap; overflow-wrap: anywhere; }
+.call-shape > p:last-child { margin: 0; color: var(--text-muted); }
+.model-note { margin: 0 0 12px; color: var(--text-muted); }
 .pricing-form input { flex-basis: 105px; }
 
 .combos-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }

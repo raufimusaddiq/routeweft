@@ -177,7 +177,12 @@ type providerReadModel struct {
 	// ids. The seed entries carry names and context windows internally, but the
 	// catalog read model is not the place to change that contract.
 	StaticModels []string `json:"staticModels,omitempty"`
-	ReportsUsage bool     `json:"reportsUsage"`
+	// DiscoveredModels and CustomModels split the provider_models rows by whether
+	// an operator added the entry by hand. Seed models have no row, so a provider
+	// with zero discovered is visible as such (#360).
+	DiscoveredModels int  `json:"discoveredModels"`
+	CustomModels     int  `json:"customModels"`
+	ReportsUsage     bool `json:"reportsUsage"`
 	// FlowType and SignInModes tell the dashboard which sign-in affordance to
 	// offer. Without them the UI cannot know whether a provider uses a browser
 	// redirect, a device code, or import only, and offering both panels made half
@@ -285,12 +290,34 @@ FROM provider_nodes n LEFT JOIN provider_connections c ON c.node_id=n.id GROUP B
 			return err
 		}
 	}
+	modelCounts := map[string][2]int{}
+	if h.opts.DB != nil {
+		rows, err := h.opts.DB.QueryContext(r.Context(), `SELECT m.provider_id,COUNT(*),SUM(CASE WHEN c.model_id IS NOT NULL THEN 1 ELSE 0 END)
+FROM provider_models m LEFT JOIN custom_models c ON c.provider_id=m.provider_id AND c.model_id=m.model_id
+GROUP BY m.provider_id`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			var total, custom int
+			if err := rows.Scan(&id, &total, &custom); err != nil {
+				return err
+			}
+			modelCounts[id] = [2]int{total - custom, custom}
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+	}
 	specs := append([]registry.Spec(nil), h.opts.Providers...)
 	sort.Slice(specs, func(i, j int) bool { return specs[i].ID < specs[j].ID })
 	items := make([]providerReadModel, 0, len(specs))
 	for _, spec := range specs {
 		count := counts[spec.ID]
-		item := providerReadModel{ID: spec.ID, Auth: string(spec.Auth), DefaultBaseURL: safeURL(spec.DefaultBaseURL), ModelCatalog: string(spec.ModelCatalog), PassthroughModels: spec.PassthroughModels, StaticModels: spec.StaticModels(), ReportsUsage: spec.ReportsUsage, ConfiguredNodes: count[0], EnabledAccounts: count[1], Readiness: readinessOf(spec.Readiness)}
+		models := modelCounts[spec.ID]
+		item := providerReadModel{ID: spec.ID, Auth: string(spec.Auth), DefaultBaseURL: safeURL(spec.DefaultBaseURL), ModelCatalog: string(spec.ModelCatalog), PassthroughModels: spec.PassthroughModels, StaticModels: spec.StaticModels(), DiscoveredModels: models[0], CustomModels: models[1], ReportsUsage: spec.ReportsUsage, ConfiguredNodes: count[0], EnabledAccounts: count[1], Readiness: readinessOf(spec.Readiness)}
 		item.FlowType, item.SignInModes, item.MetaKeys, item.SignInMethods = h.signInModes(spec.ID)
 		if flow, ok := h.importFlowFor(spec.ID); ok && flow.Bulk != nil && specAllowsOAuth(spec) {
 			item.BulkImport = true

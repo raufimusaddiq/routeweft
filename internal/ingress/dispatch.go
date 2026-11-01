@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -178,13 +177,13 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 		var known bool
 		candidates, known = h.planProviderAttempts(snapshot, providerID, model, source, compact, time.Now())
 		if !known {
-			return nil, routing.ProviderRef{}, &dispatchError{404, "model_not_found", fmt.Sprintf("model %q is not configured for inference", model)}
+			return nil, routing.ProviderRef{}, &dispatchError{404, "model_not_found", unknownModelMessage(snapshot, accessFilter(r, snapshot), "llm")}
 		}
 	} else if h.opts.ProviderResolver != nil {
 		if provider, ok := h.opts.ProviderResolver(snapshot, model); ok {
 			candidates = append(candidates, provider)
 		} else {
-			return nil, routing.ProviderRef{}, &dispatchError{404, "model_not_found", fmt.Sprintf("model %q is not configured for inference", model)}
+			return nil, routing.ProviderRef{}, &dispatchError{404, "model_not_found", unknownModelMessage(snapshot, accessFilter(r, snapshot), "llm")}
 		}
 	} else {
 		return nil, routing.ProviderRef{}, &dispatchError{503, "no_provider", "no provider is configured"}
