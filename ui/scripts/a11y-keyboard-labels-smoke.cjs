@@ -316,16 +316,16 @@ const events = Array.from({ length: 3 }, (_, i) => ({ id: 3 - i, requestId: `req
       const clickable = control.tag === 'button' || control.tag === 'a' || ['checkbox', 'radio'].includes(control.type);
       if (!clickable) continue;
       if (control.tag === 'a') {
-        if (!(await activation(control, 'Enter'))) activationFailures.push(`${control.tag} "${control.name}" Enter `);
+        if (!(await activation(control, 'Enter'))) activationFailures.push(`${control.tag} "${control.name}" Enter`);
         continue;
       }
       if (control.type === 'radio') continue; // a checked radio is a no-op on Space; the group probe below covers it
       if (control.type === 'checkbox') {
-        if (!(await activation(control, 'Space'))) activationFailures.push(`${control.tag}#${control.id}[${control.type}] "${control.name}" Space `);
+        if (!(await activation(control, 'Space'))) activationFailures.push(`${control.tag}#${control.id}[${control.type}] "${control.name}" Space`);
         continue;
       }
-      if (!(await activation(control, 'Enter'))) activationFailures.push(`${control.tag}#${control.id}[${control.type}] "${control.name}" Enter `);
-      if (!(await activation(control, 'Space'))) activationFailures.push(`${control.tag}#${control.id}[${control.type}] "${control.name}" Space `);
+      if (!(await activation(control, 'Enter'))) activationFailures.push(`${control.tag}#${control.id}[${control.type}] "${control.name}" Enter`);
+      if (!(await activation(control, 'Space'))) activationFailures.push(`${control.tag}#${control.id}[${control.type}] "${control.name}" Space`);
     }
     return {
       page: name, theme, width,
@@ -343,12 +343,16 @@ const events = Array.from({ length: 3 }, (_, i) => ({ id: 3 - i, requestId: `req
   };
 
   await page.goto(ORIGIN);
-  // Theme is read from localStorage at startup, so write it, emulate the OS, then navigate once:
-  // no goto-then-reload pair per view.
+  // The app reads the persisted theme only in its startup initializer, and a fragment-only
+  // navigation would not re-read it. A unique query makes each view a hard load, so the explicit
+  // light/dark preference really is the one rendered; the assertion below proves it did not
+  // collapse to the OS preference.
+  let loads = 0;
   const load = async (hash, theme) => {
     await page.evaluate(value => { try { localStorage.setItem('routeweft-theme', value); } catch {} }, theme);
-    await page.emulateMedia({ colorScheme: theme });
-    await page.goto(`${ORIGIN}/${hash}`);
+    await page.emulateMedia({ colorScheme: theme === 'light' ? 'dark' : 'light' });
+    await page.goto(`${ORIGIN}/?v=${++loads}${hash}`);
+    await page.waitForFunction(value => document.documentElement.dataset.theme === value, theme);
   };
 
   const results = [];
