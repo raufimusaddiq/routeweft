@@ -2253,7 +2253,7 @@ Three comparisons run the reference's own code, not a restatement of it, and any
 2. **Control workflows** (`compat/parity/generate-control-workflows.mjs`, `internal/control/api/control_workflows_test.go`). Short ordered workflows over the reference's combo, API key and model alias routes, replayed through the admin API. A step compares by outcome (success, or the refusal status) and a workflow by the state it ends in.
 3. **The ledger** (`compat/parity/divergences.json`). Every difference is a group (direction, leg or workflow, kind, path) with a reference that resolves in `docs/PARITY.md` (a D row, a register item of 6.3-6.12, or a section) and an example (the first case, both values). A difference with no entry fails; an entry that no longer matches a difference fails; an entry whose example changed fails, so a leg that changes how it differs must update the ledger. `LEGS_LEDGER_UPDATE=1` and `CONTROL_LEDGER_UPDATE=1` rewrite the examples and mark new groups `UNTRIAGED`, which fails the reference check until an item is cited.
 
-`compat/parity/ledger.mjs` writes `docs/DIVERGENCE_LEDGER.md` from the ledger and the D rows: counts, each D row with its state (approved, or decision required), every group by leg, and a sign-off block. `--check` fails when it is stale or a reference does not resolve. The `parity` CI job runs all of it and uploads the sheet as the `divergence-ledger` artifact. A divergence is never silent: it is fixed, or it has an entry, and an entry cites a decision.
+`compat/parity/ledger.mjs` writes `docs/DIVERGENCE_LEDGER.md` from the ledger and the D rows: counts, each D row with its state (approved, or decision required), every group by leg, and a sign-off block. `--check` fails when it is stale or a reference does not resolve. The `parity` job on `main` runs all of it after merge and uploads the sheet as the `divergence-ledger` artifact; no pull request runs it (#361), so a merge can land without it and a failure there is a follow-up ticket. A divergence is never silent: it is fixed, or it has an entry, and an entry cites a decision.
 
 ## 29. CI gates
 
@@ -2269,9 +2269,11 @@ A pull request runs:
 A push to `main` additionally runs, after merge:
 
 - `go test -race -count=1 -timeout 10m ./...`;
-- the `parity` job: the oracle fetch, the pinned differential and divergence
-  generators whose pins a Go or UI test replays (28.6), the oracle-tagged provider
-  parity tests and the full secret scan;
+- the `parity` job in `.github/workflows/main.yml` (push to `main` only): the
+  oracle fetch, the pinned differential and divergence generators whose pins a Go
+  or UI test replays (28.6), the oracle-tagged provider parity tests and the full
+  secret scan; a pull request does not run it, so a failure here is a follow-up
+  ticket, not a blocked merge;
 - the container build, size budget and runtime TLS trust bundle.
 
 The browser smoke and accessibility checks are not a CI job since #361: run
