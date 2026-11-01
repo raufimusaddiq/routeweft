@@ -950,6 +950,14 @@ func (h *Handler) listModelEntries(ctx context.Context, connection credentials.C
 		}
 		return models, nil
 	}
+	// Claude's listing route sends the credential as x-api-key with anthropic-version
+	// (route.js:131-141); the registry's apiKey auth is the same raw x-api-key
+	// (registry/claude.js:44-47). An OAuth token stays a bearer, which is the
+	// registry's own oauth scheme (claude.js:48-51): the route's blanket x-api-key is
+	// not followed for it (PARITY 6.15).
+	if node.Kind == credentials.NodeBuiltin && node.ProviderID == "claude" && connection.AuthKind == credentials.AuthAPIKey {
+		style = discovery.AuthXApiKey
+	}
 	switch connection.AuthKind {
 	case credentials.AuthNone:
 		style = discovery.AuthNone
