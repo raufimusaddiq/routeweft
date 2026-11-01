@@ -236,7 +236,7 @@ const PAGES = [
       results.push({ page: `state:${state.name}`, theme, width: state.width, theme_: await page.evaluate(() => document.documentElement.dataset.theme || ''), ...found });
       // A full-page capture taken from a scrolled page also shows the fixed skip link parked above the viewport; scroll home first.
       await page.evaluate(() => window.scrollTo(0, 0));
-      if (capture) await page.screenshot({ path: join(artifacts, `${label}-state-${state.name}-${theme}-${state.width}.png`), fullPage: state.name !== 'drawer' && state.name !== 'language' });
+      if (capture) await page.screenshot({ path: join(artifacts, `${label}-state-${state.name}-${theme}-${state.width}.png`), fullPage: state.name !== 'drawer' });
     }
   }
   writeFileSync(join(artifacts, `phase3b-${label}.json`), JSON.stringify(results, null, 1));

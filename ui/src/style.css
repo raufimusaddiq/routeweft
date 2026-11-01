@@ -1065,11 +1065,10 @@ h1 { font-size: var(--t-poster); font-weight: 700; letter-spacing: -.055em; line
 /* Providers: the catalogue is open rows between hairlines; the selected one is a 22px highlight block, and its state is still its word. */
 .page-d .provider-option { min-height: 68px; border-left: 0; border-radius: 22px; padding: 12px 18px; }
 .page-d .provider-option:hover:not(.provider-option-selected) { background: var(--surface-2); }
-.page-d .provider-option-selected { padding-left: 18px; }
 .page-d .provider-option > .status strong { font-weight: 700; }
 .page-d .ed-group { margin-bottom: 8px; }
 .page-d .provider-details > .detail-panel:not(.provider-empty) { border-top: 6px solid var(--ink); padding: 14px 0 28px; }
-.page-d .provider-details > .detail-panel + .detail-panel { margin-top: 24px; }
+.page-d .provider-details > .detail-panel + .detail-panel { margin-top: 12px; } /* on top of the container's 12px gap: panels sit 24px apart */
 .page-d .provider-details > .provider-empty { border: 3px solid var(--outline); border-radius: var(--radius-state); padding: 20px 24px 24px; background: var(--surface); box-shadow: var(--hard-sm); }
 .page-d .provider-summary .panel-heading h2 { font-size: var(--t-title); font-weight: 700; letter-spacing: -.04em; line-height: 1; }
 .page-d .transport-options { margin: 4px 0 0; padding: 14px 0 0; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; }
