@@ -183,6 +183,10 @@ func TestCatalogInfoKindsAndOllamaTags(t *testing.T) {
 			t.Fatalf("%s: %d %s", path, w.Code, w.Body)
 		}
 	}
+	miss := get("/v1/models/info?id=kenari/kenari-free", key)
+	if miss.Code != 404 || !strings.Contains(miss.Body.String(), "GET /v1/models") || !strings.Contains(miss.Body.String(), "5 callable ids") {
+		t.Fatalf("unknown id does not point at the real catalogue: %d %s", miss.Code, miss.Body)
+	}
 	if w := get("/v1/models/info", key); w.Code != 400 {
 		t.Fatalf("missing id: %d %s", w.Code, w.Body)
 	}

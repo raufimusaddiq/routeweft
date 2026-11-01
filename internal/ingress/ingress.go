@@ -1023,7 +1023,7 @@ func (h *Handler) handleModelsInfo(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	h.writeError(w, http.StatusNotFound, "model_not_found", "model does not exist or is not accessible")
+	h.writeError(w, http.StatusNotFound, "model_not_found", unknownModelMessage(snapshot, accessFilter(r, snapshot), r.URL.Query().Get("kind")))
 }
 
 func (h *Handler) handleModel(w http.ResponseWriter, r *http.Request) {
@@ -1047,7 +1047,7 @@ func (h *Handler) handleModel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	h.writeError(w, http.StatusNotFound, "model_not_found", "model does not exist or is not accessible")
+	h.writeError(w, http.StatusNotFound, "model_not_found", unknownModelMessage(snapshot, accessFilter(r, snapshot), "llm"))
 }
 
 func (h *Handler) handlePreflight(w http.ResponseWriter, r *http.Request) {

@@ -214,6 +214,10 @@ func TestChatCompletionsRejectsBadRequests(t *testing.T) {
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("unknown model status %d", recorder.Code)
 	}
+	// The miss must point at the real list, never at a guessed id (#360).
+	if body := recorder.Body.String(); !strings.Contains(body, "GET /v1/models") || !strings.Contains(body, "callable ids") {
+		t.Fatalf("unknown model message does not point at the catalogue: %s", body)
+	}
 }
 
 func TestChatCompletionsPropagatesClientCancellation(t *testing.T) {

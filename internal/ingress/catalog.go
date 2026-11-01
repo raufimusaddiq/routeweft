@@ -1,12 +1,26 @@
 package ingress
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 	"sort"
 
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
+
+// unknownModelMessage explains a model id that is not in the catalogue. It
+// states the size of the real list and where to read it, and names no model:
+// a suggestion the catalogue does not contain is what sent callers to
+// "kenari-free", which never existed (#360). It never echoes the requested id
+// either: an ungranted and a nonexistent id must answer identically (C02).
+func unknownModelMessage(snapshot *runtime.RuntimeSnapshot, allowed func(string) bool, kind string) string {
+	if kind == "" {
+		kind = "llm"
+	}
+	listed := publicModels(snapshot, kind, allowed)
+	return fmt.Sprintf("model not found. GET /v1/models lists the %d callable ids; pass one exactly as shown, including its \"<provider>/\" prefix. A provider with no discovered models has none there yet: run Discover for it on the Providers page.", len(listed))
+}
 
 func matchesModelKind(model runtime.Model, kind, requested string) bool {
 	switch requested {
