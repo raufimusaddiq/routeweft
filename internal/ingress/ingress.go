@@ -57,6 +57,7 @@ type Options struct {
 	Candidates                CandidateResolver
 	AccountProvider           AccountProvider
 	CredentialFor             func(context.Context, string) (string, error)
+	AccountDataFor            func(context.Context, string) (map[string]string, error)
 	State                     *runtime.RuntimeState
 	Strategy                  routing.Strategy
 	StickyLimit               uint64

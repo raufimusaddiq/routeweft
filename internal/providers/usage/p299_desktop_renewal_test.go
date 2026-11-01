@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/mimoaccount"
 	"github.com/raufimusaddiq/routeweft/internal/quota"
 )
 
@@ -38,7 +39,7 @@ func (f *mimoAccountFixture) Do(req *http.Request) (*http.Response, error) {
 	}
 	header := http.Header{}
 	status, body := http.StatusOK, ""
-	callback := mimoAccountBase + "/api/sts"
+	callback := mimoaccount.Base + "/api/sts"
 	switch req.URL.Host + req.URL.Path {
 	case "mimo-server-cn.xiaomimimo.com/api/user/xiaomi/me":
 		if valid[pass] {
@@ -117,7 +118,7 @@ const mimoKeyUsagePath = "aistudio.xiaomimimo.com/open-apis/v1/user/usage"
 // returns reads the weekly quota, and the read says when the host was read.
 func TestMimoQuotaReadRenewsAMissingSession(t *testing.T) {
 	fixture := &mimoAccountFixture{valid: map[string]bool{"desktop-pass": true}}
-	renewal := &fakeRenewal{renewed: map[string]string{"apiKey": "sk-k", "mimoPassToken": "desktop-pass", "mimoDesktopRenewal": "on", "mimoDesktopReadAt": "2026-10-29T00:00:00Z"}}
+	renewal := &fakeRenewal{renewed: map[string]string{"apiKey": "sk-k", "mimoPassToken": "desktop-pass", "mimoUserId": "mimo-user", "mimoCUserId": "mimo-cuser", "mimoDesktopRenewal": "on", "mimoDesktopReadAt": "2026-10-29T00:00:00Z"}}
 	state, err := mimoRenewalReader(t, fixture, renewal).Usage(context.Background(), quota.Credential{ConnectionID: "c1", AccessToken: "sk-k", ProviderData: map[string]string{"apiKey": "sk-k", "mimoDesktopRenewal": "on"}})
 	if err != nil {
 		t.Fatal(err)
@@ -157,9 +158,9 @@ func TestMimoQuotaReadWithoutARenewalKeepsTheKeyPath(t *testing.T) {
 // passToken that failed; one that works never does, nor does one whose usage
 // answer failed after a good handshake (the session is not the problem).
 func TestMimoQuotaReadRenewsOnlyAFailedSession(t *testing.T) {
-	stored := map[string]string{"mimoPassToken": "expired-pass", "mimoDesktopRenewal": "on"}
+	stored := map[string]string{"mimoPassToken": "expired-pass", "mimoUserId": "mimo-user", "mimoCUserId": "mimo-cuser", "mimoDesktopRenewal": "on"}
 	fixture := &mimoAccountFixture{valid: map[string]bool{"desktop-pass": true}}
-	renewal := &fakeRenewal{renewed: map[string]string{"mimoPassToken": "desktop-pass"}}
+	renewal := &fakeRenewal{renewed: map[string]string{"mimoPassToken": "desktop-pass", "mimoUserId": "mimo-user", "mimoCUserId": "mimo-cuser"}}
 	state, err := mimoRenewalReader(t, fixture, renewal).Usage(context.Background(), quota.Credential{ConnectionID: "c1", AccessToken: "sk-k", ProviderData: stored})
 	if err != nil {
 		t.Fatal(err)
@@ -168,18 +169,18 @@ func TestMimoQuotaReadRenewsOnlyAFailedSession(t *testing.T) {
 		t.Fatalf("state = %+v asked = %v", state, renewal.asked)
 	}
 
-	working := &fakeRenewal{renewed: map[string]string{"mimoPassToken": "desktop-pass"}}
+	working := &fakeRenewal{renewed: map[string]string{"mimoPassToken": "desktop-pass", "mimoUserId": "mimo-user", "mimoCUserId": "mimo-cuser"}}
 	fixture = &mimoAccountFixture{valid: map[string]bool{"sealed-pass": true}}
-	if _, err := mimoRenewalReader(t, fixture, working).Usage(context.Background(), quota.Credential{ConnectionID: "c1", AccessToken: "sk-k", ProviderData: map[string]string{"mimoPassToken": "sealed-pass", "mimoDesktopRenewal": "on"}}); err != nil {
+	if _, err := mimoRenewalReader(t, fixture, working).Usage(context.Background(), quota.Credential{ConnectionID: "c1", AccessToken: "sk-k", ProviderData: map[string]string{"mimoPassToken": "sealed-pass", "mimoUserId": "mimo-user", "mimoCUserId": "mimo-cuser", "mimoDesktopRenewal": "on"}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(working.asked) != 0 {
 		t.Fatalf("a working session asked for a renewal: %v", working.asked)
 	}
 
-	usageDown := &fakeRenewal{renewed: map[string]string{"mimoPassToken": "desktop-pass"}}
+	usageDown := &fakeRenewal{renewed: map[string]string{"mimoPassToken": "desktop-pass", "mimoUserId": "mimo-user", "mimoCUserId": "mimo-cuser"}}
 	fixture = &mimoAccountFixture{valid: map[string]bool{"sealed-pass": true, "desktop-pass": true}, usage: http.StatusInternalServerError}
-	state, err = mimoRenewalReader(t, fixture, usageDown).Usage(context.Background(), quota.Credential{ConnectionID: "c1", AccessToken: "sk-k", ProviderData: map[string]string{"mimoPassToken": "sealed-pass", "mimoDesktopRenewal": "on"}})
+	state, err = mimoRenewalReader(t, fixture, usageDown).Usage(context.Background(), quota.Credential{ConnectionID: "c1", AccessToken: "sk-k", ProviderData: map[string]string{"mimoPassToken": "sealed-pass", "mimoUserId": "mimo-user", "mimoCUserId": "mimo-cuser", "mimoDesktopRenewal": "on"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +193,7 @@ func TestMimoQuotaReadRenewsOnlyAFailedSession(t *testing.T) {
 // any unusable session does; a cancelled read asks for nothing.
 func TestMimoQuotaReadRenewalFailurePaths(t *testing.T) {
 	fixture := &mimoAccountFixture{valid: map[string]bool{}}
-	renewal := &fakeRenewal{renewed: map[string]string{"mimoPassToken": "also-bad"}}
+	renewal := &fakeRenewal{renewed: map[string]string{"mimoPassToken": "also-bad", "mimoUserId": "mimo-user", "mimoCUserId": "mimo-cuser"}}
 	state, err := mimoRenewalReader(t, fixture, renewal).Usage(context.Background(), quota.Credential{ConnectionID: "c1", AccessToken: "sk-k"})
 	if err != nil {
 		t.Fatal(err)
@@ -203,8 +204,8 @@ func TestMimoQuotaReadRenewalFailurePaths(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	cancelled := &fakeRenewal{renewed: map[string]string{"mimoPassToken": "desktop-pass"}}
-	_, _ = mimoRenewalReader(t, &mimoAccountFixture{}, cancelled).Usage(ctx, quota.Credential{ConnectionID: "c1", AccessToken: "sk-k", ProviderData: map[string]string{"mimoPassToken": "sealed-pass"}})
+	cancelled := &fakeRenewal{renewed: map[string]string{"mimoPassToken": "desktop-pass", "mimoUserId": "mimo-user", "mimoCUserId": "mimo-cuser"}}
+	_, _ = mimoRenewalReader(t, &mimoAccountFixture{}, cancelled).Usage(ctx, quota.Credential{ConnectionID: "c1", AccessToken: "sk-k", ProviderData: map[string]string{"mimoPassToken": "sealed-pass", "mimoUserId": "mimo-user", "mimoCUserId": "mimo-cuser"}})
 	if len(cancelled.asked) != 0 {
 		t.Fatalf("a cancelled read asked for a renewal: %v", cancelled.asked)
 	}

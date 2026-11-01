@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/mimoaccount"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/quota"
 )
@@ -457,7 +458,7 @@ func TestBillingSharedValueSemantics(t *testing.T) {
 	if got := searchParam("orgId", "a b&c=d/é~*+"); got != "orgId=a+b%26c%3Dd%2F%C3%A9%7E*%2B" {
 		t.Fatalf("searchParam %s", got)
 	}
-	if got := encodeURIComponent("https://x/a?b=c&d=e f!'()*~"); got != "https%3A%2F%2Fx%2Fa%3Fb%3Dc%26d%3De%20f!'()*~" {
+	if got := mimoaccount.EncodeURIComponent("https://x/a?b=c&d=e f!'()*~"); got != "https%3A%2F%2Fx%2Fa%3Fb%3Dc%26d%3De%20f!'()*~" {
 		t.Fatalf("encodeURIComponent %s", got)
 	}
 }

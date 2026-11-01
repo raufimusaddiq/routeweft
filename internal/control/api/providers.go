@@ -668,10 +668,24 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	}
 	// Apply serving's body quirks to the probe too (github, kimchi, deepseek, minimax...).
 	encoded = wire.FinalizeBodyAt(route, target.Endpoint, encoded)
+	// A Preview probe needs the same sealed account fields serving projects.
+	probeData := map[string]string{}
+	if wire.NeedsAccountData(route) && h.opts.CredentialRegistry != nil && connection.ID != "" {
+		if secret, secretErr := h.opts.CredentialRegistry.Secret(ctx, connection.ID); secretErr == nil {
+			for _, key := range []string{"mimoPassToken", "mimoUserId", "mimoCUserId"} {
+				if value := secret.ProviderData[key]; value != "" {
+					probeData[key] = value
+				}
+			}
+		}
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, parsed.String(), bytes.NewReader(encoded))
 	if err != nil {
 		result.Error = "model probe request could not be created"
 		return result
+	}
+	if len(probeData) > 0 {
+		request = request.WithContext(wire.WithAccountData(request.Context(), probeData))
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "text/event-stream, application/x-ndjson, application/json")
