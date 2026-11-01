@@ -453,7 +453,7 @@ func modeCell(t *testing.T, spec registry.Spec, stream bool, chat, skips map[str
 		}
 	case "xiaomi-mimo":
 		if !stream {
-			return cell{kindP, ref("ingress:TestProviderXiaomiMimoMessagesNativeUsesProviderPath", "ingress:TestRegistryNativeTransportWires"), "Messages fixture posts to the provider path; Chat through the table. Open: Preview models served through the account-session route (executors/xiaomi-mimo.js:21-99) are not replicated"}
+			return cell{kindP, ref("ingress:TestProviderXiaomiMimoMessagesNativeUsesProviderPath", "ingress:TestRegistryNativeTransportWires", "providers/wire:TestMimoPreviewDoSendsTheAccountRouteAndRetriesOnce"), "Messages fixture posts to the provider path; Chat through the table; Preview models take the account route with the sealed session (executors/xiaomi-mimo.js:21-99)"}
 		}
 	case "openrouter":
 		if stream {
@@ -512,7 +512,7 @@ func modeCell(t *testing.T, spec registry.Spec, stream bool, chat, skips map[str
 	case "opencode-go":
 		note += ". Open: Responses-only models, the session header and body normalization (executors/opencode-go.js:128-210) are not replicated (experimental)"
 	case "xiaomi-mimo":
-		note += ". Open: the Preview models served through the account-session route (executors/xiaomi-mimo.js:21-99) are not replicated; Cloud API models are the shared path"
+		note += "; Preview models take the account-session route with the sealed passToken and one 401 retry (executors/xiaomi-mimo.js:21-99, TestMimoPreviewDoSendsTheAccountRouteAndRetriesOnce)"
 	case "github":
 		note += ". Open: Claude models via /v1/messages and the forced stream on Responses (executors/github.js:250-275) are not replicated (experimental)"
 	}

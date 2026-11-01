@@ -182,7 +182,6 @@ const PAGES = [
         await page.goto(`${ORIGIN}/${target.hash}`);
         await page.reload();
         await page.waitForSelector(target.ready);
-        await page.waitForLoadState('networkidle');
         await page.waitForTimeout(450);
         const found = await measure();
         const theme_ = await page.evaluate(() => document.documentElement.dataset.theme || '');
@@ -211,7 +210,6 @@ const PAGES = [
       await page.goto(`${ORIGIN}/${state.hash}`);
       await page.reload();
       await page.waitForSelector('h1');
-      await page.waitForLoadState('networkidle');
       await page.waitForTimeout(350);
       await state.act();
       const found = await measure();
