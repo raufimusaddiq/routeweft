@@ -6,7 +6,7 @@ Parent: #73; sprint tracker #75. Baseline audit: 2026-10-17. R11 review: 2026-10
 ## 1. Scope, pins and interpretation
 
 - Oracle: `raufimusaddiq/literouter` `refs/heads/main`, resolved once per run and frozen (#289; `compat/parity/resolve-oracle.mjs`, recorded in `oracle-run.json`), replacing the fixed `1c3b9f47837d42ea64992063309064af755a14a3` of this audit. `1c3b9f47` below is the commit this audit and the committed `*_pin.json` fixtures were written against; it is history, not the current oracle. Observed source at the run's commit is the authority. Each run's snapshot is also compared with the previous recorded one by `compat/parity/report-changes.mjs` (#290), which lists what moved upstream as unverified candidate gaps linked to this inventory; it never classifies a difference as parity and does not file issues or post anything.
-- Supplementary reference: `luqman-v1/9router-go` is read-only, never the oracle and never copied blindly; `docs/NINEROUTER_GO_EVALUATION.md` (#291) records the SHAs, paths, license obligations and the proven Routeweft gaps it found.
+- Supplementary reference: `luqman-v1/9router-go` is read-only, never the oracle and never copied blindly (AGENTS.md section 2); its evaluation changed no product behavior and no code was copied.
 - Routeweft: `013d26a2014c16e0e4f2a35aa9acf2fa5bfd4e7c` (the common `main` / `origin/main` base).
 - Worktree: `/home/ubuntu/routeweft-wt/s5-parity-73`; branch: `sprint/5-parity-73`.
 - The oracle checkout actually reports `2df83ab99d158e3beb53eb88a089fc28e6dae948`, with existing untracked intake files. All oracle evidence below is read using `git show 1c3b9f47:<path>` / `git ls-tree`, never the newer working files. No oracle checkout, database, credentials, runtime or deployment is modified/accessed.
@@ -2386,8 +2386,9 @@ readers and no-surface providers. No provider readiness grade changes here.
 
 ## 6.17 P06 Kenari native wire and first-output probes (#76)
 
-[P06_KENARI_AUDIT.md](P06_KENARI_AUDIT.md) compares each named area with the
-pin, including the work already merged in #154/#162/#172/#173. Oracle reads use
+The table below compares each named area with the
+pin, including the work already merged in #154/#162/#172/#173; the named tests in
+PROVIDER_ACCEPTANCE_MATRIX.md are the evidence. Oracle reads use
 `/home/ubuntu/9router` at `1c3b9f47` via `git show`; `/opt/9router` is absent.
 
 | Area | Pin evidence | Routeweft evidence / remaining work | Status |
@@ -2450,9 +2451,9 @@ storage, migration, network destination or credential behaviour changed.
 
 ## 6.18 Specialized executor inventory and body reset hints (#76 P02)
 
-[The pinned executor audit](P02_EXECUTOR_AUDIT.md) cites each remaining
-specialized provider, the ticket-only shared providers, aliases and omitted
-executors. GitLab uses DefaultExecutor; iFlow inference signs a bearer request,
+The §6.14 registry rows and the tables in this section
+cite each remaining specialized provider, the ticket-only shared providers,
+aliases and omitted executors. GitLab uses DefaultExecutor; iFlow inference signs a bearer request,
 not a cookie session. Cline/ClinePass already use shared auth/envelope hooks.
 Kimchi, OpenCode Go, Vertex Partner and Perplexity Web cannot be omitted merely
 because the ticket did not name them. Existing §6.14 rows remain authoritative
@@ -2464,7 +2465,7 @@ for registry-level quirks across the complete provider inventory.
 | Gemini CLI 429 RetryInfo | `open-sse/executors/gemini-cli.js:38-52` | `TestPinnedErrorBodyResets`, `TestBodyResetRefinesWithoutErasingHeaderHints`: typed protobuf seconds, fractions, malformed/absent/zero/overflow rejection, existing header retention. | PRESENT | Dormant wire hook; public serving remains unwired. |
 | Codex remaining executor | `open-sse/executors/codex.js:219-247,280-386,417-520` | Landed in the second slice (§6.19): initial SSE inspection, compact target and body, request normalization, session and beta headers. Decisions recorded in §6.19 (#185): remote-image fetching is refused on SSRF grounds; client session headers and assistant-text hashes are deliberately ignored in favor of the explicit prompt cache key or connection digest. | PRESENT | P08 retains live endpoint qualification; the remote-image fetch is refused and the session policy is an intentional divergence, not missing implementation. |
 | Gemini CLI remaining executor | `open-sse/executors/gemini-cli.js:10-35` | Landed in the fourth slice (#194, §6.19): target, action, query, project and client headers. | PRESENT | P08 retains live-gateway qualification. |
-| Other specialized executors | `open-sse/executors/index.js:32-68` | P02_EXECUTOR_AUDIT.md enumerates the implementations and intentional differences. The last three named gaps closed in #348 (OpenCode fingerprint tools, Zed `trial_blocked` rewrite) and #350 (Xiaomi MiMo Preview). | PRESENT | Enablement of the fenced wires is #229, not executor work. |
+| Other specialized executors | `open-sse/executors/index.js:32-68` | The implementations and intentional differences are enumerated in §6.19 and the §6.14 rows. The last three named gaps closed in #348 (OpenCode fingerprint tools, Zed `trial_blocked` rewrite) and #350 (Xiaomi MiMo Preview). | PRESENT | Enablement of the fenced wires is #229, not executor work. |
 
 No new work is added to successful requests; parsing runs only on the existing
 bounded non-2xx error-body prefix. No SQLite, migration, credential persistence,
@@ -2508,7 +2509,7 @@ registry `forceStream` flag (`open-sse/handlers/chatCore.js:146`) with the reque
 contract of the endpoints it guards (`executors/codex.js:417-519`,
 `executors/grok-cli.js:419-525`) and Codex's read of the stream head
 (`executors/codex.js:280-386`). The pinned enumeration, the corrections to the ticket
-and the per-provider mechanism matrix are in [the audit](P02_EXECUTOR_AUDIT.md). Non-goals:
+and the per-provider mechanism matrix are the tables in §6.18 and §6.19. Non-goals:
 enabling anything (nothing leaves `ingress.unwired`; no readiness value changes), cookie
 sessions, signing, envelope rewrites for providers with no serving wire.
 
