@@ -1292,3 +1292,44 @@ func TestZedStatusWithBothKeysIsAlwaysTheFailure(t *testing.T) {
 		t.Errorf("a failed key beside a stream_ended type: ended=%v failed=%v", ended, failed)
 	}
 }
+
+// zed.js:284-305: a trial_blocked body is rewritten with the pin's sentence and
+// the upstream message appended, not shown as-is.
+func TestZedTrialBlockedBodyIsRewritten(t *testing.T) {
+	u := newZedUpstream(t)
+	u.completions = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"code":"trial_blocked","message":"trial expired"}`)
+	}
+	response, text := u.do(t, u.provider(), zedChatBody)
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("status %d", response.StatusCode)
+	}
+	var document map[string]any
+	if err := json.Unmarshal([]byte(text), &document); err != nil {
+		t.Fatalf("body %q: %v", text, err)
+	}
+	want := "Zed trial access is blocked upstream. The account can list hosted models, but Zed is refusing completions until trial/billing access is enabled or unblocked. Zed says: trial expired"
+	if document["message"] != want {
+		t.Fatalf("message = %q", document["message"])
+	}
+}
+
+func TestZedTrialBlockedRewriteShapes(t *testing.T) {
+	const sentence = "Zed trial access is blocked upstream. The account can list hosted models, but Zed is refusing completions until trial/billing access is enabled or unblocked. Zed says: "
+	nested := zedRewriteTrialBlocked([]byte(`{"error":{"code":"trial_blocked","message":"nested"}}`), "")
+	var document map[string]any
+	if json.Unmarshal(nested, &document) != nil {
+		t.Fatal("nested body is not JSON")
+	}
+	if got := document["error"].(map[string]any)["message"]; got != sentence+"nested" {
+		t.Fatalf("nested message = %q", got)
+	}
+	if got := string(zedRewriteTrialBlocked([]byte(`{"code":"other","message":"keep"}`), "")); got != `{"code":"other","message":"keep"}` {
+		t.Fatalf("non-trial body changed: %s", got)
+	}
+	if got := string(zedRewriteTrialBlocked([]byte("plain text"), "")); got != "plain text" {
+		t.Fatalf("non-JSON body changed: %s", got)
+	}
+}
