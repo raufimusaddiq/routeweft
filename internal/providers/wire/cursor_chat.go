@@ -28,7 +28,6 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
-	"sort"
 	"strings"
 	"time"
 
@@ -253,53 +252,16 @@ func cursorChatTools(value any) ([]byte, error) {
 			if concerns.Object(schema) == nil {
 				return nil, cursorError(ErrCursorUnsupported, "tool parameters must be an object")
 			}
-			encoded, err := cursorSortedJSON(schema)
+			encoded, err := json.Marshal(schema)
 			if err != nil {
-				return nil, err
+				return nil, cursorError(ErrCursorUnsupported, "tool schema: %v", err)
 			}
-			parts = append(parts, pbBytes(3, []byte(encoded)))
+			parts = append(parts, pbBytes(3, encoded))
 		}
 		parts = append(parts, pbString(4, "custom"))
 		tools = append(tools, pbBytes(34, pbJoin(parts...))...)
 	}
 	return tools, nil
-}
-
-// cursorSortedJSON is JSON.stringify with sorted map keys, the closest
-// reproducible encoding of the pin's insertion-ordered string.
-func cursorSortedJSON(value any) (string, error) {
-	encoded, err := json.Marshal(sortKeys(value))
-	if err != nil {
-		return "", cursorError(ErrCursorUnsupported, "tool schema: %v", err)
-	}
-	return string(encoded), nil
-}
-
-func sortKeys(value any) any {
-	switch v := value.(type) {
-	case map[string]any:
-		return sortedObject(v)
-	case []any:
-		items := make([]any, len(v))
-		for i, item := range v {
-			items[i] = sortKeys(item)
-		}
-		return items
-	}
-	return value
-}
-
-func sortedObject(value map[string]any) map[string]any {
-	keys := make([]string, 0, len(value))
-	for key := range value {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	ordered := make(map[string]any, len(value))
-	for _, key := range keys {
-		ordered[key] = sortKeys(value[key])
-	}
-	return ordered
 }
 
 // --- reply: transformProtobufToSSE (cursor.js:1086-1250) ---
@@ -437,6 +399,14 @@ func cursorChatStream(ctx context.Context, body []byte, dst io.Writer, model str
 		}
 		result := frame.result
 		if result.call != nil {
+			// The pin pushes the assistant role before the first tool call when
+			// nothing has been emitted yet (:1160-1167).
+			if chunks == 0 {
+				chunks++
+				if err := chunk(map[string]any{"role": "assistant", "content": ""}, nil); err != nil {
+					return err
+				}
+			}
 			incoming := result.call
 			if existing, ok := calls[incoming.id]; ok {
 				existing.arguments += incoming.arguments
@@ -516,8 +486,14 @@ func cursorChatFrame(body []byte, offset int) (cursorChatFrameResult, bool, erro
 	}
 	next := offset + 5 + length
 	payload := cursorDecompress(body[offset+5:next], flags)
+	// The pin builds an error response from any frame whose bytes start with '{' and
+	// contain `"error"` when JSON.parse succeeds, and treats an unparseable one as a
+	// normal frame (:1105-1120). So the parse decides, not the substring alone.
 	if len(payload) > 0 && payload[0] == '{' && bytes.Contains(payload, []byte(`"error"`)) {
-		return cursorChatFrameResult{next: next, json: cursorChatJSONError(payload)}, true, nil
+		var parsed any
+		if json.Unmarshal(payload, &parsed) == nil {
+			return cursorChatFrameResult{next: next, json: cursorChatJSONError(payload)}, true, nil
+		}
 	}
 	return cursorChatFrameResult{next: next, result: cursorChatExtract(payload)}, true, nil
 }
