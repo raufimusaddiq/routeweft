@@ -35,6 +35,17 @@ func TestResolution(t *testing.T) {
 	}
 }
 
+func TestProviderAliasesNameTheirCanonicalProvider(t *testing.T) {
+	for alias, want := range map[string]string{"kmc": "kimi", "kimi-coding": "kimi", "ag": "antigravity"} {
+		if got, ok := capabilities.ProviderAlias(alias); !ok || got != want {
+			t.Errorf("ProviderAlias(%q) = %q,%v, want %q", alias, got, ok, want)
+		}
+	}
+	if got, ok := capabilities.ProviderAlias("kimi"); ok || got != "kimi" {
+		t.Fatalf("a canonical id is not an alias: %q,%v", got, ok)
+	}
+}
+
 func BenchmarkResolve(b *testing.B) {
 	c := capabilities.New()
 	for _, model := range []string{"claude-opus-4.8", "claude-haiku-future", "unknown"} {

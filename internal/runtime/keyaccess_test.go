@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/raufimusaddiq/routeweft/internal/auth"
 )
 
 // A restriction the store cannot be trusted to express must stop the catalog
@@ -57,5 +59,21 @@ func TestMissingAccessColumnsMeanUnrestricted(t *testing.T) {
 	key, ok := snapshot.APIKeys().Lookup(secret)
 	if !ok || key.Restricted || !snapshot.KeyAllows(key, "anything/at-all") {
 		t.Fatalf("legacy key = %+v ok=%v; want unrestricted (pin KEY_ACCESS_UNRESTRICTED)", key, ok)
+	}
+}
+
+// Grants match resolved identities, so a restricted key granted the canonical
+// provider/model also reaches the registry alias prefix and the other way round.
+func TestKeyGrantsSeeThroughProviderAliases(t *testing.T) {
+	models, aliases, disabled := compileCatalog([]Model{{ProviderID: "kimi", ID: "kimi-k2"}}, nil, nil)
+	s := &RuntimeSnapshot{models: models, aliases: aliases, disabledModels: disabled}
+	for _, allow := range []string{"kimi/kimi-k2", "kmc/kimi-k2", "kimi-coding/kimi-k2"} {
+		key := auth.Entry{Restricted: true, Allow: []string{allow}}
+		if !s.KeyAllows(key, "kmc/kimi-k2") || !s.KeyAllows(key, "kimi-coding/kimi-k2") || !s.KeyAllows(key, "kimi/kimi-k2") {
+			t.Errorf("grant %q did not reach every spelling of the same model", allow)
+		}
+		if s.KeyAllows(key, "antigravity/kimi-k2") {
+			t.Errorf("grant %q reached another provider", allow)
+		}
 	}
 }

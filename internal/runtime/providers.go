@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/raufimusaddiq/routeweft/internal/credentials"
+	"github.com/raufimusaddiq/routeweft/internal/providers/capabilities"
 	"github.com/raufimusaddiq/routeweft/internal/providers/cloudflare"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
@@ -125,6 +126,14 @@ func (s *RuntimeSnapshot) ServingModel(requested string) (Model, bool) {
 	if provider, model, ok := strings.Cut(requested, "/"); ok {
 		if resolved, known := s.ResolveModel(provider, model); known {
 			return resolved, true
+		}
+		// Registry aliases name the same provider in the pin's parseModel
+		// (services/model.js:18-37): kmc/ and kimi-coding/ are kimi, ag/ is
+		// antigravity. A configured provider id that really exists wins first.
+		if canonical, aliased := capabilities.ProviderAlias(provider); aliased {
+			if resolved, known := s.ResolveModel(canonical, model); known {
+				return resolved, true
+			}
 		}
 	}
 	found := s.bareModels[requested]
