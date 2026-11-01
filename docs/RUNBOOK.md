@@ -976,8 +976,10 @@ arbitrary remote command endpoint.
 2. Resolve the oracle once (`node compat/parity/resolve-oracle.mjs`: LiteRouter
    `main`, frozen for the run, recorded in `oracle-run.json`; `--sha <recorded>`
    repeats a run), export its `ORACLE_DIR` and `ORACLE_SHA`, and run
-   `make parity-test` in a disposable development checkout, then review the
-   `parity` PR CI result and its `oracle-run` artifact. The suite reads the
+   `make parity-test` in a disposable development checkout. `parity` does not run
+   on a pull request: it runs on `main` after merge (`.github/workflows/main.yml`),
+   so review that job's `oracle-run` artifact after the merge; a failure there is
+   a follow-up ticket, not a blocked merge. The suite reads the
    resolved oracle commit's source and synthetic inputs only. It never calls a
    live provider. Read the `oracle-change-report` artifact (or run
    `node compat/parity/report-changes.mjs --previous <sha|oracle-run.json>`) for
@@ -1003,7 +1005,8 @@ Before any workload is chosen, read `docs/DIVERGENCE_LEDGER.md`. It lists every 
 from LiteRouter that is known to the pinned differential (conversion legs between the protocols,
 combo, key and alias workflows) and every decision the owner has not yet approved. A workload
 that depends on a behavior with a decision outstanding is not covered by this evaluation, however
-well it runs. `make parity-test` regenerates the evidence; the `parity` CI job uploads the sheet as the
+well it runs. `make parity-test` regenerates the evidence locally; the `parity` job on `main` (after
+merge, not on a pull request) uploads the sheet as the
 `divergence-ledger` artifact.
 
 ### Stop conditions and handoff
