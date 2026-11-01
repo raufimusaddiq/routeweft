@@ -2045,6 +2045,8 @@ Frontend:
 
 No production SSR/Next runtime.
 
+The bare root (`/`, no hash) is a public landing page while signed out; every hash route, and any valid session, is the console (#347, UI_STYLE 13).
+
 Initial page data should come from purpose-built read models; the browser should not need to join many low-level endpoints to paint Overview.
 
 Live SSE invalidates/updates targeted query keys.
