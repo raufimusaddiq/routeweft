@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/raufimusaddiq/routeweft/internal/credentials"
 	"github.com/raufimusaddiq/routeweft/internal/store/storetest"
 )
 
@@ -241,6 +242,47 @@ func TestKimchiEndpointChoosesTheCatalogHost(t *testing.T) {
 	e.mustAdmin(http.MethodPost, "/admin/v1/connections/"+id+"/discover", `{}`)
 	if n := len(upstream.requests()); n != 2 {
 		t.Fatalf("after a restart the endpoint saw %d listings, want 2", n)
+	}
+}
+
+// The Cloudflare account ID is a connection setting that scopes both chat and
+// System One URLs (registry/cloudflare-ai.js:26,30). It survives an edit and a
+// restart, and the next request uses the new account.
+func TestCloudflareAccountSurvivesRestartAndScopesTheRequest(t *testing.T) {
+	upstream := newRecordingUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"cf answer"},"finish_reason":"stop"}]}`)
+	})
+	e := newEndpointApp(t, true)
+	node, err := e.a.creds.PutNode(context.Background(), credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "cloudflare-ai", Name: "Cloudflare", BaseURL: upstream.URL + "/accounts", Transports: []string{"openai-chat"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.mustAdmin(http.MethodPost, "/admin/v1/models", `{"providerId":"cloudflare-ai","id":"@cf/meta/llama-3.2-3b-instruct"}`)
+	saved := e.mustAdmin(http.MethodPost, "/admin/v1/connections", fmt.Sprintf(`{"nodeId":%q,"name":"CF","identity":"cf","authKind":"api-key","enabled":true,"accountId":"account-a","secret":{"accessToken":"cf-key"}}`, node.ID))
+	id := connectionID(t, saved)
+	if strings.Contains(saved, "cf-key") || !strings.Contains(saved, `"accountId":"account-a"`) {
+		t.Fatalf("the save response exposes the key or hides the account: %s", saved)
+	}
+	assertAccount := func(want string) {
+		t.Helper()
+		if w := e.chat("cloudflare-ai/@cf/meta/llama-3.2-3b-instruct"); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "cf answer") {
+			t.Fatalf("request: %d %s", w.Code, w.Body)
+		}
+		got := upstream.last(t)
+		if got.Path != "/accounts/"+want+"/ai/v1/chat/completions" || got.Authorization != "Bearer cf-key" {
+			t.Fatalf("cloudflare request = %+v", got)
+		}
+	}
+	assertAccount("account-a")
+
+	// The edit changes the path the next request uses; the restart keeps it.
+	e.mustAdmin(http.MethodPatch, "/admin/v1/connections/"+id, `{"accountId":"account-b"}`)
+	assertAccount("account-b")
+	e.restart()
+	assertAccount("account-b")
+	if listed := e.mustAdmin(http.MethodGet, "/admin/v1/connections?provider=cloudflare-ai", ""); !strings.Contains(listed, `"accountId":"account-b"`) {
+		t.Fatalf("the list lost the account: %s", listed)
 	}
 }
 
