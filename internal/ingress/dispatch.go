@@ -176,6 +176,12 @@ func (h *Handler) dispatchAttempts(r *http.Request, snapshot *runtime.RuntimeSna
 		}
 		var known bool
 		candidates, known = h.planProviderAttempts(snapshot, providerID, model, source, compact, time.Now())
+		// Both misses here intentionally keep the shared catalogue text rather
+		// than naming the requested id. This path can tell an ungranted model
+		// (403, checked before dispatch) from a nonexistent one (404), so the
+		// id would not expose an ungranted model, but one message for every miss
+		// in the tree is still the simpler contract and the body never reflects
+		// client input (#367).
 		if !known {
 			return nil, routing.ProviderRef{}, &dispatchError{404, "model_not_found", unknownModelMessage(snapshot, accessFilter(r, snapshot), "llm")}
 		}

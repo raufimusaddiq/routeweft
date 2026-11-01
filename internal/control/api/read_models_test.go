@@ -417,6 +417,14 @@ func TestProviderReadModelKeepsTheStaticModelsWireContract(t *testing.T) {
 	if _, renamed := raw.Items[0]["seedModels"]; renamed {
 		t.Fatalf("the wire name was renamed to seedModels: %s", recorder.Body.String())
 	}
+	// This provider has seed models only and no provider_models rows, so both
+	// counts must be a present zero: that zero is the signal #360 exists for,
+	// and an omitted field would read as "unknown" in the dashboard (#367).
+	for _, field := range []string{"discoveredModels", "customModels"} {
+		if value, ok := raw.Items[0][field]; !ok || string(value) != "0" {
+			t.Fatalf("%s=%s, want a present 0: %s", field, value, recorder.Body.String())
+		}
+	}
 }
 
 // TestProviderReadModelReportsSignInModes is the seam test for the dashboard: it

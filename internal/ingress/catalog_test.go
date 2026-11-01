@@ -209,3 +209,29 @@ func TestCatalogInfoKindsAndOllamaTags(t *testing.T) {
 		t.Fatalf("optional key: %d", w.Code)
 	}
 }
+
+// TestModelMissMessageCountsItsOwnKind pins #367 findings 1 and 5: the count
+// belongs to the requested kind, the pointer names the path serving that kind,
+// and a one-entry list is not "1 callable ids".
+func TestModelMissMessageCountsItsOwnKind(t *testing.T) {
+	manager := newManager(t)
+	if _, err := manager.Update(context.Background(), func(candidate *runtime.Candidate) error {
+		candidate.AddModel(runtime.Model{ProviderID: "typesafe", ID: "jev"})
+		candidate.AddModel(runtime.Model{ProviderID: "alpha", ID: "chat"})
+		candidate.AddModel(runtime.Model{ProviderID: "alpha", ID: "other"})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := manager.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := func(string) bool { return true }
+	if message := unknownModelMessage(snapshot, allowed, "systemone"); !strings.Contains(message, "GET /v1/models?kind=systemone lists the 1 callable id;") {
+		t.Fatalf("systemone miss: %s", message)
+	}
+	if message := unknownModelMessage(snapshot, allowed, ""); !strings.Contains(message, "GET /v1/models lists the 2 callable ids;") {
+		t.Fatalf("llm miss: %s", message)
+	}
+}

@@ -124,7 +124,7 @@ func (p *comboPlan) slots(ordered []plannedMember) ([]attemptSlot, error) {
 		attempts, known := p.h.planProviderAttempts(p.snapshot, member.ProviderID, label, p.source, p.compact, now)
 		switch {
 		case !known:
-			slots = append(slots, attemptSlot{member: id, label: label, unavailable: &dispatchError{http.StatusNotFound, "model_not_found", fmt.Sprintf("model %q is not configured for inference", label)}})
+			slots = append(slots, attemptSlot{member: id, label: label, unavailable: &dispatchError{http.StatusNotFound, "model_not_found", unknownModelMessage(p.snapshot, accessFilter(p.r, p.snapshot), "llm")}})
 		case len(attempts) == 0:
 			slots = append(slots, attemptSlot{member: id, label: label, unavailable: &dispatchError{http.StatusServiceUnavailable, "no_eligible_accounts", fmt.Sprintf("[%s] %s", label, routing.ErrNoEligibleAccounts.Error())}})
 		default:
