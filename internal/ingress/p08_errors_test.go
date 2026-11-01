@@ -1,14 +1,19 @@
 package ingress
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
+	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
@@ -93,29 +98,150 @@ func TestProviderErrorBodiesReachTheClientByteForByte(t *testing.T) {
 	}
 }
 
-// OPEN GAPS, pinned so that closing one is a visible change. Each divergence is
-// recorded in docs/P08_TEST_MATRIX.md and PARITY (#76 P08); when one is fixed,
-// flip the expectation here and the matrix cell with it.
-func TestOpenP08ErrorClassificationGaps(t *testing.T) {
-	t.Run("402 payment required takes no account out of rotation", func(t *testing.T) {
+// CLOSED P08 CLASSIFICATION GAPS, kept as a guard so that reopening one is a
+// visible failure. The name is the one docs/P08_TEST_MATRIX.md cites.
+func TestP08ErrorClassificationClosedGaps(t *testing.T) {
+	t.Run("402 payment required cools the account and falls back", func(t *testing.T) {
 		// Pin: errorConfig.js:77 { status: 402, cooldownMs: 2 min } with
 		// accountFallback.js:35-46 shouldFallback:true, so an out-of-credit
 		// DeepSeek / OpenRouter / Grok CLI account is skipped for two minutes and
-		// the next account is tried. Routeweft classifies 402 as a terminal client
-		// error (routing/cooldown.go ClassifyStatus default branch) unless the
-		// body type/code names a quota token, which these providers' bodies do not.
-		// Grok CLI is no longer listed: #184 closed it with its own rule
-		// (wire.grokCLIPaymentRequired), asserted in
-		// TestProviderErrorBodiesCoolTheAccountLikeThePin. DeepSeek and OpenRouter stay open.
+		// the next account is tried. routing.ClassifyStatus now reads 402 as an
+		// account-scoped failure (OutcomeFallbackAccount, two minutes) for every
+		// provider; Grok CLI keeps its own rule (wire.grokCLIPaymentRequired).
 		for _, tc := range []errorShape{
 			{provider: "deepseek", protocol: openaiadapter.ChatProtocol, status: 402, body: `{"error":{"message":"Insufficient Balance","type":"unknown_error","param":null,"code":"invalid_request_error"}}`},
 			{provider: "openrouter", protocol: openaiadapter.ChatProtocol, status: 402, body: `{"error":{"code":402,"message":"Insufficient credits"}}`},
+			{provider: "openai", protocol: openaiadapter.ChatProtocol, status: 402, body: `{"error":{"message":"payment required"}}`},
 		} {
-			if got, cooling := cooldownAfter(t, tc); cooling {
-				t.Errorf("%s 402 now cools for %v: the gap is closed, update the matrix and flip this expectation", tc.provider, got)
+			got, cooling := cooldownAfter(t, tc)
+			if !cooling || got < 110*time.Second || got > 130*time.Second {
+				t.Errorf("%s 402: cooling=%v for %v, want the pin's two-minute cooldown", tc.provider, cooling, got.Round(time.Second))
 			}
+			// The cooldown alone survives a body-kind override; fallback is what the
+			// dispatch decides on, so assert the outcome the same way it derives it.
+			outcome := routing.ClassifyStatus(tc.status, http.Header{})
+			if mapped := routing.ClassifyError(shared.ParseError(tc.protocol, tc.status, []byte(tc.body)).Kind.String(), tc.status); mapped.Outcome != "" {
+				outcome.Outcome = mapped.Outcome
+			}
+			if !outcome.AllowsFallback() {
+				t.Errorf("%s 402 body %s classifies as %s: the next account would never be tried", tc.provider, tc.body, outcome.Outcome)
+			}
+		}
+	})
+	t.Run("402 honours a Retry-After the provider sends", func(t *testing.T) {
+		state := runtime.NewState()
+		handler := New(nil, Options{State: state})
+		header := http.Header{"Retry-After": []string{"30"}}
+		handler.recordUpstreamFailure(routing.ProviderRef{ProviderID: "openrouter", Protocol: openaiadapter.ChatProtocol, ConnectionID: "acct"}, 402, header, []byte(`{"error":{"message":"Insufficient credits"}}`))
+		until, cooling := state.CooldownUntil("acct", time.Now())
+		if d := time.Until(until); !cooling || d > 35*time.Second || d < 25*time.Second {
+			t.Fatalf("cooling=%v for %v, want about 30s", cooling, d)
 		}
 	})
 	// Codex usage_limit_reached honouring resets_at was a gap here; P02 closed it
 	// (wire/error_reset.go, TestCodexBodyResetReachesDispatchCooldown).
+}
+
+// An out-of-credit account answers 402; the next account serves and the first is
+// not tried again inside its cooldown (errorConfig.js:77, accountFallback.js:35-46).
+// Each provider's own 402 envelope. DeepSeek's wears type/code invalid_request_error,
+// which the shared parser reads as a request fault: the fallback must survive it.
+var paymentRequiredBodies = map[string]string{
+	"deepseek":   `{"error":{"message":"Insufficient Balance","type":"unknown_error","param":null,"code":"invalid_request_error"}}`,
+	"openrouter": `{"error":{"code":402,"message":"Insufficient credits"}}`,
+}
+
+func TestPaymentRequiredAccountFallsBackToTheNextAccount(t *testing.T) {
+	for _, provider := range []string{"deepseek", "openrouter"} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%v", provider, stream), func(t *testing.T) {
+				var mu sync.Mutex
+				attempts := map[string]int{}
+				rig := newCodeBuddyRig(t, provider, func(w http.ResponseWriter, r *http.Request) {
+					account := strings.Split(strings.TrimPrefix(r.URL.Path, "/v2/"), "/")[0]
+					mu.Lock()
+					attempts[account]++
+					mu.Unlock()
+					if account == "broke" {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusPaymentRequired)
+						_, _ = io.WriteString(w, paymentRequiredBodies[provider])
+						return
+					}
+					if stream {
+						w.Header().Set("Content-Type", "text/event-stream")
+						_, _ = io.WriteString(w, codebuddySSE)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, `{"id":"c1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"pong"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+				})
+				rig.endpoint = "chat/completions"
+				rig.accounts = []string{"broke", "good"}
+				body := fmt.Sprintf(`{"model":"x","stream":%v,"messages":[{"role":"user","content":"ping"}]}`, stream)
+				out := rig.post("/v1/chat/completions", body)
+				if out.Code != 200 || !strings.Contains(out.Body.String(), "pong") {
+					t.Fatalf("the next account did not serve: %d %s", out.Code, out.Body)
+				}
+				if until, cooling := rig.state.CooldownUntil("broke", time.Now()); !cooling || time.Until(until) < 100*time.Second {
+					t.Errorf("the out-of-credit account was not cooled for two minutes: %v %v", cooling, time.Until(until))
+				}
+				if _, cooling := rig.state.CooldownUntil("good", time.Now()); cooling {
+					t.Error("the serving account was cooled")
+				}
+				rig.post("/v1/chat/completions", body)
+				mu.Lock()
+				defer mu.Unlock()
+				if attempts["broke"] != 1 || attempts["good"] != 2 {
+					t.Errorf("attempts broke=%d good=%d, want 1 and 2", attempts["broke"], attempts["good"])
+				}
+			})
+		}
+	}
+}
+
+// The rewritten id is for the wire only. Telemetry, usage rollups and operator
+// price overrides are keyed on the catalog id, so a rewritten model must keep
+// recording under it (RequestOutcome.ModelID) while the upstream sees the other.
+func TestRewrittenUpstreamModelIDStaysOnTheWireNotInTelemetry(t *testing.T) {
+	var mu sync.Mutex
+	var sent string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		sent = string(raw)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"c1","choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`)
+	}))
+	t.Cleanup(up.Close)
+	log := &outcomeLog{}
+	manager := newManager(t)
+	_, key, err := manager.CreateAPIKey(context.Background(), "rewrite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(manager, Options{
+		AllowPrivateUpstreams: true,
+		OnRequestComplete:     log.add,
+		ProviderResolver: func(_ *runtime.RuntimeSnapshot, _ string) (routing.ProviderRef, bool) {
+			return routing.ProviderRef{ProviderID: "blackbox", Protocol: openaiadapter.ChatProtocol, BaseURL: up.URL + "/v1", APIToken: "fixture-credential",
+				UpstreamModel: "blackboxai/openai/gpt-5.5", CatalogModel: "gpt-5.5"}, true
+		},
+	})
+	mux := http.NewServeMux()
+	handler.Attach(mux)
+	gateway := httptest.NewServer(bearer(mux, key))
+	t.Cleanup(gateway.Close)
+	response := post(t, gateway.URL, "", "/v1/chat/completions", strings.Replace(chatRequest, "%s", "", 1))
+	response.Body.Close()
+	outcomes := log.wait(t)
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(sent, `"model":"blackboxai/openai/gpt-5.5"`) {
+		t.Errorf("the wire did not carry the upstream id: %s", sent)
+	}
+	if len(outcomes) != 1 || outcomes[0].ModelID != "gpt-5.5" {
+		t.Fatalf("telemetry recorded %+v, want the catalog id gpt-5.5", outcomes)
+	}
 }

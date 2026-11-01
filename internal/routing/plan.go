@@ -42,7 +42,21 @@ type ProviderRef struct {
 	APIToken      string
 	ConnectionID  string
 	UpstreamModel string
-	Endpoint      string
+	// CatalogModel is the catalog model id the operator selected, set only when the
+	// registry rewrites it for the wire (UpstreamModel differs). Telemetry, usage,
+	// live activity and price overrides are keyed on the catalog id, so they read
+	// RecordedModel, never UpstreamModel.
+	CatalogModel string
+	Endpoint     string
+}
+
+// RecordedModel is the model id persistent telemetry is keyed on: the catalog id
+// when the wire id was rewritten, else the wire id.
+func (p ProviderRef) RecordedModel() string {
+	if p.CatalogModel != "" {
+		return p.CatalogModel
+	}
+	return p.UpstreamModel
 }
 
 // Plan is the immutable route decision for one request attempt.

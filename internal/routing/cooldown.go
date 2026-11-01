@@ -25,6 +25,9 @@ type Classification struct {
 	ResetAt           string
 }
 
+// paymentRequiredCooldownSeconds is the pin's COOLDOWN.long (errorConfig.js:46).
+const paymentRequiredCooldownSeconds = 120
+
 // ClassifyStatus maps an upstream status and Retry-After header to a bounded
 // retry classification. Unknown 4xx is terminal so client errors cannot create
 // provider storms; 429/5xx may advance the bounded chain.
@@ -35,6 +38,14 @@ func ClassifyStatus(status int, header http.Header) Classification {
 		return Classification{Outcome: OutcomeSuccess}
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
 		return Classification{Outcome: OutcomeAuthRefreshRequired, RetryAfterSeconds: retryAfter}
+	case status == http.StatusPaymentRequired:
+		// 402 is an account-scoped failure (out of credit), not a request fault: the
+		// pin cools the account for COOLDOWN.long and falls back
+		// (config/errorConfig.js:77, services/accountFallback.js:35-46).
+		if retryAfter == 0 {
+			retryAfter = paymentRequiredCooldownSeconds
+		}
+		return Classification{Outcome: OutcomeFallbackAccount, RetryAfterSeconds: retryAfter}
 	case status == http.StatusTooManyRequests:
 		return Classification{Outcome: OutcomeQuotaLock, RetryAfterSeconds: retryAfter}
 	case status == http.StatusRequestTimeout || status == http.StatusConflict:
@@ -52,6 +63,13 @@ func ClassifyStatus(status int, header http.Header) Classification {
 // status-derived result; Retry-After/reset hints from the status path survive
 // because only the outcome is replaced.
 func ClassifyError(kind string, status int) Classification {
+	// 402 is the status rule of the pin (errorConfig.js:77, accountFallback.js:35-46):
+	// the account is out of credit, whatever envelope the body wears. DeepSeek's
+	// body type/code is "invalid_request_error", which reads as invalid-input and
+	// would end the chain; a request-scoped kind must not override the status here.
+	if status == http.StatusPaymentRequired && (kind == "invalid-input" || kind == "context-length") {
+		return Classification{Outcome: OutcomeFallbackAccount}
+	}
 	switch kind {
 	case "auth":
 		return Classification{Outcome: OutcomeAuthRefreshRequired}

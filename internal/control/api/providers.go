@@ -578,29 +578,32 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 		}
 		transportName = forced
 	}
-	result.UpstreamModelID = modelID
+	// The probe is a request: it carries the id the provider's API accepts, as serving does,
+	// and reports that id. The catalog id stays the model under test.
+	wireID := registry.UpstreamModelID(modelWireProviderID(node), modelID)
+	result.UpstreamModelID = wireID
 	var endpoint string
 	var body any
 	switch transportName {
 	case string(registry.TransportOpenAIChat):
 		endpoint = "chat/completions"
-		body = map[string]any{"model": modelID, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}, "max_tokens": modelProbeTokens, "stream": true}
+		body = map[string]any{"model": wireID, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}, "max_tokens": modelProbeTokens, "stream": true}
 	case string(registry.TransportOpenAIResponses):
 		endpoint = "responses"
-		body = map[string]any{"model": modelID, "input": "Reply with OK.", "max_output_tokens": modelProbeTokens, "stream": true}
+		body = map[string]any{"model": wireID, "input": "Reply with OK.", "max_output_tokens": modelProbeTokens, "stream": true}
 	case string(registry.TransportAnthropic):
 		endpoint = "messages"
-		body = map[string]any{"model": modelID, "max_tokens": modelProbeTokens, "stream": true, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}}
+		body = map[string]any{"model": wireID, "max_tokens": modelProbeTokens, "stream": true, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}}
 	case string(registry.TransportGemini):
-		endpoint = "models/" + strings.TrimPrefix(modelID, "models/") + ":streamGenerateContent"
+		endpoint = "models/" + strings.TrimPrefix(wireID, "models/") + ":streamGenerateContent"
 		body = map[string]any{"contents": []any{map[string]any{"parts": []any{map[string]string{"text": "Reply with OK."}}}}, "generationConfig": map[string]any{"maxOutputTokens": modelProbeTokens}}
 	case string(registry.TransportOllama):
 		endpoint = "api/chat"
-		body = map[string]any{"model": modelID, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}, "stream": true, "options": map[string]int{"num_predict": modelProbeTokens}}
+		body = map[string]any{"model": wireID, "messages": []any{map[string]string{"role": "user", "content": "Reply with OK."}}, "stream": true, "options": map[string]int{"num_predict": modelProbeTokens}}
 	case string(registry.TransportSystemOne):
 		// System One uses the typed endpoint and state/questions envelope (PRD section 6).
 		body = map[string]any{
-			"model":  modelID,
+			"model":  wireID,
 			"stream": true,
 			"state":  map[string]any{"message": "Routeweft System One probe."},
 			"questions": map[string]any{
@@ -637,7 +640,7 @@ func (h *Handler) testProviderModel(ctx context.Context, connection credentials.
 	}
 	// Probe the first serving target through the shared URL rules.
 	// Probes do not exercise serving's response-driven Kiro surface fallback.
-	route := probeRef(node, connection, spec, transportName, modelID, "")
+	route := probeRef(node, connection, spec, transportName, wireID, "")
 	if connection.AuthKind == credentials.AuthAPIKey || connection.AuthKind == credentials.AuthOAuth {
 		route.APIToken = credential
 	}

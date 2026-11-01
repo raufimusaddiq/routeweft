@@ -371,3 +371,58 @@ func TestCodexInspectionEndsWhenTheClientLeaves(t *testing.T) {
 		t.Fatal("the upstream request was not cancelled")
 	}
 }
+
+// P08: the request that reaches the Codex endpoint through dispatch is the
+// endpoint's contract, not the client's body (executors/codex.js:417-519): the
+// stream is forced, nothing is stored, blank instructions take the default, a
+// review twin is sent as its base model and fields the endpoint rejects are gone.
+func TestCodexDispatchSendsTheEndpointsContractNotTheClientsBody(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("client-stream=%v", stream), func(t *testing.T) {
+			rig := newResponsesRig(t, "codex", "gpt-5.4-review", []string{"acct"}, serveStream(codexStream))
+			w := rig.post("/v1/responses", fmt.Sprintf(`{"model":"x","input":"ping","stream":%v,"store":true,"instructions":"","temperature":0.3,"max_output_tokens":9,"previous_response_id":"resp_0","metadata":{"a":1}}`, stream))
+			if w.Code != 200 || !strings.Contains(w.Body.String(), "pong") {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			rig.mu.Lock()
+			defer rig.mu.Unlock()
+			body := rig.calls[0].body
+			if body["stream"] != true || body["store"] != false || body["model"] != "gpt-5.4" {
+				t.Fatalf("stream/store/model not forced: %v", body)
+			}
+			if instr, _ := body["instructions"].(string); strings.TrimSpace(instr) == "" {
+				t.Errorf("blank instructions were not defaulted: %q", body["instructions"])
+			}
+			for _, dropped := range []string{"temperature", "max_output_tokens", "previous_response_id", "metadata"} {
+				if _, present := body[dropped]; present {
+					t.Errorf("%s reached the endpoint", dropped)
+				}
+			}
+			if rig.outcomes[0].Stream != stream {
+				t.Errorf("outcome stream=%v, want the client's %v", rig.outcomes[0].Stream, stream)
+			}
+		})
+	}
+}
+
+// Grok CLI streams to the client as the endpoint streamed it, and every request
+// carries the grok-shell identity (executors/grok-cli.js:362-470).
+func TestGrokCLIStreamingClientKeepsItsStreamByteForByte(t *testing.T) {
+	rig := newResponsesRig(t, "grok-cli", "grok-4.5-high", []string{"acct"}, serveStream(codexStream))
+	w := rig.post("/v1/responses", `{"model":"x","input":"ping","stream":true,"store":true}`)
+	if w.Code != 200 || w.Body.String() != codexStream {
+		t.Fatalf("status %d: %q", w.Code, w.Body)
+	}
+	rig.mu.Lock()
+	defer rig.mu.Unlock()
+	call := rig.calls[0]
+	if call.body["stream"] != true || call.body["store"] != false || call.body["model"] != "grok-4.5" {
+		t.Fatalf("upstream saw %v", call.body)
+	}
+	if call.header.Get("X-Grok-Client-Identifier") != "grok-shell" || call.header.Get("X-Grok-Session-Id") == "" {
+		t.Errorf("grok-shell identity missing: %v", call.header)
+	}
+	if len(rig.outcomes) != 1 || !rig.outcomes[0].Stream || rig.outcomes[0].CacheRead != 8 {
+		t.Fatalf("%+v", rig.outcomes)
+	}
+}

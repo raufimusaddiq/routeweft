@@ -57,13 +57,13 @@ Cells by kind and column:
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Authenticated listing | 23 | 0 | 20 | 2 | 0 | 2 | 34 |
 | Quota / usage read | 24 | 0 | 0 | 0 | 0 | 0 | 57 |
-| Applicable unavailability | 21 | 1 | 0 | 54 | 3 | 2 | 0 |
+| Applicable unavailability | 23 | 1 | 0 | 54 | 3 | 0 | 0 |
 | Import / refresh | 18 | 0 | 3 | 0 | 0 | 3 | 57 |
-| Streaming | 23 | 2 | 51 | 1 | 2 | 2 | 0 |
-| Non-streaming | 24 | 1 | 50 | 1 | 2 | 3 | 0 |
+| Streaming | 25 | 2 | 51 | 1 | 2 | 0 | 0 |
+| Non-streaming | 26 | 1 | 50 | 1 | 2 | 1 | 0 |
 | Error shapes | 29 | 2 | 1 | 47 | 2 | 0 | 0 |
 | Cached vs ordinary tokens | 18 | 2 | 5 | 54 | 2 | 0 | 0 |
-| **All cells** | **180** | **8** | **130** | **159** | **11** | **12** | **148** |
+| **All cells** | **186** | **8** | **130** | **159** | **11** | **6** | **148** |
 
 648 cells in all (81 providers x 8 behaviours). `N` cells carry a pin citation in the evidence tables below.
 
@@ -94,7 +94,7 @@ Cells by kind and column:
 | `morph` | ready | N | N | S | N | T | T | S | S |
 | `nebius` | ready | T | N | S | N | T | T | S | S |
 | `nvidia` | ready | T | N | S | N | T | T | S | S |
-| `openrouter` | ready | P | N | G | N | P | T | S | S |
+| `openrouter` | ready | P | N | P | N | P | T | S | S |
 | `perplexity` | ready | P | N | S | N | T | T | S | S |
 | `poolside` | ready | N | N | S | N | T | T | S | S |
 | `sambanova` | ready | N | N | S | N | T | T | S | S |
@@ -105,11 +105,11 @@ Cells by kind and column:
 | `vercel-ai-gateway` | ready | T | P | P | N | T | T | S | S |
 | `volcengine-ark` | ready | T | N | S | N | T | T | S | S |
 | `openai` | ready | T | N | S | N | T | T | S | S |
-| `codex` | ready | P | P | P | P | G | G | P | T |
+| `codex` | ready | P | P | P | P | P | P | P | T |
 | `anthropic` | ready | P | N | S | N | T | T | P | P |
 | `gemini` | ready | P | N | S | N | P | P | P | P |
 | `claude` | ready | G | P | P | P | T | T | S | S |
-| `deepseek` | ready | T | P | G | N | T | T | P | P |
+| `deepseek` | ready | T | P | P | N | T | T | P | P |
 | `glm` | ready | N | P | P | N | T | T | S | S |
 | `glm-cn` | ready | N | P | S | N | T | T | S | S |
 | `minimax` | ready | N | P | P | N | T | T | P | P |
@@ -145,7 +145,7 @@ Cells by kind and column:
 | `kiro` | ready | P | P | P | P | P | P | P | P |
 | `vertex` | ready | N | N | S | G | P | P | P | P |
 | `commandcode` | ready | N | P | P | N | P | P | P | P |
-| `grok-cli` | ready | P | P | P | P | G | G | P | T |
+| `grok-cli` | ready | P | P | P | P | P | P | P | T |
 | `grok-web` | unavailable | N | N | U | G | U | U | U | U |
 | `perplexity-web` | unavailable | N | N | U | G | U | U | U | U |
 | `kenari` | ready | P | P | P | N | P | P | P | S |
@@ -277,9 +277,11 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 ### Applicable unavailability
 
 - **P** `groq` — a reported zero remaining holds the account out until the header's reset duration (U/groq.js:44-62), landed in #211 Tests: `providers/usage:TestGroqZeroRemainingIsExhaustedUntilReset`.
+- **P** `openrouter` — 402 cools the account for two minutes and falls back (errorConfig.js:77) Tests: `ingress:TestP08ErrorClassificationClosedGaps`, `ingress:TestPaymentRequiredAccountFallsBackToTheNextAccount`, `routing:TestClassifyStatusPaymentRequiredFallsBackAndCools`.
 - **P** `vercel-ai-gateway` — a credit balance is not a usage percentage Tests: `providers/usage:TestVercelBalanceIsNotAUsagePercentage`.
 - **P** `codex` — usage_limit_reached cools until resets_at / resets_in_seconds (executors/codex.js:388-410), landed in P02 Tests: `ingress:TestCodexBodyResetReachesDispatchCooldown`, `providers/wire:TestPinnedErrorBodyResets`, `providers/codex:TestUsageFailureIsUnavailableNotExhausted`.
 - **P** `claude` — a 429 on the usage read cools and falls back; no organization reports an admin message Tests: `providers/claude:TestOAuthUsage429CoolsDownThenFallsBackToLegacy`, `providers/claude:TestLegacyWithoutOrganizationReportsAdminMessage`.
+- **P** `deepseek` — 402 Insufficient Balance (its real body wears invalid_request_error, which must not end the chain) cools the account for two minutes and falls back (errorConfig.js:77, accountFallback.js:35-46); the balance endpoint reports is_available:false (#212), though routing does not consume the balance Tests: `ingress:TestP08ErrorClassificationClosedGaps`, `ingress:TestPaymentRequiredAccountFallsBackToTheNextAccount`, `routing:TestClassifyStatusPaymentRequiredFallsBackAndCools`, `routing:TestClassifyErrorPaymentRequiredBeatsRequestScopedKinds`, `providers/usage:TestDeepSeekBothZeroIsZeroNotUnlimited`.
 - **P** `glm` — an expired key is an error, not a healthy account Tests: `providers/usage:TestGLMRejectsExpiredKey`.
 - **P** `minimax`, `minimax-cn` — a base_resp error is an error, not an empty quota Tests: `providers/usage:TestMiniMaxUsageEndpointsRegionsAndCountSemantics`.
 - **P** `ollama` — usage 1.0 reads as nothing left; a null window is skipped Tests: `providers/usage:TestOllamaUsageRatioIsUsedFractionAndNullWindowsAreSkipped`.
@@ -299,8 +301,6 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **C** `cursor` — the resource_exhausted in-band failure (cursor.js:365-374) and the ChatService JSON error frame (:389-411); provider unavailable for serving Tests: `providers/wire:TestCursorDoReportsAFailureInBandNotAsSuccess`, `providers/wire:TestCursorDoPassesUpstreamRejectionsThrough`, `providers/wire:TestCursorChatStreamRejectsAnErrorFrameBeforeContent`.
 - **S** `alicode-intl`, `alitp-intl`, `alicode`, `alims-intl`, `api-airforce`, `baidu`, `bazaarlink`, `blackbox`, `bluesminds`, `byteplus`, `cerebras`, `chutes`, `cohere`, `featherless`, `fireworks`, `hyperbolic`, `kilo-gateway`, `llm7`, `mistral`, `morph`, `nebius`, `nvidia`, `perplexity`, `poolside`, `sambanova`, `siliconflow`, `tencent`, `together`, `venice`, `volcengine-ark`, `openai`, `anthropic`, `gemini`, `glm-cn`, `xiaomi-tokenplan`, `mimo-free`, `mmf`, `opencode`, `ollama-local`, `vertex-partner`, `tokenrouter`, `perplexity-agent`, `cloudflare-ai`, `muse`, `xai`, `gitlab`, `iflow`, `cline`, `clinepass`, `kilocode`, `gemini-cli`, `vertex`, `kimchi`, `azure` — generic 429/5xx/401 classification; the pin has no provider-specific capacity contract for it Tests: `ingress:TestRecordUpstreamFailureMapsProviderErrToCooldown`, `ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin`.
 - **U** `typesafe`, `grok-web`, `perplexity-web` — refused by its immutable readiness; no capacity behaviour is reachable Tests: `ingress:TestReadinessMatchesIngressReachability`.
-- **G** `openrouter` — pin: 402 cools the account for two minutes and falls back (errorConfig.js:77). Routeweft treats 402 as a terminal client error Tests: `ingress:TestOpenP08ErrorClassificationGaps`.
-- **G** `deepseek` — pin: 402 Insufficient Balance cools the account for two minutes and falls back (errorConfig.js:77, accountFallback.js:35-46), and the balance endpoint reports is_available:false. Routeweft treats 402 as a terminal client error (no cooldown, no fallback). Since #212 the read model reports a zero balance and is_available:false explicitly, but routing does not consume them Tests: `ingress:TestOpenP08ErrorClassificationGaps`, `providers/usage:TestDeepSeekBothZeroIsZeroNotUnlimited`.
 
 ### Import / refresh
 
@@ -386,6 +386,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 
 - **P** `api-airforce` — forced stream on Chat, Responses and Messages clients (registry/api-airforce.js:25-32) Tests: `ingress:TestAirforceForcedStreamAcrossClientProtocols`.
 - **P** `openrouter` — passthrough stream relayed byte for byte Tests: `ingress:TestOpenRouterPassthroughStreamRelaysBytes`, `ingress:TestRegistryNativeTransportWires`.
+- **P** `codex` — the endpoint's contract (executors/codex.js:417-519): stream forced, store:false, default instructions only when blank, review twin sent as its base model, unsupported fields dropped and the allowlist applied (P02 second slice, PARITY 6.19) Tests: `ingress:TestCodexStreamingClientKeepsItsStreamByteForByte`, `ingress:TestCodexDispatchSendsTheEndpointsContractNotTheClientsBody`, `providers/wire:TestCodexBodyIsAlwaysStreamedAndNeverStored`, `providers/wire:TestCodexInstructionsDefaultOnlyWhenBlank`, `providers/wire:TestCodexOnlyTheEndpointsFieldsAreSent`, `providers/wire:TestCodexModelIsTheUpstreamOne`, `ingress:TestCodexProviderHeadersCarryCLIFingerprint`.
 - **P** `gemini` — every converted client over streamGenerateContent Tests: `ingress:TestGeminiServesEveryConvertedClient`, `ingress:TestGeminiArrayFramedStreamIsServedWithUnobservedUsage`.
 - **P** `xiaomi-tokenplan` — Chat and Messages wires post to their own paths Tests: `ingress:TestConnectionScopedTargetsStreamAndNonStream`, `ingress:TestTokenplanRoutesPerWire`.
 - **P** `mimo-free`, `mmf` — (mmf is the same executor under its alias, executors/index.js:68) bootstrap JWT with expiry buffer and one 401/403 re-bootstrap, the gateway's headers and the MiMoCode system marker (executors/mimo-free.js:24-33,79-159); a JWT that cannot be minted refuses the request Tests: `providers/wire:TestMimoFreeBootstrapsAJWTAndSendsTheGatewaysHeaders`, `providers/wire:TestMimoFreeRetriesOnceWithAFreshJWTOnAuthFailure`, `providers/wire:TestMimoFreeRefusesWhenTheJWTCannotBeMinted`, `ingress:TestMimoFreeAndMmfAreServedWithABootstrappedJWT`.
@@ -399,6 +400,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `antigravity`, `gemini-cli`, `vertex` — every client wire over streamGenerateContent?alt=sse, the Cloud Code envelope and its response unwrapped (executors/gemini-cli.js:10-35, antigravity.js:118-135, vertex.js:83-123) Tests: `ingress:TestGeminiFamilyIsServedToEveryClientWire`, `protocol/gemini:TestCloudCodeResponseLegsServeBothWires`, `providers/wire:TestCloudCodeURLs`, `providers/wire:TestVertexURLs`.
 - **P** `kiro` — every client wire through the 403 to second-host fallback, event stream converted Tests: `ingress:TestKiroIsServedToEveryClientWire`, `protocol/kiro:TestStreamText`, `protocol/kiro:TestMessagesStreamText`.
 - **P** `commandcode` — every client wire, NDJSON converted line by line, the stream forced on the envelope, a retried error event replayed Tests: `ingress:TestCommandCodeIsServedToEveryClientWire`, `protocol/commandcode:TestStreamIsConvertedLineByLine`, `providers/wire:TestCommandCodeForcesStreamOnTheEnvelope`, `providers/wire:TestCommandCodeDoRecoversOnRetryAndReplaysTheStreamExactly`.
+- **P** `grok-cli` — the grok-shell identity and session headers, stream:true and store:false, and the endpoint's field list (executors/grok-cli.js:362-470; P02 second slice, PARITY 6.19) Tests: `ingress:TestGrokCLIStreamingClientKeepsItsStreamByteForByte`, `providers/wire:TestGrokCLIBodyIsStreamedNotStoredAndListsOnlyItsFields`, `providers/wire:TestGrokCLIHeadersCarryTheCLIIdentityAndSession`.
 - **P** `kenari` — Chat, Responses and Messages natively, both modes; Responses custom-tool rewrite on the stream Tests: `app:TestConfiguredKenariNativeWire`, `providers/wire:TestResponsesStreamRewritesConvertedCalls`.
 - **P** `zed` — LLM-token exchange, thread envelope, per-vendor request and NDJSON frames for Anthropic, OpenAI Responses, Google and xAI (executors/zed.js:60-282, shared/zedAuth.js:258-324); a failed status, a cut-off stream and a non-JSON line end as the pin ends them. Open: the listing still sends the shared bearer (see Authenticated listing); the thread id resolves the pin's client session from headers and the client's body, but not after the pin's token savers (PARITY 6.19) Tests: `providers/wire:TestZedExchangesTheTokenAndSendsTheEnvelope`, `providers/wire:TestZedServesEveryVendorShape`, `providers/wire:TestZedStreamEndsAsThePinEndsIt`, `providers/wire:TestZedBrokenUpstreamIsAnErrorOnEveryLeg`, `providers/wire:TestZedErrorChunkNamesTheRequestedModel`, `providers/wire:TestZedStopsUpstreamWhenTheClientLeaves`, `ingress:TestZedIsServedThroughItsExchangeAndEnvelope`.
 - **P** `azure` — deployment path, api-version and Api-Key header, streamed Tests: `ingress:TestConnectionScopedTargetsStreamAndNonStream`.
@@ -419,12 +421,11 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **T** `kilocode`, `kimchi` — shared path, this provider's own URL and credential: openai-chat Tests: `ingress:TestRegistryNativeTransportWires`.
 - **S** `ollama-local` — the shared Ollama codec; no test names ollama-local (experimental) Tests: `ingress:TestTruncatedOllamaStreamIsAFailure`, `protocol/ollama:TestBufferedBodyIsConverted`.
 - **U** `grok-web`, `perplexity-web` — refused by its immutable readiness; the hook Codec is proved with the fence lifted for the test run only (ingress:TestGrokWebIsServedToEveryClientWire, ingress:TestPerplexityWebThreadIsContinuedOnlyOnTheSameConnection) Tests: `ingress:TestReadinessMatchesIngressReachability`.
-- **G** `codex` — the table row proves the URL, bearer and CLI headers only. The pin's executor also forces stream:true and store:false, injects default instructions, maps review models, drops unsupported fields and filters to an allowlist (executors/codex.js:415-515); Routeweft forwards the client's body (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`, `ingress:TestCodexProviderHeadersCarryCLIFingerprint`.
-- **G** `grok-cli` — the table row proves the URL and bearer only. The pin's executor sends the grok-shell identity (x-grok-session-id, conv-id, req-id, turn-idx, model-override, email, userid), forces stream:true and store:false and normalizes input and tools (executors/grok-cli.js:362-470); Routeweft sends none of that at inference, though its listing needs the identity (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`.
 
 ### Non-streaming
 
 - **P** `api-airforce` — folded to one JSON body; a failed stream is never returned as partial JSON Tests: `ingress:TestAirforceForcedStreamAcrossClientProtocols`, `ingress:TestAirforceStreamFailureDoesNotReturnPartialJSON`.
+- **P** `codex` — a non-stream Chat, Responses or Messages client gets one body folded from the forced stream; an in-band failure of the stream is an account failure, not a partial answer Tests: `ingress:TestCodexNonStreamResponsesClientGetsOneJSONFromAForcedStream`, `ingress:TestCodexForcedStreamReachesTranslatedClients`, `ingress:TestCodexDispatchSendsTheEndpointsContractNotTheClientsBody`, `ingress:TestCodexInBandFailureOfAForcedStreamIsAnAccountFailure`.
 - **P** `gemini` — every converted client over generateContent Tests: `ingress:TestGeminiServesEveryConvertedClient`, `protocol/gemini:TestBufferedResponse`.
 - **P** `xiaomi-tokenplan` — Chat and Messages wires post to their own paths Tests: `ingress:TestConnectionScopedTargetsStreamAndNonStream`, `ingress:TestTokenplanRoutesPerWire`.
 - **P** `mimo-free`, `mmf` — (mmf is the same executor under its alias) the same bootstrap and marker on a buffered request; Accept follows the body's stream; a JWT that cannot be minted sends nothing Tests: `providers/wire:TestMimoFreeAcceptFollowsTheBodysStream`, `providers/wire:TestMimoSystemMarker`, `ingress:TestMimoFreeAndMmfAreServedWithABootstrappedJWT`, `ingress:TestMimoFreeWithoutAJWTSendsNothingAndFails`.
@@ -440,6 +441,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `antigravity`, `gemini-cli`, `vertex` — every client wire over generateContent, the Cloud Code envelope and its response unwrapped Tests: `ingress:TestGeminiFamilyIsServedToEveryClientWire`, `protocol/gemini:TestAntigravityBufferedResponse`, `providers/wire:TestCloudCodeURLs`, `providers/wire:TestVertexURLs`.
 - **P** `kiro` — every client wire through the 403 to second-host fallback, event stream aggregated Tests: `ingress:TestKiroIsServedToEveryClientWire`, `protocol/kiro:TestBufferedMatchesStreamed`, `protocol/kiro:TestMessagesBufferedMatchesStream`.
 - **P** `commandcode` — every client wire, the forced NDJSON aggregated into one body Tests: `ingress:TestCommandCodeIsServedToEveryClientWire`, `protocol/commandcode:TestBufferedBodyIsAggregated`.
+- **P** `grok-cli` — a non-stream client gets one body folded from the forced stream; input and tools normalized as the pin does Tests: `ingress:TestGrokCLINonStreamClientGetsOneJSONFromAForcedStream`, `providers/wire:TestGrokCLIInputBecomesATurnAndKeepsSystemTurns`, `providers/wire:TestGrokCLIToolsAreFlattenedAndHostedToolsKept`.
 - **P** `kenari` — native wires and the Responses body rewrite Tests: `app:TestConfiguredKenariNativeWire`, `providers/wire:TestRewriteResponsesBody`.
 - **P** `zed` — the forced stream folded to one body for the Chat, Responses and Messages clients (executors/zed.js:60-282); a failed status is the assistant's text with a clean stop and still cools the account and lets the next candidate serve, a cut-off stream is finished, as the pin does Tests: `ingress:TestZedIsServedThroughItsExchangeAndEnvelope`, `ingress:TestZedFailedStatusIsTheAssistantsTextWithACleanStop`, `ingress:TestZedFailedStatusCoolsTheAccountAndTheNextCandidateServes`, `ingress:TestZedQuotaLockOutlastsTheDefaultBackoffAndARateLimitDoesNot`, `ingress:TestZedCutOffStreamIsFinishedAsThePinDoes`.
 - **P** `azure` — deployment path, api-version and Api-Key header Tests: `ingress:TestAzureRequestShape`, `ingress:TestConnectionScopedTargetsStreamAndNonStream`.
@@ -457,9 +459,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **T** `iflow` — Chat both modes through the table; the signature over the final body is asserted by TestIflowRequestIsSigned Tests: `ingress:TestRegistryNativeTransportWires`, `ingress:TestIflowRequestIsSigned`.
 - **S** `ollama-local` — the shared Ollama codec; no test names ollama-local (experimental) Tests: `ingress:TestTruncatedOllamaStreamIsAFailure`, `protocol/ollama:TestBufferedBodyIsConverted`.
 - **U** `grok-web`, `perplexity-web` — refused by its immutable readiness; the hook Codec is proved with the fence lifted for the test run only (ingress:TestGrokWebIsServedToEveryClientWire, ingress:TestPerplexityWebThreadIsContinuedOnlyOnTheSameConnection) Tests: `ingress:TestReadinessMatchesIngressReachability`.
-- **G** `codex` — the table row proves the URL, bearer and CLI headers only. The pin's executor also forces stream:true and store:false, injects default instructions, maps review models, drops unsupported fields and filters to an allowlist (executors/codex.js:415-515); Routeweft forwards the client's body (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`, `ingress:TestCodexProviderHeadersCarryCLIFingerprint`.
 - **G** `qoder` — the pin always asks for a stream and folds it into one body above the executor (qoder.js:613-734); the unwrap that feeds the fold is tested, the fold for a Chat, Responses or Messages client is wiring that is not done; the provider is unavailable Tests: `providers/wire:TestQoderUnwrapSSEMatchesPin`.
-- **G** `grok-cli` — the table row proves the URL and bearer only. The pin's executor sends the grok-shell identity (x-grok-session-id, conv-id, req-id, turn-idx, model-override, email, userid), forces stream:true and store:false and normalizes input and tools (executors/grok-cli.js:362-470); Routeweft sends none of that at inference, though its listing needs the identity (ready, unqualified; PARITY P02) Tests: `ingress:TestRegistryNativeTransportWires`.
 
 ### Error shapes
 
@@ -469,7 +469,7 @@ Each group is one distinct claim. Test names are `internal/<dir>:<Test>`. `U/` i
 - **P** `codex` — usage_limit_reached body reaches the client unchanged Tests: `ingress:TestProviderErrorBodiesReachTheClientByteForByte`.
 - **P** `anthropic` — {type:error,error:{type}} body: overloaded_error 529 and rate_limit_error 429 cool the account; the body reaches the client unchanged Tests: `ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin`, `ingress:TestProviderErrorBodiesReachTheClientByteForByte`, `providers/shared:TestParseErrorNormalizesProviderErrBodies`.
 - **P** `gemini` — translation failure moves on; RESOURCE_EXHAUSTED is rate-limited Tests: `ingress:TestGeminiTranslationFailureMovesOn`, `providers/shared:TestParseErrorNormalizesProviderErrBodies`.
-- **P** `deepseek` — 401 and 400 bodies classified; the 402 Insufficient Balance body reaches the client unchanged (its classification is a gap, see Unavailability) Tests: `ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin`, `ingress:TestProviderErrorBodiesReachTheClientByteForByte`.
+- **P** `deepseek` — 401 and 400 bodies classified; the 402 Insufficient Balance body reaches the client unchanged and its classification is the pin's (see Unavailability) Tests: `ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin`, `ingress:TestProviderErrorBodiesReachTheClientByteForByte`.
 - **P** `minimax` — Anthropic-shaped body on the Messages wire Tests: `ingress:TestProviderErrorBodiesCoolTheAccountLikeThePin`, `providers/shared:TestParseErrorNormalizesProviderErrBodies`.
 - **P** `xiaomi-tokenplan` — a key is never sent to another region Tests: `providers/wire:TestTokenplanNeverMovesAKeyToAnotherRegionUnlessAsked`.
 - **P** `opencode` — models served on another wire are refused, not posted a Chat body Tests: `providers/wire:TestOpenCodeRefusesModelsServedOnAnotherWire`.
@@ -530,19 +530,23 @@ New deterministic tests (no network, sanitized synthetic bodies shaped like the 
 - `internal/providers/usage/p08_test.go`: pin-shaped quota fixtures for the readers that had none, namely OpenCode Go, Ollama, Xiaomi MiMo, Zed, Command Code, MiniMax and MiniMax CN, Qoder, and the GLM CN and CodeBuddy International regional hosts. They assert used-versus-remaining semantics, that an absent window is skipped rather than invented, exhausted windows, and that failures are errors, not healthy accounts.
 - `internal/ingress/p08_tokens_test.go`: cached versus ordinary tokens through real dispatch with each provider's real id, stream and non-stream: Anthropic and MiniMax Messages cache read/creation, DeepSeek `prompt_cache_hit_tokens`, Kimi top-level `cached_tokens`, Mistral details, and Responses `input_tokens_details` for Codex, Grok CLI, Muse and xAI.
 - `internal/ingress/p08_wires_test.go`: stream and non-stream on every native transport of every served provider that `TestRegistryChatWires` (Chat only) did not already walk, the connection-scoped Azure and Token Plan targets, and OpenCode's forced stream folded to one JSON body. These are `T` evidence, not provider-specific behaviour.
-- `internal/ingress/p08_errors_test.go`: provider-keyed non-OpenAI error bodies classified against the pin's rules and relayed to the client byte for byte, plus `TestOpenP08ErrorClassificationGaps`, which pins the two divergences below so closing one is a visible change.
+- `internal/ingress/p08_errors_test.go`: provider-keyed non-OpenAI error bodies classified against the pin's rules and relayed to the client byte for byte, plus `TestP08ErrorClassificationClosedGaps`, which now asserts the 402 cooldown (it pinned the divergence before it was closed) and `TestPaymentRequiredAccountFallsBackToTheNextAccount`, which proves the next account serves.
 - `internal/parity/listing_urls_test.go` (oracle-gated): the authenticated-listing URL Routeweft builds for each of the 23 providers the pin lists with a plain bearer GET equals the pinned URL.
 
-## Gaps this audit found and did not fix
+## Gaps this audit found
 
-These are findings, not new work in this PR. Each is recorded in PARITY and stays open.
+These were findings of the audit. Each is recorded with its disposition; none is left open without a reason.
 
-1. **402 Payment Required is not an unavailability signal.** The pin cools the account for two minutes and falls back (`errorConfig.js:77`, `accountFallback.js:35-46`). Routeweft classifies 402 as a terminal client error: no cooldown and no fallback, so an out-of-credit DeepSeek or OpenRouter account keeps (Grok CLI closed it in #184) being tried and keeps failing. `TestOpenP08ErrorClassificationGaps`.
+1. **402 Payment Required was not an unavailability signal when this audit began.** The pin cools the account for two minutes and falls back (`errorConfig.js:77`, `accountFallback.js:35-46`). Routeweft classified 402 as a terminal client error, so an out-of-credit DeepSeek or OpenRouter account kept being tried. Closed in #76 P08: `routing.ClassifyStatus` reads 402 as an account failure, a two-minute cooldown unless the provider sends `Retry-After`, and the next account serves (`TestP08ErrorClassificationClosedGaps`, `TestPaymentRequiredAccountFallsBackToTheNextAccount`, `routing:TestClassifyStatusPaymentRequiredFallsBackAndCools`). Grok CLI keeps its own rule from #184.
 2. **Codex `usage_limit_reached` ignored `resets_at` when this audit began.** P02 (#177) closed it (`wire/error_reset.go`); the gap guard for it was removed and the Codex cell is now P.
 3. **Groq had no quota reader in effect when this audit began.** #211 closed it: the reader now parses the `x-ratelimit-*` headers the pin reads (`usage/groq.js:44-129`) and the Groq quota and unavailability cells are now P.
 4. **A zero DeepSeek balance read as unlimited when this audit began.** #212 closed the read side: each currency is its own credit window, a zero stays zero and `is_available` is explicit (`TestDeepSeekPinnedBalanceKeepsCurrenciesApart`). Balances still do not take an out-of-credit account out of rotation; that is gap 1.
-5. **Providers declared ready whose pin executor is not replicated.** The shared-path table proves their URL and credential only: Codex (`executors/codex.js:415-515`: forced stream, `store:false`, default instructions, allowlist) and Grok CLI (`executors/grok-cli.js:362-470`: grok-shell identity, forced stream). Their streaming and non-streaming cells are `G`. Whether their readiness should change is a product decision for #76 P02 and the readiness table (#176). Zed and MiMo Free with its alias mmf were in this list until #192, which built their executors (token exchange, thread envelope, NDJSON frames, bootstrap JWT); their cells are now evidence and their readiness stays `ready`.
+5. **Codex and Grok CLI forced-stream executors were not replicated when this audit began.** Closed by the P02 second slice (PARITY 6.19) and now evidenced here: Codex (`executors/codex.js:415-515`: forced stream, `store:false`, default instructions, allowlist) and Grok CLI (`executors/grok-cli.js:362-470`: grok-shell identity, forced stream) have stream and non-stream cells backed by dispatch-level tests (`TestCodexDispatchSendsTheEndpointsContractNotTheClientsBody`, `TestGrokCLIStreamingClientKeepsItsStreamByteForByte`, `TestCodexNonStreamResponsesClientGetsOneJSONFromAForcedStream`, `TestGrokCLINonStreamClientGetsOneJSONFromAForcedStream`). Readiness is unchanged. Zed and MiMo Free with its alias mmf were closed earlier by #192.
 6. Smaller, in the cell notes: Command Code's empty window, MiniMax's camelCase envelope, Zed's `trial_blocked` message rewrite, Gemini CLI's `retryDelay` hint, Claude's and Zed's authenticated listing.
+
+## Storage and telemetry impact of the P03 upstream-id rewrite
+
+The registry rewrite of Blackbox and DeepSeek ids (`registry.UpstreamModelID`) changes only the `model` on the wire. `ProviderRef.CatalogModel` carries the catalog id and `RecordedModel()` returns it, so request outcomes, request logs, usage rollups, live activity and operator price overrides stay keyed on the catalog id. No schema change and no migration; the storage rows for rewritten models are keyed on the catalog id by design (`TestRewrittenUpstreamModelIDStaysOnTheWireNotInTelemetry`).
 
 ## What stays open
 

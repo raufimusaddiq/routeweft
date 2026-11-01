@@ -192,5 +192,5 @@ func (h *Handler) finishLive(r *http.Request, provider routing.ProviderRef, stat
 	if status >= 400 {
 		state = "error"
 	}
-	h.opts.Live.Finish(live.Recent{Model: provider.UpstreamModel, Provider: provider.ProviderID, PromptTokens: usage.InputTokens, CompletionTokens: usage.OutputTokens, Status: state})
+	h.opts.Live.Finish(live.Recent{Model: provider.RecordedModel(), Provider: provider.ProviderID, PromptTokens: usage.InputTokens, CompletionTokens: usage.OutputTokens, Status: state})
 }
