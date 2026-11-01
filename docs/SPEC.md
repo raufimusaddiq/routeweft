@@ -2257,23 +2257,26 @@ Three comparisons run the reference's own code, not a restatement of it, and any
 
 ## 29. CI gates
 
-Once code exists, pull requests should run:
+A pull request runs:
 
-- `go test ./...`;
-- `go test -race ./...` for relevant packages/full suite as runtime permits;
-- Go vet/static checks;
-- UI install lockfile check;
-- UI typecheck;
+- `go test ./...`, which includes the protocol fixture suite, the security fixture
+  suite and the pinned replays that need no oracle;
+- `go vet ./...`;
+- `go build ./cmd/routeweft`;
 - UI unit tests;
-- UI production build;
-- browser smoke and accessibility checks (`npm run smoke`), in the `ui-smoke` job, against a fresh preview stopped by PID;
-- protocol fixture suite;
-- pinned differential and divergence ledger (28.6), in the `parity` job;
-- container build;
-- size budget;
-- security fixture suite.
+- UI production build, which includes `tsc --noEmit`.
 
-Hot-path PRs additionally run the router benchmark set and post before/after results.
+A push to `main` additionally runs, after merge:
+
+- `go test -race -count=1 -timeout 10m ./...`;
+- the `parity` job: the oracle fetch, the pinned differential and divergence
+  generators whose pins a Go or UI test replays (28.6), the oracle-tagged provider
+  parity tests and the full secret scan;
+- the container build, size budget and runtime TLS trust bundle.
+
+The browser smoke and accessibility checks are not a CI job since #361: run
+`make ui-smoke` locally before a UI change is merged. Hot-path changes report the
+router benchmark set before/after from `make bench-router`.
 
 ## 30. Container/deployment
 
