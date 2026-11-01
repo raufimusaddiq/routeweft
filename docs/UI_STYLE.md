@@ -273,8 +273,12 @@ stay. Do not reorder focusable markup or alter event handlers during visual work
 
 Every control has a visible 2px focus outline in `--focus`, 2px offset, both
 themes (inside the slab it is `#111111`; in the rail it is `--highlight`, 13.4:1
-on black). Keep skip-to-content, landmarks, labels, `aria-live`, focus order and
-reduced motion. Focus must not be clipped by scroll regions. Normal text and
+on black). On a chosen access-mode label, which is a highlight block, the radio's
+ring is `--highlight-ink` instead, because `--focus` measures 1.29:1 on that
+block in dark. A selected Provider or Combo row re-points `--focus` for what sits
+inside it, so its own ring uses `--focus-page` (the page focus colour) and stays
+visible on the page behind the block instead of 1:1 in dark. Keep skip-to-content,
+landmarks, labels, `aria-live`, focus order and reduced motion. Focus must not be clipped by scroll regions. Normal text and
 state colours require WCAG AA 4.5:1; control boundaries, the frameless menu
 button's bars, the rail and header edges and focus require 3:1 against what is
 behind them.
@@ -358,6 +362,22 @@ weight 700 with `aria-selected`; provider detail panels open on a 6px rule, exce
 topology hub is an outlined pill and its nodes open rows (an active node a 3px ink
 rule, still saying "in flight"); a quota account is an open row under a 4px rule with
 its windows behind a 3px ink rule.
+
+### Keyboard, label and phone guard (`ui/scripts/a11y-keyboard-labels-smoke.cjs`)
+
+Run by `npm run smoke`. It loads Overview, Endpoint & Key, Providers, Combo &
+Capability Adapter, System One, Settings and Usage, plus the provider connection
+form, at 1440 and 390 in light and dark (32 views, 664 controls), and asserts
+from the rendered DOM: Tab reaches every control once in DOM order (a radio group
+is one stop; roving `tabindex` respected; no positive `tabindex`), every control
+shows a solid outline of at least 2px at 3:1 or more against the backdrop, Enter
+activates buttons and links, Space activates buttons, checkboxes and unchecked
+radios, every input/select/textarea/button/link has an accessible name, the
+language dialog is the only focus trap and returns focus on Escape, nothing
+overflows at 390 or 320 (16 views), and at 390 the focused field stays inside a
+420px visual viewport with no fixed bar over it. It click-counts activation with
+the default action prevented, so nothing navigates, submits or saves. The control
+API is stubbed; no credential or provider is contacted.
 
 ## 11. What #263 changed from the BDR-015 text
 
