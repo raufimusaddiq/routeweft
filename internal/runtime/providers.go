@@ -229,7 +229,7 @@ func (s *RuntimeSnapshot) AccountProvider(requested, account, source string, can
 		}
 	}
 	endpoint := config.endpoints[registry.Protocol(protocol)]
-	return routing.ProviderRef{Connection: config.metadata, ProviderID: model.ProviderID, ConnectionID: account, BaseURL: baseURL, Protocol: protocol, UpstreamModel: model.ID, Endpoint: endpoint}, true
+	return routing.ProviderRef{Connection: config.metadata, ProviderID: model.ProviderID, ConnectionID: account, BaseURL: baseURL, Protocol: protocol, UpstreamModel: upstreamModelFor(config.node, model), Endpoint: endpoint}, true
 }
 
 func (s *RuntimeSnapshot) compileServingIndexes() {
@@ -305,4 +305,13 @@ func (s *RuntimeSnapshot) ProviderStickyLimitFor(provider string) uint64 {
 		return limit
 	}
 	return s.providerStickyLimit
+}
+
+// upstreamModelFor is the id sent upstream for a served model: the registry's
+// `upstreamModelId` for a built-in node, the catalog id for everything else.
+func upstreamModelFor(node credentials.Node, model Model) string {
+	if node.Kind != credentials.NodeBuiltin {
+		return model.ID
+	}
+	return registry.UpstreamModelID(model.ProviderID, model.ID)
 }

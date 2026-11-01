@@ -92,9 +92,9 @@ func kiroCLIProxyExport(access, refresh string) string {
 		"type": "kiro", "auth_method": "external_idp", "email": "kiro@example.invalid",
 		"access_token": access, "refresh_token": refresh, "client_id": "fixture-client",
 		"token_endpoint": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-		"scopes": []string{"api://fixture/codewhisperer:completions", "offline_access"},
-		"profile_arn": "arn:aws:codewhisperer:us-east-1:000000000000:profile/FIXTURE",
-		"expires_in": 3600,
+		"scopes":         []string{"api://fixture/codewhisperer:completions", "offline_access"},
+		"profile_arn":    "arn:aws:codewhisperer:us-east-1:000000000000:profile/FIXTURE",
+		"expires_in":     3600,
 	}
 	raw, _ := json.MarshalIndent(document, "", "  ")
 	return string(raw)

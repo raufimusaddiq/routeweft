@@ -111,3 +111,17 @@ func TestClassifyErrorRefinesNormalizedKinds(t *testing.T) {
 		t.Fatalf("empty kind should not classify, got %q", got.Outcome)
 	}
 }
+
+// 402 is out-of-credit: the pin cools the account for two minutes and falls
+// back (errorConfig.js:77, accountFallback.js:35-46).
+func TestClassifyStatusPaymentRequiredFallsBackAndCools(t *testing.T) {
+	got := ClassifyStatus(http.StatusPaymentRequired, nil)
+	if got.Outcome != OutcomeFallbackAccount || !got.AllowsFallback() || got.RetryAfterSeconds != 120 {
+		t.Fatalf("402 = %+v, want fallback-account for 120s", got)
+	}
+	header := http.Header{}
+	header.Set("Retry-After", "45")
+	if got := ClassifyStatus(http.StatusPaymentRequired, header); got.RetryAfterSeconds != 45 {
+		t.Fatalf("402 with Retry-After = %+v, want 45s", got)
+	}
+}

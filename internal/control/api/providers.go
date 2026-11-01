@@ -1005,7 +1005,7 @@ func modelWireProviderID(node credentials.Node) string {
 // wire hooks (headers, target, base) see what they see at request time.
 func probeRef(node credentials.Node, connection credentials.Connection, spec registry.Spec, protocol, model, credential string) routing.ProviderRef {
 	return routing.ProviderRef{
-		ProviderID: modelWireProviderID(node), Protocol: protocol, UpstreamModel: model, APIToken: credential, ConnectionID: connection.ID,
+		ProviderID: modelWireProviderID(node), Protocol: protocol, UpstreamModel: registry.UpstreamModelID(modelWireProviderID(node), model), APIToken: credential, ConnectionID: connection.ID,
 		BaseURL: wire.NodeBase(node.ProviderID, node.BaseURL, spec.DefaultBaseURL, connection.Settings),
 		Connection: routing.ConnectionMetadata{Name: connection.Name, AuthKind: string(connection.AuthKind), Identity: connection.Identity,
 			AccountID: connection.AccountID, Settings: connection.Settings},

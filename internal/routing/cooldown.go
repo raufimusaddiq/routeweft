@@ -25,6 +25,9 @@ type Classification struct {
 	ResetAt           string
 }
 
+// paymentRequiredCooldownSeconds is the pin's COOLDOWN.long (errorConfig.js:46).
+const paymentRequiredCooldownSeconds = 120
+
 // ClassifyStatus maps an upstream status and Retry-After header to a bounded
 // retry classification. Unknown 4xx is terminal so client errors cannot create
 // provider storms; 429/5xx may advance the bounded chain.
@@ -35,6 +38,14 @@ func ClassifyStatus(status int, header http.Header) Classification {
 		return Classification{Outcome: OutcomeSuccess}
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
 		return Classification{Outcome: OutcomeAuthRefreshRequired, RetryAfterSeconds: retryAfter}
+	case status == http.StatusPaymentRequired:
+		// 402 is an account-scoped failure (out of credit), not a request fault: the
+		// pin cools the account for COOLDOWN.long and falls back
+		// (config/errorConfig.js:77, services/accountFallback.js:35-46).
+		if retryAfter == 0 {
+			retryAfter = paymentRequiredCooldownSeconds
+		}
+		return Classification{Outcome: OutcomeFallbackAccount, RetryAfterSeconds: retryAfter}
 	case status == http.StatusTooManyRequests:
 		return Classification{Outcome: OutcomeQuotaLock, RetryAfterSeconds: retryAfter}
 	case status == http.StatusRequestTimeout || status == http.StatusConflict:
