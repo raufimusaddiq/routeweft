@@ -784,7 +784,20 @@ func (h *Handler) handleDiscoverModels(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotImplemented, "model_discovery_unsupported", err.Error())
 			return
 		}
+		// A refused listing is not a code failure: say which refusal it was, so an
+		// owner can tell a spent quota or a throttled key from a broken endpoint.
+		var status *discovery.StatusError
+		if errors.As(err, &status) && status.Status == http.StatusTooManyRequests {
+			writeError(w, http.StatusBadGateway, "model_discovery_rate_limited", "the provider refused the model list with HTTP 429 (rate limit or quota); the existing catalogue is unchanged, retry when the limit resets")
+			return
+		}
 		writeError(w, http.StatusBadGateway, "model_discovery_failed", err.Error())
+		return
+	}
+	// An accepted listing with no entries would save nothing and look like a
+	// refresh. Say it instead, and keep the catalogue the operator already has.
+	if len(entries) == 0 {
+		writeError(w, http.StatusBadGateway, "model_discovery_empty", "the provider answered the model list but published no models; the existing catalogue is unchanged")
 		return
 	}
 	if h.opts.ProviderCatalog == nil {
@@ -903,7 +916,9 @@ func (h *Handler) listModelEntries(ctx context.Context, connection credentials.C
 	route := probeRef(node, connection, spec, protocol, "", "")
 	listBase, listable := wire.DiscoveryBase(route)
 	if !listable {
-		return nil, nil
+		// A provider that publishes no model list is not a silent empty refresh:
+		// name it, so Discover can say why nothing was refreshed.
+		return nil, &wire.ListingError{Unsupported: true, Err: errors.New(node.ProviderID + " publishes no model list, so there is nothing for Discover to fetch; the existing catalogue is unchanged")}
 	}
 	style := discovery.AuthBearer
 	if slicesContain(node.Transports, string(registry.TransportGemini)) {
@@ -967,6 +982,16 @@ func (h *Handler) listModelEntries(ctx context.Context, connection credentials.C
 	headers := make(map[string]string)
 	for name, values := range modelWireHeaders(route) {
 		headers[name] = values[0]
+	}
+	// kenari lists at the GET its registry row declares as validateUrl
+	// (open-sse/providers/registry/kenari.js:23); the same row's openai transport
+	// sends the key as Authorization: Bearer (kenari.js:44). It also serves
+	// Messages with x-api-key, but that is not the catalog's auth, so the
+	// Messages identity headers are not sent beside the bearer.
+	if node.Kind == credentials.NodeBuiltin && node.ProviderID == "kenari" {
+		style = discovery.AuthBearer
+		delete(headers, "X-Api-Key")
+		delete(headers, "Anthropic-Version")
 	}
 	// Where the provider lists differently from a bearer GET {base}/models (a
 	// POST, another host, a gate query, a signature, a filtered shape) the listing

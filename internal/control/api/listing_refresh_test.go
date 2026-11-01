@@ -349,3 +349,86 @@ func TestListingAliasesResolveToTheCanonicalProvider(t *testing.T) {
 		}
 	}
 }
+
+// connectBuiltin saves the connection a discover call runs for, using the
+// transports the provider's own registry row declares.
+func connectBuiltin(t *testing.T, creds *credentials.Store, provider string, auth credentials.AuthKind) credentials.Connection {
+	t.Helper()
+	catalog, err := registry.NewBuiltinCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, ok := catalog.Lookup(provider)
+	if !ok {
+		t.Fatalf("%s is not a built-in provider", provider)
+	}
+	transports := make([]string, 0, len(spec.Transports))
+	for _, transport := range spec.Transports {
+		transports = append(transports, string(transport))
+	}
+	node, err := creds.PutNode(context.Background(), credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: provider, Name: provider, Transports: transports})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := creds.PutConnection(context.Background(), credentials.Connection{
+		NodeID: node.ID, Name: provider, Identity: provider, AuthKind: auth, Enabled: true,
+		Secret: credentials.Secret{AccessToken: "accept-secret-key"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return connection
+}
+
+// claude is listed at api.anthropic.com/v1/models (route.js:131-141). When the
+// provider refuses that read with 429 the owner is told it is a rate limit or a
+// spent quota (#370), not shown a bare status or a silent zero.
+func TestClaudeDiscoveryRateLimitIsNamed(t *testing.T) {
+	upstream := probeHTTPFunc(func(*http.Request) (*http.Response, error) {
+		return listingReply(http.StatusTooManyRequests, `{"type":"error","error":{"type":"rate_limit_error"}}`), nil
+	})
+	h, mux, store, creds, cookie := newProvidersAPI(t, false, &discovery.Client{HTTP: upstream})
+	defer store.Close()
+	h.opts.Providers = registry.Builtins()
+	connection := connectBuiltin(t, creds, "claude", credentials.AuthAPIKey)
+	discovered := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+connection.ID+"/discover", "")
+	if discovered.Code != http.StatusBadGateway || !strings.Contains(discovered.Body.String(), "HTTP 429") || !strings.Contains(discovered.Body.String(), "rate limit or quota") {
+		t.Fatalf("claude 429 discovery: %d %s", discovered.Code, discovered.Body)
+	}
+	if strings.Contains(discovered.Body.String(), "accept-secret-key") {
+		t.Fatalf("claude 429 discovery echoed the credential: %s", discovered.Body)
+	}
+}
+
+// A 200 with an empty catalog is not a refresh: Discover says so and keeps the
+// catalogue the operator already has instead of returning a silent zero (#370).
+func TestDiscoveryWithNoModelsSaysSoInsteadOfRefreshingNothing(t *testing.T) {
+	upstream := probeHTTPFunc(func(*http.Request) (*http.Response, error) {
+		return listingReply(http.StatusOK, `{"data":[]}`), nil
+	})
+	h, mux, store, creds, cookie := newProvidersAPI(t, false, &discovery.Client{HTTP: upstream})
+	defer store.Close()
+	h.opts.Providers = registry.Builtins()
+	connection := connectBuiltin(t, creds, "openrouter", credentials.AuthAPIKey)
+	discovered := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+connection.ID+"/discover", "")
+	if discovered.Code != http.StatusBadGateway || !strings.Contains(discovered.Body.String(), "published no models") {
+		t.Fatalf("empty discovery: %d %s", discovered.Code, discovered.Body)
+	}
+}
+
+// azure declares no model listing, so Discover names that instead of answering
+// 200 with zero models and looking like it refreshed something (#370).
+func TestDiscoveryOfAProviderWithNoListingNamesIt(t *testing.T) {
+	upstream := probeHTTPFunc(func(*http.Request) (*http.Response, error) {
+		t.Error("a provider with no listing must not be asked for one")
+		return listingReply(http.StatusOK, `{"data":[{"id":"unexpected"}]}`), nil
+	})
+	h, mux, store, creds, cookie := newProvidersAPI(t, false, &discovery.Client{HTTP: upstream})
+	defer store.Close()
+	h.opts.Providers = registry.Builtins()
+	connection := connectBuiltin(t, creds, "azure", credentials.AuthAPIKey)
+	discovered := doJSON(t, mux, cookie, http.MethodPost, "/admin/v1/connections/"+connection.ID+"/discover", "")
+	if discovered.Code != http.StatusNotImplemented || !strings.Contains(discovered.Body.String(), "publishes no model list") {
+		t.Fatalf("unlisted discovery: %d %s", discovered.Code, discovered.Body)
+	}
+}

@@ -127,7 +127,7 @@ func SpecializedWire() []Spec {
 			TransportOpenAIChat:      "v1/chat/completions",
 			TransportOpenAIResponses: "v1/responses",
 			TransportAnthropic:       "v1/messages",
-		}, ModelCatalog: CatalogDynamic, PassthroughModels: true, ReportsUsage: true},
+		}, DiscoveryPath: "v1/models", ModelCatalog: CatalogDynamic, PassthroughModels: true, ReportsUsage: true},
 		{ID: "zed", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthOAuth, DefaultBaseURL: "https://cloud.zed.dev", ModelCatalog: CatalogPassthrough, PassthroughModels: true, ReportsUsage: true},
 		{ID: "kimchi", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, AuthModes: []AuthKind{AuthAPIKey, AuthOAuth}, DefaultBaseURL: "https://llm.kimchi.dev/openai/v1", ModelCatalog: CatalogPassthrough, PassthroughModels: true},
 		{ID: "azure", Transports: []Protocol{TransportOpenAIChat}, Auth: AuthAPIKey, DefaultBaseURL: "", ModelCatalog: CatalogStatic},
@@ -221,7 +221,7 @@ func MultiTransport() []Spec {
 
 // Claude returns the Claude Code OAuth identity using shared Anthropic Messages.
 func Claude() []Spec {
-	return []Spec{{ID: "claude", Transports: []Protocol{TransportAnthropic}, Auth: AuthOAuth, DefaultBaseURL: "https://api.anthropic.com/v1", ModelCatalog: CatalogStatic, ReportsUsage: true}}
+	return []Spec{{ID: "claude", Transports: []Protocol{TransportAnthropic}, Auth: AuthOAuth, DefaultBaseURL: "https://api.anthropic.com/v1", DiscoveryPath: "v1/models", ModelCatalog: CatalogStatic, ReportsUsage: true}}
 }
 
 // Gemini returns the first-party Gemini GenerateContent identity.
