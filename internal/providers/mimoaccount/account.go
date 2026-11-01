@@ -76,6 +76,18 @@ func (c *Sessions) Invalidate() {
 	c.mu.Unlock()
 }
 
+// Delete drops the cached cookie for one passToken, so a 401 re-runs that
+// account's handshake without disturbing other accounts.
+func (c *Sessions) Delete(passToken string) {
+	if c == nil {
+		return
+	}
+	sum := sha256.Sum256([]byte(passToken))
+	c.mu.Lock()
+	delete(c.entries, hex.EncodeToString(sum[:]))
+	c.mu.Unlock()
+}
+
 // Cookie returns the service cookie for passToken, running handshake once when
 // none is cached or the cached one expired. Concurrent callers share a handshake.
 func (c *Sessions) Cookie(ctx context.Context, passToken string, now func() time.Time, handshake func() (string, error)) (string, error) {

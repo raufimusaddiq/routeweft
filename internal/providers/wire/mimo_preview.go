@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/protocol/concerns"
+	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/providers/mimoaccount"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 )
@@ -52,6 +53,12 @@ func mimoPreviewNeedsData(provider routing.ProviderRef) bool {
 func mimoTarget(provider routing.ProviderRef) (Target, error) {
 	if mimoPreviewModel(provider.UpstreamModel) == "" {
 		return Target{}, nil
+	}
+	// The account route speaks the OpenAI Chat body; a Messages client would be
+	// sent an Anthropic body to an endpoint that cannot read it (tokenplanTarget
+	// makes the same protocol decision).
+	if provider.Protocol != openaiadapter.ChatProtocol {
+		return Target{}, fmt.Errorf("Xiaomi MiMo Preview models are served on the Chat wire only")
 	}
 	return Target{BaseURL: mimoaccount.Base, Endpoint: mimoPreviewPath}, nil
 }
@@ -116,9 +123,10 @@ func MimoDo(provider routing.ProviderRef, client *http.Client, request *http.Req
 	if response.StatusCode != http.StatusUnauthorized {
 		return response, nil
 	}
-	// One retry with a fresh session (xiaomi-mimo.js:86-101).
+	// One retry with a fresh session (xiaomi-mimo.js:86-101); only this account's
+	// cookie is dropped.
 	response.Body.Close()
-	mimoSessions.Invalidate()
+	mimoSessions.Delete(data["mimoPassToken"])
 	return mimoPreviewSend(provider, client, request, data, body)
 }
 
@@ -166,7 +174,9 @@ func mimoPreviewSend(provider routing.ProviderRef, client *http.Client, request 
 		return mimoaccount.ServiceCookie(request.Context(), client, data)
 	})
 	if err != nil || cookie == "" {
-		return mimoRefusal(request, http.StatusBadGateway, mimoPreviewMissingSession), nil
+		// The absent-passToken case was answered above; this is an SSO/transport
+		// failure and must not send the operator to sign in again.
+		return mimoRefusal(request, http.StatusBadGateway, "Xiaomi MiMo account session could not be established"), nil
 	}
 	sent, err := http.NewRequestWithContext(request.Context(), http.MethodPost, request.URL.String(), bytes.NewReader(body))
 	if err != nil {

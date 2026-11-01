@@ -91,4 +91,19 @@ func TestSessionsShareAndInvalidate(t *testing.T) {
 	if calls != 2 {
 		t.Fatalf("handshakes after invalidate = %d", calls)
 	}
+	// Deleting one passToken refreshes only that account.
+	handshakeOther := func() (string, error) { return "other", nil }
+	if _, err := sessions.Cookie(context.Background(), "q", now, handshakeOther); err != nil {
+		t.Fatal(err)
+	}
+	sessions.Delete("p")
+	if _, err := sessions.Cookie(context.Background(), "p", now, handshake); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 3 {
+		t.Fatalf("handshakes after per-token delete = %d", calls)
+	}
+	if cookie, _ := sessions.Cookie(context.Background(), "q", now, handshakeOther); cookie != "other" {
+		t.Fatalf("another account's cookie was dropped: %q", cookie)
+	}
 }

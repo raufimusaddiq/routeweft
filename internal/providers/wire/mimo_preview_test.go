@@ -225,10 +225,17 @@ func TestMimoPreviewHookDeclaresItsNeeds(t *testing.T) {
 }
 
 func TestMimoTargetOnlyMovesPreviewModels(t *testing.T) {
-	if target, err := mimoTarget(routing.ProviderRef{UpstreamModel: "xiaomi-mimo/mimo-x-pro-preview"}); err != nil || target.Endpoint != mimoPreviewPath || target.BaseURL != mimoaccount.Base {
+	chat := routing.ProviderRef{Protocol: "openai-chat", UpstreamModel: "xiaomi-mimo/mimo-x-pro-preview"}
+	if target, err := mimoTarget(chat); err != nil || target.Endpoint != mimoPreviewPath || target.BaseURL != mimoaccount.Base {
 		t.Fatalf("preview target %+v %v", target, err)
 	}
 	if target, err := mimoTarget(routing.ProviderRef{UpstreamModel: "mimo-v2.5"}); err != nil || target.Endpoint != "" || target.BaseURL != "" {
 		t.Fatalf("cloud target %+v %v", target, err)
+	}
+	// A Messages body cannot be sent to the OpenAI-shape account route.
+	messages := chat
+	messages.Protocol = "anthropic-messages"
+	if _, err := mimoTarget(messages); err == nil {
+		t.Fatal("Preview on the Messages wire was not refused")
 	}
 }

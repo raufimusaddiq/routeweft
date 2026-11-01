@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/mimoaccount"
 	"github.com/raufimusaddiq/routeweft/internal/quota"
 )
 
@@ -41,7 +42,7 @@ func TestMimoAccountSessionUsage(t *testing.T) {
 	} {
 		t.Run(tc.body, func(t *testing.T) {
 			calls := 0
-			callback := mimoAccountBase + "/api/sts"
+			callback := mimoaccount.Base + "/api/sts"
 			client := mimoClientFunc(func(req *http.Request) (*http.Response, error) {
 				calls++
 				if req.Header.Get("Authorization") != "" {
@@ -52,7 +53,7 @@ func TestMimoAccountSessionUsage(t *testing.T) {
 				status := http.StatusOK
 				switch calls {
 				case 1:
-					if req.URL.String() != mimoAccountBase+"/api/user/xiaomi/me" || !strings.Contains(req.Header.Get("Cookie"), "passToken=fixture-pass") {
+					if req.URL.String() != mimoaccount.Base+"/api/user/xiaomi/me" || !strings.Contains(req.Header.Get("Cookie"), "passToken=fixture-pass") {
 						t.Fatal("missing account credential")
 					}
 					h.Set("Location", "https://account.xiaomi.com/pass/serviceLogin?callback="+url.QueryEscape(callback))
@@ -83,7 +84,7 @@ func TestMimoAccountSessionUsage(t *testing.T) {
 					h.Add("Set-Cookie", "mimopc_slh=; Path=/")
 					h.Add("Set-Cookie", "mimopc_ph=fixture-ph; Path=/")
 				case 6:
-					if req.URL.String() != mimoAccountBase+"/api/user/usage" || req.Header.Get("User-Agent") != mimoAPIUserAgent {
+					if req.URL.String() != mimoaccount.Base+"/api/user/usage" || req.Header.Get("User-Agent") != mimoaccount.UserAgent {
 						t.Fatal("usage endpoint")
 					}
 					cookie := req.Header.Get("Cookie")
@@ -206,13 +207,13 @@ func TestMimoSessionFailureStagesDoNotExposeCredentials(t *testing.T) {
 				body := ""
 				switch calls {
 				case 1:
-					h.Set("Location", "https://account.xiaomi.com/pass/serviceLogin?callback="+url.QueryEscape(mimoAccountBase+"/api/sts"))
+					h.Set("Location", "https://account.xiaomi.com/pass/serviceLogin?callback="+url.QueryEscape(mimoaccount.Base+"/api/sts"))
 				case 2:
 					body = `&&&START&&&{"location":"https://account.xiaomi.com/pass/confirm?nonce=123"}`
 				case 3:
 					h.Add("Set-Cookie", "serviceToken=fixture-account; Path=/")
 				case 4:
-					body = `&&&START&&&{"location":"` + mimoAccountBase + `/api/sts?ticket=fixture"}`
+					body = `&&&START&&&{"location":"` + mimoaccount.Base + `/api/sts?ticket=fixture"}`
 				case 5:
 					h.Add("Set-Cookie", "serviceToken=fixture-service; Path=/")
 				}

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/mimoaccount"
 	"github.com/raufimusaddiq/routeweft/internal/quota"
 )
 
@@ -38,7 +39,7 @@ func (f *mimoAccountFixture) Do(req *http.Request) (*http.Response, error) {
 	}
 	header := http.Header{}
 	status, body := http.StatusOK, ""
-	callback := mimoAccountBase + "/api/sts"
+	callback := mimoaccount.Base + "/api/sts"
 	switch req.URL.Host + req.URL.Path {
 	case "mimo-server-cn.xiaomimimo.com/api/user/xiaomi/me":
 		if valid[pass] {

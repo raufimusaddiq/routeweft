@@ -191,7 +191,7 @@ var hooks = map[string]Hook{
 	"grok-web":         grokWebHook,
 	"perplexity-web":   perplexityWebHook,
 	"cursor":           {RequestHeaders: cursorHeaders, Target: cursorTarget, ForceStream: true, RequireCredential: true, Do: accountless(CursorDo), Codec: cursorCodec},
-	"xiaomi-mimo":      {Target: mimoTarget, Do: MimoDo, NeedsAccountData: mimoPreviewNeedsData},
+	"xiaomi-mimo":      {Target: mimoTarget, Do: MimoDo, NeedsAccountData: mimoPreviewNeedsData, Exchange: true},
 }
 
 var minimaxHook = Hook{Finalize: chain(dropOutputConfig, requireClaudeToolType), Target: betaQuery}

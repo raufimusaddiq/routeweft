@@ -12,9 +12,6 @@ import (
 	"github.com/raufimusaddiq/routeweft/internal/quota"
 )
 
-var mimoAccountBase = mimoaccount.Base
-
-const mimoAPIUserAgent = mimoaccount.UserAgent
 const mimoSessionRequired = "Weekly quota requires Xiaomi account session. API key alone is insufficient."
 
 // xiaomi mirrors getXiaomiMimoUsage (open-sse/services/usage/xiaomi-mimo.js:22-125).
@@ -119,8 +116,8 @@ func (r apiKeyReader) mimoAccountUsage(ctx context.Context, account map[string]s
 	if err != nil {
 		return quota.State{}, false, true, nil
 	}
-	reply, err := r.callWithin(ctx, mimoUsageTimeout, http.MethodGet, mimoAccountBase+"/api/user/usage", map[string]string{
-		"User-Agent": mimoAPIUserAgent, "Cookie": cookie, "Accept": "application/json",
+	reply, err := r.callWithin(ctx, mimoUsageTimeout, http.MethodGet, mimoaccount.Base+"/api/user/usage", map[string]string{
+		"User-Agent": mimoaccount.UserAgent, "Cookie": cookie, "Accept": "application/json",
 	}, nil)
 	if err != nil || reply.status < 200 || reply.status >= 300 {
 		return quota.State{}, false, false, nil
