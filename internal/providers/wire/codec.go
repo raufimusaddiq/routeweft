@@ -74,11 +74,11 @@ func perplexityCodec(provider routing.ProviderRef, state *CodecState, chat map[s
 }
 
 // cursorCodec is CursorExecutor's dispatch (executors/cursor.js:81-90,894-918):
-// an agent-capable Chat goes to AgentService/Run. CursorDo builds the Connect
-// frame from this Chat body and returns Chat SSE, so the codec body is the Chat
-// JSON unchanged and the stream is identity. Image-bearing turns need the legacy
-// ChatService protobuf path, which is not implemented (see PARITY 6.23); such a
-// request is refused by cursorRun, as before.
+// an agent-capable Chat goes to AgentService/Run, anything else — an
+// image-bearing turn in practice — to the legacy ChatService POST (PARITY V41,
+// cursor_chat.go). CursorDo makes that choice from this Chat body and returns
+// Chat SSE on either path, so the codec body is the Chat JSON unchanged and the
+// stream is identity.
 func cursorCodec(_ routing.ProviderRef, _ *CodecState, chat map[string]any, _ string) (Codec, error) {
 	body, err := json.Marshal(chat)
 	if err != nil {
