@@ -51,6 +51,7 @@ node scripts/token-saver-panels-smoke.cjs
 node scripts/usage-page-smoke.cjs
 node scripts/systemone-combos-smoke.cjs
 node scripts/phase3a-pages-smoke.cjs
+node scripts/phase3b-pages-smoke.cjs
 node scripts/live-events-smoke.cjs
 node scripts/locale-smoke.cjs
 

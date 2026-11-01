@@ -88,9 +88,9 @@ export function Usage({ onUnauthorized }: Props) {
     document.getElementById(`usage-tab-${tabs[next][0]}`)?.focus()
   }
 
-  return <div className="usage-content" aria-busy={loading}>
+  return <div className="usage-content page-d" aria-busy={loading}>
     <div className="usage-tabs" role="tablist" aria-label="Usage views" onKeyDown={onTabKey}>
-      {tabs.map(([value, label]) => <button key={value} id={`usage-tab-${value}`} className="usage-tab" type="button" role="tab" aria-selected={tab === value} aria-controls="usage-panel" tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)}>{label}</button>)}
+      {tabs.map(([value, label]) => <button key={value} id={`usage-tab-${value}`} className="usage-tab button-ghost" type="button" role="tab" aria-selected={tab === value} aria-controls="usage-panel" tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)}>{label}</button>)}
     </div>
 
     <div id="usage-panel" role="tabpanel" aria-labelledby={`usage-tab-${tab}`}>
