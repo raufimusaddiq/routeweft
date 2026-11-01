@@ -32,18 +32,53 @@ Not covered: a companion or broker callback, which needs an approved threat mode
 
 ## O04: keyboard, focus, labels, light and dark
 
-What exists and ran: `ui/scripts/shell-smoke.cjs` `captureVisuals` drives each page at **1440 and 390**
-in **light and dark** (and system at 1440) and asserts, per view/theme/width: no low-contrast text, control
-boundaries at 3:1 or more, no shadow outside the hard-offset tokens, every status dot has a word beside
-it, no 11 px text outside chart axes; at 1440 the keyboard focus ring (offset 2 px, solid, accent colour,
-at least 3:1 against what is behind it) after Tab. The sign-in panels are covered by
-`oauth-journeys-smoke.cjs` and `device-approval-smoke.cjs`. The whole `smoke.sh` list (13 scripts)
-ran green on this tree on 2026-11-01 (port 4180, exit 0). Screenshots from the earlier visual pass are in
-`docs/evidence/102/final`.
+Both guards run in the `ui-smoke` job on every push (`npm run smoke` → `ui/scripts/smoke.sh`).
 
-**Not done, and not claimed:** a form-by-form audit that every onboarding input has an accessible name, a
-Tab-order walk of the sign-in and connection forms at 390, and screenshots of the onboarding forms. The
-existing assertions above do not prove them. This is open work for #231.
+`ui/scripts/shell-smoke.cjs` `captureVisuals` drives each page at **1440 and 390** in **light and dark**
+(and system at 1440) and asserts, per view/theme/width: no low-contrast text, control boundaries at 3:1
+or more, no shadow outside the hard-offset tokens, every status dot has a word beside it, no 11 px text
+outside chart axes; at 1440 the keyboard focus ring (offset 2 px, solid, accent colour, at least 3:1
+against what is behind it) after Tab. The sign-in panels are covered by `oauth-journeys-smoke.cjs` and
+`device-approval-smoke.cjs`.
+
+`ui/scripts/a11y-keyboard-labels-smoke.cjs` (**#231 item 2**) loads Overview, Endpoint & Key, Providers,
+Combo & Capability Adapter, System One, Settings and Usage, plus the provider connection form (provider
+selected, Add connection opened), at **1440 and 390 in light and dark**: 32 views and 664 interactive
+controls. Per view it asserts:
+
+- every control is reached by Tab, exactly once, in DOM order (a native radio group is one Tab stop,
+  the Usage tabs' roving `tabindex` is respected, and no positive `tabindex` exists);
+- every control has a visible focus ring: a solid outline of at least 2 px, at least 3:1 against what is
+  behind it (the ring is measured against its backdrop, not against its own fill);
+- Enter activates every button and link, Space every button and checkbox, and Space selects an unchecked
+  radio in the first group; clicks are counted with their default action prevented, so nothing
+  navigates, submits or saves;
+- every input, select, textarea, button and link has an accessible name from `aria-labelledby`,
+  `aria-label`, `label[for]`, a wrapping label, or the button/link text, read from the rendered DOM;
+- the language dialog is the only focus trap, and Escape returns focus to its button;
+- nothing overflows horizontally at 390, and 16 views at **320** (the seven pages and the form, light and
+  dark) do not either;
+- at 390 with the viewport shortened to 420 px as an on-screen keyboard would, the focused new-key field
+  is fully inside the visual viewport (188..232) and no fixed bar overlaps it.
+
+Result on this head:
+
+```
+node scripts/a11y-keyboard-labels-smoke.cjs
+a11y keyboard/labels: 32 views at 1440/390 light+dark, 664 interactive controls, 0 without a name, 0 without a focus ring, 16 views at 320, 0 problems
+keyboard-open 390: field 188..232 in 420, fixed bars 0; modal trap true, focus return true
+```
+
+What it found and this PR fixed: the radio inside a **chosen access-mode label** (a highlight block)
+inherited the page focus colour and measured **1.29:1 in dark**. `style.css` now uses `--highlight-ink`
+for that ring (13:1 on the block in both themes). No control lacked an accessible name, no focusable
+control lacked a 2 px outline, and no Tab-order, activation or overflow failure was found elsewhere on
+these views. The whole `smoke.sh` list (16 scripts) ran green on this tree on 2026-11-01.
+
+**Not done, and not claimed:** a real phone on-screen keyboard (the check shrinks the viewport and lets
+the browser scroll the field into view, which is a proxy, not a device), a screen-reader announcement
+audit, and screenshots of the onboarding forms at 390 — their labels, order and focus are measured,
+their pixels are not captured.
 
 ## O08: resource baseline
 
