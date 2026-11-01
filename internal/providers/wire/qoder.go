@@ -276,6 +276,12 @@ func cosyPublicKey() (*rsa.PublicKey, error) {
 }
 
 func qoderHeaders(provider routing.ProviderRef, body []byte, requestURL string) (map[string]string, error) {
+	// Serving signs the agent envelope in QoderDo; this hook is the listing
+	// signer (the listing route calls RequestHeaders over the final URL/body,
+	// with no model). Returning nil for a model keeps QoderDo's local refusals.
+	if strings.TrimSpace(provider.UpstreamModel) != "" {
+		return nil, nil
+	}
 	settings := provider.Connection.Settings
 	machineID := strings.TrimSpace(settings.MachineID)
 	if machineID == "" {

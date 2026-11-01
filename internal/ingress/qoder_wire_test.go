@@ -1,62 +1,35 @@
 package ingress
 
 import (
-	"crypto/md5"
-	"encoding/hex"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/runtime"
 )
 
-// The synthetic Chat route exercises signing while the production Qoder conversion leg is absent.
-func TestQoderDispatchSeamSignsFinalRequest(t *testing.T) {
-	up := newRecorder(t)
-	ref := routing.ProviderRef{ProviderID: "qoder", Protocol: "openai-chat", BaseURL: up.srv.URL + "/algo/final", APIToken: "fixture-token", UpstreamModel: "upstream-model",
-		Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{UserID: "fixture-user", MachineID: " \tstored-machine \n"}}}
-	out := send(t, ref, "/v1/chat/completions", chatBody)
-	if out.Code != 200 {
-		t.Fatalf("status %d %s", out.Code, out.Body)
+// Qoder's dispatch seam is QoderDo + the codec: the Chat body is converted and
+// signed by PrepareChat, not by the old RequestHeaders-on-Chat seam
+// (executors/qoder.js:613-702). The wire-level TestQoderDoPreparesAndSignsTheEnvelope
+// proves the envelope; this pins that dispatch uses it and stays fenced.
+func TestQoderDispatchUsesThePreparedEnvelope(t *testing.T) {
+	if wire.For("qoder").Do == nil {
+		t.Fatal("qoder has no dispatch Do")
 	}
-	got := up.only(t)
-	if got.Path != "/algo/final/chat/completions" || !strings.Contains(got.Body, `"model":"upstream-model"`) {
-		t.Fatalf("final request path %q body %s", got.Path, got.Body)
+	if !wire.HasCodec("qoder") {
+		t.Fatal("qoder has no codec")
 	}
-	hash := func(value string) string {
-		sum := md5.Sum([]byte(value))
-		return hex.EncodeToString(sum[:])
-	}
-	parts := strings.Split(strings.TrimPrefix(got.Header.Get("Authorization"), "Bearer COSY."), ".")
-	if len(parts) != 2 {
-		t.Fatal("missing COSY authorization")
-	}
-	canonical := parts[0] + "\n" + got.Header.Get("Cosy-Key") + "\n" + got.Header.Get("Cosy-Date") + "\n" + got.Body + "\n/final/chat/completions"
-	if parts[1] != hash(canonical) {
-		t.Fatal("signature does not cover the final body and resolved URL")
-	}
-	want := map[string]string{
-		"Authorization": got.Header.Get("Authorization"), "Cosy-Key": got.Header.Get("Cosy-Key"),
-		"Cosy-User": "fixture-user", "Cosy-Date": got.Header.Get("Cosy-Date"), "Cosy-Version": "1.0.0",
-		"Cosy-Machineid": "stored-machine", "Cosy-Machinetoken": "stored-machine", "Cosy-Machinetype": "5",
-		"Cosy-Machineos": "x86_64_windows", "Cosy-Clienttype": "5", "Cosy-Clientip": "127.0.0.1",
-		"Cosy-Bodyhash": hash(got.Body), "Cosy-Bodylength": strconv.Itoa(len(got.Body)),
-		"Cosy-Sigpath": "/final/chat/completions", "Cosy-Data-Policy": "disagree",
-		"Cosy-Organization-Id": "", "Cosy-Organization-Tags": "", "Login-Version": "v2",
-		"X-Request-Id": got.Header.Get("X-Request-Id"),
-	}
-	for name, value := range want {
-		if values := got.Header.Values(name); len(values) != 1 || values[0] != value {
-			t.Errorf("header %s = %q, want [%q]", name, values, value)
-		}
-	}
-	for _, name := range []string{"Cosy-Key", "Cosy-Date", "X-Request-Id"} {
-		if got.Header.Get(name) == "" {
-			t.Errorf("empty %s", name)
+	for _, source := range clientWires {
+		if CanTranslate(source, "qoder") {
+			t.Fatalf("%s reaches qoder while fenced", source)
 		}
 	}
 }
@@ -65,7 +38,7 @@ func TestQoderMissingIdentityFailsBeforeNetwork(t *testing.T) {
 	for _, missing := range []string{"machineId", "userId", "token"} {
 		t.Run(missing, func(t *testing.T) {
 			up := newRecorder(t)
-			ref := routing.ProviderRef{ProviderID: "qoder", Protocol: "openai-chat", BaseURL: up.srv.URL, APIToken: "fixture-token", ConnectionID: "qoder-account",
+			ref := routing.ProviderRef{ProviderID: "qoder", Protocol: "qoder", UpstreamModel: "auto", BaseURL: up.srv.URL, APIToken: "fixture-token", ConnectionID: "qoder-account",
 				Connection: routing.ConnectionMetadata{Settings: routing.ProviderSettings{UserID: "fixture-user", MachineID: "stored-machine"}}}
 			switch missing {
 			case "machineId":
@@ -82,21 +55,70 @@ func TestQoderMissingIdentityFailsBeforeNetwork(t *testing.T) {
 			before := time.Now()
 			out := httptest.NewRecorder()
 			bearer(mux, key).ServeHTTP(out, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(chatBody)))
-			if out.Code != http.StatusServiceUnavailable || !strings.Contains(out.Body.String(), "credentials_unavailable") {
+			want := http.StatusServiceUnavailable
+			wantText := "credentials_unavailable"
+			switch missing {
+			case "machineId":
+				// Without qoderHeaders the request reaches QoderDo, which answers the
+				// pin's local error before any network call (qoder.js:621-689).
+				want, wantText = http.StatusBadRequest, "machineId"
+			case "userId":
+				want, wantText = http.StatusUnauthorized, "userId"
+			}
+			if out.Code != want || !strings.Contains(out.Body.String(), wantText) {
 				t.Fatalf("missing %s: status %d, body %s", missing, out.Code, out.Body)
 			}
 			until, cooling := state.CooldownUntil(ref.ConnectionID, time.Now())
-			if !cooling || until.Before(before.Add(2*time.Minute)) || until.After(time.Now().Add(2*time.Minute)) {
+			if missing == "machineId" {
+				if cooling {
+					t.Fatalf("a 400 cooled the account: %s", until)
+				}
+			} else if !cooling || until.Before(before.Add(2*time.Minute)) || until.After(time.Now().Add(2*time.Minute)) {
 				t.Fatalf("missing %s did not get the auth-refresh cooldown: %s", missing, until)
 			}
-			if missing == "machineId" && (!strings.Contains(out.Body.String(), "machineId") || !strings.Contains(out.Body.String(), "re-run Qoder sign-in")) {
-				t.Fatalf("missing recovery instruction: %s", out.Body)
-			}
+
 			up.mu.Lock()
 			defer up.mu.Unlock()
 			if len(up.seen) != 0 {
 				t.Fatal("unsigned request reached upstream")
 			}
 		})
+	}
+}
+
+// A non-stream client is served by unwrapping Qoder's envelope before the forced
+// stream is folded; without the codec-aware step FoldChatStream refused the
+// statusCodeValue field (executors/qoder.js:362-597).
+func TestQoderNonStreamFoldUnwrapsBeforeFolding(t *testing.T) {
+	provider := routing.ProviderRef{ProviderID: "qoder", Protocol: "qoder", UpstreamModel: "auto"}
+	ok := &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader("data: {\"statusCodeValue\":200,\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"pong\\\"}}]}\"}\n\ndata: [DONE]\n\n"))}
+	if err := foldForcedStream(context.Background(), ok, provider, false); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(ok.Body)
+	ok.Body.Close()
+	if !strings.Contains(string(body), `"content":"pong"`) || strings.Contains(string(body), "statusCodeValue") {
+		t.Fatalf("folded body %s", body)
+	}
+	// The handler then applies the codec's Response to this folded Chat document
+	// (openai.go:164 -> :341); it must be identity, not the old refusal.
+	var chat map[string]any
+	if err := json.Unmarshal([]byte(`{"model":"auto","messages":[{"role":"user","content":"hi"}]}`), &chat); err != nil {
+		t.Fatal(err)
+	}
+	codec, has, err := wire.CodecFor(provider, nil, chat, "auto")
+	if !has || err != nil {
+		t.Fatalf("codec: %v %v", has, err)
+	}
+	if got, responseErr := codec.Response(body); responseErr != nil || string(got) != string(body) {
+		t.Fatalf("response after fold: %s %v", got, responseErr)
+	}
+	failed := &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader("data: {\"statusCodeValue\":403,\"body\":\"{\\\"code\\\":\\\"112\\\",\\\"pricingUrl\\\":\\\"x\\\"}\"}\n\n"))}
+	err = foldForcedStream(context.Background(), failed, provider, false)
+	var dispatch *dispatchError
+	if !errors.As(err, &dispatch) || dispatch.status != http.StatusForbidden {
+		t.Fatalf("first-frame failure: %v", err)
 	}
 }

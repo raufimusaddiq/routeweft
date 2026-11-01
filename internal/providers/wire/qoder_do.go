@@ -1,0 +1,100 @@
+package wire
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"strings"
+
+	"github.com/raufimusaddiq/routeweft/internal/routing"
+)
+
+// qoderMaxRequestBytes is the bound on the Chat body QoderDo reads before
+// preparing the envelope.
+const qoderMaxRequestBytes = 32 << 20
+
+// qoderClientFor builds the Qoder client for one exchange; tests replace it.
+var qoderClientFor = func(client *http.Client) *QoderClient { return NewQoderClient(client) }
+
+// QoderDo is QoderExecutor.execute's send half (executors/qoder.js:613-702): the
+// Chat body is converted to Qoder's signed envelope, then sent once. A failure
+// the pin answers locally is returned as that HTTP status; the caller never
+// receives a request signed with credentials the gateway will refuse.
+func QoderDo(provider routing.ProviderRef, client *http.Client, request *http.Request) (*http.Response, error) {
+	raw, err := io.ReadAll(io.LimitReader(request.Body, qoderMaxRequestBytes+1))
+	request.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > qoderMaxRequestBytes {
+		return nil, errors.New("qoder request exceeds the limit")
+	}
+	settings := provider.Connection.Settings
+	// The identity COSY signing needs, refused locally as the old header seam did:
+	// no request is sent and no host is contacted without it.
+	if strings.TrimSpace(settings.UserID) == "" {
+		return qoderRefusal(request, http.StatusUnauthorized, "qoder credential is missing userId; reconnect the account"), nil
+	}
+	if strings.TrimSpace(settings.MachineID) == "" {
+		return qoderRefusal(request, http.StatusBadRequest, "qoder credential is missing machineId; re-run Qoder sign-in"), nil
+	}
+	prepared, err := qoderClientFor(client).PrepareChat(request.Context(), QoderChatInput{
+		Model: provider.UpstreamModel,
+		Body:  raw,
+		Credentials: QoderCredentials{
+			AccessToken: provider.APIToken, UserID: settings.UserID, MachineID: settings.MachineID,
+			DisplayName: provider.Connection.Name, Email: settings.Email,
+		},
+	})
+	if err != nil {
+		var local *QoderLocalError
+		if errors.As(err, &local) {
+			return qoderRefusal(request, local.Status, local.Message), nil
+		}
+		return nil, err
+	}
+	outbound, err := http.NewRequestWithContext(request.Context(), http.MethodPost, prepared.URL, bytes.NewReader(prepared.Body))
+	if err != nil {
+		return nil, err
+	}
+	for name, value := range prepared.Headers {
+		outbound.Header.Set(name, value)
+	}
+	return client.Do(outbound)
+}
+
+// qoderRefusal is the pin's local answer, in the same shape as its upstream
+// error body, so the dispatcher classifies it by status.
+func qoderRefusal(request *http.Request, status int, message string) *http.Response {
+	body, _ := json.Marshal(map[string]any{"error": map[string]any{"message": strings.TrimSpace(message), "code": status}})
+	return &http.Response{
+		StatusCode: status, Status: http.StatusText(status), Header: http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(bytes.NewReader(body)), ContentLength: int64(len(body)), Request: request,
+	}
+}
+
+// qoderPreFold is the codec-aware fold path: a non-stream client gets Qoder's
+// envelope SSE unwrapped into Chat SSE before FoldChatStream reads it. The whole
+// answer was about to be buffered by the fold anyway, so this keeps the same
+// memory profile and lets a first-frame QoderAnswerError keep its HTTP status.
+func qoderPreFold(provider routing.ProviderRef, ctx context.Context, response *http.Response) error {
+	raw, err := io.ReadAll(io.LimitReader(response.Body, qoderMaxRequestBytes+1))
+	response.Body.Close()
+	if err != nil {
+		return err
+	}
+	if len(raw) > qoderMaxRequestBytes {
+		return errors.New("qoder answer exceeds the limit")
+	}
+	var folded bytes.Buffer
+	if err := QoderUnwrapSSE(ctx, bytes.NewReader(raw), &folded, QoderStreamOptions{Model: provider.UpstreamModel}); err != nil {
+		return err
+	}
+	response.Body = io.NopCloser(bytes.NewReader(folded.Bytes()))
+	response.ContentLength = int64(folded.Len())
+	response.Header.Set("Content-Type", "text/event-stream")
+	return nil
+}

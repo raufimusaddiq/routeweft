@@ -662,7 +662,7 @@ func TestCodecProvidersAreExactlyDeclared(t *testing.T) {
 		}
 	}
 	sort.Strings(got)
-	if !reflect.DeepEqual(got, []string{"grok-web", "perplexity-web"}) {
+	if !reflect.DeepEqual(got, []string{"cursor", "grok-web", "perplexity-web", "qoder"}) {
 		t.Fatalf("codec providers %v", got)
 	}
 	for _, protocol := range []string{"openai-chat", "commandcode", "", "unknown"} {

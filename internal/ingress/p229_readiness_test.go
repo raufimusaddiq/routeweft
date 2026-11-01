@@ -1,14 +1,12 @@
 package ingress
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/cursor"
-	"github.com/raufimusaddiq/routeweft/internal/protocol/hub"
-	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	"github.com/raufimusaddiq/routeweft/internal/providers/registry"
 	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
@@ -23,7 +21,7 @@ import (
 // The fence is a routability decision: nothing leaves it without the owner's
 // approval, and nothing joins it silently either.
 func TestUnwiredIsExactlyTheOwnerFencedSet(t *testing.T) {
-	want := map[string]bool{cursor.Protocol: true, "grok-web": true, "perplexity-web": true}
+	want := map[string]bool{cursor.Protocol: true, "qoder": true, "grok-web": true, "perplexity-web": true}
 	if len(unwired) != len(want) {
 		t.Fatalf("ingress.unwired = %v, want %v; a routability change needs the owner's approval (#229)", unwired, want)
 	}
@@ -43,50 +41,37 @@ func TestUnwiredIsExactlyTheOwnerFencedSet(t *testing.T) {
 	}
 }
 
-// Cursor's legs are declared in the hub and wire.CursorDo can send, but the
-// ingress translators have no cursor arm. Lifting the fence alone would make
-// Cursor accounts candidates whose every attempt fails at the translation, so
-// enablement is not the only thing missing.
-func TestCursorFenceIsNotItsOnlyGap(t *testing.T) {
-	liftFence(t, cursor.Protocol)
-	for _, source := range clientWires {
-		if !hub.CanTranslate(source, cursor.Protocol) || !CanTranslate(source, cursor.Protocol) {
-			t.Fatalf("%s -> cursor legs are no longer declared", source)
+// Cursor and Qoder have a hook Codec (#76 P02 part 3), so every client wire is
+// convertible once the fence is lifted. The fence is not the only gap any more:
+// readiness stays unavailable by owner decision (#229), and nothing routes while
+// the entry is present.
+func TestCursorAndQoderHaveAWholeIngressArmButStayFenced(t *testing.T) {
+	for _, target := range []string{cursor.Protocol, "qoder"} {
+		if !wire.HasCodec(target) {
+			t.Fatalf("%s has no hook Codec", target)
+		}
+		for _, source := range clientWires {
+			if CanTranslate(source, target) {
+				t.Fatalf("%s is routable from %s while fenced", target, source)
+			}
 		}
 	}
-	chat, err := openai.ParseChatRequest([]byte(`{"model":"claude-4.5-sonnet","messages":[{"role":"user","content":"hi"}]}`))
-	if err != nil {
+	liftFence(t, cursor.Protocol, "qoder")
+	for _, target := range []string{cursor.Protocol, "qoder"} {
+		for _, source := range clientWires {
+			if !CanTranslate(source, target) {
+				t.Errorf("%s is not reachable from %s through its codec", target, source)
+			}
+		}
+	}
+	var chat map[string]any
+	if err := json.Unmarshal([]byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`), &chat); err != nil {
 		t.Fatal(err)
 	}
-	responses, err := openai.ParseResponsesRequest([]byte(`{"model":"claude-4.5-sonnet","input":"hi"}`), false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	messages, err := anthropic.ParseMessagesRequest([]byte(`{"model":"claude-4.5-sonnet","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	const bound = "cursor now has an ingress arm: prove the whole path from every client wire, then update registry.notReady, unreachableProviders and PARITY 6.23"
-	if _, err := TranslateChat(chat, cursor.Protocol); err == nil {
-		t.Error("Chat: " + bound)
-	}
-	if _, err := TranslateResponses(responses, cursor.Protocol); err == nil {
-		t.Error("Responses: " + bound)
-	}
-	if _, err := TranslateMessages(messages, cursor.Protocol); err == nil {
-		t.Error("Messages: " + bound)
-	}
-}
-
-// Qoder's request and answer halves are ported (#203), but no hook Codec hands
-// them to dispatch, so no client wire reaches it even with no fence at all.
-func TestQoderHasNoDispatchBindingYet(t *testing.T) {
-	if wire.HasCodec("qoder") {
-		t.Fatal("qoder has a hook Codec: prove the whole path, keep it fenced until the owner approves, and update registry.notReady, unreachableProviders and PARITY 6.23")
-	}
-	for _, source := range clientWires {
-		if CanTranslate(source, "qoder") {
-			t.Errorf("%s reaches qoder", source)
+	for _, target := range []string{cursor.Protocol, "qoder"} {
+		codec, ok, err := wire.CodecFor(routing.ProviderRef{ProviderID: target}, nil, chat, "m")
+		if !ok || err != nil || codec.Endpoint == "" || len(codec.Body) == 0 || codec.Stream == nil {
+			t.Errorf("%s codec: ok=%v err=%v codec=%+v", target, ok, err, codec)
 		}
 	}
 }
