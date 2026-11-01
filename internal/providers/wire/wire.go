@@ -167,7 +167,7 @@ var hooks = map[string]Hook{
 	"glm":              {Target: betaQuery},
 	"kimi":             {OpenAIHeaders: kimiDeviceHeaders, MessagesHeaders: kimiDeviceHeaders, Target: betaQuery},
 	"kilocode":         {OpenAIHeaders: kilocodeOrgHeaders},
-	"qoder":            {RequestHeaders: qoderHeaders, RequireCredential: true, ForceStream: true, Do: QoderDo, Codec: qoderCodec, PreFoldStream: qoderPreFold},
+	"qoder":            {RequestHeaders: qoderHeaders, RequireCredential: true, ForceStream: true, Do: QoderDo, Codec: qoderCodec, PreFoldStream: qoderPreFold, Exchange: true},
 	"iflow":            {OpenAIHeaders: iflowHeaders, Finalize: iflowStreamOptions, RequireCredential: true},
 	"kiro":             {NoOpenAIBearer: true, OpenAIHeaders: kiroHeaders, Target: kiroTarget, FinalizeAccount: kiroBody, RequireCredential: true},
 	"github":           githubHook,

@@ -1124,7 +1124,7 @@ func TestOnlyCredentialExchangesAreProbedThroughDo(t *testing.T) {
 		}
 	}
 	sort.Strings(got)
-	if want := []string{"mimo-free", "mmf", "vertex", "vertex-partner", "zed"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"mimo-free", "mmf", "qoder", "vertex", "vertex-partner", "zed"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("exchange hooks %v, want %v", got, want)
 	}
 	for _, id := range []string{"cursor", "codex", "commandcode", "grok-cli"} {

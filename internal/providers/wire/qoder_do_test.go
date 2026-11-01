@@ -40,7 +40,9 @@ func TestQoderDoPreparesAndSignsTheEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := QoderDo(provider, &http.Client{Transport: roundTripFunc(doer.Do)}, request)
+	// Send is the probe's path too (Exchanges("qoder") is true), so this test
+	// exercises what dispatch and the model probe actually take.
+	response, err := Send(provider, &http.Client{Transport: roundTripFunc(doer.Do)}, request)
 	if err != nil || response.StatusCode != http.StatusOK {
 		t.Fatalf("response %v err %v", response, err)
 	}
@@ -67,7 +69,7 @@ func TestQoderDoPreparesAndSignsTheEnvelope(t *testing.T) {
 	// A missing userId is the pin's local 401, answered before any network call.
 	provider.Connection.Settings.UserID = ""
 	before := len(doer.calls)
-	refused, err := QoderDo(provider, &http.Client{Transport: roundTripFunc(doer.Do)}, request.Clone(context.Background()))
+	refused, err := Send(provider, &http.Client{Transport: roundTripFunc(doer.Do)}, request.Clone(context.Background()))
 	if err != nil || refused.StatusCode != http.StatusUnauthorized || len(doer.calls) != before {
 		t.Fatalf("local refusal: %v %v calls=%d", refused, err, len(doer.calls)-before)
 	}
@@ -91,5 +93,14 @@ func TestQoderCodecBuildsChatAndStream(t *testing.T) {
 	var out strings.Builder
 	if err := codec.Stream(context.Background(), strings.NewReader("data: {\"statusCodeValue\":200,\"body\":\"{\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"pong\\\"}}]}\"}\n\ndata: [DONE]\n\n"), &out); err != nil || !strings.Contains(out.String(), "pong") {
 		t.Fatalf("stream err=%v out=%s", err, out.String())
+	}
+	// A non-stream client: the dispatcher folds the forced stream, then applies
+	// Response to the folded Chat document. Identity, never a refusal.
+	folded := []byte(`{"id":"chatcmpl-1","choices":[{"message":{"content":"pong"},"finish_reason":"stop"}]}`)
+	if got, err := codec.Response(folded); err != nil || string(got) != string(folded) {
+		t.Fatalf("response after fold: %q %v", got, err)
+	}
+	if !Exchanges("qoder") {
+		t.Fatal("the model probe must go through QoderDo to be signed")
 	}
 }

@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -100,9 +101,22 @@ func TestQoderNonStreamFoldUnwrapsBeforeFolding(t *testing.T) {
 	if !strings.Contains(string(body), `"content":"pong"`) || strings.Contains(string(body), "statusCodeValue") {
 		t.Fatalf("folded body %s", body)
 	}
+	// The handler then applies the codec's Response to this folded Chat document
+	// (openai.go:164 -> :341); it must be identity, not the old refusal.
+	var chat map[string]any
+	if err := json.Unmarshal([]byte(`{"model":"auto","messages":[{"role":"user","content":"hi"}]}`), &chat); err != nil {
+		t.Fatal(err)
+	}
+	codec, has, err := wire.CodecFor(provider, nil, chat, "auto")
+	if !has || err != nil {
+		t.Fatalf("codec: %v %v", has, err)
+	}
+	if got, responseErr := codec.Response(body); responseErr != nil || string(got) != string(body) {
+		t.Fatalf("response after fold: %s %v", got, responseErr)
+	}
 	failed := &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}},
 		Body: io.NopCloser(strings.NewReader("data: {\"statusCodeValue\":403,\"body\":\"{\\\"code\\\":\\\"112\\\",\\\"pricingUrl\\\":\\\"x\\\"}\"}\n\n"))}
-	err := foldForcedStream(context.Background(), failed, provider, false)
+	err = foldForcedStream(context.Background(), failed, provider, false)
 	var dispatch *dispatchError
 	if !errors.As(err, &dispatch) || dispatch.status != http.StatusForbidden {
 		t.Fatalf("first-frame failure: %v", err)

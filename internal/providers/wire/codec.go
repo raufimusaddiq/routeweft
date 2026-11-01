@@ -3,7 +3,6 @@ package wire
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 
 	"github.com/raufimusaddiq/routeweft/internal/routing"
@@ -97,16 +96,17 @@ func cursorCodec(_ routing.ProviderRef, _ *CodecState, chat map[string]any, _ st
 // executor converts the Chat body into its signed agent envelope. QoderDo builds
 // and signs that request, and QoderUnwrapSSE turns the answer back into Chat SSE.
 // Qoder always streams; a non-stream client is folded from the stream.
-func qoderCodec(_ routing.ProviderRef, _ *CodecState, chat map[string]any, model string) (Codec, error) {
+func qoderCodec(provider routing.ProviderRef, _ *CodecState, chat map[string]any, _ string) (Codec, error) {
 	body, err := json.Marshal(chat)
 	if err != nil {
 		return Codec{}, err
 	}
 	return Codec{Endpoint: qoderCodecEndpoint, Body: body,
-		Response: func([]byte) ([]byte, error) { return nil, errors.New("qoder answers only streams") },
+		// The forced stream is folded (through qoderPreFold) before this is
+		// applied, so the body is already one Chat document: identity.
+		Response: func(answer []byte) ([]byte, error) { return answer, nil },
 		Stream: func(ctx context.Context, src io.Reader, dst io.Writer) error {
-			// The client's routed model is echoed, as the grok/perplexity codecs do.
-			return QoderUnwrapSSE(ctx, src, dst, QoderStreamOptions{Model: model})
+			return QoderUnwrapSSE(ctx, src, dst, QoderStreamOptions{Model: provider.UpstreamModel})
 		}}, nil
 }
 
