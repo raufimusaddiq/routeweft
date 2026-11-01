@@ -136,6 +136,15 @@ func OutputCeiling(provider, model string) (ceiling int64, ok bool) {
 	return caps.MaxOutput, true
 }
 
+// ProviderAlias resolves a registry alias to the provider id it names. The
+// second result is false when name is already canonical or unknown.
+func ProviderAlias(name string) (string, bool) {
+	if id, ok := aliases[name]; ok && id != name {
+		return id, true
+	}
+	return name, false
+}
+
 // ProviderKeys are the names a provider is known by in the oracle's tables, which
 // key some entries by id and some by alias: the id itself, the id an alias
 // stands for, and every alias of that id, in a fixed order.

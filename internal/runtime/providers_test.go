@@ -469,3 +469,29 @@ func TestOpenCodeGoResponsesOnlyModelsSelectResponses(t *testing.T) {
 		t.Fatal("used disabled Responses transport")
 	}
 }
+
+// The pin's parseModel resolves registry aliases in provider/model
+// (services/model.js:18-37): kmc/ and kimi-coding/ name kimi, ag/ names
+// antigravity. A configured provider id that really exists is never shadowed.
+func TestServingModelResolvesRegistryProviderAliases(t *testing.T) {
+	models, aliases, disabled := compileCatalog([]Model{
+		{ProviderID: "kimi", ID: "kimi-k2"},
+		{ProviderID: "antigravity", ID: "gemini-3-flash"},
+		{ProviderID: "kmc", ID: "own-model"},
+	}, nil, nil)
+	s := &RuntimeSnapshot{models: models, aliases: aliases, disabledModels: disabled}
+	for requested, want := range map[string]string{
+		"kmc/kimi-k2":         "kimi/kimi-k2",
+		"kimi-coding/kimi-k2": "kimi/kimi-k2",
+		"ag/gemini-3-flash":   "antigravity/gemini-3-flash",
+		"kmc/own-model":       "kmc/own-model",
+	} {
+		model, ok := s.ServingModel(requested)
+		if !ok || model.ProviderID+"/"+model.ID != want {
+			t.Errorf("ServingModel(%q) = %s/%s,%v, want %s", requested, model.ProviderID, model.ID, ok, want)
+		}
+	}
+	if _, ok := s.ServingModel("kimi-coding/own-model"); ok {
+		t.Fatal("an alias must not borrow a same-named provider's model")
+	}
+}

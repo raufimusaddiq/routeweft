@@ -833,3 +833,86 @@ func TestEverySeededProviderServesItsFirstModel(t *testing.T) {
 		}
 	}
 }
+
+// The pin resolves registry provider aliases in the model prefix
+// (services/model.js:18-37): kmc/ and kimi-coding/ are kimi, ag/ is
+// antigravity. The alias reaches the canonical provider's wire, not a
+// provider named by the alias, and a restart keeps doing so.
+func TestRegistryProviderAliasesServeTheirCanonicalProvider(t *testing.T) {
+	var mu sync.Mutex
+	var seen []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		seen = append(seen, r.URL.Path+" "+r.Header.Get("Authorization")+" "+string(raw))
+		mu.Unlock()
+		if strings.HasPrefix(r.URL.Path, "/v1internal:") {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"pong"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1}},"traceId":"t"}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"pong"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
+	}))
+	defer upstream.Close()
+
+	a := New(Config{DataDir: storetest.DataDir(t), CredentialKey: []byte("01234567890123456789012345678901"), AllowPrivateUpstreams: true}, nil)
+	ctx := context.Background()
+	if err := a.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { a.store.Close() })
+	_, key, err := a.runtime.CreateAPIKey(ctx, "client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kimi, err := a.creds.PutNode(ctx, credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "kimi", Name: "kimi", BaseURL: upstream.URL, Transports: []string{"openai-chat"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.creds.PutConnection(ctx, credentials.Connection{NodeID: kimi.ID, Name: "kimi", Identity: "kimi", AuthKind: credentials.AuthAPIKey, Secret: credentials.Secret{AccessToken: "kimi-key"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	ag, err := a.creds.PutNode(ctx, credentials.Node{Kind: credentials.NodeBuiltin, ProviderID: "antigravity", Name: "antigravity", BaseURL: upstream.URL, Transports: []string{"antigravity"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.creds.PutConnection(ctx, credentials.Connection{NodeID: ag.ID, Name: "ag", Identity: "ag", AuthKind: credentials.AuthOAuth, Enabled: true,
+		Secret: credentials.Secret{AccessToken: "ya29.fixture", ProviderData: map[string]string{"projectId": "fixture-project"}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, model := range []runtime.Model{{ProviderID: "kimi", ID: "kimi-k2"}, {ProviderID: "antigravity", ID: "gemini-2.5-flash"}} {
+		if err := a.runtime.PutModel(ctx, model); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, model := range []string{"kmc/kimi-k2", "kimi-coding/kimi-k2"} {
+		w := serveRequest(a.Handler(), key, "/v1/chat/completions", fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hi"}]}`, model))
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "pong") {
+			t.Fatalf("%s: %d %s", model, w.Code, w.Body)
+		}
+		mu.Lock()
+		last := seen[len(seen)-1]
+		mu.Unlock()
+		if !strings.HasPrefix(last, "/chat/completions Bearer kimi-key ") || !strings.Contains(last, `"model":"kimi-k2"`) || strings.Contains(last, model[:strings.Index(model, "/")]) {
+			t.Fatalf("%s reached the wrong provider: %s", model, last)
+		}
+	}
+	w := serveRequest(a.Handler(), key, "/v1/chat/completions", `{"model":"ag/gemini-2.5-flash","messages":[{"role":"user","content":"hi"}]}`)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "pong") {
+		t.Fatalf("ag/: %d %s", w.Code, w.Body)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	last := seen[len(seen)-1]
+	if !strings.HasPrefix(last, "/v1internal:generateContent Bearer ya29.fixture ") || !strings.Contains(last, `"model":"gemini-2.5-flash"`) || !strings.Contains(last, `"project":"fixture-project"`) {
+		t.Fatalf("ag/ reached the wrong provider: %s", last)
+	}
+}

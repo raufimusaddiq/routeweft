@@ -198,9 +198,11 @@ func (s *RuntimeSnapshot) APIKeys() *auth.KeyIndex { return s.keys }
 // Models returns the enabled catalog and compiled aliases as a defensive copy.
 func (s *RuntimeSnapshot) Models() []Model { return listCatalog(s.models, s.aliases, s.disabledModels) }
 
-// ResolveModel resolves a direct provider/model pair or a model alias.
+// ResolveModel resolves a direct provider/model pair or a model alias. The
+// provider may be a registry alias (kmc, kimi-coding, ag): parseModel resolves
+// that prefix before lookup (services/model.js:18-37).
 func (s *RuntimeSnapshot) ResolveModel(provider, model string) (Model, bool) {
-	if target, ok := s.aliases[model]; ok && (provider == "" || provider == target.ProviderID) {
+	if target, ok := s.aliases[model]; ok && (provider == "" || canonicalProvider(provider) == canonicalProvider(target.ProviderID)) {
 		provider, model = target.ProviderID, target.ModelID
 	}
 	key := modelKey(provider, model)
@@ -208,13 +210,24 @@ func (s *RuntimeSnapshot) ResolveModel(provider, model string) (Model, bool) {
 		return Model{}, false
 	}
 	entry, ok := s.models[key]
+	if !ok {
+		// A registry alias names the same provider (kmc, kimi-coding, ag), but a
+		// configured provider whose id really is the alias keeps precedence.
+		if canonical, aliased := capabilities.ProviderAlias(provider); aliased {
+			key = modelKey(canonical, model)
+			if _, disabled := s.disabledModels[key]; disabled {
+				return Model{}, false
+			}
+			entry, ok = s.models[key]
+		}
+	}
 	entry.Capabilities = append([]string(nil), entry.Capabilities...)
 	return entry, ok
 }
 
 func (s *RuntimeSnapshot) ModelCapabilityDetails(provider, model string) capabilities.Capabilities {
-	if target, ok := s.aliases[model]; ok && (provider == "" || provider == target.ProviderID) {
-		provider, model = target.ProviderID, target.ModelID
+	if resolved, ok := s.ResolveModel(provider, model); ok {
+		provider, model = resolved.ProviderID, resolved.ID
 	}
 	return s.modelCapabilities.Resolve(provider, model)
 }
