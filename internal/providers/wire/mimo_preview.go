@@ -138,10 +138,27 @@ func mimoPreviewBody(raw []byte) ([]byte, error) {
 	if body["top_p"] == nil {
 		body["top_p"] = 0.95
 	}
-	if max, ok := body["max_tokens"].(float64); !ok || max == 0 {
+	if mimoZeroLimit(body["max_tokens"]) {
 		body["max_tokens"] = 4096
 	}
 	return json.Marshal(body)
+}
+
+// mimoZeroLimit is `!out.max_tokens` (xiaomi-mimo.js:80): absent, null or zero
+// takes the pin's 4096; a caller's positive limit is kept. JSON numbers decode
+// as json.Number here (concerns.WireObject), so a float64-only test would
+// overwrite every explicit limit.
+func mimoZeroLimit(value any) bool {
+	switch number := value.(type) {
+	case nil:
+		return true
+	case json.Number:
+		parsed, err := number.Float64()
+		return err == nil && parsed == 0
+	case float64:
+		return number == 0
+	}
+	return false
 }
 
 func mimoPreviewSend(provider routing.ProviderRef, client *http.Client, request *http.Request, data map[string]string, body []byte) (*http.Response, error) {

@@ -141,6 +141,27 @@ func TestMimoPreviewDoSendsTheAccountRouteAndRetriesOnce(t *testing.T) {
 	}
 }
 
+func TestMimoPreviewKeepsTheCallersMaxTokens(t *testing.T) {
+	body, err := mimoPreviewBody([]byte(`{"model":"mimo-x-pro-preview","max_tokens":123,"temperature":0.2,"top_p":0.5}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]any
+	if json.Unmarshal(body, &parsed) != nil {
+		t.Fatal("body is not JSON")
+	}
+	if parsed["max_tokens"] != 123.0 || parsed["temperature"] != 0.2 || parsed["top_p"] != 0.5 {
+		t.Fatalf("caller values overwritten: %s", body)
+	}
+	if parsed["thinking"] == nil {
+		t.Fatalf("thinking default missing: %s", body)
+	}
+	zero, _ := mimoPreviewBody([]byte(`{"model":"mimo-x-pro-preview","max_tokens":0}`))
+	if !strings.Contains(string(zero), `"max_tokens":4096`) {
+		t.Fatalf("a zero limit did not take the pin's default: %s", zero)
+	}
+}
+
 func TestMimoPreviewASecond401FailsWithoutAThirdCall(t *testing.T) {
 	f := newMimoFixture(t)
 	f.routeStatus = http.StatusUnauthorized
