@@ -180,7 +180,7 @@ var hooks = map[string]Hook{
 	"mimo-free":        mimoFreeHook,
 	"mmf":              mimoFreeHook,
 	"opencode-go":      {ForceStream: true, ForceStreamFor: openCodeGoForcesStream, ForcedTransport: openCodeGoTransport, FinalizeAccount: openCodeGoFinalize, RequestHeaders: openCodeGoSessionFallback, ClientRequestHeaders: openCodeGoSession},
-	"opencode":         {Target: opencodeTarget, OpenAIHeaders: opencodeHeaders, ClientRequestHeaders: opencodeIdentity, ForceStream: true, Finalize: codebuddyStream},
+	"opencode":         {Target: opencodeTarget, OpenAIHeaders: opencodeHeaders, ClientRequestHeaders: opencodeIdentity, ForceStream: true, Finalize: codebuddyStream, Do: opencodeDo},
 	"vertex-partner":   vertexPartnerHook,
 	"vertex":           vertexHook,
 	"cloudflare-ai":    {Target: cloudflareTarget},

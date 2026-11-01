@@ -332,8 +332,8 @@ func opencodeTarget(provider routing.ProviderRef) (Target, error) {
 // does hold a token keeps it: the pin has no such connection, so there is
 // nothing to match, and replacing a credential the operator set would be a guess.
 // The session, request and project headers (:417-426,492-510) are carried by
-// ClientRequestHeaders (opencode_identity.go); the free-tier fingerprint tools
-// (:455-464) remain open (PARITY 6.19).
+// ClientRequestHeaders (opencode_identity.go) and the free-tier fingerprint
+// tools (:455-464) by its Do (opencode_fingerprint.go).
 func opencodeHeaders(provider routing.ProviderRef) map[string]string {
 	if strings.TrimSpace(provider.APIToken) != "" {
 		return map[string]string{}
