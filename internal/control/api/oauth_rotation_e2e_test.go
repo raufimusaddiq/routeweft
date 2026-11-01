@@ -24,7 +24,10 @@ type rotatingEndpoint struct {
 }
 
 func (e *rotatingEndpoint) Do(request *http.Request) (*http.Response, error) {
-	raw, _ := io.ReadAll(request.Body)
+	var raw []byte
+	if request.Body != nil {
+		raw, _ = io.ReadAll(request.Body)
+	}
 	e.mu.Lock()
 	e.presented = append(e.presented, string(raw))
 	call := len(e.presented)
@@ -58,7 +61,7 @@ func (e *rotatingEndpoint) refreshTokens(t *testing.T) []string {
 func TestOAuthTokenRotationIsUsedAndSurvivesARestart(t *testing.T) {
 	ctx := context.Background()
 	endpoint := &rotatingEndpoint{}
-	h, mux, store, cookie := newOAuthAPI(t, &oauthExchange{body: tokenBody()})
+	h, mux, store, cookie := newOAuthAPI(t, &oauthExchange{})
 	h.opts.OAuthClient = endpoint
 	resolver, err := oauthrefresh.Resolver(endpoint)
 	if err != nil {
