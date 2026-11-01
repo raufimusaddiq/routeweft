@@ -492,3 +492,27 @@ func TestZedProbeOfAFailedAccountIsNotReachableAndCoolsIt(t *testing.T) {
 		})
 	}
 }
+
+// A model test is a request: it carries the id the provider's API accepts in the
+// body, as serving does, and reports that id. DeepSeek answers 400 to its catalog
+// id deepseek-v4.1-flash and Blackbox only knows its prefixed ids.
+func TestModelProbeSendsTheWireIDOfARewrittenModel(t *testing.T) {
+	catalog, _ := registry.NewBuiltinCatalog()
+	for _, tc := range []struct{ provider, model, wire string }{
+		{"deepseek", "deepseek-v4.1-flash", "deepseek-flash"},
+		{"blackbox", "gpt-5.5", "blackboxai/openai/gpt-5.5"},
+		{"blackbox", "not-rewritten", "not-rewritten"},
+	} {
+		h, calls := recordingHandler(t)
+		spec, _ := catalog.Lookup(tc.provider)
+		node, connection := builtinConnection(tc.provider, routing.ProviderSettings{}, credentials.AuthAPIKey)
+		result := h.testProviderModel(context.Background(), connection, node, spec, "openai-chat", tc.model, time.Second)
+		got := calls()
+		if len(got) != 1 || !strings.Contains(got[0].Body, `"model":"`+tc.wire+`"`) {
+			t.Fatalf("%s/%s: the probe body did not carry %q: %+v", tc.provider, tc.model, tc.wire, got)
+		}
+		if result.UpstreamModelID != tc.wire || result.ModelID != tc.model {
+			t.Errorf("%s/%s: reported model=%q upstream=%q, want %q and %q", tc.provider, tc.model, result.ModelID, result.UpstreamModelID, tc.model, tc.wire)
+		}
+	}
+}
