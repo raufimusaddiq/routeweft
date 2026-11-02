@@ -256,7 +256,7 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 		}
 		switch provider.Protocol {
 		case ollamaadapter.Protocol, openaiadapter.ChatProtocol:
-			body, err := request.MarshalBody(provider.UpstreamModel)
+			body, err := request.MarshalBody(upstreamModel)
 			endpoint := "chat/completions"
 			if provider.Protocol == ollamaadapter.Protocol {
 				endpoint = ollamaEndpoint
@@ -365,6 +365,12 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 		h.emitTranslated(r, provider, http.StatusBadGateway, false, promptcache.Usage{}, false, started)
 		return
 	}
+	// The Chat path strips a gateway envelope before it reads the answer
+	// (openai.go:181-182,:338): a cline-family body is not a Chat completion until
+	// its {"success":true,"data":{...}} wrapper is gone.
+	if unwrap := wire.UnwrapResponse(provider.ProviderID); unwrap != nil {
+		responseBody = unwrap(responseBody)
+	}
 	usage, observed := promptcache.Usage{}, false
 	if parsed, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
 		usage, observed = parsed, true
@@ -373,11 +379,31 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	if translation.Response != nil {
 		document, err = translation.Response(responseBody)
 	}
-	if err == nil {
-		document, err = ollamaadapter.ChatResponseToOllama(document, request.Model)
-	}
 	if err != nil {
-		h.writeError(w, http.StatusBadGateway, "upstream_response_invalid", "upstream response could not be read")
+		var failure *wire.WebAnswerError
+		var kiroFailure *concerns.StreamFailure
+		switch {
+		case translation.Integrity != nil && errors.As(err, &kiroFailure):
+			// A Kiro leg's failure keeps the pin's code (executors/kiro.js:690-700).
+			h.writeError(w, http.StatusBadGateway, concerns.Text(kiroFailure.Value["code"]), concerns.Text(kiroFailure.Value["message"]))
+			h.recordClassification(provider.ConnectionID, classifyResponse(http.StatusBadGateway, nil), time.Now())
+		case errors.As(err, &failure):
+			// The site reported a failure inside its answer: the client gets the
+			// pin's 502 document, and the attempt is classified as failed
+			// (openai.go:344-353), so the account cools here too.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write(failure.Body())
+			h.recordClassification(provider.ConnectionID, classifyResponse(http.StatusBadGateway, nil), time.Now())
+		default:
+			h.writeError(w, http.StatusBadGateway, "upstream_response_invalid", "upstream response could not be translated")
+		}
+		h.emitTranslated(r, provider, http.StatusBadGateway, false, usage, observed, started)
+		return
+	}
+	document, err = ollamaadapter.ChatResponseToOllama(document, request.Model)
+	if err != nil {
+		h.writeError(w, http.StatusBadGateway, "upstream_response_invalid", "upstream response could not be translated")
 		h.emitTranslated(r, provider, http.StatusBadGateway, false, usage, observed, started)
 		return
 	}

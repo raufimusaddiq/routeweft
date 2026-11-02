@@ -425,3 +425,28 @@ func TestCompatTranslationHookEndpoints(t *testing.T) {
 		t.Fatalf("answer %q", recorder.Body.String())
 	}
 }
+
+// #377: the buffered translated answer is unwrapped before it is read, exactly
+// as /v1/chat/completions unwraps it (openai.go:181-182,:338), so an enveloped
+// gateway (cline family) is a completion, not a 502.
+func TestOllamaSurfaceUnwrapsGatewayEnvelopes(t *testing.T) {
+	server, err := mockupstream.Start(nil, mockupstream.WithMatcher(func(_ *http.Request, _ string) mockupstream.Decision {
+		return mockupstream.Decision{Status: http.StatusOK, Headers: map[string]string{"Content-Type": "application/json"},
+			Body: `{"success":true,"data":{"id":"chatcmpl_1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}]}}`}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	s := newServing(t, routing.ProviderRef{ProviderID: "cline", Protocol: openaiadapter.ChatProtocol, BaseURL: server.URL(), ConnectionID: "a"})
+	r := httptest.NewRequest(http.MethodPost, "/v1/api/chat", strings.NewReader(`{"model":"test/model","messages":[{"role":"user","content":"hi"}]}`))
+	r.Header.Set("Authorization", "Bearer "+s.key)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"content":"OK"`) || !strings.Contains(w.Body.String(), `"done":true`) {
+		t.Fatalf("enveloped answer reached the Ollama client as %d: %s", w.Code, w.Body)
+	}
+	if seen := server.Requests(); len(seen) != 1 || seen[0].Path != "/chat/completions" {
+		t.Fatalf("upstream %+v", seen)
+	}
+}
