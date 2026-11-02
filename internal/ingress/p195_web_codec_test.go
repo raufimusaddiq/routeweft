@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	"github.com/raufimusaddiq/routeweft/internal/protocol/openai"
@@ -263,5 +264,50 @@ func TestPerplexityWebThreadIsContinuedOnlyOnTheSameConnection(t *testing.T) {
 				t.Errorf("another connection continued the thread: %v", other.body)
 			}
 		})
+	}
+}
+
+// #377: the Ollama surface resolves and prepares an account exactly as
+// /v1/chat/completions does, so a codec-served provider is chosen and converted
+// by its hook Codec, never handed to TranslateChat (which has no arm for it).
+func TestOllamaSurfaceServesCodecProviders(t *testing.T) {
+	liftFence(t, "grok-web")
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%v", stream), func(t *testing.T) {
+			up := newWebUpstream(t, 200, func(int) string { return grokFixture })
+			s := newWebServing(t, routing.ProviderRef{ProviderID: "grok-web", Protocol: "grok-web", BaseURL: up.URL, UpstreamModel: "grok-4", APIToken: "sso=fixture-sso", ConnectionID: "conn-a"}, nil)
+			r := httptest.NewRequest(http.MethodPost, "/v1/api/chat", strings.NewReader(fmt.Sprintf(`{"model":"test/model","stream":%t,"messages":[{"role":"user","content":"ping"}]}`, stream)))
+			r.Header.Set("Authorization", "Bearer "+s.key)
+			w := httptest.NewRecorder()
+			s.mux.ServeHTTP(w, r)
+			if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "pong") || !strings.Contains(w.Body.String(), `"done":true`) {
+				t.Fatalf("ollama client got %d: %s", w.Code, w.Body)
+			}
+			got := up.seen[0]
+			if got.path != "/rest/app-chat/conversations/new" || got.cookie != "sso=fixture-sso" || !strings.Contains(got.agent, "Chrome/136") {
+				t.Fatalf("upstream saw %+v", got)
+			}
+		})
+	}
+}
+
+// #377: a failure the site reports inside its answer reaches the Ollama client as
+// the pin's own document and cools the account, as it does on the Chat path
+// (openai.go:344-353).
+func TestOllamaSurfaceRelaysWebAnswerFailureAndCoolsTheAccount(t *testing.T) {
+	liftFence(t, "grok-web")
+	const failing = `{"result":{"response":{"token":"par"}}}` + "\n" + `{"error":{"message":"rate limited"}}` + "\n"
+	state := runtime.NewState()
+	up := newWebUpstream(t, 200, func(int) string { return failing })
+	s := newWebServing(t, routing.ProviderRef{ProviderID: "grok-web", Protocol: "grok-web", BaseURL: up.URL, APIToken: "fixture-sso", ConnectionID: "conn-a"}, state)
+	r := httptest.NewRequest(http.MethodPost, "/v1/api/chat", strings.NewReader(`{"model":"test/model","stream":false,"messages":[{"role":"user","content":"ping"}]}`))
+	r.Header.Set("Authorization", "Bearer "+s.key)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, r)
+	if w.Code != http.StatusBadGateway || strings.TrimSpace(w.Body.String()) != `{"error":{"code":"GROK_ERROR","message":"rate limited","type":"upstream_error"}}` {
+		t.Fatalf("client got %d: %s", w.Code, w.Body)
+	}
+	if _, cooling := state.CooldownUntil("conn-a", time.Now()); !cooling {
+		t.Fatal("the site's failure did not cool the account")
 	}
 }
