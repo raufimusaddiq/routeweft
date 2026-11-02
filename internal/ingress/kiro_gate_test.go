@@ -640,3 +640,27 @@ func TestKiroGateFailureCoolsTheAccountOnBufferedAndStreamedPaths(t *testing.T) 
 		t.Error("a buffered leg failure did not cool the account")
 	}
 }
+
+// #377: the Ollama surface applies Kiro's answer-integrity gate like every other
+// client wire. A refused answer is an error document, never done:true carrying a
+// partial answer.
+func TestKiroIntegrityGateRefusesTheOllamaSurface(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%v", stream), func(t *testing.T) {
+			s, seen := kiroScripted(t, routing.ProviderSettings{}, answer(kiroEllipsisTurn), answer(kiroEllipsisTurn), answer(kiroGoodTurn))
+			r := httptest.NewRequest(http.MethodPost, "/v1/api/chat", strings.NewReader(fmt.Sprintf(`{"model":"test/model","stream":%t,"messages":[{"role":"user","content":"ping"}]}`, stream)))
+			r.Header.Set("Authorization", "Bearer "+s.key)
+			w := httptest.NewRecorder()
+			s.mux.ServeHTTP(w, r)
+			if strings.Contains(w.Body.String(), "pong") || strings.Contains(w.Body.String(), `"done":true`) {
+				t.Fatalf("an ungated answer reached the Ollama client: %d %s", w.Code, w.Body)
+			}
+			if !strings.Contains(w.Body.String(), "kiro_ellipsis_retry_failed") {
+				t.Fatalf("gate refusal not relayed: %d %s", w.Code, w.Body)
+			}
+			if n := len(seen.calls()); n != 2 {
+				t.Fatalf("upstream saw %d requests, want the request and one repair", n)
+			}
+		})
+	}
+}

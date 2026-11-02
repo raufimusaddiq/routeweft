@@ -13,6 +13,7 @@ import (
 	"time"
 
 	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
+	"github.com/raufimusaddiq/routeweft/internal/protocol/concerns"
 	geminiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/gemini"
 	ollamaadapter "github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
@@ -249,6 +250,10 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	// in the Ollama protocol excluded every account that did not speak it (#377).
 	response, provider, err := h.dispatchAttempts(r, snapshot, request.Model, openaiadapter.ChatProtocol, false, request.Stream, func(provider routing.ProviderRef) (ChatTranslation, error) {
 		translation = ChatTranslation{}
+		upstreamModel := provider.UpstreamModel
+		if upstreamModel == "" {
+			upstreamModel = request.Model
+		}
 		switch provider.Protocol {
 		case ollamaadapter.Protocol, openaiadapter.ChatProtocol:
 			body, err := request.MarshalBody(provider.UpstreamModel)
@@ -261,10 +266,7 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 			}
 			return ChatTranslation{Endpoint: endpoint, Body: body, Headers: openAIProviderHeaders(provider)}, err
 		}
-		if h.opts.TranslateChat == nil {
-			return ChatTranslation{}, fmt.Errorf("no Chat-to-provider translator registered")
-		}
-		translated, err := h.translatedOllamaChat(r, provider, request)
+		translated, err := h.translatedOllamaChat(r, provider, request, upstreamModel)
 		translation = translated
 		return translated, err
 	})
@@ -293,8 +295,27 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 			h.copyNativeSSE(w, r, response)
 			return
 		}
-		h.copyTranslatedOllamaStream(w, r, response, translation, request.Model)
-		h.emitOutcome(r, provider, response.StatusCode, true, promptcache.Usage{}, false, started)
+		var answer io.Reader = response.Body
+		if translation.Integrity != nil {
+			// No heartbeat: Ollama reads bare JSON lines and an SSE comment would
+			// be an invalid line, unlike the Chat path (openai.go:278).
+			gated, gateErr := h.gateAnswer(r.Context(), response, provider, translation.Integrity, nil)
+			if gateErr != nil {
+				h.abandon(r, provider, response.StatusCode, true, promptcache.Usage{}, started, true)
+				return
+			}
+			answer = gated
+		}
+		usage, observed, relayErr := h.copyTranslatedOllamaStream(w, r, answer, translation, provider, request.Model)
+		status := response.StatusCode
+		if relayErr != nil && r.Context().Err() == nil {
+			// The status line is gone, so the failure reaches the client as one
+			// Ollama error document, never as a short answer ending in done:true.
+			writeOllamaStreamError(w, relayErr)
+			status = http.StatusBadGateway
+			h.recordClassification(provider.ConnectionID, classifyResponse(status, nil), time.Now())
+		}
+		h.emitTranslated(r, provider, status, true, usage, observed, started)
 		return
 	}
 	if provider.Protocol == ollamaadapter.Protocol {
@@ -315,52 +336,76 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(w, response.Body)
 		return
 	}
-	// The provider answered Chat (natively or through its response leg); the
-	// Ollama client reads one document with message.content and done:true.
-	responseBody, readErr := io.ReadAll(response.Body)
+	// The provider answered Chat (natively or through its response leg and the
+	// Kiro gate); the Ollama client reads one document with message.content and
+	// done:true.
+	var answer io.Reader = response.Body
+	if translation.Integrity != nil {
+		gated, gateErr := h.gateAnswer(r.Context(), response, provider, translation.Integrity, nil)
+		if gateErr != nil {
+			h.abandon(r, provider, response.StatusCode, false, promptcache.Usage{}, started, true)
+			return
+		}
+		answer = gated
+	}
+	responseBody, readErr := io.ReadAll(io.LimitReader(answer, openaiadapter.MaxTranslatedResponseBytes+1))
 	if r.Context().Err() != nil {
 		return
 	}
-	usage, observed := promptcache.Usage{}, false
-	if readErr == nil {
-		if parsed, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
-			usage, observed = parsed, true
-		}
+	var gateFailure *concerns.StreamFailure
+	if readErr != nil && errors.As(readErr, &gateFailure) {
+		// The gate's verdict, in the code the pin gives it (executors/kiro.js:493-504).
+		h.writeError(w, http.StatusBadGateway, concerns.Text(gateFailure.Value["code"]), concerns.Text(gateFailure.Value["message"]))
+		h.recordClassification(provider.ConnectionID, classifyResponse(http.StatusBadGateway, nil), time.Now())
+		h.emitTranslated(r, provider, http.StatusBadGateway, false, promptcache.Usage{}, false, started)
+		return
 	}
-	var answer []byte
-	if readErr == nil {
-		answer = responseBody
-		if translation.Response != nil {
-			answer, err = translation.Response(responseBody)
-		}
-		if err == nil {
-			answer, err = ollamaadapter.ChatResponseToOllama(answer, request.Model)
-		}
-	}
-	if readErr != nil || err != nil {
+	if readErr != nil || len(responseBody) > openaiadapter.MaxTranslatedResponseBytes {
 		h.writeError(w, http.StatusBadGateway, "upstream_response_invalid", "upstream response could not be read")
-		h.emitOutcome(r, provider, http.StatusBadGateway, false, usage, observed, started)
+		h.emitTranslated(r, provider, http.StatusBadGateway, false, promptcache.Usage{}, false, started)
+		return
+	}
+	usage, observed := promptcache.Usage{}, false
+	if parsed, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
+		usage, observed = parsed, true
+	}
+	document := responseBody
+	if translation.Response != nil {
+		document, err = translation.Response(responseBody)
+	}
+	if err == nil {
+		document, err = ollamaadapter.ChatResponseToOllama(document, request.Model)
+	}
+	if err != nil {
+		h.writeError(w, http.StatusBadGateway, "upstream_response_invalid", "upstream response could not be read")
+		h.emitTranslated(r, provider, http.StatusBadGateway, false, usage, observed, started)
 		return
 	}
 	w.WriteHeader(response.StatusCode)
-	_, _ = w.Write(answer)
-	h.emitOutcome(r, provider, response.StatusCode, false, usage, observed, started)
+	_, _ = w.Write(document)
+	h.emitTranslated(r, provider, response.StatusCode, false, usage, observed, started)
 }
 
 // translatedOllamaChat prepares a Chat client's attempt on a provider that
 // speaks another wire, with the credential and identity headers the translated
 // Chat path applies (openai.go): the surface changes the answer's shape, never
-// the account-selection or authentication rules.
-func (h *Handler) translatedOllamaChat(r *http.Request, provider routing.ProviderRef, request *openaiadapter.ChatRequest) (ChatTranslation, error) {
-	upstreamModel := provider.UpstreamModel
-	if upstreamModel == "" {
-		upstreamModel = request.Model
+// the account-selection or authentication rules. A hook Codec comes first, as it
+// does there: qoder, cursor, grok-web and perplexity-web have no TranslateChat
+// arm and would be refused after being selected.
+func (h *Handler) translatedOllamaChat(r *http.Request, provider routing.ProviderRef, request *openaiadapter.ChatRequest, upstreamModel string) (ChatTranslation, error) {
+	var translated ChatTranslation
+	var err error
+	if wire.HasCodec(provider.Protocol) {
+		translated, err = h.codecTranslation(provider, request, nil, nil, false, upstreamModel)
+	} else if h.opts.TranslateChat != nil {
+		translatedRequest := *request
+		translatedRequest.Model = upstreamModel
+		translatedRequest.Scope = translationScope(r, provider)
+		translatedRequest.Project = provider.Connection.Settings.ProjectID
+		translated, err = h.opts.TranslateChat(&translatedRequest, provider.Protocol)
+	} else {
+		return ChatTranslation{}, fmt.Errorf("no Chat-to-provider translator registered")
 	}
-	translatedRequest := *request
-	translatedRequest.Model = upstreamModel
-	translatedRequest.Scope = translationScope(r, provider)
-	translatedRequest.Project = provider.Connection.Settings.ProjectID
-	translated, err := h.opts.TranslateChat(&translatedRequest, provider.Protocol)
 	if err != nil {
 		return ChatTranslation{}, err
 	}
@@ -392,21 +437,57 @@ func (h *Handler) translatedOllamaChat(r *http.Request, provider routing.Provide
 }
 
 // copyTranslatedOllamaStream converts a provider's stream to Chat when its wire
-// is not Chat, then relays the Chat SSE as Ollama ndjson.
-func (h *Handler) copyTranslatedOllamaStream(w http.ResponseWriter, r *http.Request, response *http.Response, translation ChatTranslation, model string) {
+// is not Chat, then relays the Chat SSE as Ollama ndjson. The provider's own
+// usage is scanned, so the streamed and buffered branches account alike, and a
+// conversion failure is returned rather than left as an early end of stream.
+func (h *Handler) copyTranslatedOllamaStream(w http.ResponseWriter, r *http.Request, body io.Reader, translation ChatTranslation, provider routing.ProviderRef, model string) (promptcache.Usage, bool, error) {
+	scanner := &usageScanner{family: provider.Protocol, whole: translation.WholeAnswer}
+	answer := io.TeeReader(body, scanner)
+	var err error
 	if translation.Stream == nil {
-		h.copyOllamaStream(w, r, response, model)
-		return
+		err = h.relayOllamaSSE(w, r, answer, model)
+	} else {
+		ctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+		reader, writer := io.Pipe()
+		done := make(chan struct{})
+		go func() {
+			// CloseWithError carries a conversion failure through the pipe. The
+			// scanner is read only after this returns, so the tee has one writer.
+			_ = writer.CloseWithError(translation.Stream(ctx, answer, writer))
+			close(done)
+		}()
+		err = h.relayOllamaSSE(w, r, reader, model)
+		// A relay that stopped early (the client left, or the terminal event) is
+		// unblocked here; the converter's own error, if any, has already reached
+		// the reader above.
+		_ = reader.Close()
+		<-done
 	}
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-	reader, writer := io.Pipe()
-	go func() {
-		_ = translation.Stream(ctx, response.Body, writer)
-		_ = writer.Close()
-	}()
-	h.copyOllamaStream(w, r, &http.Response{Body: reader}, model)
-	_ = reader.Close()
+	usage, _ := scanner.usage()
+	observed := err == nil && scanner.reportsUsage(r.Context().Err() == nil)
+	if !observed {
+		usage = promptcache.Usage{}
+	}
+	return usage, observed, err
+}
+
+// writeOllamaStreamError is the failure terminal of an answer whose status is
+// already sent: one Ollama error document, in the relayed-error shape #375 set.
+func writeOllamaStreamError(w http.ResponseWriter, err error) {
+	document := map[string]any{"code": "upstream_stream_error", "message": err.Error(), "type": "upstream_stream_error"}
+	var failure *concerns.StreamFailure
+	if errors.As(err, &failure) {
+		for _, key := range []string{"code", "message", "type"} {
+			if value := concerns.Text(failure.Value[key]); value != "" {
+				document[key] = value
+			}
+		}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": document})
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }
 
 // copyOllamaNativeStream relays a native Ollama ndjson stream byte-for-byte
@@ -457,9 +538,17 @@ func (h *Handler) copyOllamaNativeStream(w http.ResponseWriter, r *http.Request,
 }
 
 func (h *Handler) copyOllamaStream(w http.ResponseWriter, r *http.Request, response *http.Response, model string) {
+	_ = h.relayOllamaSSE(w, r, response.Body, model)
+}
+
+// relayOllamaSSE relays Chat SSE as Ollama ndjson and reports the reader failure
+// that cut the stream short; a clean end (the terminal event, or EOF after the
+// last chunk) writes the final done object and returns nil.
+func (h *Handler) relayOllamaSSE(w http.ResponseWriter, r *http.Request, body io.Reader, model string) error {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	flusher, canFlush := w.(http.Flusher)
-	reader := bufio.NewReaderSize(response.Body, 32*1024)
+	tracked := &trackedReader{source: body}
+	reader := bufio.NewReaderSize(tracked, 32*1024)
 	writeLine := func(payload map[string]any) {
 		_ = json.NewEncoder(w).Encode(payload)
 		if canFlush {
@@ -467,36 +556,54 @@ func (h *Handler) copyOllamaStream(w http.ResponseWriter, r *http.Request, respo
 		}
 	}
 	for {
-		if r.Context().Err() != nil {
-			return
+		if err := r.Context().Err(); err != nil {
+			return err
 		}
 		payload, ok := nextSSEData(reader)
 		if !ok {
-			return
+			return tracked.err
 		}
 		if payload == "[DONE]" {
 			break
 		}
-		var chunk struct {
-			Choices []struct {
-				Delta struct {
-					Content string `json:"content"`
-				} `json:"delta"`
-				FinishReason *string `json:"finish_reason"`
-			} `json:"choices"`
-		}
-		if json.Unmarshal([]byte(payload), &chunk) != nil || len(chunk.Choices) == 0 {
+		var chunk map[string]any
+		if json.Unmarshal([]byte(payload), &chunk) != nil {
 			continue
 		}
-		choice := chunk.Choices[0]
-		if choice.Delta.Content != "" {
-			writeLine(map[string]any{"model": model, "message": map[string]string{"role": "assistant", "content": choice.Delta.Content}, "done": false})
+		// A converted stream reports its failure as a Chat error object before
+		// [DONE] (concerns.FailChatStream); that is not a normal end.
+		if failure := concerns.Object(chunk["error"]); failure != nil {
+			return &concerns.StreamFailure{Value: failure}
 		}
-		if choice.FinishReason != nil {
+		choices := concerns.Items(chunk["choices"])
+		if len(choices) == 0 {
+			continue
+		}
+		choice := concerns.Object(choices[0])
+		if content := concerns.Text(concerns.Object(choice["delta"])["content"]); content != "" {
+			writeLine(map[string]any{"model": model, "message": map[string]string{"role": "assistant", "content": content}, "done": false})
+		}
+		if choice["finish_reason"] != nil {
 			break
 		}
 	}
 	writeLine(map[string]any{"model": model, "message": map[string]string{"role": "assistant", "content": ""}, "done": true})
+	return nil
+}
+
+// trackedReader remembers the first non-EOF read failure, which nextSSEData
+// otherwise folds into "the stream ended".
+type trackedReader struct {
+	source io.Reader
+	err    error
+}
+
+func (t *trackedReader) Read(p []byte) (int, error) {
+	n, err := t.source.Read(p)
+	if err != nil && err != io.EOF && t.err == nil {
+		t.err = err
+	}
+	return n, err
 }
 
 func (h *Handler) handleSystemOne(w http.ResponseWriter, r *http.Request) {

@@ -411,8 +411,13 @@ account exactly as `/v1/chat/completions` does (so any wire that route can
 translate to is eligible), and reshapes only the answer into Ollama's
 `message`/NDJSON form (the oracle converts after its Chat handler,
 `src/app/api/v1/api/chat/route.js:26-27`). It is not a protocol-restricted
-route. What each leg carries, refuses or does not carry
-is PARITY 6.4. Error bodies are not
+route. A translated account keeps every rule the Chat path gives it: the hook
+Codec when the provider has one, the provider's credential/identity headers, the
+Kiro answer-integrity gate, and the bounded response reader. The buffered answer
+is deliberately minimal — `model`, an assistant `message` carrying its text, and
+`done` — and carries no `created_at`, `done_reason`, token counts or
+`tool_calls`, matching the streamed relay, which forwards Chat text only. What
+each leg carries, refuses or does not carry is PARITY 6.4. Error bodies are not
 converted: a non-2xx answer from a translated attempt is relayed with its
 status and body as the provider sent it, so a Messages client served by a Chat
 provider can receive an OpenAI-shaped error. One text-only exception applies to
