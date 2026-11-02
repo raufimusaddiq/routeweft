@@ -99,7 +99,11 @@ func TestOllamaSurfaceServesCatalogueModels(t *testing.T) {
 				if recorder.Code != http.StatusOK {
 					t.Fatalf("/v1/api/chat status=%d body=%s outbound=%s", recorder.Code, recorder.Body, body)
 				}
-				if got := recorder.Header().Get("Content-Type"); got != "application/x-ndjson" {
+				wantType := "application/json"
+				if stream {
+					wantType = "application/x-ndjson"
+				}
+				if got := recorder.Header().Get("Content-Type"); got != wantType {
 					t.Fatalf("content type %q", got)
 				}
 				if !strings.Contains(recorder.Body.String(), `"content":"OK"`) || !strings.Contains(recorder.Body.String(), `"done":true`) {
