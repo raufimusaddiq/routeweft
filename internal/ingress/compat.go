@@ -258,6 +258,10 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	}
 	defer response.Body.Close()
 	w.Header().Set("Content-Type", "application/x-ndjson")
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		// A relayed upstream error is one JSON document, not a stream (#375).
+		w.Header().Set("Content-Type", "application/json")
+	}
 	w.WriteHeader(response.StatusCode)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		h.relayUpstreamError(w, response)

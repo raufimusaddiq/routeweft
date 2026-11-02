@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -169,6 +170,60 @@ func TestOllamaChatNativeReturnsNdjson(t *testing.T) {
 	seen := server.Requests()
 	if len(seen) != 1 || !strings.HasSuffix(seen[0].Path, "/api/chat") {
 		t.Fatalf("ollama upstream %+v", seen)
+	}
+}
+
+// A non-2xx upstream answer on the Ollama surface is one relayed JSON document,
+// not an ndjson stream (#375).
+func TestOllamaChatRelayedErrorIsJson(t *testing.T) {
+	server, err := mockupstream.Start(nil, mockupstream.WithMatcher(func(_ *http.Request, _ string) mockupstream.Decision {
+		return mockupstream.Decision{Status: http.StatusServiceUnavailable, Headers: map[string]string{"Content-Type": "application/json"}, Body: `{"error":{"code":"model_unavailable","message":"model \"gone\" is not available"}}`}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, ProviderResolver: fixedProvider(ollamaadapter.Protocol, server.URL())})
+	recorder := httptest.NewRecorder()
+	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/api/chat", strings.NewReader(`{"model":"llama3.2","messages":[{"role":"user","content":"hi"}],"stream":true}`)))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status %d body %s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("error content type %q", got)
+	}
+	var document struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &document); err != nil || document.Error.Code != "model_unavailable" {
+		t.Fatalf("error body %q: %v", recorder.Body.String(), err)
+	}
+}
+
+// The success path still streams ndjson under its own content type.
+func TestOllamaChatNativeStreamsNdjson(t *testing.T) {
+	lines := "{\"model\":\"llama3.2\",\"message\":{\"role\":\"assistant\",\"content\":\"Hi\"},\"done\":false}\n" +
+		"{\"model\":\"llama3.2\",\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true}\n"
+	server, err := mockupstream.Start(nil, mockupstream.WithMatcher(func(_ *http.Request, _ string) mockupstream.Decision {
+		return mockupstream.Decision{Status: http.StatusOK, Headers: map[string]string{"Content-Type": "application/x-ndjson"}, Body: lines}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, ProviderResolver: fixedProvider(ollamaadapter.Protocol, server.URL())})
+	recorder := httptest.NewRecorder()
+	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/api/chat", strings.NewReader(`{"model":"llama3.2","messages":[{"role":"user","content":"hi"}],"stream":true}`)))
+	if recorder.Code != http.StatusOK || recorder.Body.String() != lines {
+		t.Fatalf("status %d body %q", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "application/x-ndjson" {
+		t.Fatalf("stream content type %q", got)
+	}
+	if !recorder.Flushed {
+		t.Fatal("ndjson stream was not flushed")
 	}
 }
 
