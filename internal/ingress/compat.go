@@ -67,7 +67,7 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, source, model
 	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		_, _ = io.Copy(w, response.Body)
+		h.relayUpstreamError(w, response)
 		h.emitOutcome(r, provider, response.StatusCode, stream, promptcache.Usage{}, true, started)
 		return
 	}
@@ -260,7 +260,7 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.WriteHeader(response.StatusCode)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		_, _ = io.Copy(w, response.Body)
+		h.relayUpstreamError(w, response)
 		h.emitOutcome(r, provider, response.StatusCode, request.Stream, promptcache.Usage{}, true, started)
 		return
 	}

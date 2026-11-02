@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { PAGE_SIZE, Pager, fetchAll } from './ProviderPaging'
 
-type Model = { providerId: string; id: string; name?: string; contextWindow?: number; capabilities: string[]; disabled: boolean }
+type Model = { providerId: string; id: string; name?: string; contextWindow?: number; capabilities: string[] | null; disabled: boolean }
 type Node = { id: string; kind: string; providerId: string; name: string; prefix?: string; baseUrl?: string; transports: string[] }
 type Connection = { id: string; nodeId: string; providerId: string; name: string; identity?: string; accountId?: string; enabled: boolean; priority: number }
 type Props = { onUnauthorized: () => void }

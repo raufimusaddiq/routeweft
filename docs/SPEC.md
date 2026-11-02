@@ -409,7 +409,11 @@ never a client wire of the hub. What each leg carries, refuses or does not carry
 is PARITY 6.4. Error bodies are not
 converted: a non-2xx answer from a translated attempt is relayed with its
 status and body as the provider sent it, so a Messages client served by a Chat
-provider can receive an OpenAI-shaped error. Where
+provider can receive an OpenAI-shaped error. One text-only exception applies to
+every relay: when the body's `error.code` or `error.type` is `model_unavailable`,
+the message is replaced with a catalogue-safe text that names no model, because
+the provider's own suggestion can name an id this route does not list. The status,
+code, type and every other field are relayed unchanged. Where
 Routeweft deliberately differs from the pinned oracle, the difference and its
 reason are recorded in `docs/PARITY.md` §6.3.
 

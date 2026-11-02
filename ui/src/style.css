@@ -704,6 +704,10 @@ tbody tr:hover { background: var(--surface-2); }
 /* Error: a box in the danger colour, message, retry */
 .page-error, .auth-error { gap: 16px; border: 3px solid var(--danger); border-radius: var(--radius-state); padding: 12px 20px; background: var(--surface); box-shadow: var(--hard-sm); }
 .page-error p, .auth-error { line-height: 18px; }
+.render-error { flex-wrap: wrap; align-items: flex-start; width: calc(100% - 32px); max-width: 720px; margin: 48px auto; }
+.render-error > div { flex: 1 1 240px; }
+.render-error h2 { margin: 0; font-size: var(--t-lead); line-height: 1.25; }
+.render-error p { margin: 6px 0 0; }
 
 /* Catalog rows, selected state, hover */
 .provider-option, .nav-link, .combo-row { transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease); }

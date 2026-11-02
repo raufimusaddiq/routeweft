@@ -7,7 +7,7 @@
 export type SignInMode = 'browser' | 'device' | 'import'
 export type Completion = 'code' | 'redirect-url' | 'token' | 'callback'
 export type SignInMethod = { mode: SignInMode; authKind: string; resolvesIdentity: boolean; infersIdentity?: boolean; variant?: string; metaKeys?: string[]; completion?: Completion; loopbackRedirect?: string; redirectUri?: string; redirectUnconfigured?: boolean }
-export type ProviderAuth = { id?: string; auth: string; authModes: string[]; signInMethods?: SignInMethod[]; bulkImport?: boolean }
+export type ProviderAuth = { id?: string; auth: string; authModes?: string[] | null; signInMethods?: SignInMethod[]; bulkImport?: boolean }
 
 export type ConnectMethod = {
   id: string
@@ -51,7 +51,7 @@ function flowLabel(method: SignInMethod, provider: string, id?: string): string 
 // The provider's primary mode comes first so a dual-auth provider whose default is
 // an API key still opens on the API key, as the single select did before.
 export function connectMethods(provider: ProviderAuth, providerName: string): ConnectMethod[] {
-  const modes = provider.authModes.length ? provider.authModes : [provider.auth]
+  const modes = provider.authModes?.length ? provider.authModes : [provider.auth]
   const manual = (mode: string): ConnectMethod => ({ id: `manual-${mode}`, kind: 'manual', label: MANUAL_LABELS[mode] ?? mode, authKind: mode, askIdentity: true, metaKeys: [] })
   const flows = (provider.signInMethods ?? []).map((method): ConnectMethod => ({
     id: method.variant ? `${method.mode}-${method.variant}` : method.mode, kind: method.mode, label: flowLabel(method, providerName, provider.id), authKind: method.authKind,

@@ -59,4 +59,5 @@ node scripts/phase4-figures-smoke.cjs
 node scripts/a11y-keyboard-labels-smoke.cjs
 node scripts/live-events-smoke.cjs
 node scripts/locale-smoke.cjs
+node scripts/kenari-null-capabilities-smoke.cjs
 
