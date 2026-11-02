@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -189,14 +190,19 @@ func TestRouteListingUsesServingsTargets(t *testing.T) {
 }
 
 // Azure has no model listing at the pin (registry/azure.js declares no models
-// fetcher; validate/route.js validates by a deployment chat request), so listing
-// is a clean no-op: no credential read, no request, no error.
-func TestAzureModelListingIsANoOp(t *testing.T) {
+// fetcher; validate/route.js validates by a deployment chat request). Listing
+// reads no credential and sends no request, and it says why instead of returning
+// a silent empty catalog (#370).
+func TestAzureModelListingNamesThatThereIsNone(t *testing.T) {
 	h, calls := recordingHandler(t)
 	node, connection := builtinConnection("azure", routing.ProviderSettings{AzureEndpoint: "https://acme.openai.azure.com", Deployment: "d1"}, credentials.AuthAPIKey)
 	models, err := h.fetchConnectionModelEntries(context.Background(), connection, node)
-	if err != nil || len(models) != 0 || len(calls()) != 0 {
-		t.Fatalf("models=%v err=%v calls=%v", models, err, calls())
+	var unsupported *wire.ListingError
+	if !errors.As(err, &unsupported) || !unsupported.Unsupported || !strings.Contains(err.Error(), "publishes no model list") {
+		t.Fatalf("models=%v err=%v", models, err)
+	}
+	if len(models) != 0 || len(calls()) != 0 {
+		t.Fatalf("models=%v calls=%v", models, calls())
 	}
 }
 

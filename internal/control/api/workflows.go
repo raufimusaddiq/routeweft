@@ -58,6 +58,9 @@ type validationResult struct {
 	Status          int    `json:"status,omitempty"`
 	UpstreamStatus  int    `json:"upstreamStatus,omitempty"`
 	Error           string `json:"error,omitempty"`
+	// Note explains a result that is neither a success nor a failure, such as a
+	// provider with no model listing that sync skips rather than reports failed.
+	Note string `json:"note,omitempty"`
 	// unlisted is a check that listed no models (the provider has no listing,
 	// the listing was empty, or it failed and the check ran on a supplied
 	// model): its count is not a count of the models the credential can use.
@@ -436,7 +439,15 @@ func (h *Handler) handleCatalogSync(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err != nil {
-				result.Error = "model discovery failed; known catalog retained"
+				// A provider that publishes no model list has nothing to sync:
+				// that is a named skip, not a failed run, and the known catalog
+				// stays as it is.
+				var unsupported *wire.ListingError
+				if errors.As(err, &unsupported) && unsupported.Unsupported {
+					result.OK, result.Note = true, err.Error()
+				} else {
+					result.Error = "model discovery failed; known catalog retained"
+				}
 			} else {
 				result.OK, result.ModelsAvailable = true, len(models)
 				for _, model := range models {

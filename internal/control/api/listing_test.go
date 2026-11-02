@@ -385,3 +385,19 @@ func TestTrackedListingGapIsDistinguishableFromUpstreamFailure(t *testing.T) {
 		t.Fatalf("upstream calls %d: the tracked gap must send nothing", upstream)
 	}
 }
+
+// kenari's registry row declares its catalog endpoint as GET /v1/models
+// (open-sse/providers/registry/kenari.js:23 validateUrl, with the bearer that
+// row's openai transport sends, kenari.js:44). The serving base carries no /v1, so before
+// #370 Discover requested https://kenari.id/models, which answers the marketing
+// page rather than the catalog.
+func TestKenariListingIsThePinsValidateURL(t *testing.T) {
+	models, call, err := listProvider(t, "kenari", credentials.AuthAPIKey, routing.ProviderSettings{}, "tok",
+		`{"data":[{"id":"gpt-5-5","endpoints":["chat"]}]}`)
+	if err != nil || ids(models) != "gpt-5-5" {
+		t.Fatalf("models=%+v err=%v", models, err)
+	}
+	if call.URL != "https://kenari.id/v1/models" || call.Header.Get("Authorization") != "Bearer tok" {
+		t.Fatalf("kenari listing went to %s with %v", call.URL, call.Header)
+	}
+}

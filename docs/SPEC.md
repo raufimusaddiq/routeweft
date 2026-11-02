@@ -2463,7 +2463,8 @@ models, credentials or other providers. It does not claim per-model locks or
 durable health history. Catalog sync is a single-flight, explicit operator
 action over at most 200 enabled accounts, unioning provider catalogs through
 compile/commit/publish. It never removes known, disabled or manual entries on
-partial/empty/failing discovery. GET exposes running/last-attempt/error state;
+partial/empty/failing discovery. A provider that publishes no model list has
+nothing to sync: its result is a named skip (`note`), not a failed run. GET exposes running/last-attempt/error state;
 that operational state is process-local, the catalog is durable.
 
 Suggestions retain pinned `kenari`, `openrouter-free`, `opencode-free`,
