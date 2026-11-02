@@ -151,7 +151,8 @@ func TestGeminiRejectsUnsupportedAndMalformedRequests(t *testing.T) {
 	}
 }
 
-func TestOllamaChatNativeReturnsNdjson(t *testing.T) {
+// A non-streaming success is one Ollama document, announced as JSON (#379).
+func TestOllamaChatNativeAnswersJson(t *testing.T) {
 	server, err := mockupstream.Start(nil, mockupstream.WithMatcher(func(_ *http.Request, _ string) mockupstream.Decision {
 		return mockupstream.Decision{Status: http.StatusOK, Headers: map[string]string{"Content-Type": "application/json"}, Body: `{"model":"llama3.2","message":{"role":"assistant","content":"Hi."},"done":true}`}
 	}))
@@ -162,11 +163,20 @@ func TestOllamaChatNativeReturnsNdjson(t *testing.T) {
 	mux, key := keyedHandler(t, Options{AllowPrivateUpstreams: true, ProviderResolver: fixedProvider(ollamaadapter.Protocol, server.URL())})
 	recorder := httptest.NewRecorder()
 	bearer(mux, key).ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/api/chat", strings.NewReader(`{"model":"llama3.2","messages":[{"role":"user","content":"Say hi."}],"stream":false}`)))
-	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"done":true`) {
+	if recorder.Code != http.StatusOK {
 		t.Fatalf("ollama status %d body %s", recorder.Code, recorder.Body.String())
 	}
-	if got := recorder.Header().Get("Content-Type"); got != "application/x-ndjson" {
+	if got := recorder.Header().Get("Content-Type"); got != "application/json" {
 		t.Fatalf("ollama content type %q", got)
+	}
+	var document struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+		Done bool `json:"done"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &document); err != nil || document.Message.Content != "Hi." || !document.Done {
+		t.Fatalf("ollama body %q: %v", recorder.Body.String(), err)
 	}
 	seen := server.Requests()
 	if len(seen) != 1 || !strings.HasSuffix(seen[0].Path, "/api/chat") {

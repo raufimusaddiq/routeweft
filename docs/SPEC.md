@@ -410,7 +410,9 @@ a Chat client: it parses the body as Chat, resolves the model, key grants and
 account exactly as `/v1/chat/completions` does (so any wire that route can
 translate to is eligible), and reshapes only the answer into Ollama's
 `message`/NDJSON form (the oracle converts after its Chat handler,
-`src/app/api/v1/api/chat/route.js:26-27`). It is not a protocol-restricted
+`src/app/api/v1/api/chat/route.js:26-27`). A stream is announced as
+`application/x-ndjson`; one buffered answer is announced as `application/json`.
+It is not a protocol-restricted
 route. A translated account keeps every rule the Chat path gives it: the hook
 Codec when the provider has one, the provider's credential/identity headers, the
 Kiro answer-integrity gate, and the bounded response reader. The buffered answer
