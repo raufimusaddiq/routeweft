@@ -67,7 +67,7 @@ export function Combos({ onUnauthorized }: Props) {
       const adapterData = await adapterResponse.json() as { items: Adapter[] }
       setCombos(loadedCombos)
       setCapabilityCatalog({
-        models: new Map(models.map(model => [`${model.providerId}/${model.id}`, (model as { capabilities?: string[] }).capabilities ?? []])),
+        models: new Map(models.map(model => [`${model.providerId}/${model.id}`, model.capabilities ?? []])),
         aliases: new Map(aliases.map(alias => [alias.alias, { providerId: alias.providerId, modelId: alias.modelId }])),
         combos: new Map(loadedCombos.map(combo => [combo.name, { name: combo.name, members: combo.members }])),
       })

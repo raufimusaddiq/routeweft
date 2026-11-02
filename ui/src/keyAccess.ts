@@ -18,7 +18,7 @@ export type Choice = {
 export type CatalogInput = {
   providers: Array<{ id: string; staticModels?: string[] }>
   connections: Array<{ providerId: string; enabled: boolean }>
-  models: Array<{ providerId: string; id: string; disabled?: boolean }>
+  models: Array<{ providerId: string; id: string; disabled?: boolean; capabilities?: string[] | null }>
   disabled: Array<{ providerId: string; modelId: string }>
   aliases: Array<{ alias: string; providerId: string; modelId: string }>
   combos: Array<{ name: string; members: Array<{ providerId: string; modelId: string; selected?: boolean }> }>

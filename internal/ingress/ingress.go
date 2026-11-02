@@ -481,7 +481,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		_, _ = io.Copy(w, response.Body)
+		h.relayUpstreamError(w, response)
 		h.emitOutcome(r, provider, response.StatusCode, request.Stream, promptcache.Usage{}, true, started)
 		return
 	}

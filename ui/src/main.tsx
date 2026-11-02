@@ -15,6 +15,7 @@ import { Settings } from './Settings'
 import { SystemOne } from './SystemOne'
 import { TokenSaver } from './TokenSaver'
 import { Usage } from './Usage'
+import { ErrorBoundary } from './ErrorBoundary'
 import './style.css'
 
 type Theme = 'light' | 'dark' | 'system'
@@ -239,5 +240,5 @@ function App() {
 initI18n()
 
 createRoot(document.getElementById('root')!).render(
-  <React.StrictMode><App /></React.StrictMode>,
+  <React.StrictMode><ErrorBoundary><App /></ErrorBoundary></React.StrictMode>,
 )
