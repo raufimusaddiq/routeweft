@@ -3,6 +3,7 @@ package ingress
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,11 +12,13 @@ import (
 	"strings"
 	"time"
 
+	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	geminiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/gemini"
 	ollamaadapter "github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
 	systemoneadapter "github.com/raufimusaddiq/routeweft/internal/protocol/systemone"
 	"github.com/raufimusaddiq/routeweft/internal/providers/shared"
+	"github.com/raufimusaddiq/routeweft/internal/providers/wire"
 	"github.com/raufimusaddiq/routeweft/internal/routing"
 	"github.com/raufimusaddiq/routeweft/internal/transforms/promptcache"
 )
@@ -238,19 +241,32 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	started := time.Now()
-	response, provider, err := h.dispatchAttempts(r, snapshot, request.Model, ollamaadapter.Protocol, false, request.Stream, func(provider routing.ProviderRef) (ChatTranslation, error) {
-		if provider.Protocol != ollamaadapter.Protocol {
-			if h.opts.TranslateChat == nil {
-				return ChatTranslation{}, fmt.Errorf("no Chat-to-provider translator registered")
+	var translation ChatTranslation
+	// /v1/api/chat is a Chat client whose answer is reshaped for Ollama. The
+	// oracle serves it by running its Chat handler and converting the answer
+	// afterwards (src/app/api/v1/api/chat/route.js:26-27), so a model and account
+	// resolve exactly as they do on /v1/chat/completions; asking for candidates
+	// in the Ollama protocol excluded every account that did not speak it (#377).
+	response, provider, err := h.dispatchAttempts(r, snapshot, request.Model, openaiadapter.ChatProtocol, false, request.Stream, func(provider routing.ProviderRef) (ChatTranslation, error) {
+		translation = ChatTranslation{}
+		switch provider.Protocol {
+		case ollamaadapter.Protocol, openaiadapter.ChatProtocol:
+			body, err := request.MarshalBody(provider.UpstreamModel)
+			endpoint := "chat/completions"
+			if provider.Protocol == ollamaadapter.Protocol {
+				endpoint = ollamaEndpoint
 			}
-			return h.opts.TranslateChat(request, provider.Protocol)
+			if provider.Endpoint != "" {
+				endpoint = provider.Endpoint
+			}
+			return ChatTranslation{Endpoint: endpoint, Body: body, Headers: openAIProviderHeaders(provider)}, err
 		}
-		body, err := request.MarshalBody(provider.UpstreamModel)
-		endpoint := "api/chat"
-		if provider.Endpoint != "" {
-			endpoint = provider.Endpoint
+		if h.opts.TranslateChat == nil {
+			return ChatTranslation{}, fmt.Errorf("no Chat-to-provider translator registered")
 		}
-		return ChatTranslation{Endpoint: endpoint, Body: body, Headers: openAIProviderHeaders(provider)}, err
+		translated, err := h.translatedOllamaChat(r, provider, request)
+		translation = translated
+		return translated, err
 	})
 	if err != nil {
 		h.dispatchError(w, r, err)
@@ -261,40 +277,136 @@ func (h *Handler) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		// A relayed upstream error is one JSON document, not a stream (#375).
 		w.Header().Set("Content-Type", "application/json")
-	}
-	w.WriteHeader(response.StatusCode)
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		w.WriteHeader(response.StatusCode)
 		h.relayUpstreamError(w, response)
 		h.emitOutcome(r, provider, response.StatusCode, request.Stream, promptcache.Usage{}, true, started)
 		return
 	}
 	if request.Stream {
-		if provider.Protocol != ollamaadapter.Protocol {
-			h.copyOllamaStream(w, r, response, request.Model)
-			h.emitOutcome(r, provider, response.StatusCode, true, promptcache.Usage{}, false, started)
-			return
-		}
-		if h.opts.OnRequestComplete != nil {
-			usage, observed := h.copyOllamaNativeStream(w, r, response, provider)
-			h.emitOutcome(r, provider, response.StatusCode, true, usage, observed, started)
-			return
-		}
-		h.copyNativeSSE(w, r, response)
-		return
-	}
-	if h.opts.OnRequestComplete != nil {
-		responseBody, readErr := io.ReadAll(response.Body)
-		usage, observed := promptcache.Usage{}, false
-		if readErr == nil {
-			if parsed, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
-				usage, observed = parsed, true
+		w.WriteHeader(response.StatusCode)
+		if provider.Protocol == ollamaadapter.Protocol {
+			if h.opts.OnRequestComplete != nil {
+				usage, observed := h.copyOllamaNativeStream(w, r, response, provider)
+				h.emitOutcome(r, provider, response.StatusCode, true, usage, observed, started)
+				return
 			}
+			h.copyNativeSSE(w, r, response)
+			return
 		}
-		_, _ = w.Write(responseBody)
-		h.emitOutcome(r, provider, response.StatusCode, false, usage, observed, started)
+		h.copyTranslatedOllamaStream(w, r, response, translation, request.Model)
+		h.emitOutcome(r, provider, response.StatusCode, true, promptcache.Usage{}, false, started)
 		return
 	}
-	_, _ = io.Copy(w, response.Body)
+	if provider.Protocol == ollamaadapter.Protocol {
+		if h.opts.OnRequestComplete != nil {
+			responseBody, readErr := io.ReadAll(response.Body)
+			usage, observed := promptcache.Usage{}, false
+			if readErr == nil {
+				if parsed, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
+					usage, observed = parsed, true
+				}
+			}
+			w.WriteHeader(response.StatusCode)
+			_, _ = w.Write(responseBody)
+			h.emitOutcome(r, provider, response.StatusCode, false, usage, observed, started)
+			return
+		}
+		w.WriteHeader(response.StatusCode)
+		_, _ = io.Copy(w, response.Body)
+		return
+	}
+	// The provider answered Chat (natively or through its response leg); the
+	// Ollama client reads one document with message.content and done:true.
+	responseBody, readErr := io.ReadAll(response.Body)
+	if r.Context().Err() != nil {
+		return
+	}
+	usage, observed := promptcache.Usage{}, false
+	if readErr == nil {
+		if parsed, ok := shared.ParseUsage(provider.Protocol, responseBody); ok {
+			usage, observed = parsed, true
+		}
+	}
+	var answer []byte
+	if readErr == nil {
+		answer = responseBody
+		if translation.Response != nil {
+			answer, err = translation.Response(responseBody)
+		}
+		if err == nil {
+			answer, err = ollamaadapter.ChatResponseToOllama(answer, request.Model)
+		}
+	}
+	if readErr != nil || err != nil {
+		h.writeError(w, http.StatusBadGateway, "upstream_response_invalid", "upstream response could not be read")
+		h.emitOutcome(r, provider, http.StatusBadGateway, false, usage, observed, started)
+		return
+	}
+	w.WriteHeader(response.StatusCode)
+	_, _ = w.Write(answer)
+	h.emitOutcome(r, provider, response.StatusCode, false, usage, observed, started)
+}
+
+// translatedOllamaChat prepares a Chat client's attempt on a provider that
+// speaks another wire, with the credential and identity headers the translated
+// Chat path applies (openai.go): the surface changes the answer's shape, never
+// the account-selection or authentication rules.
+func (h *Handler) translatedOllamaChat(r *http.Request, provider routing.ProviderRef, request *openaiadapter.ChatRequest) (ChatTranslation, error) {
+	upstreamModel := provider.UpstreamModel
+	if upstreamModel == "" {
+		upstreamModel = request.Model
+	}
+	translatedRequest := *request
+	translatedRequest.Model = upstreamModel
+	translatedRequest.Scope = translationScope(r, provider)
+	translatedRequest.Project = provider.Connection.Settings.ProjectID
+	translated, err := h.opts.TranslateChat(&translatedRequest, provider.Protocol)
+	if err != nil {
+		return ChatTranslation{}, err
+	}
+	if translated.Headers == nil {
+		translated.Headers = http.Header{}
+	}
+	if takesProviderHeaders(provider.Protocol) {
+		for name, values := range openAIProviderHeaders(provider) {
+			translated.Headers[name] = values
+		}
+	} else if provider.Protocol == geminiadapter.Protocol {
+		for name, values := range geminiHeaders(provider) {
+			translated.Headers[name] = values
+		}
+	} else if provider.Protocol == anthropicadapter.MessagesProtocol {
+		// A provider may rewrite the converted body (the Claude OAuth identity),
+		// exactly as on the Chat path.
+		if translated.Body, err = wire.PrepareMessages(provider.ProviderID, translated.Body); err != nil {
+			return ChatTranslation{}, err
+		}
+		for name, values := range anthropicHeaders(r, provider) {
+			translated.Headers[name] = values
+		}
+	}
+	if provider.Endpoint != "" {
+		translated.Endpoint = provider.Endpoint
+	}
+	return translated, nil
+}
+
+// copyTranslatedOllamaStream converts a provider's stream to Chat when its wire
+// is not Chat, then relays the Chat SSE as Ollama ndjson.
+func (h *Handler) copyTranslatedOllamaStream(w http.ResponseWriter, r *http.Request, response *http.Response, translation ChatTranslation, model string) {
+	if translation.Stream == nil {
+		h.copyOllamaStream(w, r, response, model)
+		return
+	}
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	reader, writer := io.Pipe()
+	go func() {
+		_ = translation.Stream(ctx, response.Body, writer)
+		_ = writer.Close()
+	}()
+	h.copyOllamaStream(w, r, &http.Response{Body: reader}, model)
+	_ = reader.Close()
 }
 
 // copyOllamaNativeStream relays a native Ollama ndjson stream byte-for-byte

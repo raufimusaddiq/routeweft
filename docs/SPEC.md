@@ -405,7 +405,13 @@ which case its value is forwarded. Native Chat is never modified. The Ollama ada
 (`internal/protocol/ollama`) is the provider side of the pin's two Ollama legs:
 a Chat, Responses or Messages client reaches an Ollama provider through the
 hub, and a stream is read as NDJSON (`concerns.ReadLines`), not SSE. Ollama is
-never a client wire of the hub. What each leg carries, refuses or does not carry
+never a client wire of the hub. The `/v1/api/chat` ingress is therefore served as
+a Chat client: it parses the body as Chat, resolves the model, key grants and
+account exactly as `/v1/chat/completions` does (so any wire that route can
+translate to is eligible), and reshapes only the answer into Ollama's
+`message`/NDJSON form (the oracle converts after its Chat handler,
+`src/app/api/v1/api/chat/route.js:26-27`). It is not a protocol-restricted
+route. What each leg carries, refuses or does not carry
 is PARITY 6.4. Error bodies are not
 converted: a non-2xx answer from a translated attempt is relayed with its
 status and body as the provider sent it, so a Messages client served by a Chat

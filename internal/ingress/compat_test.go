@@ -12,6 +12,7 @@ import (
 
 	"github.com/raufimusaddiq/routeweft/compat/fixtures"
 	"github.com/raufimusaddiq/routeweft/compat/mockupstream"
+	anthropicadapter "github.com/raufimusaddiq/routeweft/internal/protocol/anthropic"
 	geminiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/gemini"
 	ollamaadapter "github.com/raufimusaddiq/routeweft/internal/protocol/ollama"
 	openaiadapter "github.com/raufimusaddiq/routeweft/internal/protocol/openai"
@@ -377,7 +378,7 @@ func TestSystemOneModelRemapChangesOnlyModel(t *testing.T) {
 
 func TestCompatTranslationHookEndpoints(t *testing.T) {
 	server, err := mockupstream.Start(nil, mockupstream.WithMatcher(func(_ *http.Request, _ string) mockupstream.Decision {
-		return mockupstream.Decision{Status: http.StatusOK, Headers: map[string]string{"Content-Type": "application/json"}, Body: `{"ok":true}`}
+		return mockupstream.Decision{Status: http.StatusOK, Headers: map[string]string{"Content-Type": "application/json"}, Body: `{"choices":[{"index":0,"message":{"role":"assistant","content":"translated"},"finish_reason":"stop"}]}`}
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -390,10 +391,10 @@ func TestCompatTranslationHookEndpoints(t *testing.T) {
 	}
 	handler := New(manager, Options{AllowPrivateUpstreams: true,
 		ProviderResolver: func(*runtime.RuntimeSnapshot, string) (routing.ProviderRef, bool) {
-			return routing.ProviderRef{ProviderID: "openai", Protocol: "openai-chat", BaseURL: server.URL()}, true
+			return routing.ProviderRef{ProviderID: "anthropic", Protocol: anthropicadapter.MessagesProtocol, BaseURL: server.URL()}, true
 		},
 		TranslateChat: func(*openaiadapter.ChatRequest, string) (ChatTranslation, error) {
-			return ChatTranslation{Endpoint: "chat/completions", Body: []byte(`{"model":"translated"}`), Headers: http.Header{"X-Target-Auth": {"provider-secret"}}}, nil
+			return ChatTranslation{Endpoint: "messages", Body: []byte(`{"model":"translated"}`), Headers: http.Header{"X-Target-Auth": {"provider-secret"}}}, nil
 		},
 	})
 	mux := http.NewServeMux()
@@ -404,7 +405,23 @@ func TestCompatTranslationHookEndpoints(t *testing.T) {
 		t.Fatalf("hook status %d body %s", recorder.Code, recorder.Body.String())
 	}
 	seen := server.Requests()
-	if len(seen) != 1 || seen[0].Path != "/chat/completions" || seen[0].Body != `{"model":"translated"}` || seen[0].Headers.Get("X-Target-Auth") != "provider-secret" || seen[0].Headers.Get("Authorization") != "" {
+	if len(seen) != 1 || seen[0].Path != "/messages" || seen[0].Body != `{"model":"translated"}` || seen[0].Headers.Get("X-Target-Auth") != "provider-secret" || seen[0].Headers.Get("Authorization") != "" {
 		t.Fatalf("translated upstream %+v", seen)
+	}
+	// The surface answers in Ollama's shape: the hook's Chat answer is reshaped,
+	// never relayed as a Chat body.
+	var answer struct {
+		Model   string `json:"model"`
+		Message struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"message"`
+		Done bool `json:"done"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &answer); err != nil {
+		t.Fatalf("answer %q: %v", recorder.Body.String(), err)
+	}
+	if answer.Model != "llama3.2" || answer.Message.Role != "assistant" || answer.Message.Content != "translated" || !answer.Done {
+		t.Fatalf("answer %q", recorder.Body.String())
 	}
 }
